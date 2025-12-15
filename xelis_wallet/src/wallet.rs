@@ -7,6 +7,7 @@ use std::{
     },
     borrow::Cow
 };
+use indexmap::IndexSet;
 #[cfg(feature = "xswd")]
 use indexmap::IndexMap;
 use rand::{rngs::OsRng, RngCore};
@@ -870,7 +871,7 @@ impl Wallet {
                         storage.get_last_coinbase_topoheight().is_some_and(|v| v > stable_topoheight)
                         && storage.get_tx_cache().is_none()
                     );
-                    debug!("Stable topoheight is {}, should use stable balance: {}, last coinbase: {:?}", stable_topoheight, should_use_stable_balance,  storage.get_last_coinbase_topoheight());
+                    info!("Stable topoheight is {}, should use stable balance: {}, last coinbase: {:?}", stable_topoheight, should_use_stable_balance, storage.get_last_coinbase_topoheight());
 
                     if !force_stable_balance && should_use_stable_balance {
                         // Check if there is any unconfirmed balance or balance in unstable height
@@ -878,8 +879,9 @@ impl Wallet {
                         for asset in used_assets.iter() {
                             let (balance, unconfirmed) = storage.get_unconfirmed_balance_for(asset).await?;
                             debug!("Current balance for asset {} is at topoheight {}, unconfirmed: {}", asset, balance.topoheight, unconfirmed);
-                            if unconfirmed || balance.topoheight > stable_topoheight {
-                                debug!("Cannot use stable balance because balance for asset {} is at topoheight {} which is above stable topoheight {} and is unconfirmed", asset, balance.topoheight, stable_topoheight);
+                            // Except for XELIS_ASSET because of the coinbase detected previously
+                            if **asset != XELIS_ASSET && (unconfirmed || balance.topoheight > stable_topoheight) {
+                                info!("Cannot use stable balance because balance for asset {} is at topoheight {} which is above stable topoheight {} and is unconfirmed", asset, balance.topoheight, stable_topoheight);
                                 should_use_stable_balance = false;
                                 break;
                             }
@@ -894,6 +896,58 @@ impl Wallet {
                             if output_topoheight > stable_topoheight {
                                 warn!("Cannot use stable balance because we have an outgoing TX not confirmed in stable height yet");
                                 should_use_stable_balance = false;
+
+                                // Check if we got a higher topoheight than current reference
+                                if let Some(coinbase_topo) = storage.get_last_coinbase_topoheight().filter(|v| *v >= output_topoheight) {
+                                    // Our balances are too new, we must fetch the previous versions
+
+                                    warn!("We have a coinbase reward at or above the last outgoing TX topoheight, we must fetch previous balance versions");
+                                    let assets: IndexSet<Cow<'_, Hash>> = used_assets.iter()
+                                        .map(|v| Cow::Borrowed(*v))
+                                        .collect();
+
+                                    let versions = network_handler.get_api().get_balances_at_maximum_topoheight(
+                                        &self.get_address(),
+                                        assets.clone(),
+                                        output_topoheight
+                                    ).await?;
+
+                                    for (asset, version) in assets.into_iter().zip(versions) {
+                                        match version {
+                                            Some(version) => {
+                                                let contains_coinbase = version.topoheight == coinbase_topo && asset.as_ref() == &XELIS_ASSET;
+                                                debug!("Using previous balance version for asset {} at topoheight {} with ciphertext {}", asset, version.topoheight, version.version);
+                                                let mut ciphertext = version.version.take_balance_with(contains_coinbase);
+                                                let decompressed = ciphertext.computable()
+                                                    .map_err(|_| WalletError::CiphertextDecode)?;
+
+                                                // Retrieve the max supply for this asset
+                                                let max_supply = storage.get_asset(&asset).await?
+                                                    .get_max_supply();
+
+                                                let amount = match self.decrypt_ciphertext_with(decompressed.clone(), max_supply.get_max()).await? {
+                                                    Some(amount) => amount,
+                                                    None => {
+                                                        warn!("Couldn't decrypt the ciphertext for asset {}: no result found, skipping this balance version", asset);
+                                                        continue;
+                                                    }
+                                                };
+                                                let balance = Balance {
+                                                    amount,
+                                                    ciphertext: ciphertext,
+                                                    topoheight: version.topoheight,
+                                                };
+
+                                                debug!("Using previous balance for asset {} ({}) with amount {}", asset, balance.ciphertext, balance.amount);
+                                                state.add_balance((*asset).clone(), balance);
+                                            },
+                                            None => {
+                                                warn!("No previous balance version found for asset {}, skipping this balance version", asset);
+                                            }
+                                        }
+                                    }
+                                }
+
                                 let hash = if storage.has_block_hash_for_topoheight(output_topoheight)? {
                                     storage.get_block_hash_for_topoheight(output_topoheight)?
                                 } else {
