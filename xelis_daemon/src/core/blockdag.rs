@@ -4,9 +4,12 @@ use indexmap::IndexSet;
 use itertools::Either;
 use log::{debug, error, trace};
 use xelis_common::{
-    block::{BlockVersion, TopoHeight, get_combined_hash_for_tips}, crypto::Hash, difficulty::{CumulativeDifficulty, Difficulty}, time::TimestampMillis
+    block::{BlockVersion, TopoHeight, get_combined_hash_for_tips},
+    crypto::Hash,
+    difficulty::{CumulativeDifficulty, Difficulty},
+    time::TimestampMillis
 };
-use crate::{config::{STABLE_LIMIT, get_stable_limit}, core::storage::*};
+use crate::{config::get_stable_limit, core::storage::*};
 
 use super::{    
     storage::{
@@ -202,10 +205,11 @@ where
     }
 
     // now lets check all blocks until STABLE_LIMIT height before the block
-    let stable_point = if block_height >= STABLE_LIMIT {
-        block_height - STABLE_LIMIT
+    let stable_limit = get_stable_limit(block_version);
+    let stable_point = if block_height >= stable_limit {
+        block_height - stable_limit
     } else {
-        STABLE_LIMIT - block_height
+        stable_limit - block_height
     };
     let mut i = block_height.saturating_sub(1);
     let mut pre_blocks = HashSet::new();
@@ -235,7 +239,7 @@ where
 }
 
 // a block is a side block if its ordered and its block height is less than or equal to height of past 8 topographical blocks
-pub async fn is_side_block_internal<P>(provider: &P, hash: &Hash, block_topoheight: Option<u64>, current_topoheight: TopoHeight) -> Result<bool, BlockchainError>
+pub async fn is_side_block_internal<P>(provider: &P, hash: &Hash, block_topoheight: Option<u64>, current_topoheight: TopoHeight, block_version: BlockVersion) -> Result<bool, BlockchainError>
 where
     P: DifficultyProvider + DagOrderProvider
 {
@@ -261,7 +265,8 @@ where
     // verify if there is a block with height higher than this block in past 8 topo blocks
     let mut counter = 0;
     let mut i = topoheight - 1;
-    while counter < STABLE_LIMIT && i > 0 {
+    let stable_limit = get_stable_limit(block_version);
+    while counter < stable_limit && i > 0 {
         let hash = provider.get_hash_at_topo_height(i).await?;
         let previous_height = provider.get_height_for_block_hash(&hash).await?;
 
@@ -439,13 +444,14 @@ where
     Ok((base_hash, base_height))
 }
 
-pub async fn build_reachability<P: DifficultyProvider>(provider: &P, hash: Hash) -> Result<HashSet<Hash>, BlockchainError> {
+pub async fn build_reachability<P: DifficultyProvider>(provider: &P, hash: Hash, block_version: BlockVersion) -> Result<HashSet<Hash>, BlockchainError> {
     let mut set = HashSet::new();
     let mut stack: VecDeque<(Hash, u64)> = VecDeque::new();
     stack.push_back((hash, 0));
 
+    let stable_limit = get_stable_limit(block_version);
     while let Some((current_hash, current_level)) = stack.pop_back() {
-        if current_level >= 2 * STABLE_LIMIT {
+        if current_level >= 2 * stable_limit {
             trace!("Level limit reached, adding {}", current_hash);
             set.insert(current_hash);
         } else {
@@ -464,12 +470,12 @@ pub async fn build_reachability<P: DifficultyProvider>(provider: &P, hash: Hash)
 }
 
 // this function check that a TIP cannot be refered as past block in another TIP
-pub async fn verify_non_reachability<P: DifficultyProvider>(provider: &P, tips: &IndexSet<Hash>) -> Result<bool, BlockchainError> {
+pub async fn verify_non_reachability<P: DifficultyProvider>(provider: &P, tips: &IndexSet<Hash>, block_version: BlockVersion) -> Result<bool, BlockchainError> {
     trace!("Verifying non reachability for block");
     let tips_count = tips.len();
     let mut reach = Vec::with_capacity(tips_count);
     for hash in tips {
-        let set = build_reachability(provider, hash.clone()).await?;
+        let set = build_reachability(provider, hash.clone(), block_version).await?;
         reach.push(set);
     }
 
@@ -546,7 +552,7 @@ where
 
 // Verify if the block is not too far from mainchain
 // We calculate the distance from mainchain and compare it to the height
-pub async fn is_near_enough_from_main_chain<P>(provider: &P, hash: &Hash, chain_height: u64) -> Result<bool, BlockchainError>
+pub async fn is_near_enough_from_main_chain<P>(provider: &P, hash: &Hash, chain_height: u64, version: BlockVersion) -> Result<bool, BlockchainError>
 where
     P: DifficultyProvider + DagOrderProvider
 {
@@ -558,7 +564,7 @@ where
 
     // If the lowest ordered height is below or equal to current chain height
     // and that we have a difference bigger than our stable limit
-    if lowest_ordered_height <= chain_height && chain_height - lowest_ordered_height >= STABLE_LIMIT {
+    if lowest_ordered_height <= chain_height && chain_height - lowest_ordered_height >= get_stable_limit(version) {
         return Ok(false)
     }
 

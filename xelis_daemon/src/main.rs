@@ -3,7 +3,7 @@ pub mod p2p;
 pub mod core;
 pub mod config;
 
-use config::{DEV_PUBLIC_KEY, STABLE_LIMIT};
+use config::DEV_PUBLIC_KEY;
 use futures::StreamExt;
 use human_bytes::human_bytes;
 use humantime::{format_duration, Duration as HumanDuration};
@@ -53,7 +53,7 @@ use xelis_common::{
     }
 };
 use xelis_vm::Access;
-use crate::config::MILLIS_PER_SECOND;
+use crate::config::{MILLIS_PER_SECOND, get_stable_limit};
 use core::{
     state::ChainState,
     blockchain::{
@@ -521,8 +521,13 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
     info!("Verifying chain supply from {} until topoheight {}", pruned_topoheight, topoheight);
     for topo in pruned_topoheight..=topoheight {
         let hash_at_topo = storage.get_hash_at_topo_height(topo).await.context("Error while retrieving hash at topo")?;
-        let block_reward = if pruned_topoheight == 0 || topo - pruned_topoheight > STABLE_LIMIT {
-            let block_reward = blockchain.get_block_reward(&*storage, &hash_at_topo, expected_supply, Some(topo), topo).await.context("Error while calculating block reward")?;
+        // Verify that we have a balance for each account updated
+        let header = storage.get_block_header_by_hash(&hash_at_topo).await.context("Error while retrieving block header")?;
+
+        let stable_limit = get_stable_limit(header.get_version());
+        let block_reward = if pruned_topoheight == 0 || topo - pruned_topoheight > stable_limit {
+            let block_reward = blockchain.get_block_reward(&*storage, &hash_at_topo, expected_supply, Some(topo), topo, header.get_version()).await
+                .context("Error while calculating block reward")?;
             let expected_block_reward = storage.get_block_reward_at_topo_height(topo).await.context("Error while retrieving block reward")?;
             // Verify the saved block reward
             if block_reward != expected_block_reward {
@@ -547,8 +552,6 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
             return Ok(())
         }
 
-        // Verify that we have a balance for each account updated
-        let header = storage.get_block_header_by_hash(&hash_at_topo).await.context("Error while retrieving block header")?;
         if !storage.has_balance_at_exact_topoheight(header.get_miner(), &XELIS_ASSET, topo).await.context("Error while checking the miner balance version")? {
             manager.error(format!("No balance version found for miner {} at topoheight {} for block {}", header.get_miner().as_address(blockchain.get_network().is_mainnet()), topo, hash_at_topo));
             return Ok(())

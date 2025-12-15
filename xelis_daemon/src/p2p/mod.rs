@@ -2681,6 +2681,8 @@ impl<S: Storage> P2pServer<S> {
         let packet_block_bytes = &packet_block_bytes;
         let packet_ping_bytes = &packet_ping_bytes;
 
+        let stable_limit = get_stable_limit(block.get_version());
+
         // Prepare all the futures to execute them in parallel
         stream::iter(self.peer_list.get_cloned_peers().await)
             .for_each_concurrent(self.stream_concurrency, |peer| async move {
@@ -2693,7 +2695,7 @@ impl<S: Storage> P2pServer<S> {
                 // (block height is always + 1 above the highest tip height, so we can just check that peer height is not above block height + 1, it's enough in 90% of time)
                 // chain can accept old blocks (up to STABLE_LIMIT) but new blocks only N+1
                 // Easier way: we could simply check that the block height is above peer stable height
-                if (peer_height >= block.get_height() && peer_height - block.get_height() <= STABLE_LIMIT) || (peer_height <= block.get_height() && block.get_height() - peer_height <= 1) {
+                if (peer_height >= block.get_height() && peer_height - block.get_height() <= stable_limit) || (peer_height <= block.get_height() && block.get_height() - peer_height <= 1) {
                     // Don't lock the blocks propagation while sending the packet
                     let send_block = {
                         trace!("locking blocks propagation for peer {}", peer);
@@ -2747,7 +2749,7 @@ impl<S: Storage> P2pServer<S> {
                             peer.set_last_ping_sent(get_current_time_in_seconds());
                         }
                     }
-                } else if send_ping && peer_height >= block.get_height().saturating_sub(STABLE_LIMIT) {
+                } else if send_ping && peer_height >= block.get_height().saturating_sub(stable_limit) {
                     // Peer is above us, send him a ping packet to inform him we got a block propagated
                     log!(self.block_propagation_log_level, "send ping (block {}) for propagation to {}", hash, peer);
                     if let Err(e) = peer.send_bytes(packet_ping_bytes.clone()).await {
