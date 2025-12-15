@@ -1382,7 +1382,9 @@ impl<S: Storage> Blockchain<S> {
             FEE_PER_KB
         };
 
-        let mut chain_state = ChainState::new(storage, &self.environment, stable_topoheight, topoheight, block.get_version(), base_fee);
+        let (_, base_height) = blockdag::find_common_base(&*storage, block.get_tips()).await?;
+
+        let mut chain_state = ChainState::new(storage, &self.environment, stable_topoheight, topoheight, block.get_version(), base_fee, base_height);
 
         if !tx_selector.is_empty() {
             let tx_cache = TxCache::new(storage, &mempool, self.disable_zkp_cache);
@@ -1732,6 +1734,9 @@ impl<S: Storage> Blockchain<S> {
             (FEE_PER_KB, self.get_blocks_size_ema_at_tips(&*storage, block.get_tips().iter()).await?)
         };
 
+        // find the common base block from tips
+        let (base, base_height) = blockdag::find_common_base(&*storage, block.get_tips()).await?;
+
         // Transaction verification
         // Here we are going to verify all TXs in the block
         // For this, we must select TXs that are not doing collisions with other TXs in block
@@ -1898,12 +1903,12 @@ impl<S: Storage> Blockchain<S> {
                     // it will be multi-threaded by N threads
                     stream::iter(batches.into_iter().map(Ok))
                         .try_for_each_concurrent(self.txs_verification_threads_count, async |txs| {
-                            let mut chain_state = ChainState::new(storage, environment, stable_topoheight, current_topoheight, version, base_fee);
+                            let mut chain_state = ChainState::new(storage, environment, stable_topoheight, current_topoheight, version, base_fee, base_height);
                             Transaction::verify_batch(txs.iter(), &mut chain_state, cache).await
                         }).await
                 } else {
                     // Verify all valid transactions in one batch
-                    let mut chain_state = ChainState::new(&*storage, &self.environment, stable_topoheight, current_topoheight, version, base_fee);
+                    let mut chain_state = ChainState::new(&*storage, &self.environment, stable_topoheight, current_topoheight, version, base_fee, base_height);
                     let iter = txs_grouped.values()
                         .flatten();
                     Transaction::verify_batch(iter, &mut chain_state, &tx_cache).await
@@ -1923,7 +1928,6 @@ impl<S: Storage> Blockchain<S> {
             GENESIS_BLOCK_DIFFICULTY.into()
         } else {
             debug!("Computing cumulative difficulty for block {}", block_hash);
-            let (base, base_height) = blockdag::find_common_base(&*storage, block.get_tips()).await?;
             debug!("Common base found: {}, height: {}, calculating cumulative difficulty", base, base_height);
             blockdag::find_tip_work_score(
                 &*storage,

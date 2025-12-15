@@ -122,7 +122,8 @@ pub struct ChainState<'s, 'b, S: Storage> {
     // Block header version
     block_version: BlockVersion,
     // All gas fees tracked
-    gas_fee: u64
+    gas_fee: u64,
+    base_height: u64,
 }
 
 impl<'s, 'b, S: Storage> ChainState<'s, 'b, S> {
@@ -133,6 +134,7 @@ impl<'s, 'b, S: Storage> ChainState<'s, 'b, S> {
         topoheight: TopoHeight,
         block_version: BlockVersion,
         tx_base_fee: u64,
+        base_height: u64
     ) -> Self {
         Self {
             storage,
@@ -144,11 +146,12 @@ impl<'s, 'b, S: Storage> ChainState<'s, 'b, S> {
             tx_base_fee,
             contracts: HashMap::new(),
             block_version,
-            gas_fee: 0
+            gas_fee: 0,
+            base_height,
         }
     }
 
-    pub fn new(storage: &'s S, environment: &'s Environment<ContractMetadata>, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion, tx_base_fee: u64) -> Self {
+    pub fn new(storage: &'s S, environment: &'s Environment<ContractMetadata>, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion, tx_base_fee: u64, base_height: u64) -> Self {
         Self::with(
             storage,
             environment,
@@ -156,6 +159,7 @@ impl<'s, 'b, S: Storage> ChainState<'s, 'b, S> {
             topoheight,
             block_version,
             tx_base_fee,
+            base_height
         )
     }
 
@@ -342,7 +346,7 @@ impl<'s, 'b, S: Storage> BlockchainVerificationState<'b, BlockchainError> for Ch
         &'c mut self,
         tx: &Transaction,
     ) -> Result<(), BlockchainError> {
-        super::pre_verify_tx(tx, self.stable_topoheight, self.topoheight, self.block_version).await
+        super::pre_verify_tx(self.storage, tx, self.stable_topoheight, self.topoheight, self.base_height, self.block_version).await
     }
 
     /// Get the balance ciphertext for a receiver account

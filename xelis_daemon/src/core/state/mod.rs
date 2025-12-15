@@ -16,6 +16,8 @@ use xelis_common::{
     utils::format_xelis
 };
 
+use crate::core::storage::Storage;
+
 use super::{
     hard_fork,
     blockchain,
@@ -60,9 +62,36 @@ pub(super) async fn verify_fee<P: AccountProvider + BalanceProvider>(
     Ok((fee_paid, refund))
 }
 
+// Check if a miner is in the unstable height of a reference block
+async fn is_miner_until_base_height<S: Storage>(storage: &S, miner: &PublicKey, stable_height: u64, reference: &Hash) -> Result<bool, BlockchainError> {
+    let mut stack = Vec::new();
+    stack.push(reference.clone());
+
+    while let Some(current_hash) = stack.pop() {
+        let block_height = storage.get_height_for_block_hash(&current_hash).await?;
+        if block_height <= stable_height {
+            continue;
+        }
+
+        let block = storage.get_block_header_by_hash(&current_hash).await?;
+
+        // Check miner
+        if *block.get_miner() == *miner {
+            return Ok(true);
+        }
+
+        // Add parents to stack
+        for parent in block.get_tips() {
+            stack.push(parent.clone());
+        }
+    }
+
+    Ok(false)
+}
+
 // Verify a transaction before adding it to mempool/chain state
 // We only verify the reference and the required fees
-pub(super) async fn pre_verify_tx(tx: &Transaction, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion) -> Result<(), BlockchainError> {
+pub(super) async fn pre_verify_tx<S: Storage>(storage: &S, tx: &Transaction, stable_topoheight: TopoHeight, base_height: u64, topoheight: TopoHeight, block_version: BlockVersion) -> Result<(), BlockchainError> {
     debug!("Pre-verify TX at topoheight {} and stable topoheight {}", topoheight, stable_topoheight);
     if !hard_fork::is_tx_version_allowed_in_block_version(tx.get_version(), block_version) {
         debug!("Invalid version {} in block {}", tx.get_version(), block_version);
@@ -74,6 +103,15 @@ pub(super) async fn pre_verify_tx(tx: &Transaction, stable_topoheight: TopoHeigh
     if topoheight < reference.topoheight {
         debug!("Invalid reference: topoheight {} is higher than chain {}", reference.topoheight, topoheight);
         return Err(BlockchainError::InvalidReferenceTopoheight(reference.topoheight, topoheight));
+    }
+
+    if block_version >= BlockVersion::V3 {
+        let block_height = storage.get_height_for_block_hash(&reference.hash).await?;
+        if base_height < block_height && is_miner_until_base_height(storage, tx.get_source(), base_height, &reference.hash).await? {
+            // We are in the unstable height, we must ensure that we are not referencing an unstable block
+            debug!("Invalid reference: block height {} is higher than stable height {}", block_height, base_height);
+            return Err(BlockchainError::InvalidReferenceBlockHeight(block_height, base_height));
+        }
     }
 
     Ok(())
