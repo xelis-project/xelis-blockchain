@@ -192,6 +192,7 @@ pub struct P2pServer<S: Storage> {
     // Flags to use in handshake
     flags: Flags,
     sync_from_priority_only: bool,
+    reorg_from_priority_only: bool,
 }
 
 impl<S: Storage> P2pServer<S> {
@@ -222,6 +223,7 @@ impl<S: Storage> P2pServer<S> {
         disable_fast_sync_support: bool,
         proxy: Option<(ProxyKind, SocketAddr, Option<(String, String)>)>,
         sync_from_priority_only: bool,
+        reorg_from_priority_only: bool,
     ) -> Result<Arc<Self>, P2pError> {
         if tag.as_ref().is_some_and(|tag| tag.len() == 0 || tag.len() > 16) {
             return Err(P2pError::InvalidTag);
@@ -314,7 +316,8 @@ impl<S: Storage> P2pServer<S> {
             proxy,
             requests_cache: ExpirableCache::new(),
             flags,
-            sync_from_priority_only
+            sync_from_priority_only,
+            reorg_from_priority_only,
         };
 
         let arc = Arc::new(server);

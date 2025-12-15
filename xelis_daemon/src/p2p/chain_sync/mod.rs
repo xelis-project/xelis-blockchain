@@ -414,6 +414,9 @@ impl<S: Storage> P2pServer<S> {
                 warn!("Rewinding chain without checking because {} is a priority node (pop count: {})", peer, pop_count);
                 // User trust him as a priority node, rewind chain without checking, allow to go below stable height also
                 self.blockchain.rewind_chain(pop_count, false).await?;
+            } else if self.reorg_from_priority_only {
+                warn!("Ignoring reorg request from non-priority node {} because reorg_from_priority_only is enabled", peer);
+                return Err(P2pError::ReorgFromPriorityOnly.into());
             } else {
                 // Verify that someone isn't trying to trick us
                 // Fast check: because each block represent a topoheight, it should contains
