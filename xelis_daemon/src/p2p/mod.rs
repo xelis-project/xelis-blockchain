@@ -2485,8 +2485,15 @@ impl<S: Storage> P2pServer<S> {
         }
 
         let mut expected_topoheight = start_topoheight;
+        let pruned_topoheight = storage.get_pruned_topoheight().await?;
+
         // search a common point
         for (i, block_id) in blocks.into_iter().enumerate() {
+            if pruned_topoheight.is_some_and(|v| expected_topoheight <= v) {
+                debug!("Expected topoheight {} is under pruned topoheight {:?}, stopping search", expected_topoheight, pruned_topoheight);
+                break;
+            }
+
             // Verify good order of blocks
             // If we already processed genesis block (topo 0) and still have some blocks, it's invalid list
             // If we are in the first CHAIN_SYNC_REQUEST_EXPONENTIAL_INDEX_START blocks, verify the exact good order
