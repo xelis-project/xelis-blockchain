@@ -309,7 +309,7 @@ pub async fn get_peer_entry<'a>(peer: &'a Peer) -> PeerEntry<'a> {
 }
 
 // This function is used to register all the RPC methods
-pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>, allow_mining_methods: bool) {
+pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>, allow_mining_methods: bool, allow_private_methods: bool) {
     info!("Registering RPC methods...");
 
     handler.register_method_no_params("get_version", async_handler!(version::<S>, single));
@@ -424,6 +424,12 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
         handler.register_method_with_params("get_block_template", async_handler!(get_block_template::<S>));
         handler.register_method_with_params("get_miner_work", async_handler!(get_miner_work::<S>));
         handler.register_method_with_params("submit_block", async_handler!(submit_block::<S>));
+    }
+
+    if allow_private_methods {
+        handler.register_method_with_params("prune_chain", async_handler!(prune_chain::<S>));
+        handler.register_method_with_params("rewind_chain", async_handler!(rewind_chain::<S>));
+        handler.register_method_no_params("clear_caches", async_handler!(clear_caches::<S>, single));
     }
 }
 
@@ -2236,4 +2242,37 @@ async fn get_p2p_block_propagation<S: Storage>(context: &Context, params: GetP2p
         first_seen,
         processing_at
     })
+}
+
+async fn prune_chain<S: Storage>(context: &Context, params: PruneChainParams) -> Result<PruneChainResult, InternalRpcError> {
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+
+    let pruned_topoheight = blockchain.prune_until_topoheight(params.topoheight).await
+        .context("Error while pruning chain")?;
+
+    Ok(PruneChainResult {
+        pruned_topoheight,
+    })
+}
+
+async fn rewind_chain<S: Storage>(context: &Context, params: RewindChainParams) -> Result<RewindChainResult, InternalRpcError> {
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+
+    let (topoheight, txs) = blockchain.rewind_chain(params.count, params.until_stable_height).await
+        .context("Error while rewinding chain")?;
+
+    Ok(RewindChainResult {
+        topoheight,
+        txs: txs.into_iter().map(|(tx_hash, _)| tx_hash).collect(),
+    })
+}
+
+async fn clear_caches<S: Storage>(context: &Context) -> Result<(), InternalRpcError> {
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let mut storage = blockchain.get_storage().write().await;
+
+    storage.clear_objects_cache().await
+        .context("Error while clearing caches")?;
+
+    Ok(())
 }
