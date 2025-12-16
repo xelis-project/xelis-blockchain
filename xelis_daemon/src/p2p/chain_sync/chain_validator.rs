@@ -85,10 +85,8 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
     // Check if the chain validator has a higher cumulative difficulty than our blockchain
     // This is used to determine if we should switch to the new chain by popping blocks or not
     pub async fn has_higher_cumulative_difficulty(&self, current_cumulative_difficulty: &CumulativeDifficulty) -> Result<bool, BlockchainError> {
-        let new_cumulative_difficulty = self.get_expected_chain_cumulative_difficulty()
-            .ok_or(BlockchainError::NotEnoughBlocks)?;
-
-        Ok(*new_cumulative_difficulty > *current_cumulative_difficulty)
+         Ok(self.get_expected_chain_cumulative_difficulty()
+            .map_or(false, |new_cumulative_difficulty| *new_cumulative_difficulty > *current_cumulative_difficulty))
     }
 
     // Retrieve the cumulative difficulty of the chain validator
