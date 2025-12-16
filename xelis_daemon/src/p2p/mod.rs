@@ -2480,12 +2480,12 @@ impl<S: Storage> P2pServer<S> {
     // For this we have a list of block id which is basically block hash + its topoheight
     // BlockId list should be in descending order (higher topoheight first)
     async fn find_common_point(&self, storage: &S, blocks: IndexSet<BlockId>) -> Result<Option<CommonPoint>, P2pError> {
-        let start_topoheight = if let Some(first) = blocks.first() {
-            first.get_topoheight() + 1
-        } else {
+        let Some(first) = blocks.first() else {
             warn!("Block id list is empty!");
             return Err(P2pError::InvalidBlockIdList)
         };
+
+        let start_topoheight = first.get_topoheight() + 1;
 
         // Verify we have the same genesis block hash
         if let Some(genesis_id) = blocks.last() {
@@ -2494,6 +2494,13 @@ impl<S: Storage> P2pServer<S> {
                 warn!("Block id list has incorrect block genesis hash! Got {} at {}", genesis_id.get_hash(), genesis_id.get_topoheight());
                 return Err(P2pError::InvalidBlockIdList)
             }
+        }
+
+        // its asking for a next page
+        if blocks.len() == 2 {
+            debug!("Peer requested a next page for common point search, checking first block only");
+            let topoheight = storage.get_topo_height_for_hash(first.get_hash()).await?;
+            return Ok(Some(CommonPoint::new(first.get_hash().clone(), topoheight)))
         }
 
         let mut expected_topoheight = start_topoheight;
