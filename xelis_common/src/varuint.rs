@@ -191,7 +191,11 @@ impl Mul for VarUint {
     type Output = Self;
 
     fn mul(self, rhs: Self) -> Self::Output {
-        Self(self.0 * rhs.0)
+        let (result, overflow) = self.0.overflowing_mul(rhs.0);
+        // Handle overflow if necessary
+        debug_assert!(!overflow, "VarUint multiplication overflowed");
+
+        Self(result)
     }
 }
 
