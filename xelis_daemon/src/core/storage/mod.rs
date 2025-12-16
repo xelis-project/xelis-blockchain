@@ -147,6 +147,15 @@ pub trait Storage:
         self.clear_objects_cache().await?;
 
         trace!("Storing new pointers");
+
+        debug!("New tips: {}", tips.iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "));
+        for tip in tips.clone() {
+            if !self.has_block_with_hash(&tip).await? {
+                warn!("Tip {} does not exist anymore, removing", tip);
+                tips.remove(&tip);
+            }
+        }
+
         // store the new tips and topo topoheight
         self.store_tips(&tips).await?;
         self.set_top_topoheight(topoheight).await?;
