@@ -23,6 +23,7 @@ impl TipsProvider for RocksStorage {
     // Store chain tips
     async fn store_tips(&mut self, tips: &Tips) -> Result<(), BlockchainError> {
         trace!("store tips");
+        self.cache_mut().tips_cache = tips.clone();
         self.insert_into_disk(Column::Common, TIPS, tips)
     }
 }
