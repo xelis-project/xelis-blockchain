@@ -77,7 +77,7 @@ pub trait Storage:
         // Delete all orphaned blocks tips
         for tip in tips.clone() {
             if !self.is_block_topological_ordered(&tip).await? {
-                debug!("Tip {} is not ordered, removing", tip);
+                warn!("Tip {} is not ordered, removing", tip);
                 tips.remove(&tip);
             }
         }

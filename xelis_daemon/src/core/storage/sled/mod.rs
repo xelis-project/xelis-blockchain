@@ -334,7 +334,7 @@ impl SledStorage {
         // Load tips from disk if available
         if let Ok(tips) = self.load_from_disk::<Tips>(&self.extra, TIPS, DiskContext::Tips) {
             debug!("Found tips: {}", tips.len());
-            self.cache.tips_cache = tips;
+            self.cache.chain.tips = tips;
         }
 
         // Load the pruned topoheight from disk if available

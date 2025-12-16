@@ -40,8 +40,6 @@ pub struct CounterCache {
     pub blocks_execution_count: u64,
     // Count of contracts
     pub contracts_count: u64,
-    // Tips cache
-    pub tips_cache: Tips,
     // Pruned topoheight cache
     pub pruned_topoheight: Option<TopoHeight>,
 }

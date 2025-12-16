@@ -51,13 +51,13 @@ impl BlockProvider for RocksStorage {
 
     // Check if the block exists using its hash
     async fn has_block_with_hash(&self, hash: &Hash) -> Result<bool, BlockchainError> {
-        trace!("has block with hash");
+        trace!("has block with hash {}", hash);
         self.contains_data(Column::Blocks, hash)
     }
 
     // Get a block with transactions using its hash
     async fn get_block_by_hash(&self, hash: &Hash) -> Result<Block, BlockchainError> {
-        trace!("get block by hash");
+        trace!("get block by hash {}", hash);
         let header = self.get_block_header_by_hash(hash).await?;
         let mut transactions = Vec::with_capacity(header.get_txs_count());
         for hash in header.get_txs_hashes() {
@@ -69,7 +69,7 @@ impl BlockProvider for RocksStorage {
     }
 
     async fn get_block_size(&self, hash: &Hash) -> Result<usize, BlockchainError> {
-        trace!("get block size");
+        trace!("get block size {}", hash);
         let header = self.get_block_header_by_hash(hash).await?;
         let mut size = header.size();
         for hash in header.get_txs_hashes() {
@@ -87,7 +87,7 @@ impl BlockProvider for RocksStorage {
     // Hash is Immutable to be stored efficiently in caches and sharing the same object
     // with others caches (like P2p or GetWork)
     async fn save_block(&mut self, block: Arc<BlockHeader>, txs: &[Arc<Transaction>], difficulty: Difficulty, cumulative_difficulty: CumulativeDifficulty, covariance: VarUint, size_ema: u32, hash: Immutable<Hash>) -> Result<(), BlockchainError> {
-        trace!("save block");
+        trace!("save block {}", hash);
 
         let mut count_txs = 0;
         for (hash, transaction) in block.get_transactions().iter().zip(txs.iter()) {
@@ -120,7 +120,7 @@ impl BlockProvider for RocksStorage {
 
     // Delete a block using its hash
     async fn delete_block_by_hash(&mut self, hash: &Hash) -> Result<Immutable<BlockHeader>, BlockchainError> {
-        trace!("delete block with hash");
+        trace!("delete block with hash {}", hash);
         let block = self.get_block_header_by_hash(hash).await?;
 
         self.remove_from_disk(Column::Blocks, hash)?;
