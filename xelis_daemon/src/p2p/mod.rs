@@ -2126,14 +2126,14 @@ impl<S: Storage> P2pServer<S> {
                 let time = get_current_time_in_seconds();
                 // Node is trying to ask too fast our chain
                 // Don't allow faster than 1/3 of the delay
-                if  (last_request * MILLIS_PER_SECOND)  + (CHAIN_SYNC_DELAY * MILLIS_PER_SECOND * 2 / 3) > time * MILLIS_PER_SECOND {
+                if (last_request * MILLIS_PER_SECOND)  + (CHAIN_SYNC_DELAY * MILLIS_PER_SECOND * 2 / 3) > time * MILLIS_PER_SECOND {
                     debug!("{} requested sync chain too fast!", peer);
                     return Err(P2pError::RequestSyncChainTooFast)
                 }
                 peer.set_last_chain_sync(time);
 
                 // at least one block necessary (genesis block)
-                let request_size = request.size();
+                let request_size = request.len();
                 if request_size == 0 || request_size > CHAIN_SYNC_REQUEST_MAX_BLOCKS { // allows maximum 64 blocks id (2560 bytes max)
                     warn!("{} sent us a malformed chain request ({} blocks)!", peer, request_size);
                     return Err(P2pError::MalformedChainRequest(request_size))
