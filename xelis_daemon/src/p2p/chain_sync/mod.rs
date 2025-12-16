@@ -12,6 +12,7 @@ use futures::{
 };
 use indexmap::IndexSet;
 use log::{debug, error, info, trace, warn};
+use metrics::histogram;
 use xelis_common::{
     block::{Block, BlockVersion},
     crypto::Hash,
@@ -111,106 +112,116 @@ impl<S: Storage> P2pServer<S> {
     // when the common point is found, start sending blocks from this point
     pub async fn handle_chain_request(self: &Arc<Self>, peer: &Arc<Peer>, blocks: IndexSet<BlockId>, accepted_response_size: usize) -> Result<(), BlockchainError> {
         debug!("handle chain request for {} with {} blocks", peer, blocks.len());
-        let storage = self.blockchain.get_storage().read().await;
-        debug!("storage locked for chain request");
+        let start = Instant::now();
+
         // blocks hashes sent for syncing (topoheight ordered)
         let mut response_blocks = IndexSet::new();
         let mut top_blocks = IndexSet::new();
         // common point used to notify peer if he should rewind or not
-        let common_point = self.find_common_point(&*storage, blocks).await?;
         // Lowest height of the blocks sent
         let mut lowest_common_height = None;
+        
+        let common_point = {
+            let storage = self.blockchain.get_storage().read().await;
+            let common_point = self.find_common_point(&*storage, blocks).await?;
+            debug!("storage locked for chain request");
 
-        if let Some(common_point) = &common_point {
-            let mut topoheight = common_point.get_topoheight();
-            // lets add all blocks ordered hash
-            let chain_cache = storage.chain_cache().await;
-            let top_topoheight = chain_cache.topoheight;
-            // used to detect if we find unstable height for alt tips
-            let mut unstable_height = None;
-            let top_height = chain_cache.height;
-            // check to see if we should search for alt tips (and above unstable height)
-            let should_search_alt_tips = top_topoheight - topoheight < accepted_response_size as u64;
-            if should_search_alt_tips {
-                debug!("Peer is near to be synced, will send him alt tips blocks");
-                unstable_height = Some(chain_cache.stable_height + 1);
-            }
-
-            // Search the lowest height
-            let mut lowest_height = top_height;
-
-            // complete ChainResponse blocks until we are full or that we reach the top topheight
-            while response_blocks.len() < accepted_response_size && topoheight <= top_topoheight {
-                trace!("looking for hash at topoheight {}", topoheight);
-                let hash = storage.get_hash_at_topo_height(topoheight).await?;
-
-                // Find the lowest height
-                let height = storage.get_height_for_block_hash(&hash).await?;
-                if height < lowest_height {
-                    lowest_height = height;
+            if let Some(common_point) = &common_point {
+                let mut topoheight = common_point.get_topoheight();
+                // lets add all blocks ordered hash
+                let chain_cache = storage.chain_cache().await;
+                let top_topoheight = chain_cache.topoheight;
+                // used to detect if we find unstable height for alt tips
+                let mut unstable_height = None;
+                let top_height = chain_cache.height;
+                // check to see if we should search for alt tips (and above unstable height)
+                let should_search_alt_tips = top_topoheight - topoheight < accepted_response_size as u64;
+                if should_search_alt_tips {
+                    debug!("Peer is near to be synced, will send him alt tips blocks");
+                    unstable_height = Some(chain_cache.stable_height + 1);
                 }
 
-                let mut swap = false;
-                if let Some(previous_hash) = response_blocks.last() {
-                    let version = hard_fork::get_version_at_height(self.blockchain.get_network(), height);
-                    // Due to the TX being orphaned, some TXs may be in the wrong order in V1
-                    // It has been sorted in V2 and should not happen anymore
-                    if (version == BlockVersion::V0 || version == BlockVersion::V3) && storage.has_block_position_in_order(&hash).await? && storage.has_block_position_in_order(&previous_hash).await? {
-                        let position = storage.get_block_position_in_order(&hash).await?;
-                        let previous_position = storage.get_block_position_in_order(&previous_hash).await?;
-                        // if the block is a side block, we need to check if it's in the right order
-                        if position < previous_position {
-                            if blockdag::is_side_block_internal(&*storage, &hash, Some(topoheight), top_topoheight, version).await? {
-                                swap = true;
+                // Search the lowest height
+                let mut lowest_height = top_height;
+
+                // complete ChainResponse blocks until we are full or that we reach the top topheight
+                while response_blocks.len() < accepted_response_size && topoheight <= top_topoheight {
+                    trace!("looking for hash at topoheight {}", topoheight);
+                    let hash = storage.get_hash_at_topo_height(topoheight).await?;
+
+                    // Find the lowest height
+                    let height = storage.get_height_for_block_hash(&hash).await?;
+                    if height < lowest_height {
+                        lowest_height = height;
+                    }
+
+                    let mut swap = false;
+                    if let Some(previous_hash) = response_blocks.last() {
+                        let version = hard_fork::get_version_at_height(self.blockchain.get_network(), height);
+                        // Due to the TX being orphaned, some TXs may be in the wrong order in V1
+                        // It has been sorted in V2 and should not happen anymore
+                        if (version == BlockVersion::V0 || version == BlockVersion::V3) && storage.has_block_position_in_order(&hash).await? && storage.has_block_position_in_order(&previous_hash).await? {
+                            let position = storage.get_block_position_in_order(&hash).await?;
+                            let previous_position = storage.get_block_position_in_order(&previous_hash).await?;
+                            // if the block is a side block, we need to check if it's in the right order
+                            if position < previous_position {
+                                if blockdag::is_side_block_internal(&*storage, &hash, Some(topoheight), top_topoheight, version).await? {
+                                    swap = true;
+                                }
                             }
                         }
                     }
-                }
 
-                if swap {
-                    trace!("for chain request, swapping hash {} at topoheight {}", hash, topoheight);
-                    let previous = response_blocks.pop();
-                    response_blocks.insert(hash);
-                    if let Some(previous) = previous {
-                        response_blocks.insert(previous);
-                    }
-                } else {
-                    trace!("for chain request, adding hash {} at topoheight {}", hash, topoheight);
-                    response_blocks.insert(hash);
-                }
-                topoheight += 1;
-            }
-            lowest_common_height = Some(lowest_height);
-
-            // now, lets check if peer is near to be synced, and send him alt tips blocks
-            if let Some(mut height) = unstable_height {
-                trace!("unstable height: {}, top height: {}", height, top_height);
-                while height <= top_height && top_blocks.len() < CHAIN_SYNC_TOP_BLOCKS {
-                    trace!("get blocks at height {} for top blocks", height);
-                    for hash in storage.get_blocks_at_height(height).await? {
-                        if !response_blocks.contains(&hash) {
-                            trace!("Adding top block at height {}: {}", height, hash);
-                            if !top_blocks.insert(hash) {
-                                debug!("Top block was already present in response top blocks");
-                            }
-                        } else {
-                            trace!("Top block at height {}: {} was skipped because its already present in response blocks", height, hash);
+                    if swap {
+                        trace!("for chain request, swapping hash {} at topoheight {}", hash, topoheight);
+                        let previous = response_blocks.pop();
+                        response_blocks.insert(hash);
+                        if let Some(previous) = previous {
+                            response_blocks.insert(previous);
                         }
+                    } else {
+                        trace!("for chain request, adding hash {} at topoheight {}", hash, topoheight);
+                        response_blocks.insert(hash);
                     }
-                    height += 1;
+                    topoheight += 1;
+                }
+                lowest_common_height = Some(lowest_height);
+
+                // now, lets check if peer is near to be synced, and send him alt tips blocks
+                if let Some(mut height) = unstable_height {
+                    trace!("unstable height: {}, top height: {}", height, top_height);
+                    while height <= top_height && top_blocks.len() < CHAIN_SYNC_TOP_BLOCKS {
+                        trace!("get blocks at height {} for top blocks", height);
+                        for hash in storage.get_blocks_at_height(height).await? {
+                            if !response_blocks.contains(&hash) {
+                                trace!("Adding top block at height {}: {}", height, hash);
+                                if !top_blocks.insert(hash) {
+                                    debug!("Top block was already present in response top blocks");
+                                }
+                            } else {
+                                trace!("Top block at height {}: {} was skipped because its already present in response blocks", height, hash);
+                            }
+                        }
+                        height += 1;
+                    }
+                }
+
+                // Too many top blocks, use the one with highest difficulty
+                if top_blocks.len() >= u8::MAX as usize {
+                    debug!("Too many top blocks ({}), sorting and keeping only the best ones", top_blocks.len());
+                    // sort and keep only the best ones
+                    let iter = blockdag::sort_tips(&*storage, top_blocks.into_iter()).await?;
+                    top_blocks = iter.take(u8::MAX as usize).collect();
                 }
             }
 
-            // Too many top blocks, use the one with highest difficulty
-            if top_blocks.len() >= u8::MAX as usize {
-                debug!("Too many top blocks ({}), sorting and keeping only the best ones", top_blocks.len());
-                // sort and keep only the best ones
-                let iter = blockdag::sort_tips(&*storage, top_blocks.into_iter()).await?;
-                top_blocks = iter.take(u8::MAX as usize).collect();
-            }
-        }
+            common_point
+        };
 
-        debug!("Sending {} blocks & {} top blocks as response to {}", response_blocks.len(), top_blocks.len(), peer);
+        let elapsed = start.elapsed();
+        histogram!("xelis_p2p_chain_request_s").record(elapsed.as_secs_f64());
+
+        debug!("Sending {} blocks & {} top blocks as response to {} in {:?}", response_blocks.len(), top_blocks.len(), peer, elapsed);
         peer.send_packet(Packet::ChainResponse(ChainResponse::new(common_point, lowest_common_height, response_blocks, top_blocks))).await?;
         Ok(())
     }
