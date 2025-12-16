@@ -2454,7 +2454,8 @@ impl<S: Storage> Blockchain<S> {
 
         // save highest topo height
         debug!("Highest topo height found: {}", highest_topo);
-        let chain_topoheight_extended = current_height == 0 || highest_topo > current_topoheight;
+        // if the DAG has been reorganized, we update the topoheight
+        let chain_topoheight_extended = current_height == 0 || highest_topo > current_topoheight || dag_is_overwritten;
         if chain_topoheight_extended {
             debug!("Blockchain height extended, current topoheight is now {} (previous was {})", highest_topo, current_topoheight);
             storage.set_top_topoheight(highest_topo).await?;
