@@ -1028,6 +1028,7 @@ impl<S: Storage> P2pServer<S> {
 
             // Priority on priority nodes
             let mut priority_nodes = Vec::new();
+            let mut priority_sync_failed = 0;
             for peer in self.peer_list.get_cloned_peers().await {
                 let block_top_hash = { peer.get_top_block_hash().lock().await.clone() };
                 match self.blockchain.has_block(&block_top_hash).await {
@@ -1038,7 +1039,13 @@ impl<S: Storage> P2pServer<S> {
                                 debug!("Skipping {} for priority nodes because we are in fast sync mode and it doesn't support it", peer);
                                 continue;
                             }
+
+                            if peer.has_sync_chain_failed() {
+                                priority_sync_failed += 1;
+                            }
+
                             priority_nodes.push((peer, block_top_hash));
+
                         }
                     },
                     Err(e) => {
@@ -1050,6 +1057,11 @@ impl<S: Storage> P2pServer<S> {
             // select one random from priority nodes if any
             // if we have priority nodes that are synced, only try to sync from them
             let mut peer_selected = if !priority_nodes.is_empty() {
+                if priority_sync_failed > 0 && priority_sync_failed < priority_nodes.len() {
+                    debug!("filtering out priority nodes that have failed chain sync before");
+                    priority_nodes.retain(|(p, _)| !p.has_sync_chain_failed());
+                }
+
                 let selected = rand::thread_rng().gen_range(0..priority_nodes.len());
                 let (peer, block_hash) = priority_nodes.swap_remove(selected);
                 info!("Selected priority node {} for chain sync (block we don't have: {})", peer, block_hash);

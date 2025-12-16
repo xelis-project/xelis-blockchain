@@ -243,8 +243,14 @@ impl Peer {
             let last_chain_sync = self.get_last_chain_sync_out();
             let current_time = get_current_time_in_seconds();
 
-            // If its been more than 10 minutes since last chain sync, reset the flag
-            if last_chain_sync + 600 < current_time {
+            let delay = if self.is_priority() {
+                60
+            } else {
+                300
+            };
+
+            // If its been more than the given delay minutes since last chain sync, reset the flag
+            if last_chain_sync + delay < current_time {
                 self.set_sync_chain_failed(false);
                 return false;
             }
