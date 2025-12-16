@@ -1460,8 +1460,8 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     let stableheight = chain_cache.stable_height;
     let stable_topoheight = chain_cache.stable_topoheight;
     let difficulty = chain_cache.difficulty;
+    let tips = &chain_cache.tips;
 
-    let tips = storage.get_tips().await.context("Error while retrieving tips")?;
     let top_block_hash = blockchain.get_top_block_hash_for_storage(&storage).await
         .context("Error while retrieving top block hash")?;
     let avg_block_time = blockchain.get_average_block_time::<S>(&storage).await

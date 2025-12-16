@@ -4,7 +4,7 @@ use crate::{
         PEER_TX_CACHE_SIZE, PEER_TIMEOUT_BOOTSTRAP_STEP,
         PEER_TIMEOUT_REQUEST_OBJECT, CHAIN_SYNC_TIMEOUT_SECS,
         PEER_PACKET_CHANNEL_SIZE, PEER_PEERS_CACHE_SIZE,
-        PEER_OBJECTS_CONCURRENCY
+        PEER_OBJECTS_CONCURRENCY, MILLIS_PER_SECOND
     },
     p2p::packet::PacketWrapper
 };
@@ -23,7 +23,8 @@ use xelis_common::{
     serializer::Serializer,
     time::{
         get_current_time_in_seconds,
-        TimestampSeconds
+        TimestampSeconds,
+        TimestampMillis
     }
 };
 use super::{
@@ -240,11 +241,17 @@ impl Peer {
     pub fn has_sync_chain_failed(&self) -> bool {
         let tmp = self.sync_chain_failed.load(Ordering::SeqCst);
         if tmp {
-            let last_chain_sync = self.get_last_chain_sync_out();
+            let last_chain_sync = self.get_last_chain_sync_out() / MILLIS_PER_SECOND;
             let current_time = get_current_time_in_seconds();
 
-            // If its been more than 10 minutes since last chain sync, reset the flag
-            if last_chain_sync + 600 < current_time {
+            let delay = if self.is_priority() {
+                60
+            } else {
+                300
+            };
+
+            // If its been more than the given delay minutes since last chain sync, reset the flag
+            if last_chain_sync + delay < current_time {
                 self.set_sync_chain_failed(false);
                 return false;
             }
@@ -464,12 +471,12 @@ impl Peer {
 
     // Get the last time we've sent a chain sync request
     // This is used to prevent spamming the chain sync packet
-    pub fn get_last_chain_sync_out(&self) -> TimestampSeconds {
+    pub fn get_last_chain_sync_out(&self) -> TimestampMillis {
         self.last_chain_sync_out.load(Ordering::SeqCst)
     }
 
     // Store the last time we've sent a chain sync request
-    pub fn set_last_chain_sync_out(&self, time: TimestampSeconds) {
+    pub fn set_last_chain_sync_out(&self, time: TimestampMillis) {
         self.last_chain_sync_out.store(time, Ordering::SeqCst);
     }
 

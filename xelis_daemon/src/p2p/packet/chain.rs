@@ -88,7 +88,7 @@ impl ChainRequest {
         }
     }
 
-    pub fn size(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.blocks.len()
     }
 

@@ -10,6 +10,7 @@ impl CacheProvider for RocksStorage {
     // Clear all the internal caches if any
     async fn clear_objects_cache(&mut self) -> Result<(), BlockchainError> {
         trace!("clear caches");
+        self.cache_mut().clear_caches();
         Ok(())
     }
 

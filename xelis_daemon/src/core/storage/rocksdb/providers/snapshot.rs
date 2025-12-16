@@ -46,6 +46,8 @@ impl SnapshotProvider for RocksStorage {
                     }
                 }
             }
+
+            self.cache = snapshot.cache;
         } else {
             debug!("Clearing caches due to invalidation of the commit point");
             self.clear_objects_cache().await?;

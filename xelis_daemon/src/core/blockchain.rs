@@ -1256,7 +1256,7 @@ impl<S: Storage> Blockchain<S> {
 
     // Generate a block header template without transactions
     pub async fn get_block_header_template_for_storage(&self, storage: &S, address: PublicKey) -> Result<BlockHeader, BlockchainError> {
-        trace!("get block header template");
+        trace!("get block header template for storage");
         let start = Instant::now();
 
         let extra_nonce: [u8; EXTRA_NONCE_SIZE] = rand::thread_rng().gen::<[u8; EXTRA_NONCE_SIZE]>(); // generate random bytes
@@ -2454,7 +2454,8 @@ impl<S: Storage> Blockchain<S> {
 
         // save highest topo height
         debug!("Highest topo height found: {}", highest_topo);
-        let chain_topoheight_extended = current_height == 0 || highest_topo > current_topoheight;
+        // if the DAG has been reorganized, we update the topoheight
+        let chain_topoheight_extended = current_height == 0 || highest_topo > current_topoheight || dag_is_overwritten;
         if chain_topoheight_extended {
             debug!("Blockchain height extended, current topoheight is now {} (previous was {})", highest_topo, current_topoheight);
             storage.set_top_topoheight(highest_topo).await?;
@@ -2796,6 +2797,9 @@ impl<S: Storage> Blockchain<S> {
         let chain_cache = storage.chain_cache().await;
         let current_height = chain_cache.height;
         let current_topoheight = chain_cache.topoheight;
+        let previous_stable_height = chain_cache.stable_height;
+        let previous_stable_topoheight = chain_cache.stable_topoheight;
+
         warn!("Rewind chain with count = {}, height = {}, topoheight = {}", count, current_height, current_topoheight);
         let mut until_topo_height = if stop_at_stable_height {
             chain_cache.stable_topoheight
@@ -2849,12 +2853,10 @@ impl<S: Storage> Blockchain<S> {
         }
 
         let chain_cache = storage.chain_cache_mut().await?;
-
-        let previous_stable_height = chain_cache.stable_height;
-        let previous_stable_topoheight = chain_cache.stable_topoheight;
-
         chain_cache.height = new_height;
         chain_cache.topoheight = new_topoheight;
+
+        self.initialize_caches(storage).await?;
 
         let version = get_version_at_height(self.get_network(), new_height);
 
@@ -2898,14 +2900,6 @@ impl<S: Storage> Blockchain<S> {
                     }
                 }
             }
-
-            // We don't use initialize cache because we already updated half of it by hand above
-            let (difficulty, _) = self.get_difficulty_at_tips(&*storage, tips.iter()).await?;
-            let chain_cache = storage.chain_cache_mut().await?;
-
-            chain_cache.stable_height = stable_height;
-            chain_cache.stable_topoheight = stable_topoheight;
-            chain_cache.difficulty = difficulty;
         }
 
         Ok((new_topoheight, orphaned_txs))

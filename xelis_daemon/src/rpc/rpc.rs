@@ -1215,7 +1215,10 @@ async fn get_account_history<S: Storage>(context: &Context, params: GetAccountHi
     let key = params.address.get_public_key();
     let minimum_topoheight = params.minimum_topoheight.unwrap_or(0);
     let storage = blockchain.get_storage().read().await;
-    let pruned_topoheight = storage.get_pruned_topoheight().await.context("Error while retrieving pruned topoheight")?.unwrap_or(0);
+    let pruned_topoheight = storage.get_pruned_topoheight().await
+        .context("Error while retrieving pruned topoheight")?
+        .unwrap_or(0);
+
     let mut version: Option<(u64, Option<u64>, _)> = if let Some(topo) = params.maximum_topoheight {
         if topo < pruned_topoheight {
             return Err(InternalRpcError::InvalidParams("Maximum topoheight is lower than pruned topoheight"));
@@ -1241,9 +1244,15 @@ async fn get_account_history<S: Storage>(context: &Context, params: GetAccountHi
         if !params.incoming_flow {
             // don't return any error, maybe this account never spend anything
             // (even if we force 0 nonce at first activity)
-            let (topo, nonce) = storage.get_last_nonce(key).await.context("Error while retrieving last topoheight for nonce")?;
-            let version = storage.get_balance_at_exact_topoheight(key, &params.asset, topo).await.context(format!("Error while retrieving balance at topo height {topo}"))?;
-            Some((topo, nonce.get_previous_topoheight(), version))
+            let (topo, nonce) = storage.get_last_nonce(key).await
+                .context("Error while retrieving last topoheight for nonce")?;
+
+            if let Some((_, version)) = storage.get_balance_at_maximum_topoheight(key, &params.asset, topo).await
+                    .context(format!("Error while retrieving balance at topo height {topo}"))? {
+                Some((topo, nonce.get_previous_topoheight(), version))
+            } else {
+                None
+            }
         } else {
             Some(
                 storage.get_last_balance(key, &params.asset).await
@@ -1316,7 +1325,8 @@ async fn get_account_history<S: Storage>(context: &Context, params: GetAccountHi
 
                 for log in logs {
                     match log {
-                        ContractLog::Transfer { destination, contract, amount, asset } if destination == *params.address.get_public_key() => {
+                        ContractLog::Transfer { destination, contract, amount, asset }
+                        if params.incoming_flow && destination == *params.address.get_public_key() && params.asset == asset  => {
                                 history.push(AccountHistoryEntry {
                                     topoheight: topo,
                                     hash: tx_hash.clone(),
@@ -1334,7 +1344,8 @@ async fn get_account_history<S: Storage>(context: &Context, params: GetAccountHi
 
                             for execution_log in execution_logs {
                                 match execution_log {
-                                    ContractLog::Transfer { destination, contract, amount, asset } if destination == *params.address.get_public_key() => {
+                                    ContractLog::Transfer { destination, contract, amount, asset }
+                                    if params.incoming_flow && destination == *params.address.get_public_key() && params.asset == asset => {
                                         history.push(AccountHistoryEntry {
                                             topoheight: topo,
                                             hash: hash.clone(),
@@ -1406,7 +1417,7 @@ async fn get_account_history<S: Storage>(context: &Context, params: GetAccountHi
                     }
                 },
                 TransactionType::MultiSig(payload) => {
-                    if is_sender {
+                    if is_sender && params.outgoing_flow {
                         history.push(AccountHistoryEntry {
                             topoheight: topo,
                             hash: tx_hash.clone(),
@@ -1419,7 +1430,7 @@ async fn get_account_history<S: Storage>(context: &Context, params: GetAccountHi
                     }
                 },
                 TransactionType::InvokeContract(payload) => {
-                    if is_sender {
+                    if is_sender && params.outgoing_flow {
                         history.push(AccountHistoryEntry {
                             topoheight: topo,
                             hash: tx_hash.clone(),
@@ -1433,7 +1444,7 @@ async fn get_account_history<S: Storage>(context: &Context, params: GetAccountHi
                     }
                 },
                 TransactionType::DeployContract(payload) => {
-                    if is_sender {
+                    if is_sender && params.outgoing_flow {
                         history.push(AccountHistoryEntry {
                             topoheight: topo,
                             hash: tx_hash.clone(),

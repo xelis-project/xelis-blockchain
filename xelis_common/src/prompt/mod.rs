@@ -29,7 +29,7 @@ use std::{
     fmt::{self, Display, Formatter},
     fs::{self, create_dir_all},
     future::Future,
-    io::{self, Write},
+    io,
     path::Path,
     pin::Pin,
     str::FromStr,
@@ -648,16 +648,17 @@ impl Prompt {
     fn zip_log_file(log_file_path: &str, zip_file_path: &str) -> io::Result<()> {
         let file = fs::File::create(zip_file_path)?;
         let mut zip = zip::ZipWriter::new(file);
-    
-        let log_file_data = fs::read(log_file_path)?;
+
         let options = zip::write::SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Zstd)
             .large_file(true);
 
+        // Start a new file entry in the zip and stream the input file into it
         zip.start_file(log_file_path, options)?;
-        zip.write_all(&log_file_data)?;
+        let mut input = fs::File::open(log_file_path)?;
+        io::copy(&mut input, &mut zip)?;
         zip.finish()?;
-    
+
         // Delete the original log file
         fs::remove_file(log_file_path)?;
 
@@ -684,7 +685,7 @@ impl Prompt {
                 if Path::new(&path).exists() {
                     let zip_path = format!("{}.zip", path);
                     if let Err(e) = Self::zip_log_file(&path, &zip_path) {
-                        error!("Error while compressing log file: {}", e);
+                        error!("Error on zip log file: {}", e);
                     }
                 } else {
                     info!("No log file to compress for {}", filename);

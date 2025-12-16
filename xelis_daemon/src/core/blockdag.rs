@@ -71,6 +71,7 @@ where
         _ => {
             let mut scores: Vec<(Hash, CumulativeDifficulty)> = Vec::with_capacity(tips_len);
             for hash in tips {
+                debug!("get cumulative difficulty for tip {} for sort tips", hash);
                 let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&hash).await?;
                 scores.push((hash, cumulative_difficulty));
             }

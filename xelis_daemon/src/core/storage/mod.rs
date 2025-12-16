@@ -77,7 +77,7 @@ pub trait Storage:
         // Delete all orphaned blocks tips
         for tip in tips.clone() {
             if !self.is_block_topological_ordered(&tip).await? {
-                debug!("Tip {} is not ordered, removing", tip);
+                warn!("Tip {} is not ordered, removing", tip);
                 tips.remove(&tip);
             }
         }
@@ -147,6 +147,25 @@ pub trait Storage:
         self.clear_objects_cache().await?;
 
         trace!("Storing new pointers");
+
+        debug!("New tips: {}", tips.iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "));
+
+        for tip in tips.clone() {
+            if !self.has_block_with_hash(&tip).await? {
+                warn!("Tip {} does not exist anymore, removing", tip);
+                tips.remove(&tip);
+            }
+
+            // Verify reachability by one depth
+            let past_blocks = self.get_past_blocks_for_block_hash(&tip).await?;
+            for past_tip in past_blocks.iter() {
+                if tips.contains(past_tip) {
+                    warn!("Tip {} is reachable from tip {}, removing", past_tip, tip);
+                    tips.remove(past_tip);
+                }
+            }
+        }
+
         // store the new tips and topo topoheight
         self.store_tips(&tips).await?;
         self.set_top_topoheight(topoheight).await?;

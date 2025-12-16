@@ -1028,6 +1028,7 @@ impl<S: Storage> P2pServer<S> {
 
             // Priority on priority nodes
             let mut priority_nodes = Vec::new();
+            let mut priority_sync_failed = 0;
             for peer in self.peer_list.get_cloned_peers().await {
                 let block_top_hash = { peer.get_top_block_hash().lock().await.clone() };
                 match self.blockchain.has_block(&block_top_hash).await {
@@ -1038,7 +1039,13 @@ impl<S: Storage> P2pServer<S> {
                                 debug!("Skipping {} for priority nodes because we are in fast sync mode and it doesn't support it", peer);
                                 continue;
                             }
+
+                            if peer.has_sync_chain_failed() {
+                                priority_sync_failed += 1;
+                            }
+
                             priority_nodes.push((peer, block_top_hash));
+
                         }
                     },
                     Err(e) => {
@@ -1050,6 +1057,11 @@ impl<S: Storage> P2pServer<S> {
             // select one random from priority nodes if any
             // if we have priority nodes that are synced, only try to sync from them
             let mut peer_selected = if !priority_nodes.is_empty() {
+                if priority_sync_failed > 0 && priority_sync_failed < priority_nodes.len() {
+                    debug!("filtering out priority nodes that have failed chain sync before");
+                    priority_nodes.retain(|(p, _)| !p.has_sync_chain_failed());
+                }
+
                 let selected = rand::thread_rng().gen_range(0..priority_nodes.len());
                 let (peer, block_hash) = priority_nodes.swap_remove(selected);
                 info!("Selected priority node {} for chain sync (block we don't have: {})", peer, block_hash);
@@ -2114,14 +2126,14 @@ impl<S: Storage> P2pServer<S> {
                 let time = get_current_time_in_seconds();
                 // Node is trying to ask too fast our chain
                 // Don't allow faster than 1/3 of the delay
-                if  (last_request * MILLIS_PER_SECOND)  + (CHAIN_SYNC_DELAY * MILLIS_PER_SECOND * 2 / 3) > time * MILLIS_PER_SECOND {
+                if (last_request * MILLIS_PER_SECOND)  + (CHAIN_SYNC_DELAY * MILLIS_PER_SECOND * 2 / 3) > time * MILLIS_PER_SECOND {
                     debug!("{} requested sync chain too fast!", peer);
                     return Err(P2pError::RequestSyncChainTooFast)
                 }
                 peer.set_last_chain_sync(time);
 
                 // at least one block necessary (genesis block)
-                let request_size = request.size();
+                let request_size = request.len();
                 if request_size == 0 || request_size > CHAIN_SYNC_REQUEST_MAX_BLOCKS { // allows maximum 64 blocks id (2560 bytes max)
                     warn!("{} sent us a malformed chain request ({} blocks)!", peer, request_size);
                     return Err(P2pError::MalformedChainRequest(request_size))
@@ -2468,12 +2480,12 @@ impl<S: Storage> P2pServer<S> {
     // For this we have a list of block id which is basically block hash + its topoheight
     // BlockId list should be in descending order (higher topoheight first)
     async fn find_common_point(&self, storage: &S, blocks: IndexSet<BlockId>) -> Result<Option<CommonPoint>, P2pError> {
-        let start_topoheight = if let Some(first) = blocks.first() {
-            first.get_topoheight() + 1
-        } else {
+        let Some(first) = blocks.first() else {
             warn!("Block id list is empty!");
             return Err(P2pError::InvalidBlockIdList)
         };
+
+        let start_topoheight = first.get_topoheight() + 1;
 
         // Verify we have the same genesis block hash
         if let Some(genesis_id) = blocks.last() {
@@ -2484,9 +2496,23 @@ impl<S: Storage> P2pServer<S> {
             }
         }
 
+        // its asking for a next page
+        if blocks.len() == 2 {
+            debug!("Peer requested a next page for common point search, checking first block only");
+            let topoheight = storage.get_topo_height_for_hash(first.get_hash()).await?;
+            return Ok(Some(CommonPoint::new(first.get_hash().clone(), topoheight)))
+        }
+
         let mut expected_topoheight = start_topoheight;
+        let pruned_topoheight = storage.get_pruned_topoheight().await?;
+
         // search a common point
         for (i, block_id) in blocks.into_iter().enumerate() {
+            if pruned_topoheight.is_some_and(|v| expected_topoheight <= v) {
+                debug!("Expected topoheight {} is under pruned topoheight {:?}, stopping search", expected_topoheight, pruned_topoheight);
+                break;
+            }
+
             // Verify good order of blocks
             // If we already processed genesis block (topo 0) and still have some blocks, it's invalid list
             // If we are in the first CHAIN_SYNC_REQUEST_EXPONENTIAL_INDEX_START blocks, verify the exact good order
@@ -2508,6 +2534,7 @@ impl<S: Storage> P2pServer<S> {
                 }
             }
         }
+
         Ok(None)
     }
 
