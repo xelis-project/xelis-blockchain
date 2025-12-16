@@ -599,7 +599,7 @@ impl<S: Storage> P2pServer<S> {
             && (peer.is_priority() || (self.count_connected_to_a_synced_priority_node(None).await == 0))
         {
             // check that if we can trust him
-            if peer.is_priority() && false {
+            if peer.is_priority() {
                 warn!("Rewinding chain without checking because {} is a priority node (pop count: {})", peer, pop_count);
                 // User trust him as a priority node, rewind chain without checking, allow to go below stable height also
                 self.blockchain.rewind_chain(pop_count, false).await?;
