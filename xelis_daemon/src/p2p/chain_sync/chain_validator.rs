@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 use async_trait::async_trait;
 use indexmap::{IndexMap, IndexSet};
 use xelis_common::{
@@ -32,12 +32,13 @@ use crate::core::{
 use log::{debug, trace};
 
 // This struct is used to store the block data in the chain validator
-struct BlockData {
-    header: Arc<BlockHeader>,
-    topoheight: TopoHeight,
-    difficulty: Difficulty,
-    cumulative_difficulty: CumulativeDifficulty,
-    p: VarUint
+pub struct BlockData {
+    pub header: Arc<BlockHeader>,
+    pub topoheight: TopoHeight,
+    pub difficulty: Difficulty,
+    pub cumulative_difficulty: CumulativeDifficulty,
+    pub p: VarUint,
+    pub pow_hash: Hash
 }
 
 // Chain validator is used to validate the blocks received from the network
@@ -45,7 +46,7 @@ struct BlockData {
 // This is doing only minimal checks and valid chain order based on topoheight and difficulty
 pub struct ChainValidator<'a, S: Storage> {
     // store all blocks data in topological order
-    blocks: HashMap<Arc<Hash>, BlockData>,
+    blocks: IndexMap<Arc<Hash>, Option<BlockData>>,
     // store all blocks hashes at a specific height
     blocks_at_height: IndexMap<u64, IndexSet<Arc<Hash>>>,
     // Blockchain reference used to verify current chain state
@@ -73,7 +74,7 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
     // Starting topoheight must be 1 topoheight above the common point
     pub fn new(blockchain: &'a Blockchain<S>) -> Self {        
         Self {
-            blocks: HashMap::new(),
+            blocks: IndexMap::new(),
             blocks_at_height: IndexMap::new(),
             blockchain,
             hash_at_topo: IndexMap::new(),
@@ -98,18 +99,25 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
 
         debug!("looking for cumulative difficulty of {}", hash);
         self.blocks.get(hash)
-            .map(|data| &data.cumulative_difficulty)
+            .and_then(|data| data.as_ref().map(|d| &d.cumulative_difficulty))
     }
 
     // validate the basic chain structure
     // We expect that the block added is the next block ordered by topoheight
-    pub async fn insert_block(&mut self, hash: Hash, header: BlockHeader, topoheight: TopoHeight) -> Result<(), BlockchainError> {
+    pub async fn insert_block(&mut self, hash: Arc<Hash>, header: Option<BlockHeader>, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         debug!("Inserting block {} into chain validator with expected topoheight {}", hash, topoheight);
 
         if self.blocks.contains_key(&hash) {
             debug!("Block {} is already in validator chain!", hash);
             return Err(BlockchainError::AlreadyInChain)
         }
+
+        let Some(header) = header else {
+            self.blocks.insert(Arc::clone(&hash), None);
+            self.hash_at_topo.insert(topoheight, hash);
+
+            return Ok(());
+        };
 
         let storage = self.blockchain.get_storage().read().await;
         debug!("storage locked for chain validator insert block");
@@ -144,7 +152,7 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
         // verify tips count
         if tips_count == 0 || tips_count > TIPS_LIMIT {
             debug!("Block {} contains {} tips while only {} is accepted", hash, tips_count, TIPS_LIMIT);
-            return Err(BlockchainError::InvalidTipsCount(hash, tips_count))
+            return Err(BlockchainError::InvalidTipsCount(hash.as_ref().clone(), tips_count))
         }
 
         // verify that we have already all its tips
@@ -153,7 +161,7 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
                 trace!("Checking tip {} for block {}", tip, hash);
                 if !self.blocks.contains_key(tip) && !provider.has_block_with_hash(tip).await? {
                     debug!("Block {} contains tip {} which is not present in chain validator", hash, tip);
-                    return Err(BlockchainError::InvalidTipsNotFound(hash, tip.clone()))
+                    return Err(BlockchainError::InvalidTipsNotFound(hash.as_ref().clone(), tip.clone()))
                 }
             }
         }
@@ -187,29 +195,28 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
             base_height
         ).await?;
 
-        let hash = Arc::new(hash);
         // Store the block in both maps
         // One is for blocks at height and the other is for the block data
         self.blocks_at_height.entry(header.get_height())
             .or_insert_with(IndexSet::new)
             .insert(hash.clone());
 
-        self.blocks.insert(hash.clone(), BlockData {
+        self.blocks.insert(hash.clone(), Some(BlockData {
             header: Arc::new(header),
             topoheight,
             difficulty,
             cumulative_difficulty,
-            p
-        });
+            p,
+            pow_hash
+        }));
 
         self.hash_at_topo.insert(topoheight, hash);
 
         Ok(())
     }
 
-    pub fn get_block(&mut self, hash: &Hash) -> Option<Arc<BlockHeader>> {
-        debug!("retrieving block header for {}", hash);
-        self.blocks.get(hash).map(|v| v.header.clone())
+    pub fn blocks(self) -> IndexMap<Arc<Hash>, Option<BlockData>> {
+        self.blocks
     }
 }
 
@@ -232,7 +239,7 @@ impl<S: Storage> CacheProvider for ChainValidatorProvider<'_, S> {
 impl<S: Storage> DifficultyProvider for ChainValidatorProvider<'_, S> {
     async fn get_height_for_block_hash(&self, hash: &Hash) -> Result<u64, BlockchainError> {
         trace!("get height for block hash {}", hash);
-        if let Some(data) = self.parent.blocks.get(hash) {
+        if let Some(data) = self.parent.blocks.get(hash).and_then(|d| d.as_ref()) {
             return Ok(data.header.get_height())
         }
 
@@ -243,7 +250,7 @@ impl<S: Storage> DifficultyProvider for ChainValidatorProvider<'_, S> {
     // Get the block version using its hash
     async fn get_version_for_block_hash(&self, hash: &Hash) -> Result<BlockVersion, BlockchainError> {
         trace!("get version for block hash {}", hash);
-        if let Some(data) = self.parent.blocks.get(hash) {
+        if let Some(data) = self.parent.blocks.get(hash).and_then(|d| d.as_ref()) {
             return Ok(data.header.get_version())
         }
 
@@ -253,7 +260,7 @@ impl<S: Storage> DifficultyProvider for ChainValidatorProvider<'_, S> {
 
     async fn get_timestamp_for_block_hash(&self, hash: &Hash) -> Result<TimestampMillis, BlockchainError> {
         trace!("get timestamp for block hash {}", hash);
-        if let Some(data) = self.parent.blocks.get(hash) {
+        if let Some(data) = self.parent.blocks.get(hash).and_then(|d| d.as_ref()) {
             return Ok(data.header.get_timestamp())
         }
 
@@ -263,7 +270,7 @@ impl<S: Storage> DifficultyProvider for ChainValidatorProvider<'_, S> {
 
     async fn get_difficulty_for_block_hash(&self, hash: &Hash) -> Result<Difficulty, BlockchainError> {
         trace!("get difficulty for block hash {}", hash);
-        if let Some(data) = self.parent.blocks.get(hash) {
+        if let Some(data) = self.parent.blocks.get(hash).and_then(|d| d.as_ref()) {
             return Ok(data.difficulty)
         }
 
@@ -273,7 +280,7 @@ impl<S: Storage> DifficultyProvider for ChainValidatorProvider<'_, S> {
 
     async fn get_cumulative_difficulty_for_block_hash(&self, hash: &Hash) -> Result<CumulativeDifficulty, BlockchainError> {
         trace!("get cumulative difficulty for block hash {}", hash);
-        if let Some(data) = self.parent.blocks.get(hash) {
+        if let Some(data) = self.parent.blocks.get(hash).and_then(|d| d.as_ref()) {
             return Ok(data.cumulative_difficulty)
         }
 
@@ -283,7 +290,7 @@ impl<S: Storage> DifficultyProvider for ChainValidatorProvider<'_, S> {
 
     async fn get_past_blocks_for_block_hash(&self, hash: &Hash) -> Result<Immutable<IndexSet<Hash>>, BlockchainError> {
         trace!("get past blocks for block hash {}", hash);
-        if let Some(data) = self.parent.blocks.get(hash) {
+        if let Some(data) = self.parent.blocks.get(hash).and_then(|d| d.as_ref()) {
             return Ok(Immutable::Owned(data.header.get_tips().clone()))
         }
 
@@ -293,7 +300,7 @@ impl<S: Storage> DifficultyProvider for ChainValidatorProvider<'_, S> {
 
     async fn get_block_header_by_hash(&self, hash: &Hash) -> Result<Immutable<BlockHeader>, BlockchainError> {
         trace!("get block header by hash {}", hash);
-        if let Some(data) = self.parent.blocks.get(hash) {
+        if let Some(data) = self.parent.blocks.get(hash).and_then(|d| d.as_ref()) {
             return Ok(Immutable::Arc(data.header.clone()))
         }
 
@@ -303,7 +310,7 @@ impl<S: Storage> DifficultyProvider for ChainValidatorProvider<'_, S> {
 
     async fn get_estimated_covariance_for_block_hash(&self, hash: &Hash) -> Result<VarUint, BlockchainError> {
         trace!("get estimated covariance for block hash {}", hash);
-        if let Some(data) = self.parent.blocks.get(hash) {
+        if let Some(data) = self.parent.blocks.get(hash).and_then(|d| d.as_ref()) {
             return Ok(data.p.clone())
         }
 
@@ -316,7 +323,7 @@ impl<S: Storage> DifficultyProvider for ChainValidatorProvider<'_, S> {
 impl<S: Storage> DagOrderProvider for ChainValidatorProvider<'_, S> {
     async fn get_topo_height_for_hash(&self, hash: &Hash) -> Result<TopoHeight, BlockchainError> {
         trace!("get topo height for hash {}", hash);
-        if let Some(data) = self.parent.blocks.get(hash) {
+        if let Some(data) = self.parent.blocks.get(hash).and_then(|d| d.as_ref()) {
             return Ok(data.topoheight);
         }
 

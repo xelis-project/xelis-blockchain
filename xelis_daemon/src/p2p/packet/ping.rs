@@ -60,10 +60,6 @@ impl<'a> Ping<'a> {
         peer.set_topoheight(self.topoheight);
         peer.set_height(self.height);
 
-        if peer.is_pruned() && self.pruned_topoheight.is_none() {
-            return Err(P2pError::InvalidPrunedTopoHeightChange)
-        }
-
         if let Some(pruned_topoheight) = self.pruned_topoheight {
             if pruned_topoheight > self.topoheight {
                 return Err(P2pError::InvalidPrunedTopoHeight(pruned_topoheight, self.height))
