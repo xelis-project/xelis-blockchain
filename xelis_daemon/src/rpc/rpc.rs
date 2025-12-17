@@ -374,6 +374,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     // Assets
     handler.register_method_with_params_and_return_schema::<_, RPCAssetData>("get_asset", async_handler!(get_asset::<S>));
     handler.register_method_with_params("get_asset_supply", async_handler!(get_asset_supply::<S>));
+    handler.register_method_with_params("get_asset_supply_at_topoheight", async_handler!(get_asset_supply_at_topoheight::<S>));
     handler.register_method_with_params("get_assets", async_handler!(get_assets::<S>));
 
     handler.register_method_no_params("count_assets", async_handler!(count_assets::<S>, single));
@@ -838,6 +839,16 @@ async fn get_asset_supply<S: Storage>(context: &Context, params: GetAssetParams<
         topoheight,
         version
     })
+}
+
+async fn get_asset_supply_at_topoheight<S: Storage>(context: &Context, params: GetAssetSupplyAtTopoHeightParams<'_>) -> Result<Versioned<u64>, InternalRpcError> {
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+
+    let version = storage.get_circulating_supply_for_asset_at_exact_topoheight(&params.asset, params.topoheight).await
+        .context("Supply at topoheight was not found for this asset")?;
+
+    Ok(version)
 }
 
 async fn get_assets<S: Storage>(context: &Context, params: GetAssetsParams) -> Result<Vec<RPCAssetData<'static>>, InternalRpcError> {
