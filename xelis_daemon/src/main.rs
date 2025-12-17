@@ -502,7 +502,7 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
     let storage = blockchain.get_storage().read().await;
     let mut pruned_topoheight = storage.get_pruned_topoheight().await.context("Error on pruned topoheight")?.unwrap_or(0);
     let mut expected_supply = if pruned_topoheight > 0 {
-        let supply = storage.get_supply_at_topo_height(pruned_topoheight).await
+        let supply = storage.get_emitted_supply_at_topo_height(pruned_topoheight).await
             .context("Error while retrieving starting expected supply")?;
         pruned_topoheight += 1;
 
@@ -541,7 +541,7 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
             storage.get_block_reward_at_topo_height(topo).await.context("Error while retrieving block reward for pruned topo")?
         };
 
-        let supply = storage.get_supply_at_topo_height(topo).await
+        let supply = storage.get_emitted_supply_at_topo_height(topo).await
             .with_context(|| format!("Error while retrieving supply at topoheight {topo}"))?;
 
         expected_supply += block_reward;
@@ -1470,7 +1470,7 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
         .context("Error while retrieving average block size")?;
     let (required_base_fee, ema_block_size) = blockchain.get_required_base_fee::<S>(&storage, tips.iter()).await
         .context("Error while calculating required base fee")?;
-    let emitted_supply = storage.get_supply_at_topo_height(topoheight).await
+    let emitted_supply = storage.get_emitted_supply_at_topo_height(topoheight).await
         .context("Error while retrieving supply")?;
     let circulating_supply = storage.get_circulating_supply_for_asset_at_maximum_topoheight(&XELIS_ASSET, topoheight).await
         .context("Error while retrieving burned supply")?

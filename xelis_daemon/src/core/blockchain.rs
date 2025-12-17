@@ -841,7 +841,7 @@ impl<S: Storage> Blockchain<S> {
 
         let chain_cache = storage.chain_cache().await;
         let topo_height = chain_cache.topoheight;
-        storage.get_supply_at_topo_height(topo_height).await
+        storage.get_emitted_supply_at_topo_height(topo_height).await
     }
 
     // Get the count of transactions available in the mempool
@@ -2175,7 +2175,7 @@ impl<S: Storage> Blockchain<S> {
                 let past_emitted_supply = if highest_topo == 0 {
                     0
                 } else {
-                    storage.get_supply_at_topo_height(highest_topo - 1).await?
+                    storage.get_emitted_supply_at_topo_height(highest_topo - 1).await?
                 };
 
                 // Block for this hash

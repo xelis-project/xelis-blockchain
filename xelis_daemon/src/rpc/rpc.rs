@@ -671,7 +671,7 @@ async fn get_info<S: Storage>(context: &Context) -> Result<GetInfoResult, Intern
 
         let top_block_hash = storage.get_hash_at_topo_height(topoheight).await
             .context("Error while retrieving hash at topo height")?;
-        let emitted_supply = storage.get_supply_at_topo_height(topoheight).await
+        let emitted_supply = storage.get_emitted_supply_at_topo_height(topoheight).await
             .context("Error while retrieving supply at topo height")?;
         let circulating_supply = storage.get_circulating_supply_for_asset_at_maximum_topoheight(&XELIS_ASSET, topoheight).await
             .context("Error while retrieving burned supply at topoheight")?
