@@ -27,7 +27,7 @@ use super::{
 };
 
 // Verify the transaction fee and returns the leftover from fee max
-pub(super) async fn verify_fee<P: AccountProvider + BalanceProvider>(
+pub async fn verify_fee<P: AccountProvider>(
     provider: &P,
     tx: &Transaction,
     tx_size: usize,
