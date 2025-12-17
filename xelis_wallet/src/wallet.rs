@@ -7,6 +7,7 @@ use std::{
     },
     borrow::Cow
 };
+use cfg_if::cfg_if;
 use indexmap::IndexSet;
 #[cfg(feature = "xswd")]
 use indexmap::IndexMap;
@@ -258,7 +259,7 @@ struct InnerAccount {
 impl InnerAccount {
     // Decrypt a ciphertext
     pub fn decrypt_ciphertext_internal(&self, ciphertext: &Ciphertext, max_supply: Option<u64>) -> Result<Option<u64>, WalletError> {
-        trace!("decrypt ciphertext with max supply {:?}", max_supply);
+        trace!("decrypt ciphertext with max supply internal {:?}", max_supply);
 
         let point = self.keypair.decrypt_to_point(&ciphertext);
         let lock = self.precomputed_tables.read()
@@ -296,15 +297,26 @@ impl Account {
     // Decrypt a ciphertext with max supply
     // This will use spawn_blocking to avoid blocking the async runtime
     pub async fn decrypt_ciphertext(&self, ciphertext: Ciphertext, max_supply: Option<u64>) -> Result<Option<u64>, WalletError> {
+        debug!("Acquiring semaphore for decryption");
         let _permit = self.semaphore.acquire().await
             .context("Error while acquiring semaphore for decryption")?;
 
-        trace!("decrypt ciphertext with max supply {:?}", max_supply);
+        debug!("starting a thread to decrypt ciphertext with max supply {:?}", max_supply);
 
         let inner = Arc::clone(&self.inner);
-        let res = tokio::task::spawn_blocking(move || inner.decrypt_ciphertext_internal(&ciphertext, max_supply))
-            .await
-            .context("Error while waiting on decrypt thread")??;
+        let handle;
+        cfg_if! {
+            if #[cfg(target_arch = "wasm32")] {
+                handle = tokio::spawn_task("decrypt-ciphertext", async move {
+                    inner.decrypt_ciphertext_internal(&ciphertext, max_supply)
+                })
+            } else {
+                handle = tokio::task::spawn_blocking(move || inner.decrypt_ciphertext_internal(&ciphertext, max_supply))
+            }
+        }
+
+        let res = handle.await
+            .context("Error while joining decryption thread")??;
 
         Ok(res)
     }

@@ -2,7 +2,7 @@ use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
     sync::Arc,
-    time::{Duration, Instant}
+    time::Duration
 };
 use futures::{stream, StreamExt, TryStreamExt};
 use indexmap::IndexMap;
@@ -30,7 +30,7 @@ use xelis_common::{
         Address,
         Hash
     },
-    time::TimestampMillis,
+    time::{TimestampMillis, Instant},
     tokio::{
         select,
         spawn_task,
