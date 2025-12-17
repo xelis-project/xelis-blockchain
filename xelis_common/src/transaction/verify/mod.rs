@@ -7,7 +7,6 @@ use std::{
     collections::HashMap,
     iter,
     sync::Arc,
-    time::Instant
 };
 
 use anyhow::Context;
@@ -25,6 +24,7 @@ use metrics::histogram;
 use xelis_vm::ModuleValidator;
 use crate::{
     account::Nonce,
+    time::Instant,
     config::{BURN_PER_CONTRACT, MAX_GAS_USAGE_PER_TX, XELIS_ASSET},
     contract::{
         vm::{
