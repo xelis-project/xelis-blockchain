@@ -853,7 +853,8 @@ impl<S: Storage> P2pServer<S> {
                 // Don't select peers that are on a bad chain
                 // Special case for priority nodes: they are checked below again
                 let sync_failed = p.has_sync_chain_failed();
-                if sync_failed && !p.is_priority() {
+                let is_priority = p.is_priority();
+                if sync_failed && !is_priority {
                     debug!("{} has failed chain sync before, skipping...", p);
                     return None;
                 }
@@ -861,19 +862,21 @@ impl<S: Storage> P2pServer<S> {
                 // If we are connected to a priority node that is synced, only select priority nodes
                 // unless the peer had a sync failure before
 
-                if self.sync_from_priority_only && !p.is_priority() {
+                if self.sync_from_priority_only && !is_priority {
                     debug!("{} is not a priority node for syncing, skipping...", p);
                     return None;
                 }
 
                 // Avoid selecting peers that have a weaker cumulative difficulty than us
-                {
+                let peer_cd = {
                     let cumulative_difficulty = p.get_cumulative_difficulty().lock().await;
                     if *cumulative_difficulty <= our_cumulative_difficulty {
                         debug!("{} has a lower cumulative difficulty than us, skipping...", p);
                         return None;
                     }
-                }
+
+                    *cumulative_difficulty
+                };
 
                 let peer_topoheight = p.get_topoheight();
                 if fast_sync {
@@ -911,7 +914,7 @@ impl<S: Storage> P2pServer<S> {
                 // check if this peer may have a block we don't have
                 if p.get_height() >= our_height || peer_topoheight >= our_topoheight {
                     debug!("{} is a candidate for chain sync, our topoheight: {}, our height: {}", p, our_topoheight, our_height);
-                    Some(p)
+                    Some((p, is_priority, peer_cd))
                 } else {
                     trace!("{} is not ahead of us, skipping it", p);
                     None
@@ -919,7 +922,7 @@ impl<S: Storage> P2pServer<S> {
             })
             .buffer_unordered(self.stream_concurrency)
             .filter_map(|x| async move { x })
-            .collect::<IndexSet<_>>()
+            .collect::<Vec<_>>()
             .await;
 
         // Try to not reuse the same peer between each sync if we had an error
@@ -929,8 +932,8 @@ impl<S: Storage> P2pServer<S> {
             if peers.len() > 1 && (err && !priority) {
                 debug!("removing previous peer {} from random selection, err: {}, priority: {}", previous_peer, err, priority);
                 // We don't need to preserve the order
-                if let Some(position) = peers.iter().position(|p| p.get_id() == previous_peer) {
-                    peers.swap_remove_index(position);
+                if let Some(position) = peers.iter().position(|(p, _, _)| p.get_id() == previous_peer) {
+                    peers.swap_remove(position);
                 }
             }
         }
@@ -941,9 +944,20 @@ impl<S: Storage> P2pServer<S> {
             return Ok(None)
         }
 
-        let selected = rand::thread_rng().gen_range(0..count);
-        // clone the Arc to prevent the lock until the end of the sync request
-        Ok(peers.swap_remove_index(selected))
+        // If we have priority nodes, select from them first
+        // They are called "priority" for a reason
+        let priority_peers = peers.iter().filter(|(_, is_priority, _)| *is_priority).cloned().collect::<Vec<_>>();
+        if !priority_peers.is_empty() {
+            debug!("selecting from {} priority peers", priority_peers.len());
+            peers = priority_peers;
+        }
+
+        // Now sort by cumulative difficulty descending
+        // we use unstable sort because we don't care about the order of peers with same cumulative difficulty
+        peers.sort_unstable_by(|a, b| b.2.cmp(&a.2));
+
+        // Select the best peer available
+        Ok(Some(peers.swap_remove(0).0))
     }
 
     // Check if user has allowed fast sync mode
@@ -1026,53 +1040,13 @@ impl<S: Storage> P2pServer<S> {
                 false
             };
 
-            // Priority on priority nodes
-            let mut priority_nodes = Vec::new();
-            let mut priority_sync_failed = 0;
-            for peer in self.peer_list.get_cloned_peers().await {
-                let block_top_hash = { peer.get_top_block_hash().lock().await.clone() };
-                match self.blockchain.has_block(&block_top_hash).await {
-                    Ok(has_block) => {
-                        if !has_block && peer.is_priority() {
-                            debug!("{} is a priority node and has a block we don't have ({}), adding to priority nodes list", peer, block_top_hash);
-                            if fast_sync && !peer.fast_sync() {
-                                debug!("Skipping {} for priority nodes because we are in fast sync mode and it doesn't support it", peer);
-                                continue;
-                            }
-
-                            if peer.has_sync_chain_failed() {
-                                priority_sync_failed += 1;
-                            }
-
-                            priority_nodes.push((peer, block_top_hash));
-
-                        }
-                    },
-                    Err(e) => {
-                        error!("Error while checking if we have block {} for {}: {}", block_top_hash, peer, e);
-                    }
-                };
-            }
-
             // select one random from priority nodes if any
             // if we have priority nodes that are synced, only try to sync from them
-            let mut peer_selected = if !priority_nodes.is_empty() {
-                if priority_sync_failed > 0 && priority_sync_failed < priority_nodes.len() {
-                    debug!("filtering out priority nodes that have failed chain sync before");
-                    priority_nodes.retain(|(p, _)| !p.has_sync_chain_failed());
-                }
-
-                let selected = rand::thread_rng().gen_range(0..priority_nodes.len());
-                let (peer, block_hash) = priority_nodes.swap_remove(selected);
-                info!("Selected priority node {} for chain sync (block we don't have: {})", peer, block_hash);
-                Some(peer)
-            } else {
-                match self.select_random_best_peer(fast_sync, previous_peer).await {
-                    Ok(peer) => peer,
-                    Err(e) => {
-                        error!("Error while selecting random best peer for chain sync: {}", e);
-                        None
-                    }
+            let mut peer_selected = match self.select_random_best_peer(fast_sync, previous_peer).await {
+                Ok(peer) => peer,
+                Err(e) => {
+                    error!("Error while selecting random best peer for chain sync: {}", e);
+                    None
                 }
             };
 
@@ -1089,7 +1063,7 @@ impl<S: Storage> P2pServer<S> {
             }
 
             if let Some(peer) = peer_selected {
-                debug!("Selected for chain sync is {}", peer);
+                info!("Selected for chain sync is {}", peer);
                 counter!("xelis_p2p_chain_sync_total").increment(1u64);
 
                 // We are syncing the chain

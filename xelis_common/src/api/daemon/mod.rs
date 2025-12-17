@@ -613,6 +613,34 @@ pub struct GetAccountsParams {
     pub maximum_topoheight: Option<TopoHeight>
 }
 
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct RewindChainParams {
+    /// Number of blocks to rewind
+    pub count: u64,
+    /// Should it stop at stable height
+    #[serde(default)]
+    pub until_stable_height: bool,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct RewindChainResult {
+    /// New topoheight after rewind
+    pub topoheight: TopoHeight,
+    /// All transactions that were removed from the chain
+    pub txs: Vec<Hash>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct PruneChainParams {
+    /// Topoheight to prune the chain to
+    pub topoheight: TopoHeight,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct PruneChainResult {
+    /// New pruned topoheight
+    pub pruned_topoheight: TopoHeight,
+}
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetContractsParams {

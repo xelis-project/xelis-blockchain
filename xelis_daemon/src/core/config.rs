@@ -164,6 +164,12 @@ pub struct RPCConfig {
     #[clap(name = "rpc-cors-allowed-origins", long)]
     #[serde(default)]
     pub cors_allowed_origins: Vec<String>,
+    /// Allow RPC methods that are private and should not be exposed publicly.
+    /// This is useful for nodes that are running in a trusted environment
+    /// and want to expose admin commands.
+    #[clap(name = "rpc-allow-private-methods", long)]
+    #[serde(default)]
+    pub allow_private_methods: bool,
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum, Serialize, Deserialize, strum::Display)]

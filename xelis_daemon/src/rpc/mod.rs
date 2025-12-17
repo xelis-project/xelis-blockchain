@@ -97,7 +97,7 @@ impl<S: Storage> DaemonRpcServer<S> {
 
         // create the RPC Handler which will register and contains all available methods
         let mut rpc_handler = RPCHandler::new(blockchain, config.batch_limit);
-        rpc::register_methods(&mut rpc_handler, !config.getwork.disable);
+        rpc::register_methods(&mut rpc_handler, !config.getwork.disable, config.allow_private_methods);
 
         // create the default websocket server (support event & rpc methods)
         let ws = WebSocketServer::new(EventWebSocketHandler::new(rpc_handler, config.notify_events_concurrency));

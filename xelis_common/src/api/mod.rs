@@ -129,6 +129,15 @@ impl From<RPCTransactionType<'_>> for TransactionType {
     }
 }
 
+#[derive(Serialize, Deserialize, JsonSchema, Clone)]
+pub struct FeeUsage {
+    /// Fee paid by the sender
+    pub fee_paid: u64,
+    /// Fee refunded to the sender
+    /// fee_max - fee_paid
+    pub fee_refund: u64,
+}
+
 // This is exactly the same as the one in xelis_common/src/transaction/mod.rs
 // We use this one for serde (de)serialization
 // So we have addresses displayed as strings and not Public Key as bytes
@@ -144,8 +153,11 @@ pub struct RPCTransaction<'a> {
     pub data: RPCTransactionType<'a>,
     /// Fees in XELIS
     pub fee: u64,
-    // Maximum fee allowed to be paid
+    /// Maximum fee allowed to be paid
     pub fee_limit: u64,
+    /// Real fee usage if the transaction was executed in a block
+    #[serde(flatten)]
+    pub fee_usage: Option<FeeUsage>,
     /// nonce must be equal to the one on chain account
     /// used to prevent replay attacks and have ordered transactions
     pub nonce: Nonce,
@@ -165,7 +177,7 @@ pub struct RPCTransaction<'a> {
 }
 
 impl<'a> RPCTransaction<'a> {
-    pub fn from_tx(tx: &'a Transaction, hash: Cow<'a, Hash>, size: usize, mainnet: bool) -> Self {
+    pub fn from_tx(tx: &'a Transaction, hash: Cow<'a, Hash>, size: usize, fee_usage: Option<(u64, u64)>, mainnet: bool) -> Self {
         Self {
             hash,
             version: tx.get_version(),
@@ -173,6 +185,10 @@ impl<'a> RPCTransaction<'a> {
             data: RPCTransactionType::from_type(tx.get_data(), mainnet),
             fee: tx.get_fee(),
             fee_limit: tx.get_fee_limit(),
+            fee_usage: fee_usage.map(|(fee_paid, fee_refund)| FeeUsage {
+                fee_paid,
+                fee_refund
+            }),
             nonce: tx.get_nonce(),
             source_commitments: Cow::Borrowed(tx.get_source_commitments()),
             range_proof: Cow::Borrowed(tx.get_range_proof()),
