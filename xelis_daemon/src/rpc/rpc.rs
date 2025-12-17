@@ -81,7 +81,7 @@ use human_bytes::human_bytes;
 use serde_json::{json, Value};
 use xelis_vm::ValueCell;
 use std::{borrow::Cow, collections::HashMap, sync::Arc};
-use log::{info, debug, trace};
+use log::{debug, info, trace, warn};
 
 // limit the result returned per `get_dag_order` rpc method
 const MAX_DAG_ORDER: u64 = 64;
@@ -427,6 +427,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     }
 
     if allow_private_methods {
+        warn!("Private RPC methods are enabled!");
         handler.register_method_with_params("prune_chain", async_handler!(prune_chain::<S>));
         handler.register_method_with_params("rewind_chain", async_handler!(rewind_chain::<S>));
         handler.register_method_no_params("clear_caches", async_handler!(clear_caches::<S>, single));
