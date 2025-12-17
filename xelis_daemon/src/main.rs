@@ -348,6 +348,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::with_optional_arguments("inspect_contract", "Inspect a smart contract by its hash", vec![Arg::new("contract", ArgType::Hash), Arg::new("show-storage", ArgType::Bool)], CommandHandler::Async(async_handler!(inspect_contract::<S>))))?;
     command_manager.add_command(Command::new("show_mempool", "Show all transactions in mempool", CommandHandler::Async(async_handler!(show_mempool::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("import_block", "Import a block in hexadecimal format", vec![Arg::new("hex", ArgType::String)], CommandHandler::Async(async_handler!(import_block::<S>))))?;
+    command_manager.add_command(Command::with_optional_arguments("show_emitted_supply_at_topoheight", "Show emitted supply at a specific topoheight", vec![Arg::new("topoheight", ArgType::Number)], CommandHandler::Async(async_handler!(show_emitted_supply_at_topoheight::<S>))))?;
 
     // Don't keep the lock for ever
     let p2p = {
@@ -598,6 +599,26 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
         }
     }
     manager.message("Supply is valid");
+
+    Ok(())
+}
+
+async fn show_emitted_supply_at_topoheight<S: Storage>(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+
+    let storage = blockchain.get_storage().read().await;
+
+    let topoheight: u64 = if args.has_argument("topoheight") {
+        args.get_value("topoheight")?.to_number()?
+    } else {
+        blockchain.get_topo_height().await
+    };
+
+    let supply = storage.get_emitted_supply_at_topo_height(topoheight).await
+        .context("Error while retrieving emitted supply")?;
+
+    manager.message(format!("Emitted supply at topoheight {}: {}", topoheight, format_xelis(supply)));
 
     Ok(())
 }
