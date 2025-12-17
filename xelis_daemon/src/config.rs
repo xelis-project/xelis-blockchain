@@ -61,6 +61,8 @@ pub const PRUNE_SAFETY_LIMIT: u64 = 80;
 // BlockDAG rules
 // in how many height we consider the block stable
 pub const STABLE_LIMIT: u64 = 8;
+// Maximum height difference allowed between a block and its tips
+pub const MAX_TIP_HEIGHT_DIFFERENCE: u64 = 8;
 
 pub const fn get_stable_limit(version: BlockVersion) -> u64 {
     match version {

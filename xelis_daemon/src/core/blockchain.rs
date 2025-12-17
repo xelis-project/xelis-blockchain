@@ -91,6 +91,7 @@ use crate::{
         MILLIS_PER_SECOND, SIDE_BLOCK_REWARD_MAX_BLOCKS, PRUNE_SAFETY_LIMIT,
         SIDE_BLOCK_REWARD_PERCENT, SIDE_BLOCK_REWARD_MIN_PERCENT,
         TIMESTAMP_IN_FUTURE_LIMIT, CHAIN_AVERAGE_BLOCK_TIME_N,
+        MAX_TIP_HEIGHT_DIFFERENCE,
     },
     core::{
         hard_fork,
@@ -1270,6 +1271,8 @@ impl<S: Storage> Blockchain<S> {
 
         if tips.len() > 1 {
             let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(storage, tips.iter()).await?.clone();
+            let block_height_by_tips = blockdag::calculate_height_at_tips(storage, tips.iter()).await?;
+
             debug!("Best tip selected for this block template is {}", best_tip);
             let mut selected_tips = Vec::with_capacity(tips.len());
             let version_at_height = get_version_at_height(self.get_network(), current_height);
@@ -1280,8 +1283,16 @@ impl<S: Storage> Blockchain<S> {
                         continue;
                     }
 
-                    if !blockdag::is_near_enough_from_main_chain(storage, &hash, current_height, version_at_height).await? {
+                    if !blockdag::is_near_enough_from_main_chain(storage, &hash, block_height_by_tips, version_at_height).await? {
                         warn!("Tip {} is not selected for mining: too far from mainchain at height: {}", hash, current_height);
+                        continue;
+                    }
+
+                    // Check that the tip is not too far in height from best height
+                    let tip_height = storage.get_height_for_block_hash(&hash).await?;
+                    let height_diff = block_height_by_tips.saturating_sub(tip_height);
+                    if height_diff > MAX_TIP_HEIGHT_DIFFERENCE {
+                        warn!("Tip {} has a height difference too big ({} > {})", hash, height_diff, MAX_TIP_HEIGHT_DIFFERENCE);
                         continue;
                     }
                 }
@@ -1546,22 +1557,36 @@ impl<S: Storage> Blockchain<S> {
             return Err(BlockchainError::InvalidBlockVersion)
         }
 
+        if block.get_tips().len() > TIPS_LIMIT {
+            let block_hash = block_hash.map(Immutable::into_owned)
+                .unwrap_or_else(|| block.hash());
+
+            return Err(BlockchainError::InvalidTipsCount(
+                block_hash,
+                block.get_tips().len()
+            ))
+        }
+
         let algorithm = get_pow_algorithm_for_version(expected_version);
+        if self.skip_pow_verification() {
+            let block_hash = block_hash.unwrap_or_else(|| Immutable::Owned(block.hash()));
+            Ok(PreVerifyBlock::Hash(block_hash))
+        } else {
+            // Clone the Arc'ed header so we can move it to the thread
+            let header = block.get_header().clone();
+            // Compute the block hash and the PoW hash in a blocking thread
+            spawn_blocking(move || {
+                let start = Instant::now();
 
-        // Clone the Arc'ed header so we can move it to the thread
-        let header = block.get_header().clone();
-        // Compute the block hash and the PoW hash in a blocking thread
-        spawn_blocking(move || {
-            let start = Instant::now();
+                let block_hash = block_hash.unwrap_or_else(|| Immutable::Owned(header.hash()));
+                let pow_challenge = header.get_pow_challenge();
+                let pow_hash = compute_pow_hash(&pow_challenge, algorithm)?;
 
-            let block_hash = block_hash.unwrap_or_else(|| Immutable::Owned(header.hash()));
-            let pow_challenge = header.get_pow_challenge();
-            let pow_hash = compute_pow_hash(&pow_challenge, algorithm)?;
+                histogram!("xelis_block_pow_ms").record(start.elapsed().as_millis() as f64);
 
-            histogram!("xelis_block_pow_ms").record(start.elapsed().as_millis() as f64);
-
-            Ok::<_, BlockchainError>(PreVerifyBlock::Partial { block_hash, pow_hash })
-        }).await?
+                Ok::<_, BlockchainError>(PreVerifyBlock::Partial { block_hash, pow_hash })
+            }).await?
+        }
     }
 
     // Add a new block in chain
@@ -1671,6 +1696,8 @@ impl<S: Storage> Blockchain<S> {
             return Err(BlockchainError::InvalidReachability)
         }
 
+        let is_v4_enabled = version >= BlockVersion::V4;
+
         for hash in block.get_tips() {
             let previous_timestamp = storage.get_timestamp_for_block_hash(hash).await?;
             // block timestamp can't be less than previous block.
@@ -1680,6 +1707,17 @@ impl<S: Storage> Blockchain<S> {
             }
 
             trace!("calculate distance from mainchain for tips: {}", hash);
+
+            // reject blocks whose tips are too far back in height
+            // This prevents side chains from stealing cumulative difficulty by referencing old main chain blocks
+            if is_v4_enabled {
+                let tip_height = storage.get_height_for_block_hash(hash).await?;
+                let height_diff = block_height_by_tips.saturating_sub(tip_height);
+                if height_diff > MAX_TIP_HEIGHT_DIFFERENCE {
+                    debug!("Tip {} is too far back: height difference {} exceeds maximum {}", hash, height_diff, MAX_TIP_HEIGHT_DIFFERENCE);
+                    return Err(BlockchainError::TipTooFarBack);
+                }
+            }
 
             // We're processing the block tips, so we can't use the block height as it may not be in the chain yet
             let height = block_height_by_tips.saturating_sub(1);
