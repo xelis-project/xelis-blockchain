@@ -2185,28 +2185,55 @@ impl<S: Storage> Blockchain<S> {
                 // We have a decreasing block reward if there is too much side block
                 let is_side_block = blockdag::is_side_block_internal(&*storage, &hash, Some(highest_topo), highest_topo, version).await?;
                 let height = block.get_height();
-                let side_blocks_count = match side_blocks.entry(height) {
-                    Entry::Occupied(entry) => entry.into_mut(),
-                    Entry::Vacant(entry) => {
-                        let mut count = 0;
+
+                // Side blocks detected before this one at same height
+                let mut side_blocks_count = 0;
+                if is_v4_enabled {
+                    if is_side_block {
+                        let mut ordered_blocks = 0;
                         let blocks_at_height = storage.get_blocks_at_height(height).await?;
                         for block in blocks_at_height {
-                            if block != hash && blockdag::is_side_block_internal(&*storage, &block, None, highest_topo, version).await? {
-                                count += 1;
-                                debug!("Found side block {} at height {}", block, height);
+                            if block != hash && storage.is_block_topological_ordered(&block).await? {
+                                let topoheight = storage.get_topo_height_for_hash(&block).await?;
+                                if topoheight < highest_topo {
+                                    info!("Found block {} at height {}", block, height);
+                                    ordered_blocks += 1;
+                                }
                             }
                         }
 
-                        entry.insert(count)
-                    },
-                };
+                        // Delete one because we have at least one normal block
+                        if ordered_blocks > 0 {
+                            ordered_blocks -= 1;
+                        }
 
-                let block_reward = self.internal_get_block_reward(past_emitted_supply, is_side_block, *side_blocks_count, block.get_version()).await?;
-                trace!("set block {} reward to {} at {} (height {}, side block: {}, {} {}%)", hash, block_reward, highest_topo, height, is_side_block, side_blocks_count, side_block_reward_percentage(*side_blocks_count));
-                if is_side_block {
-                    *side_blocks_count += 1;
+                        debug!("Block {} is a side block at height {} with {} side blocks before it", hash, height, ordered_blocks);
+                        side_blocks_count = ordered_blocks;
+                    }
+                } else {
+                    let tmp = match side_blocks.entry(height) {
+                        Entry::Occupied(entry) => entry.into_mut(),
+                        Entry::Vacant(entry) => {
+                            let mut count = 0;
+                            let blocks_at_height = storage.get_blocks_at_height(height).await?;
+                            for block in blocks_at_height {
+                                if block != hash && blockdag::is_side_block_internal(&*storage, &block, None, highest_topo, version).await? {
+                                    count += 1;
+                                    warn!("Found side block {} at height {}", block, height);
+                                }
+                            }
+
+                            entry.insert(count)
+                        },
+                    };
+                    side_blocks_count = *tmp;
+                    if is_side_block {
+                        *tmp += 1;
+                    }
                 }
 
+                let block_reward = self.internal_get_block_reward(past_emitted_supply, is_side_block, side_blocks_count, block.get_version()).await?;
+                trace!("Block reward for block {} at height {} is {}", hash, height, block_reward);
                 // Chain State used for the verification
                 trace!("building chain state to execute TXs in block {}", block_hash);
                 let mut chain_state = ApplicableChainState::new(
@@ -2812,7 +2839,7 @@ impl<S: Storage> Blockchain<S> {
         Ok(!provider.is_block_topological_ordered(hash).await?)
     }
 
-    pub async fn is_side_block<P: DifficultyProvider + DagOrderProvider + CacheProvider>(&self, provider: &P, hash: &Hash, version: BlockVersion) -> Result<bool, BlockchainError> {
+    pub async fn is_side_block<P: DifficultyProvider + DagOrderProvider + CacheProvider + BlocksAtHeightProvider>(&self, provider: &P, hash: &Hash, version: BlockVersion) -> Result<bool, BlockchainError> {
         let chain_cache = provider.chain_cache().await;
         let topoheight = chain_cache.topoheight;
         blockdag::is_side_block_internal(provider, hash, None, topoheight, version).await

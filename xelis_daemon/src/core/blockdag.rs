@@ -12,10 +12,7 @@ use xelis_common::{
 use crate::{config::get_stable_limit, core::storage::*};
 
 use super::{    
-    storage::{
-        Storage,
-        DifficultyProvider
-    },
+    storage::DifficultyProvider,
     error::BlockchainError,
 };
 
@@ -58,10 +55,11 @@ where
 // Sort the TIPS by cumulative difficulty
 // If the cumulative difficulty is the same, the hash value is used to sort
 // Hashes are sorted in descending order
-pub async fn sort_tips<S, I>(storage: &S, tips: I) -> Result<impl Iterator<Item = Hash> + ExactSizeIterator, BlockchainError>
+pub async fn sort_tips<D, I, H>(provider: &D, tips: I) -> Result<impl Iterator<Item = H> + ExactSizeIterator, BlockchainError>
 where
-    S: Storage,
-    I: Iterator<Item = Hash> + ExactSizeIterator,
+    D: DifficultyProvider,
+    I: Iterator<Item = H> + ExactSizeIterator,
+    H: AsRef<Hash>,
 {
     trace!("sort tips");
     let tips_len = tips.len();
@@ -69,10 +67,10 @@ where
         0 => Err(BlockchainError::ExpectedTips),
         1 => Ok(Either::Left(tips)),
         _ => {
-            let mut scores: Vec<(Hash, CumulativeDifficulty)> = Vec::with_capacity(tips_len);
+            let mut scores: Vec<(H, CumulativeDifficulty)> = Vec::with_capacity(tips_len);
             for hash in tips {
-                debug!("get cumulative difficulty for tip {} for sort tips", hash);
-                let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&hash).await?;
+                debug!("get cumulative difficulty for tip {} for sort tips", hash.as_ref());
+                let cumulative_difficulty = provider.get_cumulative_difficulty_for_block_hash(hash.as_ref()).await?;
                 scores.push((hash, cumulative_difficulty));
             }
 
@@ -111,24 +109,9 @@ where
     I: Iterator<Item = &'a Hash> + ExactSizeIterator
 {
     trace!("find best tip by cumulative difficulty");
-    let tips_len = tips.len();
-    match tips_len {
-        0 => Err(BlockchainError::ExpectedTips),
-        1 => Ok(tips.into_iter().next().unwrap()),
-        _ => {
-            let mut highest_cumulative_difficulty = CumulativeDifficulty::zero();
-            let mut selected_tip = None;
-            for hash in tips {
-                let cumulative_difficulty = provider.get_cumulative_difficulty_for_block_hash(hash).await?;
-                if highest_cumulative_difficulty < cumulative_difficulty {
-                    highest_cumulative_difficulty = cumulative_difficulty;
-                    selected_tip = Some(hash);
-                }
-            }
-
-            selected_tip.ok_or(BlockchainError::ExpectedTips)
-        }
-    }
+    sort_tips(provider, tips).await?
+        .next()
+        .ok_or(BlockchainError::ExpectedTips)
 }
 
 // Find the newest tip based on the timestamp of the blocks
@@ -239,10 +222,11 @@ where
     Ok(true)
 }
 
-// a block is a side block if its ordered and its block height is less than or equal to height of past 8 topographical blocks
+// Check if the block is a side block
+// This is only used to determine the block reward
 pub async fn is_side_block_internal<P>(provider: &P, hash: &Hash, block_topoheight: Option<u64>, current_topoheight: TopoHeight, block_version: BlockVersion) -> Result<bool, BlockchainError>
 where
-    P: DifficultyProvider + DagOrderProvider
+    P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider
 {
     trace!("is block {} a side block", hash);
     let topoheight = match block_topoheight {
@@ -263,19 +247,34 @@ where
 
     let height = provider.get_height_for_block_hash(hash).await?;
 
-    // verify if there is a block with height higher than this block in past 8 topo blocks
-    let mut counter = 0;
-    let mut i = topoheight - 1;
-    let stable_limit = get_stable_limit(block_version);
-    while counter < stable_limit && i > 0 {
-        let hash = provider.get_hash_at_topo_height(i).await?;
-        let previous_height = provider.get_height_for_block_hash(&hash).await?;
-
-        if height <= previous_height {
-            return Ok(true)
+    if block_version >= BlockVersion::V4 {
+        // Check if we have a block at same height with a topoheight lower than this block
+        let blocks_at_height = provider.get_blocks_at_height(height).await?;
+        for block_hash in blocks_at_height {
+            if block_hash != *hash && provider.is_block_topological_ordered(&block_hash).await? {
+                let block_topo = provider.get_topo_height_for_hash(&block_hash).await?;
+                if block_topo < topoheight {
+                    debug!("Block {} is a side block at height {} because block {} has lower topoheight {}", hash, height, block_hash, block_topo);
+                    return Ok(true)
+                }
+            }
         }
-        counter += 1;
-        i -= 1;
+    } else {
+        // verify if there is a block with height higher than this block in past N topo blocks
+        let mut counter = 0;
+        let mut i = topoheight - 1;
+        let stable_limit = get_stable_limit(block_version);
+        while counter < stable_limit && i > 0 {
+            let hash = provider.get_hash_at_topo_height(i).await?;
+            let previous_height = provider.get_height_for_block_hash(&hash).await?;
+    
+            if height <= previous_height {
+                debug!("Block {} is a side block at height {} because block {} at topoheight {} has height {}", hash, height, hash, i, previous_height);
+                return Ok(true)
+            }
+            counter += 1;
+            i -= 1;
+        }
     }
 
     Ok(false)
