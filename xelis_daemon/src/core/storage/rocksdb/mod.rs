@@ -356,7 +356,7 @@ impl RocksStorage {
             None => {
                 let cf = cf_handle!(db, column);
                 db.put_cf(&cf, key.as_ref(), value.to_bytes())
-                    .with_context(|| format!("Error while inserting into disk column {:?}", column))?;
+                    .map_err(|e| anyhow::anyhow!("Error while inserting into disk column {:?}: {}", column, e))?;
             }
         };
 
