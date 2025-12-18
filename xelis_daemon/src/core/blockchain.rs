@@ -910,7 +910,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // if simulator is enabled or we are too low in height, don't calculate difficulty
-        if height <= 1 || self.is_simulator_enabled() {
+        if height <= 1 || self.is_simulator_enabled() || *self.get_network() == Network::Devnet {
             let difficulty = difficulty::get_minimum_difficulty(self.get_network(), version);
             return Ok((difficulty, difficulty::get_covariance_p(version)))
         }

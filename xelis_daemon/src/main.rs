@@ -3,7 +3,6 @@ pub mod p2p;
 pub mod core;
 pub mod config;
 
-use config::DEV_PUBLIC_KEY;
 use futures::StreamExt;
 use human_bytes::human_bytes;
 use humantime::{format_duration, Duration as HumanDuration};
@@ -333,7 +332,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::with_optional_arguments("difficulty_dataset", "Create a dataset for difficulty from chain", vec![Arg::new("output", ArgType::String)], CommandHandler::Async(async_handler!(difficulty_dataset::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("circulating_supply_dataset", "Create a dataset for circulating supply of specific asset from chain", vec![Arg::new("output", ArgType::String), Arg::new("asset", ArgType::Hash)], CommandHandler::Async(async_handler!(circulating_supply_dataset::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("block_size_dataset", "Create a dataset for block size from chain", vec![Arg::new("output", ArgType::String)], CommandHandler::Async(async_handler!(block_size_dataset::<S>))))?;
-    command_manager.add_command(Command::with_optional_arguments("mine_block", "Mine a block on testnet", vec![Arg::new("count", ArgType::Number)], CommandHandler::Async(async_handler!(mine_block::<S>))))?;
+    command_manager.add_command(Command::with_optional_arguments("mine_block", "Mine a block on testnet", vec![Arg::new("address", ArgType::String), Arg::new("count", ArgType::Number)], CommandHandler::Async(async_handler!(mine_block::<S>))))?;
     command_manager.add_command(Command::with_required_arguments("add_peer", "Connect to a new peer using ip:port format", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(add_peer::<S>))))?;
     command_manager.add_command(Command::new("list_unexecuted_transactions", "List all unexecuted transactions", CommandHandler::Async(async_handler!(list_unexecuted_transactions::<S>))))?;
     command_manager.add_command(Command::new("swap_blocks_executions_positions", "Swap the position of two blocks executions", CommandHandler::Async(async_handler!(swap_blocks_executions_positions::<S>))))?;
@@ -1765,6 +1764,15 @@ async fn difficulty_dataset<S: Storage>(manager: &CommandManager, mut arguments:
 
 // Mine a block
 async fn mine_block<S: Storage>(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let address = if arguments.has_argument("address") {
+        arguments.get_value("address")?.to_string_value()?
+    } else {
+        manager.get_prompt()
+        .read("Address: ").await
+        .context("Error while reading address")?
+    };
+    let address = Address::from_string(&address).context("Invalid address")?;
+
     let count = if arguments.has_argument("count") {
         arguments.get_value("count")?.to_number()?
     } else {
@@ -1788,7 +1796,7 @@ async fn mine_block<S: Storage>(manager: &CommandManager, mut arguments: Argumen
 
     manager.message(format!("Mining {} block(s)...", count));
     for _ in 0..count {
-        let block = blockchain.mine_block(&DEV_PUBLIC_KEY).await.context("Error while mining block")?;
+        let block = blockchain.mine_block(address.get_public_key()).await.context("Error while mining block")?;
         let block_hash = block.hash();
         manager.message(format!("Block mined: {}", block_hash));
 
