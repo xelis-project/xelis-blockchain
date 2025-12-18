@@ -2783,8 +2783,6 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
-        let version = provider.get_version_for_block_hash(hash).await?;
-
         self.internal_get_block_reward(past_supply, is_side_block, side_blocks_count, version).await
     }
 
