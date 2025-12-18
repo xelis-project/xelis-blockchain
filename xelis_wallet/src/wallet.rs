@@ -905,6 +905,7 @@ impl Wallet {
                     if should_use_stable_balance {
                         if let Some(entry) = storage.get_last_outgoing_transaction()? {
                             let output_topoheight = entry.get_topoheight();
+                            let mut reference_topoheight = output_topoheight;
                             if output_topoheight > stable_topoheight {
                                 warn!("Cannot use stable balance because we have an outgoing TX not confirmed in stable height yet");
                                 should_use_stable_balance = false;
@@ -913,23 +914,30 @@ impl Wallet {
                                 if let Some(coinbase_topo) = storage.get_last_coinbase_topoheight().filter(|v| *v >= output_topoheight) {
                                     // Our balances are too new, we must fetch the previous versions
 
-                                    warn!("We have a coinbase reward at or above the last outgoing TX topoheight, we must fetch previous balance versions");
+                                    warn!("We have a coinbase reward (topo {coinbase_topo}) at or above the last outgoing TX topoheight {output_topoheight}, we must fetch previous balance versions");
                                     let assets: IndexSet<Cow<'_, Hash>> = used_assets.iter()
                                         .map(|v| Cow::Borrowed(*v))
                                         .collect();
 
-                                    let versions = network_handler.get_api().get_balances_at_maximum_topoheight(
-                                        &self.get_address(),
-                                        assets.clone(),
-                                        output_topoheight
-                                    ).await?;
+                                    let versions = network_handler.get_api()
+                                        .get_balances_at_maximum_topoheight(
+                                            &self.get_address(),
+                                            assets.clone(),
+                                            output_topoheight
+                                        ).await?;
 
+                                    let mut xelis_contains_input = None;
                                     for (asset, version) in assets.into_iter().zip(versions) {
                                         match version {
                                             Some(version) => {
-                                                let contains_coinbase = version.topoheight == coinbase_topo && asset.as_ref() == &XELIS_ASSET;
-                                                debug!("Using previous balance version for asset {} at topoheight {} with ciphertext {}", asset, version.topoheight, version.version);
-                                                let mut ciphertext = version.version.take_balance_with(contains_coinbase);
+                                                if asset.as_ref() == &XELIS_ASSET && version.version.contains_input() {
+                                                    xelis_contains_input = Some(version.topoheight);
+                                                }
+
+                                                let select_output_balance = xelis_contains_input.is_some_and(|v| version.topoheight >= v);
+
+                                                debug!("Using previous balance version for asset {} at topoheight {} with ciphertext {}, output: {}", asset, version.topoheight, version.version, select_output_balance);
+                                                let mut ciphertext = version.version.take_balance_with(select_output_balance);
                                                 let decompressed = ciphertext.computable()
                                                     .map_err(|_| WalletError::CiphertextDecode)?;
 
@@ -958,19 +966,25 @@ impl Wallet {
                                             }
                                         }
                                     }
+
+                                    if let Some(output_topoheight) = xelis_contains_input {
+                                        warn!("Previous balance version for XELIS may contain coinbase input, we must adjust the reference accordingly: from {} to {}", reference_topoheight, output_topoheight - 1);
+                                        // We need to adjust the reference to the previous block
+                                        reference_topoheight = output_topoheight - 1;
+                                    }
                                 }
 
-                                let hash = if storage.has_block_hash_for_topoheight(output_topoheight)? {
-                                    storage.get_block_hash_for_topoheight(output_topoheight)?
+                                let hash = if storage.has_block_hash_for_topoheight(reference_topoheight)? {
+                                    storage.get_block_hash_for_topoheight(reference_topoheight)?
                                 } else {
                                     let res = network_handler.get_api()
-                                        .get_block_at_topoheight(output_topoheight).await?;
+                                        .get_block_at_topoheight(reference_topoheight).await?;
 
                                     res.header.hash.into_owned()
                                 };
 
                                 state.set_reference(Reference {
-                                    topoheight: output_topoheight,
+                                    topoheight: reference_topoheight,
                                     hash,
                                 });
                             }
