@@ -10,6 +10,7 @@ To see the full history and exact changes, please refer to the commits history d
   Expected date: 18/12/2025 ~10pm UTC at block height 3,357,500.
 - Faster side block computation
 - Fixed side block reward calculation
+- Reduce rocksdb max open files to 256
 
 ## v1.19.7
 
