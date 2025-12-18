@@ -1686,7 +1686,7 @@ impl<S: Storage> Blockchain<S> {
 
             if block_height_by_tips < stable_height {
                 warn!("block height by tips {} for this block ({}), its height is in stable height {}", block_height_by_tips, block_hash, stable_height);
-                // return Err(BlockchainError::InvalidBlockHeightStableHeight)
+                return Err(BlockchainError::InvalidBlockHeightStableHeight)
             }
         }
 
