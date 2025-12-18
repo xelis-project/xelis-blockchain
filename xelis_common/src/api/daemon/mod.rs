@@ -598,6 +598,12 @@ pub struct GetAssetParams<'a> {
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
+pub struct GetAssetSupplyAtTopoHeightParams<'a> {
+    pub asset: Cow<'a, Hash>,
+    pub topoheight: TopoHeight
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetAssetsParams {
     pub skip: Option<usize>,
     pub maximum: Option<usize>,

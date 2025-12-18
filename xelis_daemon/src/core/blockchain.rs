@@ -91,6 +91,7 @@ use crate::{
         MILLIS_PER_SECOND, SIDE_BLOCK_REWARD_MAX_BLOCKS, PRUNE_SAFETY_LIMIT,
         SIDE_BLOCK_REWARD_PERCENT, SIDE_BLOCK_REWARD_MIN_PERCENT,
         TIMESTAMP_IN_FUTURE_LIMIT, CHAIN_AVERAGE_BLOCK_TIME_N,
+        MAX_TIP_HEIGHT_DIFFERENCE,
     },
     core::{
         hard_fork,
@@ -840,7 +841,7 @@ impl<S: Storage> Blockchain<S> {
 
         let chain_cache = storage.chain_cache().await;
         let topo_height = chain_cache.topoheight;
-        storage.get_supply_at_topo_height(topo_height).await
+        storage.get_emitted_supply_at_topo_height(topo_height).await
     }
 
     // Get the count of transactions available in the mempool
@@ -909,7 +910,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // if simulator is enabled or we are too low in height, don't calculate difficulty
-        if height <= 1 || self.is_simulator_enabled() {
+        if height <= 1 || self.is_simulator_enabled() || *self.get_network() == Network::Devnet {
             let difficulty = difficulty::get_minimum_difficulty(self.get_network(), version);
             return Ok((difficulty, difficulty::get_covariance_p(version)))
         }
@@ -1270,6 +1271,8 @@ impl<S: Storage> Blockchain<S> {
 
         if tips.len() > 1 {
             let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(storage, tips.iter()).await?.clone();
+            let block_height_by_tips = blockdag::calculate_height_at_tips(storage, tips.iter()).await?;
+
             debug!("Best tip selected for this block template is {}", best_tip);
             let mut selected_tips = Vec::with_capacity(tips.len());
             let version_at_height = get_version_at_height(self.get_network(), current_height);
@@ -1280,8 +1283,16 @@ impl<S: Storage> Blockchain<S> {
                         continue;
                     }
 
-                    if !blockdag::is_near_enough_from_main_chain(storage, &hash, current_height, version_at_height).await? {
+                    if !blockdag::is_near_enough_from_main_chain(storage, &hash, block_height_by_tips, version_at_height).await? {
                         warn!("Tip {} is not selected for mining: too far from mainchain at height: {}", hash, current_height);
+                        continue;
+                    }
+
+                    // Check that the tip is not too far in height from best height
+                    let tip_height = storage.get_height_for_block_hash(&hash).await?;
+                    let height_diff = block_height_by_tips.saturating_sub(tip_height);
+                    if height_diff > MAX_TIP_HEIGHT_DIFFERENCE {
+                        warn!("Tip {} has a height difference too big ({} > {})", hash, height_diff, MAX_TIP_HEIGHT_DIFFERENCE);
                         continue;
                     }
                 }
@@ -1302,8 +1313,11 @@ impl<S: Storage> Blockchain<S> {
             // We drain any tips above the limit
             let len = sorted_tips.len() - TIPS_LIMIT;
             let dropped_tips = sorted_tips.drain(TIPS_LIMIT..)
-            .map(|h| h.to_string()).collect::<Vec<String>>().join(", ");
-            warn!("too many tips for block generation, using the {} heavier tips: {} extra tips dropped", TIPS_LIMIT, len);
+                .map(|h| h.to_string())
+                .collect::<Vec<String>>()
+                .join(", ");
+
+            debug!("too many tips for block generation, using the {} heavier tips: {} extra tips dropped", TIPS_LIMIT, len);
             trace!("dropped tips: {}", dropped_tips);
         }
 
@@ -1546,22 +1560,36 @@ impl<S: Storage> Blockchain<S> {
             return Err(BlockchainError::InvalidBlockVersion)
         }
 
+        if block.get_tips().len() > TIPS_LIMIT {
+            let block_hash = block_hash.map(Immutable::into_owned)
+                .unwrap_or_else(|| block.hash());
+
+            return Err(BlockchainError::InvalidTipsCount(
+                block_hash,
+                block.get_tips().len()
+            ))
+        }
+
         let algorithm = get_pow_algorithm_for_version(expected_version);
+        if self.skip_pow_verification() {
+            let block_hash = block_hash.unwrap_or_else(|| Immutable::Owned(block.hash()));
+            Ok(PreVerifyBlock::Hash(block_hash))
+        } else {
+            // Clone the Arc'ed header so we can move it to the thread
+            let header = block.get_header().clone();
+            // Compute the block hash and the PoW hash in a blocking thread
+            spawn_blocking(move || {
+                let start = Instant::now();
 
-        // Clone the Arc'ed header so we can move it to the thread
-        let header = block.get_header().clone();
-        // Compute the block hash and the PoW hash in a blocking thread
-        spawn_blocking(move || {
-            let start = Instant::now();
+                let block_hash = block_hash.unwrap_or_else(|| Immutable::Owned(header.hash()));
+                let pow_challenge = header.get_pow_challenge();
+                let pow_hash = compute_pow_hash(&pow_challenge, algorithm)?;
 
-            let block_hash = block_hash.unwrap_or_else(|| Immutable::Owned(header.hash()));
-            let pow_challenge = header.get_pow_challenge();
-            let pow_hash = compute_pow_hash(&pow_challenge, algorithm)?;
+                histogram!("xelis_block_pow_ms").record(start.elapsed().as_millis() as f64);
 
-            histogram!("xelis_block_pow_ms").record(start.elapsed().as_millis() as f64);
-
-            Ok::<_, BlockchainError>(PreVerifyBlock::Partial { block_hash, pow_hash })
-        }).await?
+                Ok::<_, BlockchainError>(PreVerifyBlock::Partial { block_hash, pow_hash })
+            }).await?
+        }
     }
 
     // Add a new block in chain
@@ -1660,8 +1688,8 @@ impl<S: Storage> Blockchain<S> {
             debug!("Height by tips: {}, stable height: {}", block_height_by_tips, stable_height);
 
             if block_height_by_tips < stable_height {
-                warn!("block height by tips {} for this block ({}), its height is in stable height {}", block_height_by_tips, block_hash, stable_height);
-                // return Err(BlockchainError::InvalidBlockHeightStableHeight)
+                error!("block height by tips {} for this block ({}), its height is in stable height {}", block_height_by_tips, block_hash, stable_height);
+                return Err(BlockchainError::InvalidBlockHeightStableHeight)
             }
         }
 
@@ -1670,6 +1698,8 @@ impl<S: Storage> Blockchain<S> {
             debug!("{} with hash {} has an invalid reachability", block, block_hash);
             return Err(BlockchainError::InvalidReachability)
         }
+
+        let is_v4_enabled = version >= BlockVersion::V4;
 
         for hash in block.get_tips() {
             let previous_timestamp = storage.get_timestamp_for_block_hash(hash).await?;
@@ -1680,6 +1710,17 @@ impl<S: Storage> Blockchain<S> {
             }
 
             trace!("calculate distance from mainchain for tips: {}", hash);
+
+            // reject blocks whose tips are too far back in height
+            // This prevents side chains from stealing cumulative difficulty by referencing old main chain blocks
+            if is_v4_enabled {
+                let tip_height = storage.get_height_for_block_hash(hash).await?;
+                let height_diff = block_height_by_tips.saturating_sub(tip_height);
+                if height_diff > MAX_TIP_HEIGHT_DIFFERENCE {
+                    debug!("Tip {} is too far back: height difference {} exceeds maximum {}", hash, height_diff, MAX_TIP_HEIGHT_DIFFERENCE);
+                    return Err(BlockchainError::TipTooFarBack);
+                }
+            }
 
             // We're processing the block tips, so we can't use the block height as it may not be in the chain yet
             let height = block_height_by_tips.saturating_sub(1);
@@ -2101,7 +2142,7 @@ impl<S: Storage> Blockchain<S> {
                     }
 
                     // Delete changes made by this block
-                    storage.delete_versioned_data_at_topoheight(topoheight).await?;
+                    storage.delete_versioned_data_at_topoheight(topoheight, is_v4_enabled).await?;
 
                     topoheight += 1;
                 }
@@ -2137,7 +2178,7 @@ impl<S: Storage> Blockchain<S> {
                 let past_emitted_supply = if highest_topo == 0 {
                     0
                 } else {
-                    storage.get_supply_at_topo_height(highest_topo - 1).await?
+                    storage.get_emitted_supply_at_topo_height(highest_topo - 1).await?
                 };
 
                 // Block for this hash
@@ -2147,28 +2188,58 @@ impl<S: Storage> Blockchain<S> {
                 // We have a decreasing block reward if there is too much side block
                 let is_side_block = blockdag::is_side_block_internal(&*storage, &hash, Some(highest_topo), highest_topo, version).await?;
                 let height = block.get_height();
-                let side_blocks_count = match side_blocks.entry(height) {
-                    Entry::Occupied(entry) => entry.into_mut(),
-                    Entry::Vacant(entry) => {
-                        let mut count = 0;
+
+                // Side blocks detected before this one at same height
+                let mut side_blocks_count = 0;
+                if is_v4_enabled {
+                    if is_side_block {
+                        // count how many ordered blocks are before this one at same height
+                        // so we can adjust the reward
+                        let mut ordered_blocks = 0;
                         let blocks_at_height = storage.get_blocks_at_height(height).await?;
                         for block in blocks_at_height {
-                            if block != hash && blockdag::is_side_block_internal(&*storage, &block, None, highest_topo, version).await? {
-                                count += 1;
-                                debug!("Found side block {} at height {}", block, height);
+                            if block != hash && storage.is_block_topological_ordered(&block).await? {
+                                let topoheight = storage.get_topo_height_for_hash(&block).await?;
+                                if topoheight < highest_topo {
+                                    debug!("Found block {} at height {} for {}", block, height, hash);
+                                    ordered_blocks += 1;
+                                }
                             }
                         }
 
-                        entry.insert(count)
-                    },
-                };
+                        // Delete one because we have at least one normal block
+                        if ordered_blocks > 0 {
+                            ordered_blocks -= 1;
+                        }
 
-                let block_reward = self.internal_get_block_reward(past_emitted_supply, is_side_block, *side_blocks_count, block.get_version()).await?;
-                trace!("set block {} reward to {} at {} (height {}, side block: {}, {} {}%)", hash, block_reward, highest_topo, height, is_side_block, side_blocks_count, side_block_reward_percentage(*side_blocks_count));
-                if is_side_block {
-                    *side_blocks_count += 1;
+                        debug!("Block {} is a side block at height {} with {} side blocks before it", hash, height, ordered_blocks);
+                        side_blocks_count = ordered_blocks;
+                    }
+                } else {
+                    let tmp = match side_blocks.entry(height) {
+                        Entry::Occupied(entry) => entry.into_mut(),
+                        Entry::Vacant(entry) => {
+                            let mut count = 0;
+                            let blocks_at_height = storage.get_blocks_at_height(height).await?;
+                            for block in blocks_at_height {
+                                if block != hash && blockdag::is_side_block_internal(&*storage, &block, None, highest_topo, version).await? {
+                                    count += 1;
+                                    debug!("Found side block {} at height {} for {} (is side block {})", block, height, hash, is_side_block);
+                                }
+                            }
+
+                            entry.insert(count)
+                        },
+                    };
+                    side_blocks_count = *tmp;
+                    if is_side_block {
+                        debug!("Incrementing side blocks at height {} for {}", height, hash);
+                        *tmp += 1;
+                    }
                 }
 
+                let block_reward = self.internal_get_block_reward(past_emitted_supply, is_side_block, side_blocks_count, block.get_version()).await?;
+                trace!("Block reward for block {} at height {} is {}", hash, height, block_reward);
                 // Chain State used for the verification
                 trace!("building chain state to execute TXs in block {}", block_hash);
                 let mut chain_state = ApplicableChainState::new(
@@ -2219,7 +2290,7 @@ impl<S: Storage> Blockchain<S> {
                         // Execute the transaction by applying changes in storage
                         debug!("Executing tx {} in block {} with nonce {}", tx_hash, hash, tx.get_nonce());
                         if let Err(e) = tx.apply_with_partial_verify(tx_hash, &mut chain_state).await {
-                            warn!("Error while executing TX {} with current DAG org: {}", tx_hash, e);
+                            error!("Error while executing TX {} with current DAG org: {}", tx_hash, e);
                             // TX may be orphaned if not added again in good order in next blocks
                             orphaned_transactions.insert(tx_hash.clone());
                             continue;
@@ -2433,7 +2504,7 @@ impl<S: Storage> Blockchain<S> {
                 trace!("Adding {} as new tips", hash);
                 new_tips.push(hash);
             } else {
-                warn!("Rusty TIP declared stale {} with best height: {}", hash, best_height);
+                info!("Rusty TIP declared stale {} with best height: {}", hash, best_height);
             }
         }
 
@@ -2443,7 +2514,7 @@ impl<S: Storage> Blockchain<S> {
         for hash in new_tips {
             if best_tip != hash {
                 if !blockdag::validate_tips(&*storage, &best_tip, &hash).await? {
-                    warn!("Rusty TIP {} declared stale", hash);
+                    info!("Rusty TIP {} declared stale", hash);
                 } else {
                     debug!("Tip {} is valid, adding to final Tips list", hash);
                     tips.insert(hash);
@@ -2479,7 +2550,7 @@ impl<S: Storage> Blockchain<S> {
                 info!("Auto pruning chain until topoheight {} (keep only {} blocks)", current_topoheight - keep_only, keep_only);
                 let start = Instant::now();
                 if let Err(e) = self.prune_until_topoheight_for_storage(current_topoheight - keep_only, &mut *storage).await {
-                    warn!("Error while trying to auto prune chain: {}", e);
+                    error!("Error while trying to auto prune chain: {}", e);
                 }
 
                 info!("Auto pruning done in {}ms", start.elapsed().as_millis());
@@ -2774,7 +2845,7 @@ impl<S: Storage> Blockchain<S> {
         Ok(!provider.is_block_topological_ordered(hash).await?)
     }
 
-    pub async fn is_side_block<P: DifficultyProvider + DagOrderProvider + CacheProvider>(&self, provider: &P, hash: &Hash, version: BlockVersion) -> Result<bool, BlockchainError> {
+    pub async fn is_side_block<P: DifficultyProvider + DagOrderProvider + CacheProvider + BlocksAtHeightProvider>(&self, provider: &P, hash: &Hash, version: BlockVersion) -> Result<bool, BlockchainError> {
         let chain_cache = provider.chain_cache().await;
         let topoheight = chain_cache.topoheight;
         blockdag::is_side_block_internal(provider, hash, None, topoheight, version).await

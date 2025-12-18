@@ -4,6 +4,48 @@ This file contains all the changelogs to ensure that changes can be tracked and 
 
 To see the full history and exact changes, please refer to the commits history directly.
 
+## v1.20.0
+
+- New Hard Fork configured:
+  Expected date: 18/12/2025 ~10pm UTC at block height 3,357,500.
+- Faster side block computation
+- Fixed side block reward calculation
+- Reduce rocksdb max open files to 256
+
+## v1.19.7
+
+- Improved algorithm for priority peer selection during a chain sync
+- FeeUsage RPC API
+- Private rpc methods for node management in a trusted environment (prune_chain, rewind_chain, clear_caches)
+
+## v1.19.6
+
+- Re-enable peer priority rewind without deep verification
+
+## v1.19.5
+
+- Fix cache corruption on snapshot mode
+- Fix deep peer chain verification on chain rewind request
+- minor bug fixes & improvements
+
+## v1.19.4
+
+- More check on miner transactions
+- Increased stable limit
+- Enable the p2p block propagation of blocks from a sync chain
+- Sync with priority nodes first if configured
+- Wallet improvements for balance versions selection
+
+## v1.19.3
+
+- Reduce sync chain delay from 5s to 1s
+- Add metrics for block difficulty
+
+## v1.19.2
+
+- Fix "tip not found" on chain sync reorg
+- Fix rejected blocks during chain sync
+
 ## v1.19.1
 
 - Bug fixes in the transaction serialization that cause a panic when accessing a TX.

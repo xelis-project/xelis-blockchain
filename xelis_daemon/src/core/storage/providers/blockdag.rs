@@ -16,7 +16,7 @@ pub trait BlockDagProvider: DagOrderProvider + BlockProvider {
     async fn get_block_reward_at_topo_height(&self, topoheight: TopoHeight) -> Result<u64, BlockchainError>;
 
     // Get the supply from topoheight
-    async fn get_supply_at_topo_height(&self, topoheight: TopoHeight) -> Result<u64, BlockchainError>;
+    async fn get_emitted_supply_at_topo_height(&self, topoheight: TopoHeight) -> Result<u64, BlockchainError>;
 
     // Set the metadata for topoheight
     async fn get_metadata_at_topoheight(&self, topoheight: TopoHeight) -> Result<TopoHeightMetadata, BlockchainError>;

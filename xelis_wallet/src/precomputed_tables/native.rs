@@ -2,13 +2,13 @@ use std::{
     fs::create_dir_all,
     path::Path,
     sync::Arc,
-    time::Instant
 };
 
 use anyhow::{bail, Result};
 use log::info;
 use xelis_common::{
     crypto::ecdlp,
+    time::Instant,
     utils::detect_available_parallelism
 };
 

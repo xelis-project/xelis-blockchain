@@ -1,6 +1,20 @@
-use std::{collections::HashMap, pin::Pin, future::Future, fmt::Display, time::{Instant, Duration}, sync::{Mutex, PoisonError}, rc::Rc, str::FromStr};
+use std::{
+    collections::HashMap,
+    pin::Pin,
+    future::Future,
+    fmt::Display,
+    time::Duration,
+    sync::{Mutex, PoisonError},
+    rc::Rc,
+    str::FromStr
+};
 
-use crate::{config::VERSION, async_handler, context::Context};
+use crate::{
+    config::VERSION,
+    async_handler,
+    context::Context,
+    time::Instant
+};
 
 use super::{argument::*, ShareablePrompt, LogLevel};
 use anyhow::Error;

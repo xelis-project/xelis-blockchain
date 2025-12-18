@@ -8,6 +8,12 @@ pub type TimestampMillis = u64;
 // Seconds timestamps used to determine it using its type
 pub type TimestampSeconds = u64;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub type Instant = std::time::Instant;
+#[cfg(target_arch = "wasm32")]
+pub type Instant = web_time::Instant;
+
+
 #[inline]
 pub fn get_current_time() -> Duration {
     let start = SystemTime::now();

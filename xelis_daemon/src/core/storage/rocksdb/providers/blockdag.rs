@@ -35,7 +35,7 @@ impl BlockDagProvider for RocksStorage {
     }
 
     // Get the supply from topoheight
-    async fn get_supply_at_topo_height(&self, topoheight: TopoHeight) -> Result<u64, BlockchainError> {
+    async fn get_emitted_supply_at_topo_height(&self, topoheight: TopoHeight) -> Result<u64, BlockchainError> {
         trace!("get supply at topoheight {}", topoheight);
         self.get_metadata_at_topoheight(topoheight)
             .map(|metadata| metadata.emitted_supply)

@@ -33,7 +33,7 @@ impl BlockDagProvider for SledStorage {
             .map(|metadata| metadata.block_reward)
     }
 
-    async fn get_supply_at_topo_height(&self, topoheight: TopoHeight) -> Result<u64, BlockchainError> {
+    async fn get_emitted_supply_at_topo_height(&self, topoheight: TopoHeight) -> Result<u64, BlockchainError> {
         trace!("get supply at topo height {}", topoheight);
         self.get_metadata_at_topoheight(topoheight).await
             .map(|metadata| metadata.emitted_supply)

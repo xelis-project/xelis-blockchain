@@ -4438,6 +4438,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "web-time"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
+dependencies = [
+ "js-sys",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "webpki-roots"
 version = "0.26.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4987,7 +4997,7 @@ dependencies = [
 
 [[package]]
 name = "xelis_common"
-version = "1.19.7"
+version = "1.20.0"
 dependencies = [
  "actix-rt",
  "actix-web",
@@ -5033,6 +5043,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite-wasm",
  "tokio_with_wasm",
+ "web-time",
  "win32console",
  "xelis-builder",
  "xelis-bytecode",
@@ -5048,7 +5059,7 @@ dependencies = [
 
 [[package]]
 name = "xelis_daemon"
-version = "1.19.7"
+version = "1.20.0"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -5090,7 +5101,7 @@ dependencies = [
 
 [[package]]
 name = "xelis_miner"
-version = "1.19.7"
+version = "1.20.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -5107,7 +5118,7 @@ dependencies = [
 
 [[package]]
 name = "xelis_wallet"
-version = "1.19.7"
+version = "1.20.0"
 dependencies = [
  "actix-web",
  "actix-web-httpauth",

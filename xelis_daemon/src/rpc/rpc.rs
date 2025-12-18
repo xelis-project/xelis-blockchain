@@ -269,18 +269,23 @@ pub async fn get_transaction_response<'a, S: Storage>(blockchain: &Blockchain<S>
 
     // Search the real fee paid if executed in block
     let fee_usage = if let Some(block_executor) = executed_in_block.as_ref() {
-        let topoheight = storage.get_topo_height_for_hash(block_executor).await
-            .context("Error while retrieving topo height of executor")?;
         let header = storage.get_block_header_by_hash(&block_executor).await
             .context("Error while retrieving block header of executor")?;
-        let (required_base_fee, _) = blockchain.get_required_base_fee(&*storage, header.get_tips().iter()).await
+        if header.get_version() >= BlockVersion::V3 {
+            let topoheight = storage.get_topo_height_for_hash(block_executor).await
+                .context("Error while retrieving topo height of executor")?;
+
+            let (required_base_fee, _) = blockchain.get_required_base_fee(&*storage, header.get_tips().iter()).await
                 .context("Error while calculating required base fee")?;
-
-        let version = header.get_version();
-        let (paid, refund) = state::verify_fee(storage, tx, tx_size, topoheight, required_base_fee, version).await
-            .context("Error while verifying transaction fee")?;
-
-        Some((paid, refund))
+    
+            let version = header.get_version();
+            let (paid, refund) = state::verify_fee(storage, tx, tx_size, topoheight, required_base_fee, version).await
+                .context("Error while verifying transaction fee")?;
+    
+            Some((paid, refund))
+        } else {
+            None
+        }
     } else {
         None
     };
@@ -374,6 +379,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     // Assets
     handler.register_method_with_params_and_return_schema::<_, RPCAssetData>("get_asset", async_handler!(get_asset::<S>));
     handler.register_method_with_params("get_asset_supply", async_handler!(get_asset_supply::<S>));
+    handler.register_method_with_params("get_asset_supply_at_topoheight", async_handler!(get_asset_supply_at_topoheight::<S>));
     handler.register_method_with_params("get_assets", async_handler!(get_assets::<S>));
 
     handler.register_method_no_params("count_assets", async_handler!(count_assets::<S>, single));
@@ -670,7 +676,7 @@ async fn get_info<S: Storage>(context: &Context) -> Result<GetInfoResult, Intern
 
         let top_block_hash = storage.get_hash_at_topo_height(topoheight).await
             .context("Error while retrieving hash at topo height")?;
-        let emitted_supply = storage.get_supply_at_topo_height(topoheight).await
+        let emitted_supply = storage.get_emitted_supply_at_topo_height(topoheight).await
             .context("Error while retrieving supply at topo height")?;
         let circulating_supply = storage.get_circulating_supply_for_asset_at_maximum_topoheight(&XELIS_ASSET, topoheight).await
             .context("Error while retrieving burned supply at topoheight")?
@@ -838,6 +844,16 @@ async fn get_asset_supply<S: Storage>(context: &Context, params: GetAssetParams<
         topoheight,
         version
     })
+}
+
+async fn get_asset_supply_at_topoheight<S: Storage>(context: &Context, params: GetAssetSupplyAtTopoHeightParams<'_>) -> Result<Versioned<u64>, InternalRpcError> {
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+
+    let version = storage.get_circulating_supply_for_asset_at_exact_topoheight(&params.asset, params.topoheight).await
+        .context("Supply at topoheight was not found for this asset")?;
+
+    Ok(version)
 }
 
 async fn get_assets<S: Storage>(context: &Context, params: GetAssetsParams) -> Result<Vec<RPCAssetData<'static>>, InternalRpcError> {

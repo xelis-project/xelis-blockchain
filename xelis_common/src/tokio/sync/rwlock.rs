@@ -3,8 +3,9 @@ use std::{
     ops::{Deref, DerefMut},
     panic::Location,
     sync::{atomic::{AtomicU64, Ordering}, Arc, Mutex as StdMutex},
-    time::{Duration, Instant}
+    time::Duration
 };
+use crate::time::Instant;
 use tokio::{
     pin,
     sync::{

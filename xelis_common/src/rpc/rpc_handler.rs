@@ -4,7 +4,6 @@ use std::{
     future::Future,
     pin::Pin,
     sync::Arc,
-    time::Instant
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -14,6 +13,7 @@ use schemars::{schema_for, JsonSchema, Schema};
 
 use crate::{
     context::Context,
+    time::Instant,
     rpc::{
         InternalRpcError,
         RpcRequest,

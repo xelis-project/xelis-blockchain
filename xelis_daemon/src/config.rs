@@ -61,6 +61,8 @@ pub const PRUNE_SAFETY_LIMIT: u64 = 80;
 // BlockDAG rules
 // in how many height we consider the block stable
 pub const STABLE_LIMIT: u64 = 8;
+// Maximum height difference allowed between a block and its tips
+pub const MAX_TIP_HEIGHT_DIFFERENCE: u64 = 8;
 
 pub const fn get_stable_limit(version: BlockVersion) -> u64 {
     match version {
@@ -204,7 +206,7 @@ pub const PEER_PACKET_CHANNEL_SIZE: usize = 1024;
 pub const PEER_SEND_BYTES_TIMEOUT: u64 = 3_000;
 
 // Hard Forks configured
-const HARD_FORKS: [HardFork; 4] = [
+const HARD_FORKS: [HardFork; 5] = [
     HardFork {
         height: 0,
         version: BlockVersion::V0,
@@ -231,7 +233,14 @@ const HARD_FORKS: [HardFork; 4] = [
         version: BlockVersion::V3,
         changelog: "Smart Contracts, xelis-hash v3, 5s block time",
         version_requirement: Some(">=1.19.0")
-    }
+    },
+    HardFork {
+        // Expected date: 18/12/2025 ~10pm UTC
+        height: 3_357_500,
+        version: BlockVersion::V4,
+        changelog: "Reference TX & BlockDAG improvements",
+        version_requirement: Some(">=1.20.0")
+    },
 ];
 
 // Testnet / Stagenet / Devnet hard forks
@@ -263,8 +272,8 @@ const OTHERS_NETWORK_HARD_FORKS: [HardFork; 5] = [
     HardFork {
         height: 20,
         version: BlockVersion::V4,
-        changelog: "Reference TX improvements",
-        version_requirement: Some(">=1.19.0")
+        changelog: "Reference TX & BlockDAG improvements",
+        version_requirement: Some(">=1.20.0")
     }
 ];
 

@@ -74,7 +74,7 @@ const fn default_db_cache_size() -> u64 {
 }
 
 const fn default_max_open_files() -> i32 {
-    1024
+    256
 }
 
 const fn default_keep_max_log_files() -> usize {

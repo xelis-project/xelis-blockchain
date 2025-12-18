@@ -3,7 +3,6 @@ pub mod p2p;
 pub mod core;
 pub mod config;
 
-use config::DEV_PUBLIC_KEY;
 use futures::StreamExt;
 use human_bytes::human_bytes;
 use humantime::{format_duration, Duration as HumanDuration};
@@ -333,7 +332,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::with_optional_arguments("difficulty_dataset", "Create a dataset for difficulty from chain", vec![Arg::new("output", ArgType::String)], CommandHandler::Async(async_handler!(difficulty_dataset::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("circulating_supply_dataset", "Create a dataset for circulating supply of specific asset from chain", vec![Arg::new("output", ArgType::String), Arg::new("asset", ArgType::Hash)], CommandHandler::Async(async_handler!(circulating_supply_dataset::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("block_size_dataset", "Create a dataset for block size from chain", vec![Arg::new("output", ArgType::String)], CommandHandler::Async(async_handler!(block_size_dataset::<S>))))?;
-    command_manager.add_command(Command::with_optional_arguments("mine_block", "Mine a block on testnet", vec![Arg::new("count", ArgType::Number)], CommandHandler::Async(async_handler!(mine_block::<S>))))?;
+    command_manager.add_command(Command::with_optional_arguments("mine_block", "Mine a block on testnet", vec![Arg::new("address", ArgType::String), Arg::new("count", ArgType::Number)], CommandHandler::Async(async_handler!(mine_block::<S>))))?;
     command_manager.add_command(Command::with_required_arguments("add_peer", "Connect to a new peer using ip:port format", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(add_peer::<S>))))?;
     command_manager.add_command(Command::new("list_unexecuted_transactions", "List all unexecuted transactions", CommandHandler::Async(async_handler!(list_unexecuted_transactions::<S>))))?;
     command_manager.add_command(Command::new("swap_blocks_executions_positions", "Swap the position of two blocks executions", CommandHandler::Async(async_handler!(swap_blocks_executions_positions::<S>))))?;
@@ -348,6 +347,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::with_optional_arguments("inspect_contract", "Inspect a smart contract by its hash", vec![Arg::new("contract", ArgType::Hash), Arg::new("show-storage", ArgType::Bool)], CommandHandler::Async(async_handler!(inspect_contract::<S>))))?;
     command_manager.add_command(Command::new("show_mempool", "Show all transactions in mempool", CommandHandler::Async(async_handler!(show_mempool::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("import_block", "Import a block in hexadecimal format", vec![Arg::new("hex", ArgType::String)], CommandHandler::Async(async_handler!(import_block::<S>))))?;
+    command_manager.add_command(Command::with_optional_arguments("show_emitted_supply_at_topoheight", "Show emitted supply at a specific topoheight", vec![Arg::new("topoheight", ArgType::Number)], CommandHandler::Async(async_handler!(show_emitted_supply_at_topoheight::<S>))))?;
 
     // Don't keep the lock for ever
     let p2p = {
@@ -502,7 +502,7 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
     let storage = blockchain.get_storage().read().await;
     let mut pruned_topoheight = storage.get_pruned_topoheight().await.context("Error on pruned topoheight")?.unwrap_or(0);
     let mut expected_supply = if pruned_topoheight > 0 {
-        let supply = storage.get_supply_at_topo_height(pruned_topoheight).await
+        let supply = storage.get_emitted_supply_at_topo_height(pruned_topoheight).await
             .context("Error while retrieving starting expected supply")?;
         pruned_topoheight += 1;
 
@@ -541,7 +541,7 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
             storage.get_block_reward_at_topo_height(topo).await.context("Error while retrieving block reward for pruned topo")?
         };
 
-        let supply = storage.get_supply_at_topo_height(topo).await
+        let supply = storage.get_emitted_supply_at_topo_height(topo).await
             .with_context(|| format!("Error while retrieving supply at topoheight {topo}"))?;
 
         expected_supply += block_reward;
@@ -598,6 +598,26 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
         }
     }
     manager.message("Supply is valid");
+
+    Ok(())
+}
+
+async fn show_emitted_supply_at_topoheight<S: Storage>(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+
+    let storage = blockchain.get_storage().read().await;
+
+    let topoheight: u64 = if args.has_argument("topoheight") {
+        args.get_value("topoheight")?.to_number()?
+    } else {
+        blockchain.get_topo_height().await
+    };
+
+    let supply = storage.get_emitted_supply_at_topo_height(topoheight).await
+        .context("Error while retrieving emitted supply")?;
+
+    manager.message(format!("Emitted supply at topoheight {}: {}", topoheight, format_xelis(supply)));
 
     Ok(())
 }
@@ -1470,7 +1490,7 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
         .context("Error while retrieving average block size")?;
     let (required_base_fee, ema_block_size) = blockchain.get_required_base_fee::<S>(&storage, tips.iter()).await
         .context("Error while calculating required base fee")?;
-    let emitted_supply = storage.get_supply_at_topo_height(topoheight).await
+    let emitted_supply = storage.get_emitted_supply_at_topo_height(topoheight).await
         .context("Error while retrieving supply")?;
     let circulating_supply = storage.get_circulating_supply_for_asset_at_maximum_topoheight(&XELIS_ASSET, topoheight).await
         .context("Error while retrieving burned supply")?
@@ -1744,6 +1764,15 @@ async fn difficulty_dataset<S: Storage>(manager: &CommandManager, mut arguments:
 
 // Mine a block
 async fn mine_block<S: Storage>(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let address = if arguments.has_argument("address") {
+        arguments.get_value("address")?.to_string_value()?
+    } else {
+        manager.get_prompt()
+        .read("Address: ").await
+        .context("Error while reading address")?
+    };
+    let address = Address::from_string(&address).context("Invalid address")?;
+
     let count = if arguments.has_argument("count") {
         arguments.get_value("count")?.to_number()?
     } else {
@@ -1767,7 +1796,7 @@ async fn mine_block<S: Storage>(manager: &CommandManager, mut arguments: Argumen
 
     manager.message(format!("Mining {} block(s)...", count));
     for _ in 0..count {
-        let block = blockchain.mine_block(&DEV_PUBLIC_KEY).await.context("Error while mining block")?;
+        let block = blockchain.mine_block(address.get_public_key()).await.context("Error while mining block")?;
         let block_hash = block.hash();
         manager.message(format!("Block mined: {}", block_hash));
 
