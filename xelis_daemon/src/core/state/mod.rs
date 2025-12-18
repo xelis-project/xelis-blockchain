@@ -93,7 +93,11 @@ async fn is_miner_until_base_height<S: Storage>(storage: &S, miner: &PublicKey, 
 
 async fn is_referencing_previous_output<S: Storage>(storage: &S, tx: &Transaction, reference: &Reference, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
     let reference_block_topo = select_best_topoheight_for_reference(storage, reference, topoheight).await?;
-    if let Some((topo, version)) = storage.get_output_balance_in_range(tx.get_source(), &XELIS_ASSET, reference.topoheight, topoheight).await? {
+    let min_topo = reference.topoheight
+        .min(reference_block_topo)
+        .min(topoheight);
+
+    if let Some((topo, version)) = storage.get_output_balance_in_range(tx.get_source(), &XELIS_ASSET, min_topo, topoheight).await? {
         let is_pointing_output = if version.contains_input() {
             reference.topoheight < topo || reference_block_topo < topo
         } else {
