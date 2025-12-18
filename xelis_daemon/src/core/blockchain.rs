@@ -2201,7 +2201,7 @@ impl<S: Storage> Blockchain<S> {
                             if block != hash && storage.is_block_topological_ordered(&block).await? {
                                 let topoheight = storage.get_topo_height_for_hash(&block).await?;
                                 if topoheight < highest_topo {
-                                    info!("Found block {} at height {}", block, height);
+                                    debug!("Found block {} at height {} for {}", block, height, hash);
                                     ordered_blocks += 1;
                                 }
                             }
