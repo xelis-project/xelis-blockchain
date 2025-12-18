@@ -50,6 +50,7 @@ pub trait VersionedProvider:
         self.delete_scheduled_executions_at_topoheight(topoheight).await?;
 
         self.delete_versioned_assets_supply_at_topoheight(topoheight).await?;
+        self.delete_dag_order_at_topoheight(topoheight).await?;
 
         // Special case: because we inject it directly into the chain at startup
         if topoheight > 0 {

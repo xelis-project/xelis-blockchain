@@ -4,18 +4,24 @@ use xelis_common::{block::TopoHeight, crypto::Hash};
 use crate::core::{
     error::BlockchainError,
     storage::{
-        rocksdb::{
+        DagOrderProvider, RocksStorage, VersionedDagOrderProvider, rocksdb::{
             Column,
             IteratorMode
-        },
-        snapshot::Direction,
-        RocksStorage,
-        VersionedDagOrderProvider
+        }, snapshot::Direction
     }
 };
 
 #[async_trait]
 impl VersionedDagOrderProvider for RocksStorage {
+    // Delete the topoheight for a block hash
+    async fn delete_dag_order_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
+        trace!("delete topo height for block {}", topoheight);
+        let hash = self.get_hash_at_topo_height(topoheight).await?;
+
+        self.remove_from_disk(Column::TopoByHash, hash)?;
+        self.remove_from_disk(Column::HashAtTopo, topoheight.to_be_bytes())
+    }
+
     // Delete every block hashes <=> topoheight relations
     async fn delete_dag_order_above_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         trace!("delete dag order above topoheight {}", topoheight);
