@@ -269,18 +269,23 @@ pub async fn get_transaction_response<'a, S: Storage>(blockchain: &Blockchain<S>
 
     // Search the real fee paid if executed in block
     let fee_usage = if let Some(block_executor) = executed_in_block.as_ref() {
-        let topoheight = storage.get_topo_height_for_hash(block_executor).await
-            .context("Error while retrieving topo height of executor")?;
         let header = storage.get_block_header_by_hash(&block_executor).await
             .context("Error while retrieving block header of executor")?;
-        let (required_base_fee, _) = blockchain.get_required_base_fee(&*storage, header.get_tips().iter()).await
+        if header.get_version() >= BlockVersion::V3 {
+            let topoheight = storage.get_topo_height_for_hash(block_executor).await
+                .context("Error while retrieving topo height of executor")?;
+
+            let (required_base_fee, _) = blockchain.get_required_base_fee(&*storage, header.get_tips().iter()).await
                 .context("Error while calculating required base fee")?;
-
-        let version = header.get_version();
-        let (paid, refund) = state::verify_fee(storage, tx, tx_size, topoheight, required_base_fee, version).await
-            .context("Error while verifying transaction fee")?;
-
-        Some((paid, refund))
+    
+            let version = header.get_version();
+            let (paid, refund) = state::verify_fee(storage, tx, tx_size, topoheight, required_base_fee, version).await
+                .context("Error while verifying transaction fee")?;
+    
+            Some((paid, refund))
+        } else {
+            None
+        }
     } else {
         None
     };
