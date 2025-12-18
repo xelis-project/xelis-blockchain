@@ -2190,6 +2190,8 @@ impl<S: Storage> Blockchain<S> {
                 let mut side_blocks_count = 0;
                 if is_v4_enabled {
                     if is_side_block {
+                        // count how many ordered blocks are before this one at same height
+                        // so we can adjust the reward
                         let mut ordered_blocks = 0;
                         let blocks_at_height = storage.get_blocks_at_height(height).await?;
                         for block in blocks_at_height {
@@ -2219,7 +2221,7 @@ impl<S: Storage> Blockchain<S> {
                             for block in blocks_at_height {
                                 if block != hash && blockdag::is_side_block_internal(&*storage, &block, None, highest_topo, version).await? {
                                     count += 1;
-                                    warn!("Found side block {} at height {}", block, height);
+                                    debug!("Found side block {} at height {} for {} (is side block {})", block, height, hash, is_side_block);
                                 }
                             }
 
@@ -2228,6 +2230,7 @@ impl<S: Storage> Blockchain<S> {
                     };
                     side_blocks_count = *tmp;
                     if is_side_block {
+                        debug!("Incrementing side blocks at height {} for {}", height, hash);
                         *tmp += 1;
                     }
                 }

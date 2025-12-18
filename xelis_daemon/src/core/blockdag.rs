@@ -265,11 +265,11 @@ where
         let mut i = topoheight - 1;
         let stable_limit = get_stable_limit(block_version);
         while counter < stable_limit && i > 0 {
-            let hash = provider.get_hash_at_topo_height(i).await?;
-            let previous_height = provider.get_height_for_block_hash(&hash).await?;
+            let hash_at_topo = provider.get_hash_at_topo_height(i).await?;
+            let previous_height = provider.get_height_for_block_hash(&hash_at_topo).await?;
     
             if height <= previous_height {
-                debug!("Block {} is a side block at height {} because block {} at topoheight {} has height {}", hash, height, hash, i, previous_height);
+                debug!("Block {} is a side block at height {} because block {} at topoheight {} has height {}", hash, height, hash_at_topo, i, previous_height);
                 return Ok(true)
             }
             counter += 1;
