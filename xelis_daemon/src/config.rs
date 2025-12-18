@@ -238,7 +238,7 @@ const HARD_FORKS: [HardFork; 5] = [
         // Expected date: 18/12/2025 ~10pm UTC
         height: 3_357_500,
         version: BlockVersion::V4,
-        changelog: "BlockDAG improvements",
+        changelog: "Reference TX & BlockDAG improvements",
         version_requirement: Some(">=1.20.0")
     },
 ];
@@ -272,8 +272,8 @@ const OTHERS_NETWORK_HARD_FORKS: [HardFork; 5] = [
     HardFork {
         height: 20,
         version: BlockVersion::V4,
-        changelog: "Reference TX improvements",
-        version_requirement: Some(">=1.19.0")
+        changelog: "Reference TX & BlockDAG improvements",
+        version_requirement: Some(">=1.20.0")
     }
 ];
 
