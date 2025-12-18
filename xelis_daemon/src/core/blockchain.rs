@@ -1313,8 +1313,11 @@ impl<S: Storage> Blockchain<S> {
             // We drain any tips above the limit
             let len = sorted_tips.len() - TIPS_LIMIT;
             let dropped_tips = sorted_tips.drain(TIPS_LIMIT..)
-            .map(|h| h.to_string()).collect::<Vec<String>>().join(", ");
-            warn!("too many tips for block generation, using the {} heavier tips: {} extra tips dropped", TIPS_LIMIT, len);
+                .map(|h| h.to_string())
+                .collect::<Vec<String>>()
+                .join(", ");
+
+            debug!("too many tips for block generation, using the {} heavier tips: {} extra tips dropped", TIPS_LIMIT, len);
             trace!("dropped tips: {}", dropped_tips);
         }
 
@@ -1685,7 +1688,7 @@ impl<S: Storage> Blockchain<S> {
             debug!("Height by tips: {}, stable height: {}", block_height_by_tips, stable_height);
 
             if block_height_by_tips < stable_height {
-                warn!("block height by tips {} for this block ({}), its height is in stable height {}", block_height_by_tips, block_hash, stable_height);
+                error!("block height by tips {} for this block ({}), its height is in stable height {}", block_height_by_tips, block_hash, stable_height);
                 return Err(BlockchainError::InvalidBlockHeightStableHeight)
             }
         }
@@ -2287,7 +2290,7 @@ impl<S: Storage> Blockchain<S> {
                         // Execute the transaction by applying changes in storage
                         debug!("Executing tx {} in block {} with nonce {}", tx_hash, hash, tx.get_nonce());
                         if let Err(e) = tx.apply_with_partial_verify(tx_hash, &mut chain_state).await {
-                            warn!("Error while executing TX {} with current DAG org: {}", tx_hash, e);
+                            error!("Error while executing TX {} with current DAG org: {}", tx_hash, e);
                             // TX may be orphaned if not added again in good order in next blocks
                             orphaned_transactions.insert(tx_hash.clone());
                             continue;
@@ -2501,7 +2504,7 @@ impl<S: Storage> Blockchain<S> {
                 trace!("Adding {} as new tips", hash);
                 new_tips.push(hash);
             } else {
-                warn!("Rusty TIP declared stale {} with best height: {}", hash, best_height);
+                info!("Rusty TIP declared stale {} with best height: {}", hash, best_height);
             }
         }
 
@@ -2511,7 +2514,7 @@ impl<S: Storage> Blockchain<S> {
         for hash in new_tips {
             if best_tip != hash {
                 if !blockdag::validate_tips(&*storage, &best_tip, &hash).await? {
-                    warn!("Rusty TIP {} declared stale", hash);
+                    info!("Rusty TIP {} declared stale", hash);
                 } else {
                     debug!("Tip {} is valid, adding to final Tips list", hash);
                     tips.insert(hash);
@@ -2547,7 +2550,7 @@ impl<S: Storage> Blockchain<S> {
                 info!("Auto pruning chain until topoheight {} (keep only {} blocks)", current_topoheight - keep_only, keep_only);
                 let start = Instant::now();
                 if let Err(e) = self.prune_until_topoheight_for_storage(current_topoheight - keep_only, &mut *storage).await {
-                    warn!("Error while trying to auto prune chain: {}", e);
+                    error!("Error while trying to auto prune chain: {}", e);
                 }
 
                 info!("Auto pruning done in {}ms", start.elapsed().as_millis());
