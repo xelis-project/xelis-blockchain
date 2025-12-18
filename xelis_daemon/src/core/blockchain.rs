@@ -2142,7 +2142,7 @@ impl<S: Storage> Blockchain<S> {
                     }
 
                     // Delete changes made by this block
-                    storage.delete_versioned_data_at_topoheight(topoheight).await?;
+                    storage.delete_versioned_data_at_topoheight(topoheight, is_v4_enabled).await?;
 
                     topoheight += 1;
                 }

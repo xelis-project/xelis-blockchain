@@ -37,7 +37,7 @@ pub trait VersionedProvider:
     + VersionedDagOrderProvider {
 
     // Delete versioned data at topoheight
-    async fn delete_versioned_data_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
+    async fn delete_versioned_data_at_topoheight(&mut self, topoheight: TopoHeight, dag_included: bool) -> Result<(), BlockchainError> {
         debug!("delete versioned data at topoheight {}", topoheight);
         self.delete_versioned_balances_at_topoheight(topoheight).await?;
         self.delete_versioned_nonces_at_topoheight(topoheight).await?;
@@ -50,7 +50,10 @@ pub trait VersionedProvider:
         self.delete_scheduled_executions_at_topoheight(topoheight).await?;
 
         self.delete_versioned_assets_supply_at_topoheight(topoheight).await?;
-        self.delete_dag_order_at_topoheight(topoheight).await?;
+
+        if dag_included {
+            self.delete_dag_order_at_topoheight(topoheight).await?;
+        }
 
         // Special case: because we inject it directly into the chain at startup
         if topoheight > 0 {
