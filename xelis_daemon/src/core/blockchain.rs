@@ -1699,7 +1699,6 @@ impl<S: Storage> Blockchain<S> {
         }
 
         let is_v4_enabled = version >= BlockVersion::V4;
-        let is_v5_enabled = version >= BlockVersion::V5;
 
         for hash in block.get_tips() {
             let previous_timestamp = storage.get_timestamp_for_block_hash(hash).await?;
@@ -2183,6 +2182,7 @@ impl<S: Storage> Blockchain<S> {
 
                 // Block for this hash
                 let block = storage.get_block_by_hash(&hash).await?;
+                let version = block.get_version();
 
                 // Reward the miner of this block
                 // We have a decreasing block reward if there is too much side block
@@ -2191,7 +2191,7 @@ impl<S: Storage> Blockchain<S> {
 
                 // Side blocks detected before this one at same height
                 let mut side_blocks_count = 0;
-                if is_v4_enabled {
+                if version >= BlockVersion::V4 {
                     if is_side_block {
                         side_blocks_count = self.count_side_blocks(&*storage, &hash, highest_topo, height).await?;
                         debug!("Block {} is a side block at height {} with {} side blocks before it", hash, height, side_blocks_count);
@@ -2219,13 +2219,12 @@ impl<S: Storage> Blockchain<S> {
                     }
                 }
 
-                let block_reward = self.internal_get_block_reward(past_emitted_supply, is_side_block, side_blocks_count, block.get_version()).await?;
+                let block_reward = self.internal_get_block_reward(past_emitted_supply, is_side_block, side_blocks_count, version).await?;
                 trace!("Block reward for block {} at height {} is {}", hash, height, block_reward);
-                let (required_tx_fee, version) = if is_v5_enabled {
-                    let base_fee = self.get_required_base_fee(&*storage, block.get_tips().iter()).await?.0;
-                    (base_fee, block.get_version())
+                let required_tx_fee = if version >= BlockVersion::V5 {
+                    self.get_required_base_fee(&*storage, block.get_tips().iter()).await?.0
                 } else {
-                    (base_fee, version)
+                    base_fee
                 };
 
                 // Chain State used for the verification
