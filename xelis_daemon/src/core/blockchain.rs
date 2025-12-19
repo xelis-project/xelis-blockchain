@@ -1078,7 +1078,6 @@ impl<S: Storage> Blockchain<S> {
 
             let start = Instant::now();
             let version = get_version_at_height(self.get_network(), height);
-            debug!("current version is {:?}, but using BlockVersion::V4 for more verifications", version);
 
             // NOTE: we do not verify / clean against requested base fee
             // to ensure no TX is orphaned, but only delayed until the chain congestion reduce
@@ -1700,6 +1699,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         let is_v4_enabled = version >= BlockVersion::V4;
+        let is_v5_enabled = version >= BlockVersion::V5;
 
         for hash in block.get_tips() {
             let previous_timestamp = storage.get_timestamp_for_block_hash(hash).await?;
@@ -2193,27 +2193,8 @@ impl<S: Storage> Blockchain<S> {
                 let mut side_blocks_count = 0;
                 if is_v4_enabled {
                     if is_side_block {
-                        // count how many ordered blocks are before this one at same height
-                        // so we can adjust the reward
-                        let mut ordered_blocks = 0;
-                        let blocks_at_height = storage.get_blocks_at_height(height).await?;
-                        for block in blocks_at_height {
-                            if block != hash && storage.is_block_topological_ordered(&block).await? {
-                                let topoheight = storage.get_topo_height_for_hash(&block).await?;
-                                if topoheight < highest_topo {
-                                    debug!("Found block {} at height {} for {}", block, height, hash);
-                                    ordered_blocks += 1;
-                                }
-                            }
-                        }
-
-                        // Delete one because we have at least one normal block
-                        if ordered_blocks > 0 {
-                            ordered_blocks -= 1;
-                        }
-
-                        debug!("Block {} is a side block at height {} with {} side blocks before it", hash, height, ordered_blocks);
-                        side_blocks_count = ordered_blocks;
+                        side_blocks_count = self.count_side_blocks(&*storage, &hash, highest_topo, height).await?;
+                        debug!("Block {} is a side block at height {} with {} side blocks before it", hash, height, side_blocks_count);
                     }
                 } else {
                     let tmp = match side_blocks.entry(height) {
@@ -2240,8 +2221,15 @@ impl<S: Storage> Blockchain<S> {
 
                 let block_reward = self.internal_get_block_reward(past_emitted_supply, is_side_block, side_blocks_count, block.get_version()).await?;
                 trace!("Block reward for block {} at height {} is {}", hash, height, block_reward);
+                let (required_tx_fee, version) = if is_v5_enabled {
+                    let base_fee = self.get_required_base_fee(&*storage, block.get_tips().iter()).await?.0;
+                    (base_fee, block.get_version())
+                } else {
+                    (base_fee, version)
+                };
+
                 // Chain State used for the verification
-                trace!("building chain state to execute TXs in block {}", block_hash);
+                trace!("building chain state to execute TXs in block {} with required base fee {}", block_hash, required_tx_fee);
                 let mut chain_state = ApplicableChainState::new(
                     &*storage,
                     &self.environment,
@@ -2250,7 +2238,7 @@ impl<S: Storage> Blockchain<S> {
                     version,
                     &hash,
                     &block,
-                    base_fee,
+                    required_tx_fee,
                     base_height
                 );
 
@@ -2767,22 +2755,56 @@ impl<S: Storage> Blockchain<S> {
         Ok(block_reward)
     }
 
-    // Get the block reward for a block
-    // This will search all blocks at same height and verify which one are side blocks
-    pub async fn get_block_reward<P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + CacheProvider>(&self, provider: &P, hash: &Hash, past_supply: u64, block_topoheight: Option<u64>, current_topoheight: TopoHeight, version: BlockVersion) -> Result<u64, BlockchainError> {
-        let is_side_block = self.is_side_block(provider, hash, version).await?;
-        let mut side_blocks_count = 0;
-        if is_side_block {
-            // get the block height for this hash
-            let height = provider.get_height_for_block_hash(hash).await?;
-            let blocks_at_height = provider.get_blocks_at_height(height).await?;
-            for block in blocks_at_height {
-                if *hash != block && blockdag::is_side_block_internal(provider, &block, block_topoheight, current_topoheight, version).await? {
-                    side_blocks_count += 1;
+    // count how many ordered blocks are before this one at same height
+    // so we can adjust the reward
+    async fn count_side_blocks<P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + CacheProvider>(
+        &self,
+        provider: &P,
+        hash: &Hash,
+        current_topoheight: TopoHeight,
+        height: u64,
+    ) -> Result<u64, BlockchainError> {
+        let mut ordered_blocks = 0;
+        let blocks_at_height = provider.get_blocks_at_height(height).await?;
+        for block in blocks_at_height {
+            if block != *hash && provider.is_block_topological_ordered(&block).await? {
+                let topoheight = provider.get_topo_height_for_hash(&block).await?;
+                if topoheight < current_topoheight {
+                    debug!("Found block {} at height {} for {}", block, height, hash);
+                    ordered_blocks += 1;
                 }
             }
         }
 
+        // Delete one because we have at least one normal block
+        if ordered_blocks > 0 {
+            ordered_blocks -= 1;
+        }
+
+        Ok(ordered_blocks)
+    }
+
+    // Get the block reward for a block
+    // This will search all blocks at same height and verify which one are side blocks
+    pub async fn get_block_reward<P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + CacheProvider>(&self, provider: &P, hash: &Hash, past_supply: u64, current_topoheight: TopoHeight, version: BlockVersion) -> Result<u64, BlockchainError> {
+        let is_side_block = self.is_side_block(provider, hash, version).await?;
+        let mut side_blocks_count = 0;
+        if is_side_block {
+            if version >= BlockVersion::V4 {
+                side_blocks_count = self.count_side_blocks(provider, hash, current_topoheight, provider.get_height_for_block_hash(hash).await?).await?;
+            } else {
+                // get the block height for this hash
+                let height = provider.get_height_for_block_hash(hash).await?;
+                let blocks_at_height = provider.get_blocks_at_height(height).await?;
+                for block in blocks_at_height {
+                    if *hash != block && blockdag::is_side_block_internal(provider, &block, None, current_topoheight, version).await? {
+                        side_blocks_count += 1;
+                    }
+                }
+            }
+        }
+
+        info!("Block {} is side block: {} with {} side blocks before it", hash, is_side_block, side_blocks_count);
         self.internal_get_block_reward(past_supply, is_side_block, side_blocks_count, version).await
     }
 

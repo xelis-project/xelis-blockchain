@@ -67,7 +67,7 @@ pub const MAX_TIP_HEIGHT_DIFFERENCE: u64 = 8;
 pub const fn get_stable_limit(version: BlockVersion) -> u64 {
     match version {
         BlockVersion::V0 | BlockVersion::V1 | BlockVersion::V2 => 8,
-        BlockVersion::V3 | BlockVersion::V4 => 24,
+        BlockVersion::V3 | BlockVersion::V4 | BlockVersion::V5 => 24,
     }
 }
 
