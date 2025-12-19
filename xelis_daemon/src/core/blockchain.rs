@@ -2803,7 +2803,7 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
-        info!("Block {} is side block: {} with {} side blocks before it", hash, is_side_block, side_blocks_count);
+        debug!("Block {} is side block: {} with {} side blocks before it", hash, is_side_block, side_blocks_count);
         self.internal_get_block_reward(past_supply, is_side_block, side_blocks_count, version).await
     }
 
