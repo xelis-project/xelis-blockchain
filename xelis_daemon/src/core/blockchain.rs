@@ -2032,7 +2032,9 @@ impl<S: Storage> Blockchain<S> {
 
         counter!("xelis_block_added").increment(1);
 
+        debug!("Acquiring storage write lock to save block {}", block_hash);
         let mut storage = self.storage.write().await;
+        debug!("Storage write lock acquired for saving block {}", block_hash);
 
         // Save transactions & block
         {
