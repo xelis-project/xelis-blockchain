@@ -17,12 +17,12 @@ impl DagOrderProvider for SledStorage {
         Self::insert_into_disk(self.snapshot.as_mut(), &self.hash_at_topo, &topoheight.to_be_bytes(), hash.as_bytes())?;
 
         // save in cache
-        if let Some(cache) = self.cache.objects.as_ref().map(|o| &o.topo_by_hash_cache) {
+        if let Some(cache) = self.cache_mut().objects.as_ref().map(|o| &o.topo_by_hash_cache) {
             let mut topo = cache.lock().await;
             topo.put(hash.clone(), topoheight);
         }
 
-        if let Some(cache) = self.cache.objects.as_ref().map(|o| &o.hash_at_topo_cache) {
+        if let Some(cache) = self.cache_mut().objects.as_ref().map(|o| &o.hash_at_topo_cache) {
             let mut hash_at_topo = cache.lock().await;
             hash_at_topo.put(topoheight, hash.clone());
         }

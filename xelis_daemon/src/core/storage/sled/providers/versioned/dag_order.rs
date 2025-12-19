@@ -19,12 +19,12 @@ impl VersionedDagOrderProvider for SledStorage {
         Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.topo_by_hash, hash.as_bytes())?;
         Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.hash_at_topo, &topoheight.to_be_bytes())?;
 
-        if let Some(cache) = self.cache.objects.as_ref().map(|o| &o.topo_by_hash_cache) {
+        if let Some(cache) = self.cache_mut().objects.as_ref().map(|o| &o.topo_by_hash_cache) {
             let mut topo = cache.lock().await;
             topo.pop(&hash);
         }
 
-        if let Some(cache) = self.cache.objects.as_ref().map(|o| &o.hash_at_topo_cache) {
+        if let Some(cache) = self.cache_mut().objects.as_ref().map(|o| &o.hash_at_topo_cache) {
             let mut hash_at_topo = cache.lock().await;
             hash_at_topo.pop(&topoheight);
         }
@@ -46,12 +46,12 @@ impl VersionedDagOrderProvider for SledStorage {
             }
         }
 
-        if let Some(cache) = self.cache.objects.as_ref().map(|o| &o.hash_at_topo_cache) {
+        if let Some(cache) = self.cache_mut().objects.as_ref().map(|o| &o.hash_at_topo_cache) {
             let mut hash_at_topo = cache.lock().await;
             hash_at_topo.clear();
         }
 
-        if let Some(cache) = self.cache.objects.as_ref().map(|o| &o.topo_by_hash_cache) {
+        if let Some(cache) = self.cache_mut().objects.as_ref().map(|o| &o.topo_by_hash_cache) {
             let mut topo = cache.lock().await;
             topo.clear();
         }
