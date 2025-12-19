@@ -18,7 +18,7 @@ use xelis_common::{
 };
 use std::{
     hash::Hash as StdHash,
-    ops::{Deref, DerefMut},
+    ops::Deref,
     str::FromStr,
     sync::Arc
 };
@@ -223,20 +223,6 @@ impl Into<sled::Mode> for StorageMode {
             Self::HighThroughput => sled::Mode::HighThroughput,
             Self::LowSpace => sled::Mode::LowSpace
         }
-    }
-}
-
-impl Deref for SledStorage {
-    type Target = StorageCache;
-
-    fn deref(&self) -> &Self::Target {
-        &self.cache
-    }
-}
-
-impl DerefMut for SledStorage {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.cache
     }
 }
 
