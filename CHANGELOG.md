@@ -4,6 +4,13 @@ This file contains all the changelogs to ensure that changes can be tracked and 
 
 To see the full history and exact changes, please refer to the commits history directly.
 
+## v1.21.0
+
+- New Network Upgrade configured:
+  Expected date: 19/06/2025 ~11pm UTC at block height 3,373,000.
+- Fix TX base fee required during DAG reorgs
+- Fix `verify_chain` CLI command
+
 ## v1.20.0
 
 - New Hard Fork configured:
