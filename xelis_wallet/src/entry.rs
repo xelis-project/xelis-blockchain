@@ -518,8 +518,15 @@ impl TransactionEntry {
             EntryData::Burn { .. } => true,
             EntryData::Outgoing { .. } => true,
             EntryData::MultiSig { .. } => true,
+            EntryData::DeployContract { .. } => true,
+            EntryData::InvokeContract { .. } => true,
             _ => false,
         }
+    }
+
+    // Is the transaction a coinbase reward
+    pub fn is_coinbase(&self) -> bool {
+        matches!(&self.entry, EntryData::Coinbase { .. })
     }
 
     // Convert to RPC Transaction Entry

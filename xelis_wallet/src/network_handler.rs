@@ -493,7 +493,7 @@ impl NetworkHandler {
                     // Transaction found at which topoheight it was executed
                     let mut tx_topoheight = topoheight;
                     let mut tx_timestamp = block.timestamp;
-    
+
                     // New transaction entry that may be linked to us, check if TX was executed
                     if !self.api.is_tx_executed_in_block(&tx.hash, &block_hash).await? {
                         debug!("Transaction {} was a good candidate but was not executed in block {}, searching its block executor", tx.hash, block_hash);
