@@ -906,15 +906,16 @@ impl Wallet {
                         if let Some(entry) = storage.get_last_outgoing_transaction()? {
                             let output_topoheight = entry.get_topoheight();
                             let mut reference_topoheight = output_topoheight;
+                            debug!("Last outgoing TX found at topoheight {}", output_topoheight);
                             if output_topoheight > stable_topoheight {
                                 warn!("Cannot use stable balance because we have an outgoing TX not confirmed in stable height yet");
                                 should_use_stable_balance = false;
 
                                 // Check if we got a higher topoheight than current reference
-                                if let Some(coinbase_topo) = storage.get_last_coinbase_topoheight().filter(|v| *v >= output_topoheight) {
+                                if storage.has_coinbase_at_or_above_topoheight(output_topoheight)? {
                                     // Our balances are too new, we must fetch the previous versions
 
-                                    warn!("We have a coinbase reward (topo {coinbase_topo}) at or above the last outgoing TX topoheight {output_topoheight}, we must fetch previous balance versions");
+                                    warn!("We have a coinbase reward at or above the last outgoing TX topoheight {output_topoheight}, we must fetch previous balance versions");
                                     let assets: IndexSet<Cow<'_, Hash>> = used_assets.iter()
                                         .map(|v| Cow::Borrowed(*v))
                                         .collect();
@@ -930,7 +931,8 @@ impl Wallet {
                                     for (asset, version) in assets.into_iter().zip(versions) {
                                         match version {
                                             Some(version) => {
-                                                if asset.as_ref() == &XELIS_ASSET && version.version.contains_input() {
+                                                debug!("Found previous balance version for asset {} at topoheight {} (contains input: {})", asset, version.topoheight, version.version.contains_input());
+                                                if *asset == XELIS_ASSET && version.version.contains_input() {
                                                     xelis_contains_input = Some(version.topoheight);
                                                 }
 

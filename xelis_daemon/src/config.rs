@@ -67,7 +67,7 @@ pub const MAX_TIP_HEIGHT_DIFFERENCE: u64 = 8;
 pub const fn get_stable_limit(version: BlockVersion) -> u64 {
     match version {
         BlockVersion::V0 | BlockVersion::V1 | BlockVersion::V2 => 8,
-        BlockVersion::V3 | BlockVersion::V4 => 24,
+        BlockVersion::V3 | BlockVersion::V4 | BlockVersion::V5 => 24,
     }
 }
 
@@ -206,7 +206,7 @@ pub const PEER_PACKET_CHANNEL_SIZE: usize = 1024;
 pub const PEER_SEND_BYTES_TIMEOUT: u64 = 3_000;
 
 // Hard Forks configured
-const HARD_FORKS: [HardFork; 5] = [
+const HARD_FORKS: [HardFork; 6] = [
     HardFork {
         height: 0,
         version: BlockVersion::V0,
@@ -241,10 +241,17 @@ const HARD_FORKS: [HardFork; 5] = [
         changelog: "Reference TX & BlockDAG improvements",
         version_requirement: Some(">=1.20.0")
     },
+    HardFork {
+        // Expected date: 19/12/2025 ~11pm UTC
+        height: 3_373_000,
+        version: BlockVersion::V5,
+        changelog: "TX Base fee improvements",
+        version_requirement: Some(">=1.21.0")
+    }
 ];
 
 // Testnet / Stagenet / Devnet hard forks
-const OTHERS_NETWORK_HARD_FORKS: [HardFork; 5] = [
+const OTHERS_NETWORK_HARD_FORKS: [HardFork; 6] = [
     HardFork {
         height: 0,
         version: BlockVersion::V0,
@@ -274,6 +281,12 @@ const OTHERS_NETWORK_HARD_FORKS: [HardFork; 5] = [
         version: BlockVersion::V4,
         changelog: "Reference TX & BlockDAG improvements",
         version_requirement: Some(">=1.20.0")
+    },
+    HardFork {
+        height: 25,
+        version: BlockVersion::V5,
+        changelog: "TX Base fee improvements",
+        version_requirement: Some(">=1.21.0")
     }
 ];
 

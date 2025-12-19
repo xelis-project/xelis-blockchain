@@ -995,19 +995,16 @@ impl EncryptedStorage {
     // Find the last outgoing transaction created
     pub fn get_last_outgoing_transaction(&self) -> Result<Option<TransactionEntry>> {
         trace!("get last transaction created");
-        let mut last_tx: Option<TransactionEntry> = None;
-
         for el in self.transactions_indexes.iter().values().rev() {
             let tx_hash = el?;
             let entry: TransactionEntry = self.load_from_disk_with_key(&self.transactions, &tx_hash)?;
             if entry.is_outgoing() {
                 debug!("Found last outgoing transaction: {:?}", entry);
-                last_tx = Some(entry);
-                break;
+                return Ok(Some(entry));
             }
         }
 
-        Ok(last_tx)
+        Ok(None)
     }
 
     // Count the number of transactions stored
@@ -1554,6 +1551,30 @@ impl EncryptedStorage {
     pub fn get_last_coinbase_topoheight(&self) -> Option<u64> {
         trace!("get last coinbase topoheight");
         self.last_coinbase_topoheight
+    }
+
+    pub fn has_coinbase_at_or_above_topoheight(&self, topoheight: u64) -> Result<bool> {
+        trace!("has coinbase at or above topoheight {}", topoheight);
+
+        if self.last_coinbase_topoheight.is_some_and(|v| v >= topoheight) {
+            trace!("cached last coinbase topoheight {:?} is >= {}", self.last_coinbase_topoheight, topoheight);
+            return Ok(true)
+        }
+
+        for el in self.transactions_indexes.iter().values().rev() {
+            let tx_hash = el?;
+            let entry: TransactionEntry = self.load_from_disk_with_key(&self.transactions, &tx_hash)?;
+            if entry.get_topoheight() < topoheight {
+                break;
+            }
+
+            if  entry.is_coinbase() {
+                debug!("Found coinbase transaction at {}", entry.get_topoheight());
+                return Ok(true)
+            }
+        }
+
+        Ok(false)
     }
 
     // Store the private key

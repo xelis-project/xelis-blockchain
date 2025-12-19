@@ -163,7 +163,7 @@ impl<S: Storage> P2pServer<S> {
                         let version = hard_fork::get_version_at_height(self.blockchain.get_network(), height);
                         // Due to the TX being orphaned, some TXs may be in the wrong order in V1
                         // It has been sorted in V2 and should not happen anymore
-                        if (version == BlockVersion::V0 || version == BlockVersion::V3) && storage.has_block_position_in_order(&hash).await? && storage.has_block_position_in_order(&previous_hash).await? {
+                        if (version == BlockVersion::V0 || version >= BlockVersion::V3) && storage.has_block_position_in_order(&hash).await? && storage.has_block_position_in_order(&previous_hash).await? {
                             let position = storage.get_block_position_in_order(&hash).await?;
                             let previous_position = storage.get_block_position_in_order(&previous_hash).await?;
                             // if the block is a side block, we need to check if it's in the right order

@@ -76,8 +76,16 @@ impl<T: ?Sized> Mutex<T> {
             }
         }
     }
-}
 
+    /// Consumes the mutex, returning the underlying data.
+    #[allow(dead_code)]
+    pub fn into_inner(self) -> T
+    where
+        T: Sized,
+    {
+        self.inner.into_inner()
+    }
+}
 
 impl<T: ?Sized> AsRef<InnerMutex<T>> for Mutex<T> {
     fn as_ref(&self) -> &InnerMutex<T> {
