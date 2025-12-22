@@ -380,8 +380,13 @@ pub struct GetBalanceResult {
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetStableBalanceResult {
+    /// Versioned balance at stable topoheight
     pub version: VersionedBalance,
+    /// Version topoheight at which the balance is stable
+    pub topoheight: TopoHeight,
+    /// Stable topoheight of the blockchain
     pub stable_topoheight: TopoHeight,
+    /// Hash of the stable block
     pub stable_block_hash: Hash 
 }
 
