@@ -629,7 +629,7 @@ async fn get_stable_balance<S: Storage>(context: &Context, params: GetBalancePar
         }
     }
 
-    let (stable_topoheight, version) = if let Some((topoheight, version)) = stable_version {
+    let (topoheight, version) = if let Some((topoheight, version)) = stable_version {
         (topoheight, version)
     } else {
         storage.get_balance_at_maximum_topoheight(params.address.get_public_key(), &params.asset, stable_topoheight).await?
@@ -638,6 +638,7 @@ async fn get_stable_balance<S: Storage>(context: &Context, params: GetBalancePar
 
     Ok(GetStableBalanceResult {
         version,
+        topoheight,
         stable_topoheight,
         stable_block_hash: storage.get_hash_at_topo_height(stable_topoheight).await.context("Error while retrieving hash at topo height")?
     })
