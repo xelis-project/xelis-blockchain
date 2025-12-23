@@ -858,7 +858,7 @@ impl<S: Storage> P2pServer<S> {
 
                             for balance in balances {
                                 let (topo, version) = balance.as_version();
-                                if highest_topoheight.is_none() {
+                                if highest_topoheight.is_none_or(|v| topo > v) {
                                     highest_topoheight = Some(topo);
                                 }
     
