@@ -124,24 +124,16 @@ where
     let tips_len = tips.len();
     match tips_len {
         0 => Err(BlockchainError::ExpectedTips),
-        1 => {
-            let hash = tips.into_iter().next().unwrap();
-            let timestamp = provider.get_timestamp_for_block_hash(hash).await?;
-            Ok((hash, timestamp))
-        },
         _ => {
-            let mut timestamp = 0;
             let mut newest_tip = None;
             for hash in tips.into_iter() {
                 let tip_timestamp = provider.get_timestamp_for_block_hash(hash).await?;
-                if timestamp < tip_timestamp {
-                    timestamp = tip_timestamp;
-                    newest_tip = Some(hash);
-                
+                if newest_tip.is_none_or(|(_, v)| v < tip_timestamp) {
+                    newest_tip = Some((hash, tip_timestamp));
                 }
             }
 
-            Ok((newest_tip.ok_or(BlockchainError::ExpectedTips)?, timestamp))
+            newest_tip.ok_or(BlockchainError::ExpectedTips)
         }
     }
 }
