@@ -132,14 +132,20 @@ pub(super) async fn pre_verify_tx<S: Storage>(storage: &S, tx: &Transaction, sta
     }
 
     if block_version >= BlockVersion::V4 {
-        let block_height = storage.get_height_for_block_hash(&reference.hash).await?;
-        if base_height < block_height
-            && !is_referencing_previous_output(storage, tx, &reference, topoheight).await?
-            && is_miner_until_base_height(storage, tx.get_source(), base_height, &reference.hash).await?
-        {
-            // We are in the unstable height, we must ensure that we are not referencing an unstable block
-            debug!("Invalid reference: block height {} is higher than stable height {}", block_height, base_height);
-            return Err(BlockchainError::InvalidReferenceBlockHeight(block_height, base_height));
+        if storage.has_block_with_hash(&reference.hash).await? {
+            let block_height = storage.get_height_for_block_hash(&reference.hash).await?;
+            if base_height < block_height
+                && !is_referencing_previous_output(storage, tx, &reference, topoheight).await?
+                && is_miner_until_base_height(storage, tx.get_source(), base_height, &reference.hash).await?
+            {
+                // We are in the unstable height, we must ensure that we are not referencing an unstable block
+                debug!("Invalid reference: block height {} is higher than stable height {}", block_height, base_height);
+                return Err(BlockchainError::InvalidReferenceBlockHeight(block_height, base_height));
+            }
+        } else {
+            // if we don't have the requested block, thats fine because that means its not in our current unstable height
+            // We only prune blocks below stable height
+            debug!("block reference hash {} not found for transaction", reference.hash);
         }
     }
 
