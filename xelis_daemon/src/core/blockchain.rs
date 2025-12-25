@@ -2535,7 +2535,7 @@ impl<S: Storage> Blockchain<S> {
         if let Some(keep_only) = self.auto_prune_keep_n_blocks.filter(|_| chain_topoheight_extended) {
             // check that the topoheight is greater than the safety limit
             // and that we can prune the chain using the config while respecting the safety limit
-            if current_topoheight % keep_only == 0 && current_topoheight - keep_only > 0 {
+            if current_topoheight > keep_only && current_topoheight % keep_only == 0 && current_topoheight - keep_only > 0 {
                 info!("Auto pruning chain until topoheight {} (keep only {} blocks)", current_topoheight - keep_only, keep_only);
                 let start = Instant::now();
                 if let Err(e) = self.prune_until_topoheight_for_storage(current_topoheight - keep_only, &mut *storage).await {

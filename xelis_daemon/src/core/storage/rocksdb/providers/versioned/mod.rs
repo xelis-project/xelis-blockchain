@@ -89,7 +89,7 @@ impl RocksStorage {
         self.delete_versioned_below_topoheight(column_pointer, column_versioned, topoheight, keep_last, |k, v| Ok((RawBytes::from_bytes(&k)?, v)))
     }
 
-    pub fn delete_versioned_below_topoheight<V: Serializer, K: Serializer>(
+    pub fn delete_versioned_below_topoheight<K: Serializer, V: Serializer>(
         &mut self,
         column_pointer: Column,
         column_versioned: Column,
@@ -126,7 +126,7 @@ impl RocksStorage {
                         trace!("deleting versioned data at topoheight {}", prev_topo);
                         Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), column_versioned, &versioned_key)?;
                     } else if prev_topo < topoheight {
-                        trace!("Patching versioned data at topoheight {}", topoheight);
+                        trace!("Patching versioned data at topoheight {}", prev_topo);
                         patched = true;
 
                         let mut data: Versioned<RawBytes> = self.load_from_disk(column_versioned, &versioned_key)?;
