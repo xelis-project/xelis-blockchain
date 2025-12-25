@@ -48,6 +48,12 @@ impl<'a> Reader<'a> {
         self.bytes
     }
 
+    pub fn read_bytes_left(&mut self) -> &[u8] {
+        let tmp = self.total;
+        self.total = self.bytes.len();
+        &self.bytes[tmp..]
+    }
+
     pub fn context_mut(&mut self) -> &mut Context {
         &mut self.context
     }

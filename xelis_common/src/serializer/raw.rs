@@ -20,7 +20,7 @@ impl Serializer for RawBytes {
     }
 
     fn read(reader: &mut Reader) -> Result<Self, super::ReaderError> {
-        let bytes = reader.bytes();
+        let bytes = reader.read_bytes_left();
         Ok(Self(bytes.to_vec()))
     }
 
