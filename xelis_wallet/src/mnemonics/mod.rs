@@ -39,6 +39,8 @@ pub enum MnemonicsError {
     InvalidLanguageIndex,
     #[error("Invalid language")]
     InvalidLanguage,
+    #[error("Unknown word: {0} at position {1}")]
+    UnknownWord(String, usize),
     #[error("Invalid key size")]
     InvalidKeySize,
     #[error("Invalid key from bytes")]
@@ -115,9 +117,13 @@ fn find_indices(words: &[&str]) -> Result<Option<(Vec<usize>, usize)>, Mnemonics
             let trimmed = word.trim().to_lowercase();
             if let Some(index) = language.get_words().iter().position(|v| v.to_lowercase() == trimmed) {
                 indices.push(index);
-            } else {
-                // incorrect language for this word, try the next one
+            } else if indices.is_empty() {
+                // incorrect language, try next one
                 continue 'main;
+            } else {
+                // We have found some indices, but one word is invalid
+                // report it
+                return Err(MnemonicsError::UnknownWord(word.to_string(), indices.len()));
             }
         }
 
