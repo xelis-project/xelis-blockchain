@@ -18,8 +18,12 @@ pub enum BlockVersion {
     V2 = 2,
     // Smart Contracts
     V3 = 3,
+    // Fix DAG corruption
     V4 = 4,
+    // TX Base Fee in DAG
     V5 = 5,
+    // DAG Improvements
+    V6,
 }
 
 impl BlockVersion {
@@ -28,7 +32,10 @@ impl BlockVersion {
         match self {
             BlockVersion::V0 | BlockVersion::V1 => matches!(tx_version, TxVersion::V0),
             BlockVersion::V2 => matches!(tx_version, TxVersion::V1),
-            BlockVersion::V3 | BlockVersion::V4 | BlockVersion::V5 => matches!(tx_version, TxVersion::V2),
+            BlockVersion::V3
+            | BlockVersion::V4
+            | BlockVersion::V5
+            | BlockVersion::V6 => matches!(tx_version, TxVersion::V2),
         }
     }
 
@@ -37,7 +44,10 @@ impl BlockVersion {
         match self {
             BlockVersion::V0 | BlockVersion::V1 => TxVersion::V0,
             BlockVersion::V2 => TxVersion::V1,
-            BlockVersion::V3 | BlockVersion::V4 | BlockVersion::V5 => TxVersion::V2,
+            BlockVersion::V3
+            | BlockVersion::V4
+            | BlockVersion::V5
+            | BlockVersion::V6 => TxVersion::V2,
         }
     }
 }
@@ -53,6 +63,7 @@ impl TryFrom<u8> for BlockVersion {
             3 => Ok(BlockVersion::V3),
             4 => Ok(BlockVersion::V4),
             5 => Ok(BlockVersion::V5),
+            6 => Ok(BlockVersion::V6),
             _ => Err(()),
         }
     }
@@ -60,18 +71,13 @@ impl TryFrom<u8> for BlockVersion {
 
 impl Serializer for BlockVersion {
     fn write(&self, writer: &mut Writer) {
-        match self {
-            BlockVersion::V0 => writer.write_u8(0),
-            BlockVersion::V1 => writer.write_u8(1),
-            BlockVersion::V2 => writer.write_u8(2),
-            BlockVersion::V3 => writer.write_u8(3),
-            BlockVersion::V4 => writer.write_u8(4),
-            BlockVersion::V5 => writer.write_u8(5),
-        }
+        writer.write_u8(*self as u8);
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError>
-        where Self: Sized {
+    where
+        Self: Sized
+    {
         let id = reader.read_u8()?;
         Self::try_from(id).map_err(|_| ReaderError::InvalidValue)
     }
@@ -90,6 +96,7 @@ impl fmt::Display for BlockVersion {
             BlockVersion::V3 => write!(f, "V3"),
             BlockVersion::V4 => write!(f, "V4"),
             BlockVersion::V5 => write!(f, "V5"),
+            BlockVersion::V6 => write!(f, "V6"),
         }
     }
 }
@@ -105,7 +112,8 @@ impl<'de> serde::Deserialize<'de> for BlockVersion {
     fn deserialize<D>(deserializer: D) -> Result<BlockVersion, D::Error>
         where D: serde::Deserializer<'de> {
         let value = u8::deserialize(deserializer)?;
-        BlockVersion::try_from(value).map_err(|_| serde::de::Error::custom("Invalid value for BlockVersion"))
+        BlockVersion::try_from(value)
+            .map_err(|_| serde::de::Error::custom("Invalid value for BlockVersion"))
     }
 }
 
