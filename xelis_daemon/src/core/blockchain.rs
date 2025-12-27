@@ -228,6 +228,8 @@ pub struct Blockchain<S: Storage> {
     disable_zkp_cache: bool,
     // Max concurrency allowed for general tasks
     concurrency: usize,
+    // Cache for mining block header templates
+    mining_cache: RwLock<Option<BlockHeader>>,
 }
 
 impl<S: Storage> Blockchain<S> {
@@ -310,7 +312,8 @@ impl<S: Storage> Blockchain<S> {
             txs_verification_threads_count: config.txs_verification_threads_count,
             flush_db_every_n_blocks: config.flush_db_every_n_blocks,
             disable_zkp_cache: config.disable_zkp_cache,
-            concurrency: config.concurrency
+            concurrency: config.concurrency,
+            mining_cache: RwLock::new(None),
         };
 
         // include genesis block
@@ -1259,7 +1262,19 @@ impl<S: Storage> Blockchain<S> {
         trace!("get block header template for storage");
         let start = Instant::now();
 
-        let extra_nonce: [u8; EXTRA_NONCE_SIZE] = rand::thread_rng().gen::<[u8; EXTRA_NONCE_SIZE]>(); // generate random bytes
+         // generate random bytes
+        let extra_nonce: [u8; EXTRA_NONCE_SIZE] = rand::thread_rng().gen::<[u8; EXTRA_NONCE_SIZE]>();
+
+        let mut lock = self.mining_cache.write().await;
+        if let Some(mut cached_template) = lock.as_ref().cloned() {
+            // Randomize the extra nonce
+            // to keep the same behavior
+            cached_template.extra_nonce = extra_nonce;
+            cached_template.miner = address;
+            cached_template.timestamp = get_current_time_in_millis();
+
+            return Ok(cached_template);
+        }
 
         let chain_cache = storage.chain_cache().await;
         let tips_set = chain_cache.tips.clone();
@@ -1278,12 +1293,12 @@ impl<S: Storage> Blockchain<S> {
             for hash in tips {
                 if best_tip != hash {
                     if !blockdag::validate_tips(storage, &best_tip, &hash).await? {
-                        warn!("Tip {} is invalid, not selecting it because difficulty can't be less than 91% of {}", hash, best_tip);
+                        debug!("Tip {} is invalid, not selecting it because difficulty can't be less than 91% of {}", hash, best_tip);
                         continue;
                     }
 
                     if !blockdag::is_near_enough_from_main_chain(storage, &hash, block_height_by_tips, version_at_height).await? {
-                        warn!("Tip {} is not selected for mining: too far from mainchain at height: {}", hash, current_height);
+                        debug!("Tip {} is not selected for mining: too far from mainchain at height: {}", hash, current_height);
                         continue;
                     }
 
@@ -1291,7 +1306,7 @@ impl<S: Storage> Blockchain<S> {
                     let tip_height = storage.get_height_for_block_hash(&hash).await?;
                     let height_diff = block_height_by_tips.saturating_sub(tip_height);
                     if height_diff > MAX_TIP_HEIGHT_DIFFERENCE {
-                        warn!("Tip {} has a height difference too big ({} > {})", hash, height_diff, MAX_TIP_HEIGHT_DIFFERENCE);
+                        debug!("Tip {} has a height difference too big ({} > {})", hash, height_diff, MAX_TIP_HEIGHT_DIFFERENCE);
                         continue;
                     }
                 }
@@ -1341,6 +1356,8 @@ impl<S: Storage> Blockchain<S> {
         let block = BlockHeader::new(get_version_at_height(self.get_network(), height), height, timestamp, sorted_tips, extra_nonce, address, IndexSet::new());
 
         histogram!("xelis_block_header_template_ms").record(start.elapsed().as_millis() as f64);
+
+        lock.replace(block.clone());
 
         Ok(block)
     }
@@ -2602,6 +2619,11 @@ impl<S: Storage> Blockchain<S> {
             }
 
             gauge!("xelis_block_difficulty").set(difficulty.as_u64().unwrap_or(0) as f64);
+
+            let mut lock = self.mining_cache.write().await;
+            if lock.take().is_some() {
+                debug!("Clearing mining cache due to chain change");
+            }
         }
 
         // Check if the event is tracked
