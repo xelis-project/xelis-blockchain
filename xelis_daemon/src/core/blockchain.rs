@@ -2069,17 +2069,22 @@ impl<S: Storage> Blockchain<S> {
         let mut tips = storage.get_tips().await?;
         // TODO: best would be to not clone
         tips.insert(block_hash.as_ref().clone());
+
+        // remove block tips that are no longer tips
         for hash in block.get_tips() {
             tips.remove(hash);
         }
+
         debug!("New tips: {}", tips.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(","));
 
-        let (base_hash, base_height) = blockdag::find_common_base(&*storage, &tips, version).await?;
-        debug!("New base hash: {}, height: {}", base_hash, base_height);
-        let best_tip = blockdag::find_best_tip(&*storage, &tips, &base_hash, base_height).await?;
+        let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(&*storage, tips.iter()).await?;
         debug!("Best tip selected: {}", best_tip);
 
+        // Find a common base across all our TIPS in the chain
+        let (base_hash, base_height) = blockdag::find_common_base(&*storage, &tips, version).await?;
         let base_topo_height = storage.get_topo_height_for_hash(&base_hash).await?;
+        debug!("New base hash: {}, height: {}, topo height: {}", base_hash, base_height, base_topo_height);
+
         // generate a full order until base_topo_height
         let mut full_order = blockdag::generate_full_order(&*storage, &best_tip, &base_hash, base_height, base_topo_height).await?;
         debug!("Generated full order size: {}, with base ({}) topo height: {}", full_order.len(), base_hash, base_topo_height);

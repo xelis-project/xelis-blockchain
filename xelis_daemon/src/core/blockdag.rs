@@ -658,25 +658,6 @@ where
     Ok((set, score))
 }
 
-// find the best tip (highest cumulative difficulty)
-// We get their cumulative difficulty and sort them then take the first one
-pub async fn find_best_tip<'a, P: DifficultyProvider + DagOrderProvider + CacheProvider>(provider: &P, tips: &'a HashSet<Hash>, base: &Hash, base_height: u64) -> Result<&'a Hash, BlockchainError> {
-    if tips.len() == 0 {
-        return Err(BlockchainError::ExpectedTips)
-    }
-
-    let mut scores = Vec::with_capacity(tips.len());
-    for hash in tips {
-        let block_tips = provider.get_past_blocks_for_block_hash(hash).await?;
-        let (_, cumulative_difficulty) = find_tip_work_score(provider, hash, block_tips.iter(), None, base, base_height).await?;
-        scores.push((hash, cumulative_difficulty));
-    }
-
-    sort_descending_by_cumulative_difficulty(&mut scores);
-    let (best_tip, _) = scores[0];
-    Ok(best_tip)
-}
-
 // this function generate a DAG paritial order into a full order using recursive calls.
 // hash represents the best tip (biggest cumulative difficulty)
 // base represents the block hash of a block already ordered and in stable height
