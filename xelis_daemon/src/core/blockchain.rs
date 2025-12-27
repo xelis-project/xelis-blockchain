@@ -941,10 +941,10 @@ impl<S: Storage> Blockchain<S> {
 
         // Get the minimum difficulty configured
         let minimum_difficulty = difficulty::get_minimum_difficulty(self.get_network(), version);
+        let solve_time = (parent_newest_tip_timestamp - newest_tip_timestamp).max(1);
 
         let (difficulty, p_new) = difficulty::calculate_difficulty(
-            parent_newest_tip_timestamp,
-            newest_tip_timestamp,
+            solve_time,
             biggest_difficulty,
             p,
             minimum_difficulty,

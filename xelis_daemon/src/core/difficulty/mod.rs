@@ -57,9 +57,7 @@ fn kalman_filter(z: VarUint, x_est_prev: VarUint, p_prev: VarUint, shift: u64, l
 // Calculate the required difficulty for the next block based on the solve time of the previous block
 // We are using a Kalman filter to estimate the hashrate and adjust the difficulty
 // This function will determine which algorithm to use based on the version
-pub fn calculate_difficulty(parent_timestamp: TimestampMillis, timestamp: TimestampMillis, previous_difficulty: Difficulty, p: VarUint, minimum_difficulty: Difficulty, version: BlockVersion) -> (Difficulty, VarUint) {
-    let solve_time = (timestamp - parent_timestamp).max(1);
-
+pub fn calculate_difficulty(solve_time: TimestampMillis, previous_difficulty: Difficulty, p: VarUint, minimum_difficulty: Difficulty, version: BlockVersion) -> (Difficulty, VarUint) {
     let block_time_target = get_block_time_target_for_version(version);
     match version {
         BlockVersion::V0 => v1::calculate_difficulty(solve_time, previous_difficulty, p, minimum_difficulty, block_time_target),
