@@ -133,6 +133,7 @@ use std::{
         HashSet,
         VecDeque
     },
+    iter,
     net::SocketAddr,
     sync::Arc,
     time::{Duration, Instant}
@@ -2502,29 +2503,40 @@ impl<S: Storage> Blockchain<S> {
             histogram!("xelis_dag_ordering_ms").record(start.elapsed().as_millis() as f64);
         }
 
-        let best_height = storage.get_height_for_block_hash(best_tip).await?;
         let mut new_tips = Vec::new();
         let version_at_height = hard_fork::get_version_at_height(self.get_network(), current_height);
         for hash in tips {
-            if blockdag::is_near_enough_from_main_chain(&*storage, &hash, current_height, version_at_height).await? {
-                trace!("Adding {} as new tips", hash);
-                new_tips.push(hash);
-            } else {
-                info!("Rusty TIP declared stale {} with best height: {}", hash, best_height);
+            if !blockdag::is_near_enough_from_main_chain(&*storage, &hash, current_height, version_at_height).await? {
+                debug!("Tip {} is too far from main chain at height {}, skipping...", hash, current_height);
+                continue;
             }
+
+            trace!("Adding {} as new tips", hash);
+            new_tips.push(hash);
         }
 
         tips = HashSet::new();
         debug!("find best tip by cumulative difficulty");
         let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(&*storage, new_tips.iter()).await?.clone();
+        let expected_next_height = blockdag::calculate_height_at_tips(&*storage, iter::once(&best_tip)).await?;
+        debug!("Best tip is {}, expected next height is {}", best_tip, expected_next_height);
+
         for hash in new_tips {
             if best_tip != hash {
                 if !blockdag::validate_tips(&*storage, &best_tip, &hash).await? {
-                    info!("Rusty TIP {} declared stale", hash);
-                } else {
-                    debug!("Tip {} is valid, adding to final Tips list", hash);
-                    tips.insert(hash);
+                    debug!("Tip {} is not compatible with best tip {}, declaring it stale", hash, best_tip);
+                    continue;
                 }
+
+                let height = storage.get_height_for_block_hash(&hash).await?;
+                let height_diff = expected_next_height.saturating_sub(height);
+                if height_diff > MAX_TIP_HEIGHT_DIFFERENCE {
+                    debug!("Tip {} has a height difference too big ({} > {}), declaring it stale", hash, height_diff, MAX_TIP_HEIGHT_DIFFERENCE);
+                    continue;
+                }
+
+                debug!("Tip {} is valid, adding to final Tips list", hash);
+                tips.insert(hash);
             }
         }
         tips.insert(best_tip);
