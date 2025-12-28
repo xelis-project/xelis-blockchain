@@ -13,7 +13,7 @@ use xelis_common::{
     block::{BlockVersion, TopoHeight},
     config::XELIS_ASSET,
     crypto::{Hash, PublicKey},
-    transaction::{Reference, Transaction},
+    transaction::{Reference, Transaction, TransactionType},
     utils::format_xelis
 };
 
@@ -122,6 +122,13 @@ pub(super) async fn pre_verify_tx<S: Storage>(storage: &S, tx: &Transaction, sta
     if !hard_fork::is_tx_version_allowed_in_block_version(tx.get_version(), block_version) {
         debug!("Invalid version {} in block {}", tx.get_version(), block_version);
         return Err(BlockchainError::InvalidTxVersion);
+    }
+
+    if let TransactionType::DeployContract(payload) = tx.get_data() {
+        if !hard_fork::is_contract_version_allowed_in_block_version(payload.contract.version, block_version) {
+            debug!("Invalid contract version {} in block {}", payload.contract.version, block_version);
+            return Err(BlockchainError::InvalidContractVersion);
+        }
     }
 
     let reference = tx.get_reference();
