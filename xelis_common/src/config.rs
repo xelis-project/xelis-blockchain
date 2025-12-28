@@ -1,3 +1,4 @@
+use std::sync::Once;
 use crate::{
     contract::register_opaque_types,
     crypto::Hash,
@@ -106,12 +107,15 @@ pub const MAX_BLOCK_SIZE: usize = (BYTES_PER_KB * BYTES_PER_KB) + (256 * BYTES_P
 // BlockDAG rules
 pub const TIPS_LIMIT: usize = 3; // maximum 3 TIPS per block
 
+// Lazily ensure global initialization occured
+static INIT: Once = Once::new();
+
 // Initialize the configuration
 pub fn init() {
-    // register the opaque types
-    register_opaque_types();
+    INIT.call_once(|| {
+        register_opaque_types();
+    });
 }
-
 
 // Static checks
 static_assert!(MAX_TRANSACTION_SIZE <= MAX_BLOCK_SIZE, "Max transaction size must be less than or equal to max block size");
