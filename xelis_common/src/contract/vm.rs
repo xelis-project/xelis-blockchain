@@ -22,7 +22,8 @@ use crate::{
         ContractProviderWrapper,
         ContractVersion,
         InterContractPermission,
-        Source
+        Source,
+        data_size_in_bytes
     },
     crypto::{
         Hash,
@@ -37,6 +38,7 @@ use crate::{
 
 // Actual constructor hook id
 pub const HOOK_CONSTRUCTOR_ID: u8 = 0;
+pub const MAX_ENTRY_SIZE_BYTES: usize = 256;
 
 #[derive(Debug)]
 pub enum InvokeContract {
@@ -211,7 +213,8 @@ pub(crate) async fn run_virtual_machine<'a, P: ContractProvider>(
                 None => {
                     if contract_environment.version >= ContractVersion::V1 {
                         // We must verify that it is serializable (json & binary)
-                        if !res.is_json_serializable() || !res.is_serializable() {
+                        // and not too big (> MAX_ENTRY_SIZE_BYTES)
+                        if !res.is_json_serializable() || !res.is_serializable() || data_size_in_bytes(&res) > MAX_ENTRY_SIZE_BYTES {
                             let level = if debug_mode {
                                 Level::Error
                             } else {
@@ -220,7 +223,7 @@ pub(crate) async fn run_virtual_machine<'a, P: ContractProvider>(
                             log!(level, "Invoke contract {} returned a non serializable value: {:#}", contract, res);
                             return Err(VMError::InvalidReturnValue);
                         }
-    
+
                         ExitValue::Payload(res)
                     } else {
                         ExitValue::None
