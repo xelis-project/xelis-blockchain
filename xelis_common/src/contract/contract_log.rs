@@ -1,3 +1,5 @@
+use xelis_vm::ValueCell;
+
 use crate::{
     contract::ScheduledExecutionKindLog,
     crypto::{Hash, PublicKey},
@@ -73,6 +75,8 @@ pub enum ContractLog {
         // at which topoheight it will be called
         kind: ScheduledExecutionKindLog,
     },
+    // Payload returned on contract exit
+    ExitPayload(ValueCell),
 }
 
 impl Serializer for ContractLog {
@@ -130,6 +134,10 @@ impl Serializer for ContractLog {
                 contract.write(writer);
                 hash.write(writer);
                 kind.write(writer);
+            },
+            ContractLog::ExitPayload(payload) => {
+                writer.write_u8(10);
+                payload.write(writer);
             }
         }
     }
@@ -182,6 +190,10 @@ impl Serializer for ContractLog {
                 hash: Hash::read(reader)?,
                 kind: ScheduledExecutionKindLog::read(reader)?,
             },
+            10 => {
+                let payload = ValueCell::read(reader)?;
+                ContractLog::ExitPayload(payload)
+            },
             _ => return Err(ReaderError::InvalidValue)
         })
     }
@@ -198,6 +210,7 @@ impl Serializer for ContractLog {
             ContractLog::RefundDeposits => 0,
             ContractLog::GasInjection { contract, amount } => contract.size() + amount.size(),
             ContractLog::ScheduledExecution { contract, hash, kind } => contract.size() + hash.size() + kind.size(),
+            ContractLog::ExitPayload(payload) => payload.size(),
         }
     }
 }

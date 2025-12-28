@@ -12,6 +12,7 @@ use crate::serializer::*;
 pub enum ContractVersion {
     #[default]
     V0,
+    V1,
 }
 
 impl FromStr for ContractVersion {
@@ -36,6 +37,7 @@ impl fmt::Display for ContractVersion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ContractVersion::V0 => write!(f, "v0"),
+            ContractVersion::V1 => write!(f, "v1"),
         }
     }
 }
@@ -48,6 +50,7 @@ impl Serializer for ContractVersion {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         match reader.read_u8()? {
             0 => Ok(ContractVersion::V0),
+            1 => Ok(ContractVersion::V1),
             _ => Err(ReaderError::InvalidValue),
         }
     }
@@ -75,5 +78,15 @@ impl Serializer for ContractModule {
 
     fn size(&self) -> usize {
         self.version.size() + self.module.size()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ordering() {
+        assert!(ContractVersion::V0 < ContractVersion::V1);
     }
 }

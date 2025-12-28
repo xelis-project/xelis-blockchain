@@ -8,6 +8,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use bulletproofs::RangeProof;
+use xelis_vm::ValueCell;
 use crate::{
     account::Nonce,
     contract::{ContractLog, ScheduledExecutionKindLog},
@@ -287,7 +288,10 @@ pub enum RPCContractLog<'a> {
         contract: Cow<'a, Hash>,
         hash: Cow<'a, Hash>,
         kind: Cow<'a, ScheduledExecutionKindLog>,
-    }
+    },
+    ExitPayload {
+        payload: Cow<'a, ValueCell>,
+    },
 }
 
 impl<'a> RPCContractLog<'a> {
@@ -328,6 +332,7 @@ impl<'a> RPCContractLog<'a> {
                 hash: Cow::Owned(hash),
                 kind: Cow::Owned(kind),
             },
+            ContractLog::ExitPayload(payload) => RPCContractLog::ExitPayload { payload: Cow::Owned(payload) },
         }
     }
 
@@ -368,6 +373,7 @@ impl<'a> RPCContractLog<'a> {
                 hash: Cow::Borrowed(hash),
                 kind: Cow::Borrowed(kind)
             },
+            ContractLog::ExitPayload(payload) => RPCContractLog::ExitPayload { payload: Cow::Borrowed(payload) },
         }
     }
 }
@@ -411,7 +417,8 @@ impl<'a> From<RPCContractLog<'a>> for ContractLog {
                 contract: contract.into_owned(),
                 hash: hash.into_owned(),
                 kind: kind.into_owned(),
-            }
+            },
+            RPCContractLog::ExitPayload { payload } => ContractLog::ExitPayload(payload.into_owned()),
         }
     }
 }

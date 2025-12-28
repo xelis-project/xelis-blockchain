@@ -140,6 +140,8 @@ pub struct ContractEnvironment<'a, P: ContractProvider> {
     pub environment: &'a Environment<ContractMetadata>,
     // Module to execute
     pub module: &'a Module,
+    // Version of the contract
+    pub version: ContractVersion,
     // Provider for the contract
     pub provider: &'a P,
 }

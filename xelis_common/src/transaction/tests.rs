@@ -962,6 +962,7 @@ impl<'a> BlockchainContractState<'a, MockProvider, ()> for MockChainState {
         let environment = ContractEnvironment {
             environment: &self.env.environment(),
             module: &contract_module.module,
+            version: contract_module.version,
             provider: &self.provider,
         };
 
