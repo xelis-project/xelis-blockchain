@@ -964,7 +964,7 @@ impl<S: Storage> Blockchain<S> {
             let now_timestamp = provider.get_timestamp_for_block_hash(&first).await?;
             let count_timestamp = provider.get_timestamp_for_block_hash(last).await?;
 
-            let time_span = count_timestamp - now_timestamp;
+            let time_span = count_timestamp.saturating_sub(now_timestamp);
             let mut count = DAA_WINDOW;
             if last_topoheight < DAA_WINDOW {
                 count = last_topoheight;
@@ -997,7 +997,7 @@ impl<S: Storage> Blockchain<S> {
         );
 
         let elapsed = start.elapsed();
-        debug!("Difficulty calculated in {:?}", elapsed);
+        info!("Difficulty calculated in {:?}", elapsed);
         histogram!("xelis_difficulty_time_µs").record(elapsed.as_micros() as f64);
 
         Ok((difficulty, p_new))
