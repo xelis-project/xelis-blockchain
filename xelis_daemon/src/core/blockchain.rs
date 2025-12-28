@@ -71,7 +71,7 @@ use xelis_common::{
     utils::{
         calculate_tx_fee_extra,
         calculate_tx_fee_per_kb,
-        format_xelis
+        format_xelis,
     },
     tokio::{
         spawn_task,
@@ -91,7 +91,7 @@ use crate::{
         MILLIS_PER_SECOND, SIDE_BLOCK_REWARD_MAX_BLOCKS, PRUNE_SAFETY_LIMIT,
         SIDE_BLOCK_REWARD_PERCENT, SIDE_BLOCK_REWARD_MIN_PERCENT,
         TIMESTAMP_IN_FUTURE_LIMIT, CHAIN_AVERAGE_BLOCK_TIME_N,
-        MAX_TIP_HEIGHT_DIFFERENCE,
+        MAX_TIP_HEIGHT_DIFFERENCE, DAA_WINDOW
     },
     core::{
         hard_fork,
@@ -634,7 +634,7 @@ impl<S: Storage> Blockchain<S> {
             } else {
                 warn!("No genesis block found!");
                 info!("Generating a new genesis block...");
-                let header = BlockHeader::new(BlockVersion::V0, 0, get_current_time_in_millis(), IndexSet::new(), [0u8; EXTRA_NONCE_SIZE], DEV_PUBLIC_KEY.clone(), IndexSet::new());
+                let header = BlockHeader::new(get_version_at_height(&self.network, 0), 0, get_current_time_in_millis(), IndexSet::new(), [0u8; EXTRA_NONCE_SIZE], DEV_PUBLIC_KEY.clone(), IndexSet::new());
                 let block = Block::new(header, Vec::new());
                 let block_hash = block.hash();
                 info!("Genesis generated: {} with {:?} {}", block.to_hex(), block_hash, block_hash);
@@ -896,11 +896,11 @@ impl<S: Storage> Blockchain<S> {
     // We take the difficulty from the biggest tip, but compute the solve time from the newest tips
     pub async fn get_difficulty_at_tips<'a, P, I>(&self, provider: &P, tips: I) -> Result<(Difficulty, VarUint), BlockchainError>
     where
-        P: DifficultyProvider + DagOrderProvider + PrunedTopoheightProvider,
-        I: IntoIterator<Item = &'a Hash> + ExactSizeIterator + Clone,
-        I::IntoIter: ExactSizeIterator
+        P: DifficultyProvider + DagOrderProvider + PrunedTopoheightProvider + BlocksAtHeightProvider + CacheProvider,
+        I: Iterator<Item = &'a Hash> + ExactSizeIterator + Clone,
     {
         trace!("get difficulty at tips");
+        let start = Instant::now();
 
         // Get the height at the tips
         let height = blockdag::calculate_height_at_tips(provider, tips.clone().into_iter()).await?;
@@ -914,7 +914,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // if simulator is enabled or we are too low in height, don't calculate difficulty
-        if height <= 1 || self.is_simulator_enabled() || *self.get_network() == Network::Devnet {
+        if height <= 1 || self.is_simulator_enabled() {
             let difficulty = difficulty::get_minimum_difficulty(self.get_network(), version);
             return Ok((difficulty, difficulty::get_covariance_p(version)))
         }
@@ -926,30 +926,79 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
-        // Search the highest difficulty available
         let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(provider, tips.clone().into_iter()).await?;
         let biggest_difficulty = provider.get_difficulty_for_block_hash(best_tip).await?;
-
-        // Search the newest tip available to determine the real solve time
-        let (_, newest_tip_timestamp) = blockdag::find_newest_tip_by_timestamp(provider, tips.clone().into_iter()).await?;
-
-        // Find the newest tips parent timestamp
-        let parent_tips = provider.get_past_blocks_for_block_hash(best_tip).await?;
-        let (_, parent_newest_tip_timestamp) = blockdag::find_newest_tip_by_timestamp(provider, parent_tips.iter()).await?;
-
         let p = provider.get_estimated_covariance_for_block_hash(best_tip).await?;
 
         // Get the minimum difficulty configured
         let minimum_difficulty = difficulty::get_minimum_difficulty(self.get_network(), version);
-        let solve_time = (parent_newest_tip_timestamp - newest_tip_timestamp).max(1);
+
+        let solve_time = if version >= BlockVersion::V6 {
+            let (base, base_height) = blockdag::find_common_base(provider, tips, version).await?;
+            let base_topo_height = provider.get_topo_height_for_hash(&base).await?;
+
+            let order = blockdag::generate_full_order(provider, best_tip, &base, base_height, base_topo_height).await?;
+            assert_eq!(order.first(), Some(&base));
+
+            let order_len = order.len() as u64;
+            let last_topoheight = base_topo_height + order_len;
+
+            // Take the newest 50 blocks from the order
+            let (first, last) = if order_len < DAA_WINDOW {
+                // Extend backwards via topoheight
+                let diff = DAA_WINDOW - order_len;
+                let first_topoheight = base_topo_height.saturating_sub(diff);
+                let first = Cow::Owned(provider.get_hash_at_topo_height(first_topoheight).await?);
+                let last = order.last().ok_or(BlockchainError::NotEnoughBlocks)?;
+                (first, last)
+            } else {
+                // Take last 50 blocks: from index (len - 50) to (len - 1)
+                let start_idx = order_len as usize - DAA_WINDOW as usize;
+                let first = order.get_index(start_idx)
+                    .map(Cow::Borrowed)
+                    .ok_or(BlockchainError::NotEnoughBlocks)?;
+                let last = order.last().ok_or(BlockchainError::NotEnoughBlocks)?;
+                (first, last)
+            };
+
+            let now_timestamp = provider.get_timestamp_for_block_hash(&first).await?;
+            let count_timestamp = provider.get_timestamp_for_block_hash(last).await?;
+
+            let time_span = count_timestamp - now_timestamp;
+            let mut count = DAA_WINDOW;
+            if last_topoheight < DAA_WINDOW {
+                count = last_topoheight;
+            }
+
+            let solve_time = time_span / count;
+
+            info!("Calculated solve time is {} between now {} and past {} (count: {})", solve_time, last, first, count);
+
+            solve_time
+        } else {
+            // Search the highest difficulty available
+
+            // Search the newest tip available to determine the real solve time
+            let (_, newest_tip_timestamp) = blockdag::find_newest_tip_by_timestamp(provider, tips.clone().into_iter()).await?;
+
+            // Find the newest tips parent timestamp
+            let parent_tips = provider.get_past_blocks_for_block_hash(best_tip).await?;
+            let (_, parent_newest_tip_timestamp) = blockdag::find_newest_tip_by_timestamp(provider, parent_tips.iter()).await?;
+
+            parent_newest_tip_timestamp - newest_tip_timestamp
+        };
 
         let (difficulty, p_new) = difficulty::calculate_difficulty(
-            solve_time,
+            solve_time.max(1),
             biggest_difficulty,
             p,
             minimum_difficulty,
             version
         );
+
+        let elapsed = start.elapsed();
+        debug!("Difficulty calculated in {:?}", elapsed);
+        histogram!("xelis_difficulty_time_µs").record(elapsed.as_micros() as f64);
 
         Ok((difficulty, p_new))
     }
@@ -969,9 +1018,8 @@ impl<S: Storage> Blockchain<S> {
     // if the difficulty is valid, returns it (prevent to re-compute it)
     pub async fn verify_proof_of_work<'a, P, I>(&self, provider: &P, hash: &Hash, tips: I) -> Result<(Difficulty, VarUint), BlockchainError>
     where
-        P: DifficultyProvider + DagOrderProvider + PrunedTopoheightProvider,
-        I: IntoIterator<Item = &'a Hash> + ExactSizeIterator + Clone,
-        I::IntoIter: ExactSizeIterator
+        P: DifficultyProvider + DagOrderProvider + PrunedTopoheightProvider + CacheProvider + BlocksAtHeightProvider,
+        I: Iterator<Item = &'a Hash> + ExactSizeIterator + Clone,
     {
         trace!("Verifying proof of work for block {}", hash);
         let (difficulty, p) = self.get_difficulty_at_tips(provider, tips).await?;
@@ -2785,7 +2833,8 @@ impl<S: Storage> Blockchain<S> {
         trace!("internal get block reward");
         let block_time_target = get_block_time_target_for_version(version);
         let mut block_reward = get_block_reward(past_supply, block_time_target);
-        if is_side_block {
+        // Starting version 6, side blocks have same reward as normal blocks
+        if is_side_block && version < BlockVersion::V6 {
             let side_block_percent = side_block_reward_percentage(side_blocks_count);
             trace!("side block reward: {}%", side_block_percent);
 

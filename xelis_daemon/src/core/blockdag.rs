@@ -180,32 +180,35 @@ where
         }
     }
 
-    // now lets check all blocks until STABLE_LIMIT height before the block
-    let stable_limit = get_stable_limit(block_version);
-    let stable_point = if block_height >= stable_limit {
-        block_height - stable_limit
-    } else {
-        stable_limit - block_height
-    };
-    let mut i = block_height.saturating_sub(1);
-    let mut pre_blocks = HashSet::new();
-    while i >= stable_point && i != 0 {
-        let blocks = provider.get_blocks_at_height(i).await?;
-        pre_blocks.extend(blocks);
-        i -= 1;
-    }
+    // Starting V6, we don't check the cumulative difficulty of previous blocks anymore
+    if block_version < BlockVersion::V6 {
+        // now lets check all blocks until STABLE_LIMIT height before the block
+        let sync_cumulative_difficulty = provider.get_cumulative_difficulty_for_block_hash(hash).await?;
 
-    let sync_block_cumulative_difficulty = provider.get_cumulative_difficulty_for_block_hash(hash).await?;
-    // if potential sync block has lower cumulative difficulty than one of past blocks, it is not a sync block
-    for pre_hash in pre_blocks {
-        // We compare only against block ordered otherwise we can have desync between node which could lead to fork
-        // This is rare event but can happen
-        if provider.is_block_topological_ordered(&pre_hash).await? {
-            let cumulative_difficulty = provider.get_cumulative_difficulty_for_block_hash(&pre_hash).await?;
-            if cumulative_difficulty >= sync_block_cumulative_difficulty {
-                debug!("Block {} at height {} is not a sync block, it has lower cumulative difficulty than block {} at height {}", hash, block_height, pre_hash, i);
-                return Ok(false)
+        let stable_limit = get_stable_limit(block_version);
+        let stable_point = if block_height >= stable_limit {
+            block_height - stable_limit
+        } else {
+            stable_limit - block_height
+        };
+        let mut i = block_height.saturating_sub(1);
+        while i >= stable_point && i != 0 {
+            let blocks_at_height = provider.get_blocks_at_height(i).await?;
+            for pre in blocks_at_height {
+                // compare only with ordered blocks
+                if provider.is_block_topological_ordered(&pre).await? {
+                    let cd = provider.get_cumulative_difficulty_for_block_hash(&pre).await?;
+                    if cd >= sync_cumulative_difficulty {
+                        debug!(
+                            "Block {} at height {} is not a sync block; {} at height {} has >= cumulative difficulty",
+                            hash, block_height, pre, i
+                        );
+                        return Ok(false);
+                    }
+                }
             }
+
+            i -= 1;
         }
     }
 
@@ -382,16 +385,16 @@ where
 pub async fn find_common_base<'a, P, I>(provider: &P, tips: I, block_version: BlockVersion) -> Result<(Hash, u64), BlockchainError>
 where
     P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider + CacheProvider,
-    I: IntoIterator<Item = &'a Hash> + Copy,
+    I: IntoIterator<Item = &'a Hash> + Clone,
 {
-    debug!("find common base for tips {}", tips.into_iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "));
+    debug!("find common base for tips {}", tips.clone().into_iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "));
     let chain_cache = provider.chain_cache().await;
 
     debug!("accessing common base cache");
     let mut cache = chain_cache.common_base_cache.lock().await;
     debug!("common base cache locked");
 
-    let combined_tips = get_combined_hash_for_tips(tips.into_iter());
+    let combined_tips = get_combined_hash_for_tips(tips.clone().into_iter());
     if let Some((hash, height)) = cache.get(&combined_tips) {
         debug!("Common base found in cache: {} at height {}", hash, height);
         return Ok((hash.clone(), *height))
@@ -399,7 +402,7 @@ where
 
     let mut best_height = 0;
     // first, we check the best (highest) height of all tips
-    for hash in tips.into_iter() {
+    for hash in tips.clone().into_iter() {
         let height = provider.get_height_for_block_hash(hash).await?;
         if height > best_height {
             best_height = height;

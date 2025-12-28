@@ -63,6 +63,9 @@ pub const PRUNE_SAFETY_LIMIT: u64 = 80;
 pub const STABLE_LIMIT: u64 = 8;
 // Maximum height difference allowed between a block and its tips
 pub const MAX_TIP_HEIGHT_DIFFERENCE: u64 = 8;
+// DAA window size
+// Number of blocks to consider for difficulty adjustment algorithm
+pub const DAA_WINDOW: u64 = 50;
 
 pub const fn get_stable_limit(version: BlockVersion) -> u64 {
     match version {
@@ -251,43 +254,13 @@ const HARD_FORKS: [HardFork; 6] = [
 ];
 
 // Testnet / Stagenet / Devnet hard forks
-const OTHERS_NETWORK_HARD_FORKS: [HardFork; 6] = [
+const OTHERS_NETWORK_HARD_FORKS: [HardFork; 1] = [
     HardFork {
         height: 0,
-        version: BlockVersion::V0,
+        version: BlockVersion::V6,
         changelog: "Initial version",
         version_requirement: None
     },
-    HardFork {
-        height: 5,
-        version: BlockVersion::V1,
-        changelog: "xelis-hash v2",
-        version_requirement: Some(">=1.13.0")
-    },
-    HardFork {
-        height: 10,
-        version: BlockVersion::V2,
-        changelog: "MultiSig, P2P",
-        version_requirement: Some(">=1.16.0")
-    },
-    HardFork {
-        height: 15,
-        version: BlockVersion::V3,
-        changelog: "Smart Contracts, xelis-hash v3, 5s block time",
-        version_requirement: Some(">=1.19.0")
-    },
-    HardFork {
-        height: 20,
-        version: BlockVersion::V4,
-        changelog: "Reference TX & BlockDAG improvements",
-        version_requirement: Some(">=1.20.0")
-    },
-    HardFork {
-        height: 25,
-        version: BlockVersion::V5,
-        changelog: "TX Base fee improvements",
-        version_requirement: Some(">=1.21.0")
-    }
 ];
 
 // Mainnet seed nodes
