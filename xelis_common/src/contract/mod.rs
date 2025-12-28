@@ -638,10 +638,10 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
             Some(hash_type.clone())
         );
         env.register_static_function(
-            "sha256",
+            "sha3",
             hash_type.clone(),
             vec![("input", Type::Bytes)],
-            FunctionHandler::Sync(sha256_fn),
+            FunctionHandler::Sync(sha3_fn),
             7500,
             Some(hash_type.clone())
         );
