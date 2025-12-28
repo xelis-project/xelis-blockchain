@@ -45,7 +45,7 @@ use xelis_common::{
 };
 use xelis_vm::Environment;
 use crate::core::{
-    blockchain::tx_kb_size_rounded,
+    blockchain::{ContractEnvironments, tx_kb_size_rounded},
     state::{chain_state::Account, verify_fee},
     error::BlockchainError,
     storage::{
@@ -554,24 +554,24 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
 
     async fn get_contract_environment_for<'c>(
         &'c mut self,
-        contract: Cow<'c, Hash>,
+        contract_hash: Cow<'c, Hash>,
         deposits: Option<&'c IndexMap<Hash, ContractDeposit>>,
         caller: ContractCaller<'c>,
         permission: Cow<'c, InterContractPermission>,
     ) -> Result<(ContractEnvironment<'c, S>, ContractChainState<'c>), BlockchainError> {
-        debug!("get contract environment for contract {} from caller {}", contract, caller.get_hash());
+        debug!("get contract environments for contract {} from caller {}", contract_hash, caller.get_hash());
 
         // Find the contract module in our cache
         // We don't use the function `get_contract_module_with_environment` because we need to return the mutable storage
-        let module = self.inner.contracts.get(&contract)
-            .ok_or_else(|| BlockchainError::ContractNotFound(contract.as_ref().clone()))
+        let contract = self.inner.contracts.get(&contract_hash)
+            .ok_or_else(|| BlockchainError::ContractNotFound(contract_hash.as_ref().clone()))
             .and_then(|(_, module)| module.as_ref()
                 .map(|m| m.as_ref())
-                .ok_or_else(|| BlockchainError::ContractModuleNotFound(contract.as_ref().clone()))
+                .ok_or_else(|| BlockchainError::ContractModuleNotFound(contract_hash.as_ref().clone()))
             )?;
 
         // Find the contract cache in our cache map
-        let mut cache = self.contract_manager.caches.get(&contract)
+        let mut cache = self.contract_manager.caches.get(&contract_hash)
             .cloned()
             .unwrap_or_default();
 
@@ -591,8 +591,8 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
                             }
                         },
                         Entry::Vacant(e) => {
-                            debug!("loading balance {} for contract {} at maximum topoheight {}", asset, contract, self.topoheight);
-                            let (mut state, balance) = self.storage.get_contract_balance_at_maximum_topoheight(&contract, asset, self.topoheight).await?
+                            debug!("loading balance {} for contract {} at maximum topoheight {}", asset, contract_hash, self.topoheight);
+                            let (mut state, balance) = self.storage.get_contract_balance_at_maximum_topoheight(&contract_hash, asset, self.topoheight).await?
                                 .map(|(topo, balance)| (VersionedState::FetchedAt(topo), balance.take()))
                                 .unwrap_or((VersionedState::New, 0));
     
@@ -614,8 +614,8 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
             mainnet,
             // We only provide the current contract cache available
             // others can be lazily added to it
-            caches: [(contract.as_ref().clone(), cache)].into_iter().collect(),
-            entry_contract: contract,
+            caches: [(contract_hash.as_ref().clone(), cache)].into_iter().collect(),
+            entry_contract: contract_hash,
             topoheight: self.inner.topoheight,
             block_hash: self.block_hash,
             block: self.block,
@@ -640,10 +640,13 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
             gas_fee_allowance: 0,
         };
 
+        let environment = self.environments.get(&contract.version)
+            .ok_or(BlockchainError::ContractEnvironmentNotFound(contract.version))?;
+
         let contract_environment = ContractEnvironment {
-            environment: self.inner.environment,
-            module: &module.module,
-            version: module.version,
+            environment,
+            module: &contract.module,
+            version: contract.version,
             provider: self.inner.storage,
         };
 
@@ -756,7 +759,7 @@ impl<'s, 'b, S: Storage> AsMut<ChainState<'s, 'b, S>> for ApplicableChainState<'
 impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
     pub fn new(
         storage: &'s S,
-        environment: &'s Environment<ContractMetadata>,
+        environments: &'s ContractEnvironments,
         stable_topoheight: TopoHeight,
         topoheight: TopoHeight,
         block_version: BlockVersion,
@@ -768,7 +771,7 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
         Self {
             inner: ChainState::with(
                 storage,
-                environment,
+                environments,
                 stable_topoheight,
                 topoheight,
                 block_version,

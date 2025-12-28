@@ -81,7 +81,7 @@ use xelis_common::{
         sync::{RwLock, Semaphore}
     },
     varuint::VarUint,
-    contract::{ContractMetadata, build_environment},
+    contract::{ContractMetadata, ContractVersion, build_environment},
 };
 use xelis_vm::Environment;
 use crate::{
@@ -188,6 +188,9 @@ impl PreVerifyBlock {
     }
 }
 
+// Contract environments map
+pub type ContractEnvironments = HashMap<ContractVersion, Environment<ContractMetadata>>;
+
 pub struct Blockchain<S: Storage> {
     // mempool to retrieve/add all txs
     mempool: RwLock<Mempool>,
@@ -200,7 +203,7 @@ pub struct Blockchain<S: Storage> {
     // By default, set to N threads available
     pre_verify_block_semaphore: Semaphore,
     // Contract environment stdlib
-    environment: Environment<ContractMetadata>,
+    environments: ContractEnvironments,
     // P2p module
     p2p: RwLock<Option<Arc<P2pServer<S>>>>,
     // RPC module
@@ -293,7 +296,10 @@ impl<S: Storage> Blockchain<S> {
         }
 
         let on_disk = storage.has_blocks().await?;
-        let environment = build_environment::<S>().build();
+        let environments = ContractVersion::variants()
+            .into_iter()
+            .map(|version| (version, build_environment::<S>(version).build()))
+            .collect();
 
         info!("Initializing chain...");
         let blockchain = Self {
@@ -301,7 +307,7 @@ impl<S: Storage> Blockchain<S> {
             storage: RwLock::new(storage),
             add_block_semaphore: Semaphore::new(1),
             pre_verify_block_semaphore: Semaphore::new(config.pre_verify_block_threads_count),
-            environment,
+            environments,
             p2p: RwLock::new(None),
             rpc: RwLock::new(None),
             skip_pow_verification: config.skip_pow_verification || config.simulator.is_some(),
@@ -488,8 +494,8 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // get the environment stdlib for contract execution
-    pub fn get_contract_environment(&self) -> &Environment<ContractMetadata> {
-        &self.environment
+    pub fn get_contract_environments(&self) -> &ContractEnvironments {
+        &self.environments
     }
 
     // Get the configured threads count for TXS
@@ -563,7 +569,7 @@ impl<S: Storage> Blockchain<S> {
                 FEE_PER_KB
             };
 
-            mempool.clean_up(&*storage, &self.environment, chain_cache.stable_topoheight, chain_cache.topoheight, block_version, tx_base_fee, chain_cache.stable_height, true).await?;
+            mempool.clean_up(&*storage, &self.environments, chain_cache.stable_topoheight, chain_cache.topoheight, block_version, tx_base_fee, chain_cache.stable_height, true).await?;
         }
 
         Ok(())
@@ -1133,7 +1139,7 @@ impl<S: Storage> Blockchain<S> {
 
             // NOTE: we do not verify / clean against requested base fee
             // to ensure no TX is orphaned, but only delayed until the chain congestion reduce
-            mempool.add_tx(storage, &self.environment, stable_topoheight, current_topoheight, FEE_PER_KB, stable_height, hash.clone(), tx.clone(), tx_size, version).await?;
+            mempool.add_tx(storage, &self.environments, stable_topoheight, current_topoheight, FEE_PER_KB, stable_height, hash.clone(), tx.clone(), tx_size, version).await?;
 
             debug!("TX {} has been added to the mempool", hash);
 
@@ -1471,7 +1477,7 @@ impl<S: Storage> Blockchain<S> {
         // Find the base height for this block
         let base_height = blockdag::find_common_base_height(&*storage, block.get_tips(), block.get_version()).await?;
 
-        let mut chain_state = ChainState::new(storage, &self.environment, stable_topoheight, topoheight, block.get_version(), base_fee, base_height);
+        let mut chain_state = ChainState::new(storage, &self.environments, stable_topoheight, topoheight, block.get_version(), base_fee, base_height);
 
         if !tx_selector.is_empty() {
             let tx_cache = TxCache::new(storage, &mempool, self.disable_zkp_cache);
@@ -2027,7 +2033,7 @@ impl<S: Storage> Blockchain<S> {
                     }
 
                     let storage = &*storage;
-                    let environment = &self.environment;
+                    let environments = &self.environments;
                     let cache = &tx_cache;
 
                     // We run the batches in concurrent tasks
@@ -2035,12 +2041,12 @@ impl<S: Storage> Blockchain<S> {
                     // it will be multi-threaded by N threads
                     stream::iter(batches.into_iter().map(Ok))
                         .try_for_each_concurrent(self.txs_verification_threads_count, async |txs| {
-                            let mut chain_state = ChainState::new(storage, environment, stable_topoheight, current_topoheight, version, base_fee, base_height);
+                            let mut chain_state = ChainState::new(storage, environments, stable_topoheight, current_topoheight, version, base_fee, base_height);
                             Transaction::verify_batch(txs.iter(), &mut chain_state, cache).await
                         }).await
                 } else {
                     // Verify all valid transactions in one batch
-                    let mut chain_state = ChainState::new(&*storage, &self.environment, stable_topoheight, current_topoheight, version, base_fee, base_height);
+                    let mut chain_state = ChainState::new(&*storage, &self.environments, stable_topoheight, current_topoheight, version, base_fee, base_height);
                     let iter = txs_grouped.values()
                         .flatten();
                     Transaction::verify_batch(iter, &mut chain_state, &tx_cache).await
@@ -2304,7 +2310,7 @@ impl<S: Storage> Blockchain<S> {
                 trace!("building chain state to execute TXs in block {} with required base fee {}", block_hash, required_tx_fee);
                 let mut chain_state = ApplicableChainState::new(
                     &*storage,
-                    &self.environment,
+                    &self.environments,
                     base_topo_height,
                     highest_topo,
                     version,
@@ -2701,7 +2707,7 @@ impl<S: Storage> Blockchain<S> {
             let mut mempool = self.mempool.write().await;
 
             let start = Instant::now();
-            let orphaned = mempool.try_add_back_txs(&*storage, orphaned_transactions.into_iter(), &self.environment, base_topo_height, highest_topo, version, FEE_PER_KB, base_height).await?;
+            let orphaned = mempool.try_add_back_txs(&*storage, orphaned_transactions.into_iter(), &self.environments, base_topo_height, highest_topo, version, FEE_PER_KB, base_height).await?;
             if !orphan_event_tracked {
                 for (tx_hash, tx) in orphaned {
                     // We couldn't add it back to mempool, let's notify this event
@@ -2728,7 +2734,7 @@ impl<S: Storage> Blockchain<S> {
 
             let start = Instant::now();
             // NOTE: we don't remove any under-paid TX, they stay in mempool until fixed
-            let res = mempool.clean_up(&*storage, &self.environment, base_topo_height, highest_topo, version, FEE_PER_KB, base_height, dag_is_overwritten).await?;
+            let res = mempool.clean_up(&*storage, &self.environments, base_topo_height, highest_topo, version, FEE_PER_KB, base_height, dag_is_overwritten).await?;
             debug!("Took {:?} to clean mempool!", start.elapsed());
             histogram!("xelis_mempool_clean_up_ms").record(start.elapsed().as_millis() as f64);
 
