@@ -643,6 +643,7 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
         let contract_environment = ContractEnvironment {
             environment: self.inner.environment,
             module: &module.module,
+            version: module.version,
             provider: self.inner.storage,
         };
 
