@@ -3,7 +3,6 @@ use std::{fmt, str::FromStr, sync::Arc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 pub use xelis_vm::Module;
-
 use crate::serializer::*;
 
 #[derive(Default, Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
@@ -21,6 +20,7 @@ impl FromStr for ContractVersion {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "v0" | "0" => Ok(ContractVersion::V0),
+            "v1" | "1" => Ok(ContractVersion::V1),
             _ => Err("Invalid contract version"),
         }
     }
