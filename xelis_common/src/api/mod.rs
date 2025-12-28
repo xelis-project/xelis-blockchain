@@ -292,6 +292,13 @@ pub enum RPCContractLog<'a> {
     ExitPayload {
         payload: Cow<'a, ValueCell>,
     },
+    TransferPayload {
+        contract: Cow<'a, Hash>,
+        amount: u64,
+        asset: Cow<'a, Hash>,
+        destination: Cow<'a, Address>,
+        payload: Cow<'a, ValueCell>,
+    }
 }
 
 impl<'a> RPCContractLog<'a> {
@@ -333,6 +340,13 @@ impl<'a> RPCContractLog<'a> {
                 kind: Cow::Owned(kind),
             },
             ContractLog::ExitPayload(payload) => RPCContractLog::ExitPayload { payload: Cow::Owned(payload) },
+            ContractLog::TransferPayload { contract, amount, asset, destination, payload } => RPCContractLog::TransferPayload {
+                contract: Cow::Owned(contract),
+                amount,
+                asset: Cow::Owned(asset),
+                destination: Cow::Owned(destination.as_address(mainnet)),
+                payload: Cow::Owned(payload)
+            },
         }
     }
 
@@ -374,6 +388,13 @@ impl<'a> RPCContractLog<'a> {
                 kind: Cow::Borrowed(kind)
             },
             ContractLog::ExitPayload(payload) => RPCContractLog::ExitPayload { payload: Cow::Borrowed(payload) },
+            ContractLog::TransferPayload { contract, amount, asset, destination, payload } => RPCContractLog::TransferPayload {
+                contract: Cow::Borrowed(contract),
+                amount: *amount,
+                asset: Cow::Borrowed(asset),
+                destination: Cow::Owned(destination.as_address(mainnet)),
+                payload: Cow::Borrowed(payload)
+            },
         }
     }
 }
@@ -419,6 +440,13 @@ impl<'a> From<RPCContractLog<'a>> for ContractLog {
                 kind: kind.into_owned(),
             },
             RPCContractLog::ExitPayload { payload } => ContractLog::ExitPayload(payload.into_owned()),
+            RPCContractLog::TransferPayload { contract, amount, asset, destination, payload } => ContractLog::TransferPayload {
+                contract: contract.into_owned(),
+                amount,
+                asset: asset.into_owned(),
+                destination: destination.into_owned().to_public_key(),
+                payload: payload.into_owned()
+            }
         }
     }
 }

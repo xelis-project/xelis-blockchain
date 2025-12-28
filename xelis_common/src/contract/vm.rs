@@ -12,7 +12,7 @@ use indexmap::IndexMap;
 use xelis_vm::{ModuleMetadata, Reference, VM, VMError, ValueCell};
 
 use crate::{
-    config::{TX_GAS_BURN_PERCENT, XELIS_ASSET},
+    config::{TX_GAS_BURN_PERCENT, XELIS_ASSET, CONTRACT_MAX_PAYLOAD_SIZE, CONTRACT_PAYLOAD_FEE_PER_BYTE},
     contract::{
         ChainState,
         ContractCache,
@@ -38,7 +38,6 @@ use crate::{
 
 // Actual constructor hook id
 pub const HOOK_CONSTRUCTOR_ID: u8 = 0;
-pub const MAX_ENTRY_SIZE_BYTES: usize = 256;
 
 #[derive(Debug)]
 pub enum InvokeContract {
@@ -193,11 +192,7 @@ pub(crate) async fn run_virtual_machine<'a, P: ContractProvider>(
 
     // To be sure that we don't have any overflow
     // We take the minimum between the gas used and the max gas
-    let context = vm.context();
-    let gas_usage = context
-        .current_gas_usage()
-        .min(max_gas);
-    let vm_max_gas = context.get_gas_limit();
+    let context = vm.context_mut();
 
     let exit_code = match res {
         Ok(res) => {
@@ -212,19 +207,30 @@ pub(crate) async fn run_virtual_machine<'a, P: ContractProvider>(
                 Some(v) => ExitValue::ExitCode(v),
                 None => {
                     if contract_environment.version >= ContractVersion::V1 {
+                        let level = if debug_mode {
+                            Level::Error
+                        } else {
+                            Level::Debug
+                        };
+
                         // We must verify that it is serializable (json & binary)
                         // and not too big (> MAX_ENTRY_SIZE_BYTES)
-                        if !res.is_json_serializable() || !res.is_serializable() || data_size_in_bytes(&res) > MAX_ENTRY_SIZE_BYTES {
-                            let level = if debug_mode {
-                                Level::Error
-                            } else {
-                                Level::Debug
-                            };
+                        let bytes = data_size_in_bytes(&res);
+                        if !res.is_json_serializable() || !res.is_serializable() || bytes > CONTRACT_MAX_PAYLOAD_SIZE {
+                            
                             log!(level, "Invoke contract {} returned a non serializable value: {:#}", contract, res);
                             return Err(VMError::InvalidReturnValue);
                         }
 
-                        ExitValue::Payload(res)
+                        let cost = CONTRACT_PAYLOAD_FEE_PER_BYTE * bytes as u64;
+                        debug!("Invoke contract {} returned payload of size {} bytes, costing {} gas", contract, bytes, cost);
+                        match context.increase_gas_usage(cost) {
+                            Ok(()) => ExitValue::Payload(res),
+                            Err(e) => {
+                                log!(level, "Invoke contract {} cannot pay payload gas cost: {:#}", contract, e);
+                                ExitValue::None
+                            }
+                        }
                     } else {
                         ExitValue::None
                     }
@@ -243,6 +249,11 @@ pub(crate) async fn run_virtual_machine<'a, P: ContractProvider>(
             ExitValue::None
         }
     };
+
+    let gas_usage = context
+        .current_gas_usage()
+        .min(max_gas);
+    let vm_max_gas = context.get_gas_limit();
 
     Ok((gas_usage, vm_max_gas, exit_code))
 }

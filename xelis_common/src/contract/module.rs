@@ -14,6 +14,16 @@ pub enum ContractVersion {
     V1,
 }
 
+impl ContractVersion {
+    #[inline(always)]
+    pub const fn variants() -> [ContractVersion; 2] {
+        [
+            ContractVersion::V0,
+            ContractVersion::V1,
+        ]
+    }
+}
+
 impl FromStr for ContractVersion {
     type Err = &'static str;
 

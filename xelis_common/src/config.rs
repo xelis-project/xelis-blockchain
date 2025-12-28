@@ -67,6 +67,16 @@ pub const FEE_PER_STORE_CONTRACT: u64 = FEE_PER_BYTE_STORED_CONTRACT * 256;
 // Fee per read operation in a contract
 // Each read operation has a fixed cost of 0.00000200 XEL
 pub const FEE_PER_READ_CONTRACT: u64 = 200;
+// Max payload size for transfer calls from contract and entry calls from user
+// This allows to limit the data that can be sent from a contract
+// This is to prevent bloating the chain with large data
+pub const CONTRACT_MAX_PAYLOAD_SIZE: usize = 256;
+// Fee per byte of payload stored in contract calls
+// Each byte of data sent as payload in contract calls has a fixed cost
+// 0.00000002 XEL per byte
+// It is not part of the consensus and only stored as a off-chain data
+// for easier dApps integration
+pub const CONTRACT_PAYLOAD_FEE_PER_BYTE: u64 = 2;
 
 // Fee per byte of data stored in a contract memory
 // Each byte of data stored in the contract memory has a fixed cost

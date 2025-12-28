@@ -110,7 +110,7 @@ impl MockChainState {
             burned_coins: HashMap::new(),
             gas_fee: 0,
             burned_fee: 0,
-            env: Arc::new(build_environment::<MockProvider>()),
+            env: Arc::new(build_environment::<MockProvider>(ContractVersion::V1)),
             provider: MockProvider::default(),
             mainnet: false,
             block_hash: Hash::zero(),
