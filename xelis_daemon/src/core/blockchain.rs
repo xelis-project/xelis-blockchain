@@ -938,7 +938,7 @@ impl<S: Storage> Blockchain<S> {
             let base_topo_height = provider.get_topo_height_for_hash(&base).await?;
 
             let order = blockdag::generate_full_order(provider, best_tip, &base, base_height, base_topo_height).await?;
-            assert_eq!(order.first(), Some(&base));
+            debug_assert_eq!(order.first(), Some(&base));
 
             let order_len = order.len() as u64;
             let last_topoheight = base_topo_height + order_len;
