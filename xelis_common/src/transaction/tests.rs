@@ -990,6 +990,7 @@ impl<'a> BlockchainContractState<'a, MockProvider, ()> for MockChainState {
             permission,
             gas_fee: 0,
             gas_fee_allowance: 0,
+            environments: Cow::Owned(HashMap::new()),
         };
 
         Ok((environment, chain_state))

@@ -137,6 +137,7 @@ pub(crate) async fn run_virtual_machine<'a, P: ContractProvider>(
     // Insert the module to load
     let metadata = ContractMetadata {
         contract_executor: contract.as_ref().clone(),
+        contract_version: contract_environment.version,
         contract_caller: None,
         deposits,
     };

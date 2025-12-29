@@ -125,6 +125,7 @@ pub fn test_chain_state(contract: Hash) -> ContractChainState<'static> {
         permission: Cow::Owned(InterContractPermission::default()),
         gas_fee: 0,
         gas_fee_allowance: 0,
+        environments: Cow::Owned(HashMap::new()),
     }
 }
 

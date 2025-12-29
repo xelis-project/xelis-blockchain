@@ -18,6 +18,7 @@ use std::{
     any::TypeId,
     borrow::Cow,
     collections::{hash_map::Entry, HashMap},
+    sync::Arc,
 };
 use anyhow::Context as AnyhowContext;
 use better_any::Tid;
@@ -38,6 +39,7 @@ use xelis_vm::{
     SysCallResult,
     Type,
     ValueCell,
+    Environment,
 };
 use crate::{
     account::CiphertextCache,
@@ -88,6 +90,8 @@ pub struct TransferOutput {
     // The asset to transfer
     pub asset: Hash,
 }
+
+pub type ContractEnvironments = HashMap<ContractVersion, Arc<Environment<ContractMetadata>>>;
 
 // ChainState shared across each executions
 // The ChainState must be cloned before being used.
@@ -141,6 +145,8 @@ pub struct ChainState<'a> {
     pub allow_executions: bool,
     // Permission for inter-contract calls
     pub permission: Cow<'a, InterContractPermission>,
+    // The contract environments available
+    pub environments: Cow<'a, ContractEnvironments>,
     // Gas fee accumulated during the execution
     pub gas_fee: u64,
     // Gas fee allowance for the execution
