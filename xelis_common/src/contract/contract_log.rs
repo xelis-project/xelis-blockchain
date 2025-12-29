@@ -1,7 +1,7 @@
 use xelis_vm::ValueCell;
 
 use crate::{
-    contract::ScheduledExecutionKindLog,
+    contract::{ExitError, ScheduledExecutionKindLog},
     crypto::{Hash, PublicKey},
     serializer::*
 };
@@ -89,6 +89,7 @@ pub enum ContractLog {
         /// The payload sent with the transfer
         payload: ValueCell,
     },
+    ExitError(ExitError),
 }
 
 impl Serializer for ContractLog {
@@ -159,6 +160,10 @@ impl Serializer for ContractLog {
                 destination.write(writer);
                 payload.write(writer);
             },
+            ContractLog::ExitError(err) => {
+                writer.write_u8(12);
+                err.write(writer);
+            },
         }
     }
 
@@ -222,6 +227,10 @@ impl Serializer for ContractLog {
                 let payload = ValueCell::read(reader)?;
                 ContractLog::TransferPayload { contract, amount, asset, destination, payload }
             },
+            12 => {
+                let err = ExitError::read(reader)?;
+                ContractLog::ExitError(err)
+            },
             _ => return Err(ReaderError::InvalidValue)
         })
     }
@@ -240,6 +249,7 @@ impl Serializer for ContractLog {
             ContractLog::ScheduledExecution { contract, hash, kind } => contract.size() + hash.size() + kind.size(),
             ContractLog::ExitPayload(payload) => payload.size(),
             ContractLog::TransferPayload { contract, amount, asset, destination, payload } => contract.size() + amount.size() + asset.size() + destination.size() + payload.size(),
+            ContractLog::ExitError(err) => err.size(),
         }
     }
 }

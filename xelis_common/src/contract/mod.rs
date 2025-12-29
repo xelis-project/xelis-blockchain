@@ -8,6 +8,7 @@ mod scheduled_execution;
 mod permission;
 mod module;
 mod source;
+mod error;
 
 #[cfg(test)]
 pub mod tests;
@@ -80,6 +81,7 @@ pub use scheduled_execution::*;
 pub use permission::*;
 pub use module::*;
 pub use source::*;
+pub use error::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransferOutput {

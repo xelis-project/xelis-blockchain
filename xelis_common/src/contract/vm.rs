@@ -23,7 +23,8 @@ use crate::{
         ContractVersion,
         InterContractPermission,
         Source,
-        data_size_in_bytes
+        ExitError,
+        data_size_in_bytes,
     },
     crypto::{
         Hash,
@@ -84,7 +85,7 @@ pub enum ContractError<E> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value")]
 pub enum ExitValue {
-    None,
+    Error(ExitError),
     ExitCode(u64),
     Payload(ValueCell),
 }
@@ -156,13 +157,13 @@ pub(crate) async fn run_virtual_machine<'a, P: ContractProvider>(
         InvokeContract::Hook(hook) => {
             if !vm.invoke_hook_id(hook)? {
                 warn!("Invoke contract {} hook {} not found", contract, hook);
-                return Ok((0, max_gas, ExitValue::None))
+                return Ok((0, max_gas, ExitValue::Error(ExitError::UnknownHook)))
             }
         },
         InvokeContract::Chunk(chunk, allow_executions) => {
             if !contract_environment.module.is_callable_chunk(chunk as usize) {
                 warn!("Invoke contract {} chunk {} not found", contract, chunk);
-                return Ok((0, max_gas, ExitValue::None))
+                return Ok((0, max_gas, ExitValue::Error(ExitError::InvalidEntry)))
             }
 
             vm.invoke_chunk_id(chunk as usize)?;
@@ -195,6 +196,12 @@ pub(crate) async fn run_virtual_machine<'a, P: ContractProvider>(
     // We take the minimum between the gas used and the max gas
     let context = vm.context_mut();
 
+    let error_level = if debug_mode {
+        Level::Error
+    } else {
+        Level::Debug
+    };
+
     let exit_code = match res {
         Ok(res) => {
             let level = if debug_mode {
@@ -202,38 +209,34 @@ pub(crate) async fn run_virtual_machine<'a, P: ContractProvider>(
             } else {
                 Level::Debug
             };
+
             log!(level, "Invoke contract {} result: {:#}", contract, res);
             // If the result return 0 as exit code, it means that everything went well
             let exit_code = match res.as_u64().ok() {
                 Some(v) => ExitValue::ExitCode(v),
                 None => {
                     if contract_environment.version >= ContractVersion::V1 {
-                        let level = if debug_mode {
-                            Level::Error
-                        } else {
-                            Level::Debug
-                        };
-
                         // We must verify that it is serializable (json & binary)
                         // and not too big (> MAX_ENTRY_SIZE_BYTES)
                         let bytes = data_size_in_bytes(&res);
                         if !res.is_json_serializable() || !res.is_serializable() || bytes > CONTRACT_MAX_PAYLOAD_SIZE {
                             
-                            log!(level, "Invoke contract {} returned a non serializable value: {:#}", contract, res);
-                            return Err(VMError::InvalidReturnValue);
-                        }
-
-                        let cost = CONTRACT_PAYLOAD_FEE_PER_BYTE * bytes as u64;
-                        debug!("Invoke contract {} returned payload of size {} bytes, costing {} gas", contract, bytes, cost);
-                        match context.increase_gas_usage(cost) {
-                            Ok(()) => ExitValue::Payload(res),
-                            Err(e) => {
-                                log!(level, "Invoke contract {} cannot pay payload gas cost: {:#}", contract, e);
-                                ExitValue::None
+                            log!(error_level, "Invoke contract {} returned a non serializable value: {:#}", contract, res);
+                            ExitValue::Error(ExitError::InvalidEntryPayloadReturn)
+                        } else {
+                            let cost = CONTRACT_PAYLOAD_FEE_PER_BYTE * bytes as u64;
+                            debug!("Invoke contract {} returned payload of size {} bytes, costing {} gas", contract, bytes, cost);
+                            match context.increase_gas_usage(cost) {
+                                Ok(()) => ExitValue::Payload(res),
+                                Err(e) => {
+                                    log!(error_level, "Invoke contract {} cannot pay payload gas cost: {:#}", contract, e);
+                                    ExitValue::Error(e.into())
+                                }
                             }
                         }
+
                     } else {
-                        ExitValue::None
+                        ExitValue::Error(ExitError::MissingEntryExitCode)
                     }
                 }
             };
@@ -241,13 +244,8 @@ pub(crate) async fn run_virtual_machine<'a, P: ContractProvider>(
             exit_code
         },
         Err(err) => {
-            let level = if debug_mode {
-                Level::Error
-            } else {
-                Level::Debug
-            };
-            log!(level, "Invoke contract {} error: {:#}", contract, err);
-            ExitValue::None
+            log!(error_level, "Invoke contract {} error: {:#}", contract, err);
+            ExitValue::Error(err.into())
         }
     };
 
@@ -418,10 +416,13 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
                 ContractLog::ExitCode(Some(0))
             ]);
         },
-        ExitValue::None => {
-            debug!("Contract exited with no value");
+        ExitValue::Error(err) => {
+            debug!("Contract exited with error: {}", err);
 
-            outputs.push(ContractLog::ExitCode(None));
+            outputs.extend([
+                ContractLog::ExitError(err),
+                ContractLog::ExitCode(None)
+            ]);
         },
     };
 

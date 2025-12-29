@@ -11,7 +11,7 @@ use bulletproofs::RangeProof;
 use xelis_vm::ValueCell;
 use crate::{
     account::Nonce,
-    contract::{ContractLog, ScheduledExecutionKindLog},
+    contract::{ContractLog, ScheduledExecutionKindLog, ExitError},
     crypto::{
         elgamal::{CompressedCommitment, CompressedHandle},
         proofs::CiphertextValidityProof,
@@ -298,7 +298,10 @@ pub enum RPCContractLog<'a> {
         asset: Cow<'a, Hash>,
         destination: Cow<'a, Address>,
         payload: Cow<'a, ValueCell>,
-    }
+    },
+    ExitError {
+        err: Cow<'a, ExitError>,
+    },
 }
 
 impl<'a> RPCContractLog<'a> {
@@ -347,6 +350,7 @@ impl<'a> RPCContractLog<'a> {
                 destination: Cow::Owned(destination.as_address(mainnet)),
                 payload: Cow::Owned(payload)
             },
+            ContractLog::ExitError(err) => RPCContractLog::ExitError { err: Cow::Owned(err) },
         }
     }
 
@@ -395,6 +399,7 @@ impl<'a> RPCContractLog<'a> {
                 destination: Cow::Owned(destination.as_address(mainnet)),
                 payload: Cow::Borrowed(payload)
             },
+            ContractLog::ExitError(err) => RPCContractLog::ExitError { err: Cow::Borrowed(err) },
         }
     }
 }
@@ -446,7 +451,8 @@ impl<'a> From<RPCContractLog<'a>> for ContractLog {
                 asset: asset.into_owned(),
                 destination: destination.into_owned().to_public_key(),
                 payload: payload.into_owned()
-            }
+            },
+            RPCContractLog::ExitError { err } => ContractLog::ExitError(err.into_owned()),
         }
     }
 }
