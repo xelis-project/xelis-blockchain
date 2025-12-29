@@ -308,6 +308,7 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
     /// Get the contract environments
     async fn get_environment(&mut self, version: ContractVersion) -> Result<&Environment<ContractMetadata>, BlockchainError> {
         self.environments.get(&version)
+            .map(|env| (*env).as_ref())
             .ok_or(BlockchainError::ContractEnvironmentNotFound(version))
     }
 

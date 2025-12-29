@@ -189,7 +189,7 @@ impl PreVerifyBlock {
 }
 
 // Contract environments map
-pub type ContractEnvironments = HashMap<ContractVersion, Environment<ContractMetadata>>;
+pub type ContractEnvironments = HashMap<ContractVersion, Arc<Environment<ContractMetadata>>>;
 
 pub struct Blockchain<S: Storage> {
     // mempool to retrieve/add all txs
@@ -298,7 +298,7 @@ impl<S: Storage> Blockchain<S> {
         let on_disk = storage.has_blocks().await?;
         let environments = ContractVersion::variants()
             .into_iter()
-            .map(|version| (version, build_environment::<S>(version).build()))
+            .map(|version| (version, Arc::new(build_environment::<S>(version).build())))
             .collect();
 
         info!("Initializing chain...");

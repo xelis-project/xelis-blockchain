@@ -609,7 +609,7 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
 
         let mainnet = self.inner.storage.is_mainnet();
         let state = ContractChainState {
-            // TODO: only available on mainnet & enabled by a config
+            // TODO: only available on non-mainnet networks & enabled by a config
             debug_mode: !mainnet,
             mainnet,
             // We only provide the current contract cache available
@@ -638,6 +638,7 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
             permission,
             gas_fee: 0,
             gas_fee_allowance: 0,
+            environments: Cow::Borrowed(self.inner.environments),
         };
 
         let environment = self.environments.get(&contract.version)

@@ -433,6 +433,7 @@ impl<'s, 'b, S: Storage> BlockchainVerificationState<'b, BlockchainError> for Ch
     /// Get the contract environments
     async fn get_environment(&mut self, version: ContractVersion) -> Result<&Environment<ContractMetadata>, BlockchainError> {
         self.environments.get(&version)
+            .map(|env| (*env).as_ref())
             .ok_or(BlockchainError::ContractEnvironmentNotFound(version))
     }
 
