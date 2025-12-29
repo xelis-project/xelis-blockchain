@@ -916,24 +916,32 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
     pub async fn process_executions_at_block_end(&mut self) -> Result<(), BlockchainError> {
         trace!("process executions at block end");
 
-        let mut scheduled_executions = IndexMap::new();
         let mut executions = Vec::new();
 
-        // Collect all scheduled executions for block end
-        for (hash, execution) in self.contract_manager.scheduled_executions.drain(..) {
-            match execution.kind {
-                ScheduledExecutionKind::BlockEnd => {
-                    executions.push(execution);
-                },
-                _ => {
-                    scheduled_executions.insert(hash, execution);
+        loop {
+            let mut scheduled_executions = IndexMap::new();
+            // Collect all scheduled executions for block end
+            for (hash, execution) in self.contract_manager.scheduled_executions.drain(..) {
+                match execution.kind {
+                    ScheduledExecutionKind::BlockEnd => {
+                        executions.push(execution);
+                    },
+                    _ => {
+                        scheduled_executions.insert(hash, execution);
+                    }
                 }
             }
+    
+            self.contract_manager.scheduled_executions = scheduled_executions;
+            if executions.is_empty() {
+                debug!("no more block end scheduled executions to process");
+                break;
+            }
+
+            self.process_executions(executions.drain(..)).await?;
         }
 
-        self.contract_manager.scheduled_executions = scheduled_executions;
-
-        self.process_executions(executions.into_iter()).await
+        Ok(())
     }
 
     // Execute all scheduled executions for current topoheight
