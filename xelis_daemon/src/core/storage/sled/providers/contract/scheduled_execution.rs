@@ -50,6 +50,7 @@ impl ContractScheduledExecutionProvider for SledStorage {
             })
         )
     }
+
     // Get an iterator of planned scheduled executions at the given execution topoheight
     // Returns the contract hash and the execution topoheight
     async fn get_registered_contract_scheduled_executions_at_topoheight<'a>(&'a self, topoheight: TopoHeight) -> Result<impl Iterator<Item = Result<(TopoHeight, Hash), BlockchainError>> + Send + 'a, BlockchainError> {
@@ -64,7 +65,6 @@ impl ContractScheduledExecutionProvider for SledStorage {
             })
         )
     }
-
 
     async fn get_contract_scheduled_executions_at_topoheight<'a>(&'a self, topoheight: TopoHeight) -> Result<impl Iterator<Item = Result<ScheduledExecution, BlockchainError>> + Send + 'a, BlockchainError> {
         trace!("get contract scheduled executions at topoheight {}", topoheight);
