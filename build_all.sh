@@ -59,7 +59,7 @@ for target in "${targets[@]}"; do
             echo "Docker image $IMAGE_NAME already present, skipping pull."
         fi
 
-        XELIS_COMMIT_HASH="$commit_hash" docker run --rm -it -v "$PWD:/work" -w /work "$IMAGE_NAME" cargo xwin build --target "$target" --profile release-with-lto 
+        docker run --rm -it -e XELIS_COMMIT_HASH="$commit_hash" -v "$PWD:/work" -w /work "$IMAGE_NAME" cargo xwin build --target "$target" --profile release-with-lto 
     else
         # ---- Non-Windows builds via cross ----
         XELIS_COMMIT_HASH="$commit_hash" cross build --target "$target" --profile release-with-lto
