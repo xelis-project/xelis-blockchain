@@ -2104,21 +2104,24 @@ impl<S: Storage> Blockchain<S> {
 
         counter!("xelis_block_added").increment(1);
 
-        debug!("Acquiring storage write lock to save block {}", block_hash);
-        let mut storage = self.storage.write().await;
-        debug!("Storage write lock acquired for saving block {}", block_hash);
-
         // Save transactions & block
         {
+            trace!("Acquiring storage write lock to save block {}", block_hash);
+            let mut storage = self.storage.write().await;
+            trace!("Storage write lock acquired for saving block {}", block_hash);
+
             debug!("Saving block {} on disk", block_hash);
             let start = Instant::now();
             storage.save_block(block.clone(), &txs, difficulty, cumulative_difficulty, p, new_block_size_ema, Immutable::Arc(block_hash.clone())).await?;
             storage.add_block_execution_to_order(&block_hash).await?;
 
             histogram!("xelis_block_store_ms").record(start.elapsed().as_millis() as f64);
+            debug!("Block {} saved on disk", block_hash);
         }
 
-        debug!("Block {} saved on disk", block_hash);
+        trace!("Re acquiring storage in read mode for block {}", block_hash);
+        let storage = self.storage.read().await;
+        trace!("Storage read lock acquired for block {}", block_hash);
 
         let mut tips = storage.get_tips().await?;
         // TODO: best would be to not clone
@@ -2143,6 +2146,9 @@ impl<S: Storage> Blockchain<S> {
         let mut full_order = blockdag::generate_full_order(&*storage, &best_tip, &base_hash, base_height, base_topo_height).await?;
         debug!("Generated full order size: {}, with base ({}) topo height: {}", full_order.len(), base_hash, base_topo_height);
         trace!("Full order: {}", full_order.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", "));
+
+        trace!("Dropping storage read lock for block {}", block_hash);
+        drop(storage);
 
         // rpc server lock
         let rpc_server = self.rpc.read().await;
@@ -2170,6 +2176,10 @@ impl<S: Storage> Blockchain<S> {
             // detect which part of DAG reorg stay, for other part, undo all executed txs
             debug!("Detecting stable point of DAG and cleaning txs above it");
             {
+                trace!("Acquiring storage write lock to clean transactions above stable point");
+                let mut storage = self.storage.write().await;
+                trace!("Storage write lock acquired for cleaning transactions above stable point");
+
                 let mut topoheight = base_topo_height;
                 while topoheight <= current_topoheight {
                     let hash_at_topo = storage.get_hash_at_topo_height(topoheight).await?;
@@ -2242,6 +2252,10 @@ impl<S: Storage> Blockchain<S> {
             debug!("Ordering blocks based on generated DAG order ({} blocks)", full_order.len());
             for (i, hash) in full_order.into_iter().enumerate() {
                 highest_topo = base_topo_height + skipped + i as u64;
+
+                trace!("Processing block {} at topoheight {}", hash, highest_topo);
+                let storage = self.storage.read().await;
+                trace!("Storage read lock acquired for ordering block {}", hash);
 
                 // if block is not re-ordered and it's not genesis block
                 // because we don't need to recompute everything as it's still good in chain
@@ -2538,6 +2552,12 @@ impl<S: Storage> Blockchain<S> {
 
                 // apply changes from Chain State
                 let finalizer = chain_state.finalize().await?;
+
+                drop(storage);
+                trace!("Re acquiring storage write lock to apply changes for block {}", hash);
+                let mut storage = self.storage.write().await;
+                trace!("Storage write lock acquired to apply changes for block {}", hash);
+
                 finalizer.apply_changes(&mut *storage, past_emitted_supply, block_reward).await?;
 
                 if should_track_events.contains(&NotifyEvent::BlockOrdered) {
@@ -2561,6 +2581,10 @@ impl<S: Storage> Blockchain<S> {
             histogram!("xelis_txs_execution_ms").record(elapsed.as_millis() as f64);
             histogram!("xelis_dag_ordering_ms").record(start.elapsed().as_millis() as f64);
         }
+
+        trace!("Re acquiring storage read lock after ordering for block {}", block_hash);
+        let storage = self.storage.read().await;
+        trace!("Storage read lock acquired after ordering for block {}", block_hash);
 
         let mut new_tips = Vec::new();
         let version_at_height = hard_fork::get_version_at_height(self.get_network(), current_height);
@@ -2600,75 +2624,61 @@ impl<S: Storage> Blockchain<S> {
         }
         tips.insert(best_tip);
 
+        // Drop the storage again to re-acquire in write mode
+        drop(storage);
+
         // save highest topo height
         debug!("Highest topo height found: {}", highest_topo);
         // if the DAG has been reorganized, we update the topoheight
         let chain_topoheight_extended = current_height == 0 || highest_topo > current_topoheight || dag_is_overwritten;
-        if chain_topoheight_extended {
-            debug!("Blockchain height extended, current topoheight is now {} (previous was {})", highest_topo, current_topoheight);
-            storage.set_top_topoheight(highest_topo).await?;
-            current_topoheight = highest_topo;
-        }
-
-        // If block is directly orphaned
-        // Mark all TXs ourself as linked to it
-        if !block_is_ordered {
-            debug!("Block {} is orphaned, marking all TXs as linked to it", block_hash);
-            for tx_hash in block.get_txs_hashes() {
-                storage.add_block_linked_to_tx_if_not_present(&tx_hash, &block_hash).await?;
-            }
-        }
-
-        // auto prune mode
-        if let Some(keep_only) = self.auto_prune_keep_n_blocks.filter(|_| chain_topoheight_extended) {
-            // check that the topoheight is greater than the safety limit
-            // and that we can prune the chain using the config while respecting the safety limit
-            if current_topoheight > keep_only && current_topoheight % keep_only == 0 && current_topoheight - keep_only > 0 {
-                info!("Auto pruning chain until topoheight {} (keep only {} blocks)", current_topoheight - keep_only, keep_only);
-                let start = Instant::now();
-                if let Err(e) = self.prune_until_topoheight_for_storage(current_topoheight - keep_only, &mut *storage).await {
-                    error!("Error while trying to auto prune chain: {}", e);
-                }
-
-                info!("Auto pruning done in {}ms", start.elapsed().as_millis());
-            }
-        }
-
-        debug!("Storing new tips in storage");
-        // Store the new tips available
-        storage.store_tips(&tips).await?;
-
         let chain_height_extended = current_height == 0 || block.get_height() > current_height;
-        if chain_height_extended {
-            debug!("storing new top height {}", block.get_height());
-            storage.set_top_height(block.get_height()).await?;
-            current_height = block.get_height();
-        }
 
-        // update stable height and difficulty in cache
         {
-            if should_track_events.contains(&NotifyEvent::StableHeightChanged) {
-                // detect the change in stable height
-                if base_height != stable_height {
-                    let value = json!(StableHeightChangedEvent {
-                        previous_stable_height: stable_height,
-                        new_stable_height: base_height
-                    });
-                    events.entry(NotifyEvent::StableHeightChanged).or_insert_with(Vec::new).push(value);
+            trace!("acquiring final storage write lock to update stats for {}", block_hash);
+            let mut storage = self.storage.write().await;
+            trace!("final storage write lock acquired for {}", block_hash);
+    
+            if chain_topoheight_extended {
+                debug!("Blockchain height extended, current topoheight is now {} (previous was {})", highest_topo, current_topoheight);
+                storage.set_top_topoheight(highest_topo).await?;
+                current_topoheight = highest_topo;
+            }
+
+            // If block is directly orphaned
+            // Mark all TXs ourself as linked to it
+            if !block_is_ordered {
+                debug!("Block {} is orphaned, marking all TXs as linked to it", block_hash);
+                for tx_hash in block.get_txs_hashes() {
+                    storage.add_block_linked_to_tx_if_not_present(&tx_hash, &block_hash).await?;
                 }
             }
 
-            if should_track_events.contains(&NotifyEvent::StableTopoHeightChanged) {
-                // detect the change in stable topoheight
-                if base_topo_height != stable_topoheight {
-                    let value = json!(StableTopoHeightChangedEvent {
-                        previous_stable_topoheight: stable_topoheight,
-                        new_stable_topoheight: base_topo_height
-                    });
-                    events.entry(NotifyEvent::StableTopoHeightChanged).or_insert_with(Vec::new).push(value);
+            // auto prune mode
+            if let Some(keep_only) = self.auto_prune_keep_n_blocks.filter(|_| chain_topoheight_extended) {
+                // check that the topoheight is greater than the safety limit
+                // and that we can prune the chain using the config while respecting the safety limit
+                if current_topoheight > keep_only && current_topoheight % keep_only == 0 && current_topoheight - keep_only > 0 {
+                    info!("Auto pruning chain until topoheight {} (keep only {} blocks)", current_topoheight - keep_only, keep_only);
+                    let start = Instant::now();
+                    if let Err(e) = self.prune_until_topoheight_for_storage(current_topoheight - keep_only, &mut *storage).await {
+                        error!("Error while trying to auto prune chain: {}", e);
+                    }
+    
+                    info!("Auto pruning done in {}ms", start.elapsed().as_millis());
                 }
             }
+    
+            debug!("Storing new tips in storage");
+            // Store the new tips available
+            storage.store_tips(&tips).await?;
 
+            if chain_height_extended {
+                debug!("storing new top height {}", block.get_height());
+                storage.set_top_height(block.get_height()).await?;
+                current_height = block.get_height();
+            }
+    
+            // update stable height and difficulty in cache
             debug!("update difficulty in cache for new tips");
             let (difficulty, _) = self.get_difficulty_at_tips(&*storage, tips.iter()).await?;
 
@@ -2694,6 +2704,38 @@ impl<S: Storage> Blockchain<S> {
             let mut lock = self.mining_cache.write().await;
             if lock.take().is_some() {
                 debug!("Clearing mining cache due to chain change");
+            }
+ 
+            // Flush to the disk
+            if self.flush_db_every_n_blocks.is_some_and(|n| current_topoheight % n == 0) {
+                debug!("force flushing storage");
+                storage.flush().await?;
+            }
+        }
+
+        trace!("Re acquiring storage read lock to finalize block {}", block_hash);
+        let storage = self.storage.read().await;
+        trace!("Storage read lock acquired to finalize block {}", block_hash);
+
+        if should_track_events.contains(&NotifyEvent::StableHeightChanged) {
+            // detect the change in stable height
+            if base_height != stable_height {
+                let value = json!(StableHeightChangedEvent {
+                    previous_stable_height: stable_height,
+                    new_stable_height: base_height
+                });
+                events.entry(NotifyEvent::StableHeightChanged).or_insert_with(Vec::new).push(value);
+            }
+        }
+
+        if should_track_events.contains(&NotifyEvent::StableTopoHeightChanged) {
+            // detect the change in stable topoheight
+            if base_topo_height != stable_topoheight {
+                let value = json!(StableTopoHeightChangedEvent {
+                    previous_stable_topoheight: stable_topoheight,
+                    new_stable_topoheight: base_topo_height
+                });
+                events.entry(NotifyEvent::StableTopoHeightChanged).or_insert_with(Vec::new).push(value);
             }
         }
 
@@ -2761,12 +2803,6 @@ impl<S: Storage> Blockchain<S> {
                 };
                 events.entry(NotifyEvent::TransactionOrphaned).or_insert_with(Vec::new).push(json!(data));
             }
-        }
-
-        // Flush to the disk
-        if self.flush_db_every_n_blocks.is_some_and(|n| current_topoheight % n == 0) {
-            debug!("force flushing storage");
-            storage.flush().await?;
         }
 
         let elapsed = start.elapsed().as_millis();
