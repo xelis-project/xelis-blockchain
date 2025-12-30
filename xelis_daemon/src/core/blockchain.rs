@@ -991,7 +991,7 @@ impl<S: Storage> Blockchain<S> {
             let parent_tips = provider.get_past_blocks_for_block_hash(best_tip).await?;
             let (_, parent_newest_tip_timestamp) = blockdag::find_newest_tip_by_timestamp(provider, parent_tips.iter()).await?;
 
-            parent_newest_tip_timestamp - newest_tip_timestamp
+            newest_tip_timestamp.saturating_sub(parent_newest_tip_timestamp)
         };
 
         let (difficulty, p_new) = difficulty::calculate_difficulty(
