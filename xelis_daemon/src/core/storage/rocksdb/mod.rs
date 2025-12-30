@@ -527,35 +527,33 @@ impl Storage for RocksStorage {
 
     // Stop the storage and wait for it to finish
     async fn stop(&mut self) -> Result<(), BlockchainError> {
-        self.flush().await
-    }
-
-    // Flush the inner DB after a block being written
-    async fn flush(&mut self) -> Result<(), BlockchainError> {
-        trace!("flush DB");
-
         let db = Arc::clone(&self.db);
         // To prevent starving the current async worker,
         // We execute the following on a blocking thread
         // and simply await its result 
         tokio::task::spawn_blocking(move || {
-            for column in Column::iter() {
-                info!("compacting {:?}", column);
-                let cf = cf_handle!(db, column);
-                db.compact_range_cf::<&[u8], &[u8]>(&cf, None, None);
-            }
-
-            debug!("wait for compact");
+            info!("compacting DB");            
+            db.compact_range::<&[u8], &[u8]>(None, None);
+            info!("wait for compact");
             let options = WaitForCompactOptions::default();
             db.wait_for_compact(&options)
                 .context("Error while waiting on compact")?;
 
             info!("flushing DB");
             db.flush()
-                .context("Error while flushing DB")?;
+                .context("Error while flushing DB")
+        }).await
+            .context("Flushing DB")?
+            .map_err(BlockchainError::from)
+    }
 
-            Ok::<_, BlockchainError>(())
-        }).await.context("Flushing DB")?
+    // Flush the inner DB after a block being written
+    async fn flush(&mut self) -> Result<(), BlockchainError> {
+        trace!("flush DB");
+        self.db.flush().context("Error while flushing DB")?;
+        debug!("DB flushed successfully");
+
+        Ok(())
     }
 }
 
