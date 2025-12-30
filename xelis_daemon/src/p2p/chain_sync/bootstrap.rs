@@ -375,7 +375,7 @@ impl<S: Storage> P2pServer<S> {
             StepRequest::ContractsExecutions(min, max, page) => {
                 let page = page.unwrap_or(0);
 
-                let stream = storage.get_registered_contract_scheduled_executions_in_range(min, max).await?
+                let stream = storage.get_registered_contract_scheduled_executions_in_range(min, max, Some(max)).await?
                     .skip(page as usize * MAX_ITEMS_PER_PAGE)
                     .take(MAX_ITEMS_PER_PAGE);
 

@@ -79,7 +79,7 @@ impl ContractScheduledExecutionProvider for RocksStorage {
     }
 
     // Get the registered scheduled executions at maximum topoheight (inclusive)
-    async fn get_registered_contract_scheduled_executions_in_range<'a>(&'a self, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<impl Stream<Item = Result<(TopoHeight, TopoHeight, ScheduledExecution), BlockchainError>> + Send + 'a, BlockchainError> {
+    async fn get_registered_contract_scheduled_executions_in_range<'a>(&'a self, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight, min_execution_topoheight: Option<TopoHeight>) -> Result<impl Stream<Item = Result<(TopoHeight, TopoHeight, ScheduledExecution), BlockchainError>> + Send + 'a, BlockchainError> {
         let min = minimum_topoheight.to_be_bytes();
         let max = (maximum_topoheight + 1).to_be_bytes();
         let stream = self.iter_keys::<(TopoHeight, ContractId, TopoHeight)>(Column::DelayedExecutionRegistrations, IteratorMode::Range {
@@ -89,7 +89,7 @@ impl ContractScheduledExecutionProvider for RocksStorage {
         })?
             .map(move |res| {
                 let (registration, contract_id, execution_topoheight) = res?;
-                if registration <= maximum_topoheight && registration >= minimum_topoheight {
+                if registration <= maximum_topoheight && registration >= minimum_topoheight && min_execution_topoheight.is_none_or(|min| execution_topoheight >= min) {
                     let key = Self::get_contract_scheduled_execution_key(contract_id, execution_topoheight);
                     let execution = self.load_from_disk(Column::DelayedExecution, &key)?;
 

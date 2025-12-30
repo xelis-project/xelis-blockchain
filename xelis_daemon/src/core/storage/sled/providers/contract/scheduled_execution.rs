@@ -77,14 +77,14 @@ impl ContractScheduledExecutionProvider for SledStorage {
 
     // Get the registered scheduled executions at maximum topoheight (inclusive)
     // Returns a stream of (execution_topoheight, registration_topoheight, execution)
-    async fn get_registered_contract_scheduled_executions_in_range<'a>(&'a self, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<impl Stream<Item = Result<(TopoHeight, TopoHeight, ScheduledExecution), BlockchainError>> + Send + 'a, BlockchainError> {
+    async fn get_registered_contract_scheduled_executions_in_range<'a>(&'a self, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight, min_execution_topoheight: Option<TopoHeight>) -> Result<impl Stream<Item = Result<(TopoHeight, TopoHeight, ScheduledExecution), BlockchainError>> + Send + 'a, BlockchainError> {
         trace!("get registered contract scheduled executions at maximum topoheight {}", maximum_topoheight);
 
         let stream = stream::iter(Self::iter_keys::<(TopoHeight, Hash, TopoHeight)>(self.snapshot.as_ref(), &self.contracts_scheduled_executions_registrations))
             .map(move |res| async move {
                 let (registration_topoheight, contract, execution_topoheight) = res?;
 
-                if registration_topoheight <= maximum_topoheight && registration_topoheight >= minimum_topoheight {
+                if registration_topoheight <= maximum_topoheight && registration_topoheight >= minimum_topoheight && min_execution_topoheight.is_none_or(|min| execution_topoheight >= min) {
                     let execution = self.get_contract_scheduled_execution_at_topoheight(&contract, execution_topoheight).await?;
                     Ok(Some((execution_topoheight, registration_topoheight, execution)))
                 } else {
