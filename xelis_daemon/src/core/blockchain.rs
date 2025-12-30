@@ -572,6 +572,10 @@ impl<S: Storage> Blockchain<S> {
             mempool.clean_up(&*storage, &self.environments, chain_cache.stable_topoheight, chain_cache.topoheight, block_version, tx_base_fee, chain_cache.stable_height, true).await?;
         }
 
+        if self.mining_cache.write().await.take().is_some() {
+            debug!("Cleared mining cache");
+        }
+
         Ok(())
     }
 
