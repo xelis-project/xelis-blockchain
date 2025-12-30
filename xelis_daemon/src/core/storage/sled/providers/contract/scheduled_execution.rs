@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use futures::{stream, Stream, StreamExt};
 use log::trace;
-use xelis_common::{block::TopoHeight, contract::ScheduledExecution, crypto::Hash, serializer::{Serializer, Skip}};
+use xelis_common::{block::TopoHeight, contract::ScheduledExecution, crypto::Hash, serializer::Serializer};
 use crate::core::{
     error::{BlockchainError, DiskContext},
     storage::{ContractScheduledExecutionProvider, SledStorage}
@@ -38,19 +38,33 @@ impl ContractScheduledExecutionProvider for SledStorage {
         self.load_from_disk(&self.contracts_scheduled_executions, &key, DiskContext::ScheduledExecution(topoheight))
     }
 
+    async fn get_contract_scheduled_executions_for_execution_topoheight<'a>(&'a self, topoheight: TopoHeight) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + Send + 'a, BlockchainError> {
+        trace!("get registered contract scheduled executions at topoheight {}", topoheight);
+
+        // Iterate over the registrations to get all the registrations done at provided topoheight
+        let prefix = topoheight.to_be_bytes();
+        Ok(Self::scan_prefix_keys::<(TopoHeight, Hash)>(self.snapshot.as_ref(), &self.contracts_scheduled_executions, &prefix)    
+            .map(|res| {
+                let (_, contract) = res?;
+                Ok(contract)
+            })
+        )
+    }
+    // Get an iterator of planned scheduled executions at the given execution topoheight
+    // Returns the contract hash and the execution topoheight
     async fn get_registered_contract_scheduled_executions_at_topoheight<'a>(&'a self, topoheight: TopoHeight) -> Result<impl Iterator<Item = Result<(TopoHeight, Hash), BlockchainError>> + Send + 'a, BlockchainError> {
         trace!("get registered contract scheduled executions at topoheight {}", topoheight);
 
         // Iterate over the registrations to get all the registrations done at provided topoheight
         let prefix = topoheight.to_be_bytes();
-        Ok(Self::scan_prefix_keys::<Skip<8, (Hash, TopoHeight)>>(self.snapshot.as_ref(), &self.contracts_scheduled_executions_registrations, &prefix)    
+        Ok(Self::scan_prefix_keys::<(TopoHeight, Hash, TopoHeight)>(self.snapshot.as_ref(), &self.contracts_scheduled_executions_registrations, &prefix)    
             .map(|res| {
-                let key = res?;
-                let (contract, topoheight) = key.0;
-                Ok((topoheight, contract))
+                let (_, contract, execution_topoheight) = res?;
+                Ok((execution_topoheight, contract))
             })
         )
     }
+
 
     async fn get_contract_scheduled_executions_at_topoheight<'a>(&'a self, topoheight: TopoHeight) -> Result<impl Iterator<Item = Result<ScheduledExecution, BlockchainError>> + Send + 'a, BlockchainError> {
         trace!("get contract scheduled executions at topoheight {}", topoheight);

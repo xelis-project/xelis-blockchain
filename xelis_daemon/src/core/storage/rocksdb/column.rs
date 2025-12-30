@@ -100,7 +100,9 @@ pub enum Column {
     // {topoheight}{contract_id}{contract_data_id} => {version}
     VersionedContractsData,
 
-    // {topoheight}{contract_id} => {execution}
+    // Execution topoheight represents when the execution must happen
+    // Used for delayed contract calls
+    // {execution_topoheight}{contract_id} => {execution}
     DelayedExecution,
     // {topoheight}{contract_id}{execution_topoheight} => []
     DelayedExecutionRegistrations,

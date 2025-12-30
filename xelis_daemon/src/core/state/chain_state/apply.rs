@@ -885,28 +885,26 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
     }
 
     // Execute the given list of scheduled executions
-    async fn process_executions(&mut self, executions: impl Iterator<Item = ScheduledExecution>) -> Result<(), BlockchainError> {
-        for execution in executions {
-            debug!("processing scheduled execution of contract {} with caller {}", execution.contract, execution.hash);
+    async fn process_execution(&mut self, execution: ScheduledExecution) -> Result<(), BlockchainError> {
+        debug!("processing scheduled execution of contract {} with caller {}", execution.contract, execution.hash);
 
-            if !self.load_contract_module(Cow::Owned(execution.contract.clone())).await? {
-                warn!("failed to load contract module for scheduled execution of contract {} with caller {}", execution.contract, execution.hash);
-                continue;
-            }
+        if !self.load_contract_module(Cow::Owned(execution.contract.clone())).await? {
+            warn!("failed to load contract module for scheduled execution of contract {} with caller {}", execution.contract, execution.hash);
+            return Ok(());
+        }
 
-            if let Err(e) = vm::invoke_contract(
-                ContractCaller::Scheduled(Cow::Owned(execution.hash.clone()), Cow::Owned(execution.contract.clone())),
-                self,
-                Cow::Owned(execution.contract.clone()),
-                None,
-                execution.params.into_iter(),
-                execution.gas_sources,
-                execution.max_gas,
-                InvokeContract::Chunk(execution.chunk_id, false),
-                Cow::Owned(InterContractPermission::All),
-            ).await {
-                warn!("failed to process scheduled execution of contract {} with caller {}: {}", execution.contract, execution.hash, e);
-            }
+        if let Err(e) = vm::invoke_contract(
+            ContractCaller::Scheduled(Cow::Owned(execution.hash.clone()), Cow::Owned(execution.contract.clone())),
+            self,
+            Cow::Owned(execution.contract.clone()),
+            None,
+            execution.params.into_iter(),
+            execution.gas_sources,
+            execution.max_gas,
+            InvokeContract::Chunk(execution.chunk_id, false),
+            Cow::Owned(InterContractPermission::All),
+        ).await {
+            warn!("failed to process scheduled execution of contract {} with caller {}: {}", execution.contract, execution.hash, e);
         }
 
         Ok(())
@@ -938,7 +936,9 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
                 break;
             }
 
-            self.process_executions(executions.drain(..)).await?;
+            for execution in executions.drain(..) {
+                self.process_execution(execution).await?;
+            }
         }
 
         Ok(())
@@ -950,23 +950,18 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
 
         let topoheight = self.inner.topoheight;
 
-        // Do it in batches of 64 to avoid loading too much in memory at once
-        let mut skip = 0;
-        loop {
-            let executions = self.storage.get_contract_scheduled_executions_at_topoheight(topoheight).await?
-                .skip(skip)
-                .take(64)
-                .collect::<Result<Vec<_>, _>>()?;
+        let mut executions = self.storage.get_contract_scheduled_executions_for_execution_topoheight(topoheight).await?
+            .collect::<Result<Vec<_>, _>>()?;
 
-            if executions.is_empty() {
-                break;
-            }
+        executions.sort();
 
-            skip += executions.len();
-            self.process_executions(executions.into_iter()).await?;
+        for hash in executions.iter() {
+            let execution = self.storage.get_contract_scheduled_execution_at_topoheight(hash, topoheight).await?;
+
+            self.process_execution(execution).await?;
         }
 
-        debug!("finished processing {} scheduled executions for topoheight {}", skip, topoheight);
+        debug!("finished processing {} scheduled executions for topoheight {}", executions.len(), topoheight);
 
         Ok(())
     }

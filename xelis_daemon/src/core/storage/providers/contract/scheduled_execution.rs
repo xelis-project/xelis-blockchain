@@ -17,7 +17,11 @@ pub trait ContractScheduledExecutionProvider {
     // Get the contract scheduled execution registered at the provided topoheight
     async fn get_contract_scheduled_execution_at_topoheight(&self, contract: &Hash, topoheight: TopoHeight) -> Result<ScheduledExecution, BlockchainError>;
 
-    // Get the registered scheduled executions at the provided topoheight
+    // Get an iterator of planned scheduled executions at the given execution topoheight
+    async fn get_contract_scheduled_executions_for_execution_topoheight<'a>(&'a self, topoheight: TopoHeight) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + Send + 'a, BlockchainError>;
+
+    // Get an iterator of planned scheduled executions at the given execution topoheight
+    // Returns the contract hash and the execution topoheight
     async fn get_registered_contract_scheduled_executions_at_topoheight<'a>(&'a self, topoheight: TopoHeight) -> Result<impl Iterator<Item = Result<(TopoHeight, Hash), BlockchainError>> + Send + 'a, BlockchainError>;
 
     // Get the scheduled executions planned for the provided topoheight
