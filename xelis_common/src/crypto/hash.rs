@@ -177,3 +177,20 @@ impl<'a> Into<Cow<'a, Hash>> for &'a Hash {
         Cow::Borrowed(self)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ordering() {
+
+        let hash1 = Hash::new([0; 32]);
+        let hash2 = Hash::new([1; 32]);
+        let hash3 = Hash::new([0; 31].iter().cloned().chain(std::iter::once(1)).collect::<Vec<u8>>().try_into().unwrap());
+
+        assert!(hash1 < hash2);
+        assert!(hash1 < hash3);
+        assert!(hash3 < hash2);
+    }
+}
