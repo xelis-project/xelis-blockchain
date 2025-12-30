@@ -167,7 +167,7 @@ pub(crate) async fn run_virtual_machine<'a, P: ContractProvider>(
             }
 
             vm.invoke_chunk_id(chunk as usize)?;
-            chain_state.allow_executions = allow_executions;
+            chain_state.executions.allow_executions = allow_executions;
         }
     }
 
@@ -324,7 +324,8 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
 
         let tracker = chain_state.tracker;
         let assets = chain_state.assets;
-        let executions = chain_state.scheduled_executions;
+        let executions = chain_state.executions.changes;
+
         let gas_fee = chain_state.gas_fee;
 
         // Some contract have injected gas to users

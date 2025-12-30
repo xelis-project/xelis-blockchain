@@ -1,6 +1,6 @@
 mod kind;
 
-use std::hash;
+use std::{hash, sync::Arc};
 
 use indexmap::IndexMap;
 use schemars::JsonSchema;
@@ -56,7 +56,7 @@ pub struct ScheduledExecution {
     // It is based on blake3(contract || topoheight)
     // because we only allow one scheduled execution per contract
     // at a specific topoheight
-    pub hash: Hash,
+    pub hash: Arc<Hash>,
     // Contract hash of the module
     pub contract: Hash,
     // Chunk id
@@ -90,7 +90,7 @@ impl Eq for ScheduledExecution {}
 impl Serializer for ScheduledExecution {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         Ok(Self {
-            hash: Hash::read(reader)?,
+            hash: Arc::new(Hash::read(reader)?),
             contract: Hash::read(reader)?,
             chunk_id: u16::read(reader)?,
             params: Vec::read(reader)?,
@@ -163,7 +163,7 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
             }
         }
         ScheduledExecutionKind::BlockEnd => {
-            if !state.allow_executions {
+            if !state.executions.allow_executions {
                 return Ok(SysCallResult::Return(Primitive::Null.into()));
             }
         }
@@ -230,7 +230,7 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
     ]);
 
     let execution = ScheduledExecution {
-        hash: hash.clone(),
+        hash: Arc::new(hash.clone()),
         contract: metadata.metadata.contract_executor.clone(),
         chunk_id,
         max_gas,
@@ -243,11 +243,9 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
     let (provider, state) = from_context::<P>(context)?;
 
     // check that it does not already exist
-    if state.scheduled_executions.contains_key(&hash) {
+    if !state.executions.insert(execution) {
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
     }
-
-    state.scheduled_executions.insert(hash.clone(), execution);
 
     state.outputs.push(ContractLog::ScheduledExecution {
         contract: metadata.metadata.contract_executor.clone(),
@@ -336,8 +334,7 @@ pub fn scheduled_execution_get_max_gas<'a, 'ty, 'r>(
         .as_ref()
         .as_opaque_type()?;
 
-    let execution = state.scheduled_executions.get(&scheduled_execution.hash)
-        .ok_or(EnvironmentError::Static("scheduled execution not found in cache"))?;
+    let execution = state.executions.get(&scheduled_execution.hash)?;
 
     Ok(SysCallResult::Return(Primitive::U64(execution.max_gas).into()))
 }
@@ -362,7 +359,7 @@ pub fn scheduled_execution_get_pending<'a, 'ty, 'r>(
         &kind.to_bytes(),
     ]);
 
-    if state.scheduled_executions.contains_key(&hash) {
+    if state.executions.contains_key(&hash) {
         Ok(SysCallResult::Return(OpaqueScheduledExecution {
             hash: hash,
             kind,
@@ -392,7 +389,7 @@ pub async fn scheduled_execution_increase_max_gas<'a, 'ty, 'r, P: ContractProvid
 
     let (provider, state) = from_context::<P>(context)?;
 
-    if !state.allow_executions {
+    if !state.executions.allow_executions {
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
     }
 
@@ -404,8 +401,7 @@ pub async fn scheduled_execution_increase_max_gas<'a, 'ty, 'r, P: ContractProvid
         }
     
         // Check that the scheduled execution exists and belongs to this contract
-        let execution = state.scheduled_executions.get(&scheduled_execution.hash)
-            .ok_or(EnvironmentError::Static("scheduled execution not found in cache"))?;
+        let execution = state.executions.get(&scheduled_execution.hash)?;
 
         if execution.contract != metadata.metadata.contract_executor {
             return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
@@ -439,8 +435,7 @@ pub async fn scheduled_execution_increase_max_gas<'a, 'ty, 'r, P: ContractProvid
 
     let (_, state) = from_context::<P>(context)?;
 
-    let execution = state.scheduled_executions.get_mut(&scheduled_execution.hash)
-        .ok_or(EnvironmentError::Static("scheduled execution not found in cache"))?;
+    let execution = state.executions.get_mut(&scheduled_execution.hash)?;
 
     // Total max gas allocated to this execution
     execution.max_gas = execution.max_gas.checked_add(amount)

@@ -11,6 +11,9 @@ use crate::{
     config::{BURN_PER_CONTRACT, COIN_VALUE, XELIS_ASSET},
     contract::{
         AssetChanges,
+        ChainState as ContractChainState,
+        ExecutionsManager,
+        ExecutionsChanges,
         ContractCache,
         ContractEventTracker,
         ContractLog,
@@ -18,7 +21,6 @@ use crate::{
         ContractModule,
         ContractVersion,
         InterContractPermission,
-        ScheduledExecution,
         build_environment,
         tests::MockProvider,
         vm::ContractCaller
@@ -87,6 +89,7 @@ pub struct MockChainState {
     pub block_hash: Hash,
     pub block: Block,
     pub global_caches: HashMap<Hash, ContractCache>,
+    pub executions: ExecutionsChanges,
 }
 
 impl MockChainState {
@@ -116,6 +119,7 @@ impl MockChainState {
             block_hash: Hash::zero(),
             block: Block::new(header, Vec::new()),
             global_caches: HashMap::new(),
+            executions: ExecutionsChanges::default(),
         }
     }
 
@@ -967,7 +971,7 @@ impl<'a> BlockchainContractState<'a, MockProvider, ()> for MockChainState {
         };
 
         // Create the chain state using stored references
-        let chain_state = crate::contract::ChainState {
+        let chain_state = ContractChainState {
             debug_mode: false,
             mainnet: self.mainnet,
             // We only provide the current contract cache available
@@ -985,8 +989,11 @@ impl<'a> BlockchainContractState<'a, MockProvider, ()> for MockChainState {
             assets: HashMap::new(),
             modules: HashMap::new(),
             injected_gas: indexmap::IndexMap::new(),
-            scheduled_executions: indexmap::IndexMap::new(),
-            allow_executions: true,
+            executions: ExecutionsManager {
+                allow_executions: true,
+                global_executions: &self.executions.executions,
+                changes: Default::default(),
+            },
             permission,
             gas_fee: 0,
             gas_fee_allowance: 0,
@@ -1009,7 +1016,7 @@ impl<'a> BlockchainContractState<'a, MockProvider, ()> for MockChainState {
         _caches: HashMap<Hash, ContractCache>,
         _tracker: ContractEventTracker,
         _assets: HashMap<Hash, Option<AssetChanges>>,
-        _executions: indexmap::IndexMap<Hash, ScheduledExecution>,
+        _executions: ExecutionsChanges,
         extra_gas_fee: u64,
     ) -> Result<(), ()> {
         // TODO: persist changes in the chain state

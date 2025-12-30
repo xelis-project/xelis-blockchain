@@ -8,6 +8,7 @@ use crate::{
     block::BlockVersion,
     contract::{
         vm::ContractCaller,
+        ExecutionsChanges,
         AssetChanges,
         ChainState,
         ContractCache,
@@ -16,7 +17,6 @@ use crate::{
         ContractProvider,
         InterContractPermission,
         ContractMetadata,
-        ScheduledExecution,
         ContractModule,
         ContractVersion
     },
@@ -180,7 +180,7 @@ pub trait BlockchainContractState<'a, P: ContractProvider, E> {
         caches: HashMap<Hash, ContractCache>,
         tracker: ContractEventTracker,
         assets: HashMap<Hash, Option<AssetChanges>>,
-        executions_block_end: IndexMap<Hash, ScheduledExecution>,
+        executions_changes: ExecutionsChanges,
         extra_gas_fee: u64,
     ) -> Result<(), E>;
 

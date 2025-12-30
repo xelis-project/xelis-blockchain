@@ -12,6 +12,7 @@ use crate::{
     config::XELIS_ASSET,
     contract::{
         ChainState as ContractChainState,
+        ExecutionsManager,
         ContractEventTracker,
         ContractModule,
         ContractProvider,
@@ -104,6 +105,7 @@ pub fn test_chain_state(contract: Hash) -> ContractChainState<'static> {
     );
     let block = Box::leak(Box::new(Block::new(header, Vec::new())));
     let global_caches = Box::leak(Box::new(HashMap::new()));
+    let global_executions = Box::leak(Box::new(HashMap::new()));
 
     ContractChainState {
         debug_mode: false,
@@ -120,8 +122,11 @@ pub fn test_chain_state(contract: Hash) -> ContractChainState<'static> {
         global_caches,
         assets: HashMap::new(),
         injected_gas: IndexMap::new(),
-        scheduled_executions: IndexMap::new(),
-        allow_executions: true,
+        executions: ExecutionsManager {
+            allow_executions: true,
+            global_executions,
+            changes: Default::default(),
+        },
         permission: Cow::Owned(InterContractPermission::default()),
         gas_fee: 0,
         gas_fee_allowance: 0,

@@ -18,7 +18,7 @@ pub mod vm;
 use std::{
     any::TypeId,
     borrow::Cow,
-    collections::{hash_map::Entry, HashMap},
+    collections::{HashMap, hash_map::Entry},
     sync::Arc,
 };
 use anyhow::Context as AnyhowContext;
@@ -95,6 +95,61 @@ pub struct TransferOutput {
 
 pub type ContractEnvironments = HashMap<ContractVersion, Arc<Environment<ContractMetadata>>>;
 
+#[derive(Debug, Clone, Default)]
+pub struct ExecutionsChanges {
+    // Registered executions during the current execution
+    pub executions: HashMap<Arc<Hash>, ScheduledExecution>,
+    // Hashes of scheduled executions to trigger at specific topoheights
+    pub at_topoheight: Vec<Arc<Hash>>,
+    // Hashes of scheduled executions to trigger at the end of the block
+    pub block_end: Vec<Arc<Hash>>,
+}
+
+pub struct ExecutionsManager<'a> {
+    // In case we are in a scheduled execution already, prevent from
+    // recursive scheduling
+    pub allow_executions: bool,
+    // all scheduled executions in the global chain state
+    pub global_executions: &'a HashMap<Arc<Hash>, ScheduledExecution>,
+    pub changes: ExecutionsChanges,
+}
+
+impl<'a> ExecutionsManager<'a> {
+    pub fn contains_key(&self, hash: &Hash) -> bool {
+        self.global_executions.contains_key(hash) || self.changes.executions.contains_key(hash)
+    }
+
+    pub fn get(&self, hash: &Hash) -> Result<&ScheduledExecution, EnvironmentError> {
+        if let Some(execution) = self.global_executions.get(hash) {
+            Ok(execution)
+        } else {
+            self.changes.executions.get(hash)
+                .ok_or(EnvironmentError::Static("scheduled execution not found in cache"))
+        }
+    }
+
+    pub fn get_mut(&mut self, hash: &Hash) -> Result<&mut ScheduledExecution, EnvironmentError> {
+        if let Some(execution) = self.changes.executions.get_mut(hash) {
+            Ok(execution)
+        } else {
+            Err(EnvironmentError::Static("scheduled execution not found in cache"))
+        }
+    }
+
+    pub fn insert(&mut self, execution: ScheduledExecution) -> bool {
+        if self.global_executions.contains_key(&execution.hash) || self.changes.executions.contains_key(&execution.hash) {
+            return false
+        }
+
+        match &execution.kind {
+            ScheduledExecutionKind::TopoHeight(_) => self.changes.at_topoheight.push(execution.hash.clone()),
+            ScheduledExecutionKind::BlockEnd => self.changes.block_end.push(execution.hash.clone()),
+        };
+
+        self.changes.executions.insert(execution.hash.clone(), execution).is_none()
+    }
+}
+
 // ChainState shared across each executions
 // The ChainState must be cloned before being used.
 // If the contract execution is a success, the updated version
@@ -139,12 +194,8 @@ pub struct ChainState<'a> {
     // it is kept in insertion order to rollback funds to contract
     // in case they were not fully used
     pub injected_gas: IndexMap<Source, u64>,
-    // Scheduled executions planned during the execution
-    // it can be TopoHeight or BlockEnd
-    pub scheduled_executions: IndexMap<Hash, ScheduledExecution>,
-    // In case we are in a scheduled execution already, prevent from
-    // recursive scheduling
-    pub allow_executions: bool,
+    // executions manager
+    pub executions: ExecutionsManager<'a>,
     // Permission for inter-contract calls
     pub permission: Cow<'a, InterContractPermission>,
     // The contract environments available
