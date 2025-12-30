@@ -647,7 +647,7 @@ impl<S: Storage> P2pServer<S> {
                         let mut storage = self.blockchain.get_storage().write().await;
                         debug!("locked storage write mode for commit point");
 
-                        storage.end_snapshot(apply).await?;
+                        storage.end_snapshot(apply)?;
                         info!("Commit point ended for chain validator, apply: {}", apply);
                     }
 
