@@ -978,7 +978,7 @@ impl<S: Storage> Blockchain<S> {
 
             let solve_time = time_span / count;
 
-            info!("Calculated solve time is {} between now {} and past {} (count: {})", solve_time, last, first, count);
+            trace!("Calculated solve time is {} between now {} and past {} (count: {})", solve_time, last, first, count);
 
             solve_time
         } else {
@@ -1003,7 +1003,7 @@ impl<S: Storage> Blockchain<S> {
         );
 
         let elapsed = start.elapsed();
-        info!("Difficulty calculated in {:?}", elapsed);
+        trace!("Difficulty calculated in {:?}", elapsed);
         histogram!("xelis_difficulty_time_µs").record(elapsed.as_micros() as f64);
 
         Ok((difficulty, p_new))
