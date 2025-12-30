@@ -527,6 +527,23 @@ impl<A: Serializer, B: Serializer, C: Serializer> Serializer for (A, B, C) {
     }
 }
 
+impl<A: Serializer, B: Serializer, C: Serializer, D: Serializer> Serializer for (A, B, C, D) {
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        Ok((A::read(reader)?, B::read(reader)?, C::read(reader)?, D::read(reader)?))
+    }
+
+    fn write(&self, writer: &mut Writer) {
+        self.0.write(writer);
+        self.1.write(writer);
+        self.2.write(writer);
+        self.3.write(writer);
+    }
+
+    fn size(&self) -> usize {
+        self.0.size() + self.1.size() + self.2.size() + self.3.size()
+    }
+}
+
 impl<K: Serializer + std::hash::Hash + Eq, V: Serializer> Serializer for IndexMap<K, V> {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let size = reader.read_u16()?;
