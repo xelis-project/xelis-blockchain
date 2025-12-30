@@ -644,7 +644,18 @@ impl<S: Storage> P2pServer<S> {
                     let apply = match res.as_ref() {
                         // In case we got a partially good chain only, and that its still better than ours
                         // we can partially switch to it if the topoheight AND the cumulative difficulty is bigger
-                        Ok((_, res)) => res.is_ok() || (our_previous_topoheight < self.blockchain.get_topo_height().await && current_cumulative_difficulty < self.blockchain.get_cumulative_difficulty().await?),
+                        Ok((_, res)) => {
+                            if res.is_ok() {
+                                true
+                            } else {
+                                let storage = storage.lock().await?;
+                                let chain_cache = storage.chain_cache().await;
+                                let topoheight = chain_cache.topoheight;
+
+                                let cumulative_difficulty = self.blockchain.get_cumulative_difficulty_with_storage(&*storage).await?;
+                                our_previous_topoheight < topoheight && current_cumulative_difficulty < cumulative_difficulty
+                            }
+                        },
                         Err(_) => false,
                     };
 

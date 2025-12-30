@@ -844,6 +844,13 @@ impl<S: Storage> Blockchain<S> {
         debug!("get cumulative difficulty");
         let storage = self.storage.read().await;
         debug!("storage lock acquired for cumulative difficulty");
+
+        self.get_cumulative_difficulty_with_storage(&*storage).await
+    }
+
+    // Retrieve the cumulative difficulty of the chain with provided storage holder
+    pub async fn get_cumulative_difficulty_with_storage(&self, storage: &S) -> Result<CumulativeDifficulty, BlockchainError> {
+        trace!("get cumulative difficulty with storage");
         let top_block_hash = self.get_top_block_hash_for_storage(&storage).await?;
         storage.get_cumulative_difficulty_for_block_hash(&top_block_hash).await
     }
