@@ -254,13 +254,43 @@ const HARD_FORKS: [HardFork; 6] = [
 ];
 
 // Testnet / Stagenet / Devnet hard forks
-const OTHERS_NETWORK_HARD_FORKS: [HardFork; 1] = [
+const OTHERS_NETWORK_HARD_FORKS: [HardFork; 6] = [
     HardFork {
         height: 0,
-        version: BlockVersion::V6,
+        version: BlockVersion::V0,
         changelog: "Initial version",
         version_requirement: None
     },
+    HardFork {
+        height: 5,
+        version: BlockVersion::V1,
+        changelog: "xelis-hash v2",
+        version_requirement: Some(">=1.13.0")
+    },
+    HardFork {
+        height: 10,
+        version: BlockVersion::V2,
+        changelog: "MultiSig, P2P",
+        version_requirement: Some(">=1.16.0")
+    },
+    HardFork {
+        height: 15,
+        version: BlockVersion::V3,
+        changelog: "Smart Contracts, xelis-hash v3, 5s block time",
+        version_requirement: Some(">=1.19.0")
+    },
+    HardFork {
+        height: 20,
+        version: BlockVersion::V4,
+        changelog: "Reference TX & BlockDAG improvements",
+        version_requirement: Some(">=1.20.0")
+    },
+    HardFork {
+        height: 25,
+        version: BlockVersion::V5,
+        changelog: "TX Base fee improvements",
+        version_requirement: Some(">=1.21.0")
+    }
 ];
 
 // Mainnet seed nodes
