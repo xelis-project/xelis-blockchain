@@ -54,8 +54,8 @@ impl SnapshotProvider for SledStorage {
         Ok(())
     }
 
-    fn swap_snapshot(&mut self, other: Snapshot) -> Result<Option<Snapshot>, BlockchainError> {
+    fn swap_snapshot(&mut self, other: Option<Snapshot>) -> Result<Option<Snapshot>, BlockchainError> {
         trace!("swap snapshot");
-        Ok(self.snapshot.replace(other))
+        Ok(std::mem::replace(&mut self.snapshot, other))
     }
 }

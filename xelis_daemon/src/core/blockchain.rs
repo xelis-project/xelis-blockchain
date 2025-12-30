@@ -146,6 +146,7 @@ use super::storage::{
     BlocksAtHeightProvider,
     ClientProtocolProvider,
     PrunedTopoheightProvider,
+    snapshot::StorageHolder,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -1672,7 +1673,13 @@ impl<S: Storage> Blockchain<S> {
     // Verification is done using read guards,
     // once the block is fully verified, we can include it
     // in our chain by acquiring a write guard
+    #[inline(always)]
     pub async fn add_new_block(&self, block: Block, pre_verify: PreVerifyBlock, broadcast: BroadcastOption, mining: bool) -> Result<(), BlockchainError> {
+        self.add_new_block_with_storage(StorageHolder::Storage(&self.storage), block, pre_verify, broadcast, mining).await
+    }
+
+    // Add a new block in chain with the given storage holder
+    pub async fn add_new_block_with_storage(&self, holder: StorageHolder<'_, S>, block: Block, pre_verify: PreVerifyBlock, broadcast: BroadcastOption, mining: bool) -> Result<(), BlockchainError> {
         let start = Instant::now();
 
         // Expected version for this block
@@ -1694,7 +1701,7 @@ impl<S: Storage> Blockchain<S> {
         debug!("acquiring add block semaphore");
         let _permit = self.add_block_semaphore.acquire().await?;
         debug!("add block semaphore acquired, locking storage for block verification");
-        let storage = self.storage.read().await;
+        let storage = holder.read().await?;
 
         debug!("Add new block {}", block_hash);
         if storage.has_block_with_hash(&block_hash).await? {
@@ -2108,11 +2115,12 @@ impl<S: Storage> Blockchain<S> {
 
         counter!("xelis_block_added").increment(1);
 
+        trace!("Acquiring storage write lock to save block {}", block_hash);
+        let mut storage = holder.write().await?;
+        trace!("Storage write lock acquired for saving block {}", block_hash);
+
         // Save transactions & block
         {
-            trace!("Acquiring storage write lock to save block {}", block_hash);
-            let mut storage = self.storage.write().await;
-            trace!("Storage write lock acquired for saving block {}", block_hash);
 
             debug!("Saving block {} on disk", block_hash);
             let start = Instant::now();
@@ -2124,7 +2132,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         trace!("Re acquiring storage in read mode for block {}", block_hash);
-        let storage = self.storage.read().await;
+        let storage = storage.downgrade();
         trace!("Storage read lock acquired for block {}", block_hash);
 
         let mut tips = storage.get_tips().await?;
@@ -2181,7 +2189,7 @@ impl<S: Storage> Blockchain<S> {
             debug!("Detecting stable point of DAG and cleaning txs above it");
             {
                 trace!("Acquiring storage write lock to clean transactions above stable point");
-                let mut storage = self.storage.write().await;
+                let mut storage = holder.write().await?;
                 trace!("Storage write lock acquired for cleaning transactions above stable point");
 
                 let mut topoheight = base_topo_height;
@@ -2258,7 +2266,7 @@ impl<S: Storage> Blockchain<S> {
                 highest_topo = base_topo_height + skipped + i as u64;
 
                 trace!("Processing block {} at topoheight {}", hash, highest_topo);
-                let storage = self.storage.read().await;
+                let storage = holder.read().await?;
                 trace!("Storage read lock acquired for ordering block {}", hash);
 
                 // if block is not re-ordered and it's not genesis block
@@ -2559,7 +2567,7 @@ impl<S: Storage> Blockchain<S> {
 
                 drop(storage);
                 trace!("Re acquiring storage write lock to apply changes for block {}", hash);
-                let mut storage = self.storage.write().await;
+                let mut storage = holder.write().await?;
                 trace!("Storage write lock acquired to apply changes for block {}", hash);
 
                 finalizer.apply_changes(&mut *storage, past_emitted_supply, block_reward).await?;
@@ -2587,7 +2595,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         trace!("Re acquiring storage read lock after ordering for block {}", block_hash);
-        let storage = self.storage.read().await;
+        let storage = holder.read().await?;
         trace!("Storage read lock acquired after ordering for block {}", block_hash);
 
         let mut new_tips = Vec::new();
@@ -2637,10 +2645,10 @@ impl<S: Storage> Blockchain<S> {
         let chain_topoheight_extended = current_height == 0 || highest_topo > current_topoheight || dag_is_overwritten;
         let chain_height_extended = current_height == 0 || block.get_height() > current_height;
 
+        trace!("acquiring final storage write lock to update stats for {}", block_hash);
+        let mut storage = holder.write().await?;
+        trace!("final storage write lock acquired for {}", block_hash);
         {
-            trace!("acquiring final storage write lock to update stats for {}", block_hash);
-            let mut storage = self.storage.write().await;
-            trace!("final storage write lock acquired for {}", block_hash);
     
             if chain_topoheight_extended {
                 debug!("Blockchain height extended, current topoheight is now {} (previous was {})", highest_topo, current_topoheight);
@@ -2718,7 +2726,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         trace!("Re acquiring storage read lock to finalize block {}", block_hash);
-        let storage = self.storage.read().await;
+        let storage = storage.downgrade();
         trace!("Storage read lock acquired to finalize block {}", block_hash);
 
         if should_track_events.contains(&NotifyEvent::StableHeightChanged) {

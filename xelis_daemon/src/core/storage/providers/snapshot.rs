@@ -5,7 +5,7 @@ use crate::core::{error::BlockchainError, storage::snapshot::Snapshot};
 
 #[async_trait]
 pub trait SnapshotProvider {
-    type Column: Hash + Eq;
+    type Column: Hash + Eq + Send + Sync + 'static;
 
     // Check if we have a snapshot already set
     async fn has_snapshot(&self) -> Result<bool, BlockchainError>;
@@ -17,5 +17,5 @@ pub trait SnapshotProvider {
     // Apply the batch to the storage
     fn end_snapshot(&mut self, apply: bool) -> Result<(), BlockchainError>;
 
-    fn swap_snapshot(&mut self, other: Snapshot<Self::Column>) -> Result<Option<Snapshot<Self::Column>>, BlockchainError>;
+    fn swap_snapshot(&mut self, other: Option<Snapshot<Self::Column>>) -> Result<Option<Snapshot<Self::Column>>, BlockchainError>;
 }
