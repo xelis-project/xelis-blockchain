@@ -4,6 +4,7 @@ mod read_only;
 use std::collections::hash_map::Entry;
 
 use async_trait::async_trait;
+use log::debug;
 use xelis_vm::{
     traits::{JSONHelper, Serializable},
     Context,
@@ -113,6 +114,7 @@ pub async fn storage_load<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
             .flatten(),
         Entry::Vacant(v) => match storage.load_data(&metadata.metadata.contract_executor, &key, state.topoheight).await? {
             Some((topoheight, constant)) => {
+                debug!("storage load cache missed for key {}, fetched at topoheight {}: {:?}", key, topoheight, constant);
                 v.insert(Some((VersionedState::FetchedAt(topoheight), constant.clone())));
                 constant
             },
@@ -188,6 +190,7 @@ pub async fn storage_store<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, 
         }
     };
 
+    debug!("storage store key {}, setting value {}", key, value);
     // then, we replace the value if it exists (or simply insert it)
     let value = cache.storage.insert(key, Some((data_state, Some(value))))
         .and_then(|v| v.and_then(|(_, v)| v))
