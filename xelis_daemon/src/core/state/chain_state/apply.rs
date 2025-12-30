@@ -1,7 +1,7 @@
 use std::{
     borrow::Cow,
-    collections::{hash_map::Entry, HashMap},
-    ops::{Deref, DerefMut}
+    collections::{HashMap, hash_map::Entry},
+    ops::{Deref, DerefMut},
 };
 use anyhow::Context;
 use async_trait::async_trait;
@@ -13,6 +13,8 @@ use xelis_common::{
     block::{Block, BlockVersion, TopoHeight},
     config::{EXTRA_BASE_FEE_BURN_PERCENT, FEE_PER_KB, XELIS_ASSET},
     contract::{
+        ExecutionsManager,
+        ExecutionsChanges,
         AssetChanges,
         ChainState as ContractChainState,
         ContractCache,
@@ -70,7 +72,7 @@ struct ContractManager<'b> {
     tracker: ContractEventTracker,
     modules: HashMap<Hash, Option<ContractModule>>,
     // Planned executions for the current block
-    scheduled_executions: IndexMap<Hash, ScheduledExecution>,
+    executions: ExecutionsChanges,
 }
 
 // Chain State that can be applied to the mutable storage
@@ -319,10 +321,15 @@ impl<'a> FinalizedChainState<'a> {
 
         // Apply all scheduled executions at their topoheight
         debug!("applying scheduled executions at topoheights");
-        for (_, execution) in self.contract_manager.scheduled_executions {
+        for hash in self.contract_manager.executions.at_topoheight {
+            let execution = self.contract_manager.executions.executions.get(&hash)
+                .ok_or(BlockchainError::Unknown)?;
+
             if let ScheduledExecutionKind::TopoHeight(execution_topoheight) = execution.kind {
                 trace!("storing scheduled execution of contract {} with caller {} at topoheight {}", execution.contract, execution.hash, self.topoheight);
                 storage.set_contract_scheduled_execution_at_topoheight(&execution.contract, self.topoheight, &execution, execution_topoheight).await?;
+            } else {
+                warn!("scheduled execution {} kind mismatch, expected TopoHeight", execution.hash);
             }
         }
 
@@ -633,8 +640,11 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
             // But the ordering is important, so IndexMap is used
             injected_gas: IndexMap::new(),
             // Scheduled executions for any topoheight
-            scheduled_executions: self.contract_manager.scheduled_executions.clone(),
-            allow_executions: true,
+            executions: ExecutionsManager {
+                global_executions: &self.contract_manager.executions.executions,
+                changes: Default::default(),
+                allow_executions: true,
+            },
             permission,
             gas_fee: 0,
             gas_fee_allowance: 0,
@@ -697,7 +707,7 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
         caches: HashMap<Hash, ContractCache>,
         tracker: ContractEventTracker,
         assets: HashMap<Hash, Option<AssetChanges>>,
-        scheduled_executions: IndexMap<Hash, ScheduledExecution>,
+        executions: ExecutionsChanges,
         extra_gas_fee: u64,
     ) -> Result<(), BlockchainError> {
         for (contract, mut cache) in caches {
@@ -716,7 +726,13 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
 
         self.contract_manager.tracker = tracker;
         self.contract_manager.assets = assets;
-        self.contract_manager.scheduled_executions = scheduled_executions;
+
+        for (hash, execution) in executions.executions {
+            self.contract_manager.executions.executions.insert(hash, execution);
+        }
+
+        self.contract_manager.executions.at_topoheight.extend(executions.at_topoheight);
+        self.contract_manager.executions.block_end.extend(executions.block_end);
 
         self.add_gas_fee(extra_gas_fee).await?;
 
@@ -787,7 +803,7 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
                 assets: HashMap::new(),
                 modules: HashMap::new(),
                 tracker: ContractEventTracker::default(),
-                scheduled_executions: IndexMap::new(),
+                executions: Default::default(),
             },
             block_hash,
             block,
@@ -894,7 +910,7 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
         }
 
         if let Err(e) = vm::invoke_contract(
-            ContractCaller::Scheduled(Cow::Owned(execution.hash.clone()), Cow::Owned(execution.contract.clone())),
+            ContractCaller::Scheduled(Cow::Owned(execution.hash.as_ref().clone()), Cow::Owned(execution.contract.clone())),
             self,
             Cow::Owned(execution.contract.clone()),
             None,
@@ -914,29 +930,20 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
     pub async fn process_executions_at_block_end(&mut self) -> Result<(), BlockchainError> {
         trace!("process executions at block end");
 
-        let mut executions = Vec::new();
-
+        // We loop over it,
+        // Contract can't re define a block at end execution
+        // But it is used by the listener events callbacks
         loop {
-            let mut scheduled_executions = IndexMap::new();
-            // Collect all scheduled executions for block end
-            for (hash, execution) in self.contract_manager.scheduled_executions.drain(..) {
-                match execution.kind {
-                    ScheduledExecutionKind::BlockEnd => {
-                        executions.push(execution);
-                    },
-                    _ => {
-                        scheduled_executions.insert(hash, execution);
-                    }
-                }
-            }
-    
-            self.contract_manager.scheduled_executions = scheduled_executions;
+            let executions = std::mem::take(&mut self.contract_manager.executions.block_end);
             if executions.is_empty() {
                 debug!("no more block end scheduled executions to process");
                 break;
             }
 
-            for execution in executions.drain(..) {
+            for execution in executions {
+                let execution = self.contract_manager.executions.executions.remove(&execution)
+                    .ok_or(BlockchainError::Unknown)?;
+
                 self.process_execution(execution).await?;
             }
         }
