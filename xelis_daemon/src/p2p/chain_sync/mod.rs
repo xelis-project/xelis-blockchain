@@ -471,7 +471,7 @@ impl<S: Storage> P2pServer<S> {
                 Some(res) = scheduler.next() => {
                     let future = async move {
                         match res? {
-                            ResponseHelper::Requested(block, pre_verify) => self.blockchain.add_new_block_with_storage(StorageHolder::Snapshot(snapshot), block, pre_verify, BroadcastOption::Miners, false).await,
+                            ResponseHelper::Requested(block, pre_verify) => self.blockchain.add_new_block_with_storage(StorageHolder::Snapshot(snapshot), block, pre_verify, BroadcastOption::None, false).await,
                             ResponseHelper::NotRequested(hash) => self.try_re_execution_block(hash).await,
                         }
                     };
@@ -688,6 +688,17 @@ impl<S: Storage> P2pServer<S> {
                                 }
                             }
                         }
+                    } else {
+                        // We must notify peers & miners asap
+                        self.ping_peers().await;
+                        debug!("Notified peers about our new chain state after applying snapshot");
+                        if let Some(getwork) = self.blockchain.get_rpc().read().await.as_ref().and_then(|rpc| rpc.getwork_server().as_ref()) {
+                            if let Err(e) = getwork.get_handler().notify_new_job().await {
+                                debug!("Error while notifying new job to miners after applying snapshot: {}", e);
+                            }
+                        }
+
+                        debug!("Chain validator commit point applied successfully");
                     }
 
                     // Return errors if any
