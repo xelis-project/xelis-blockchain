@@ -429,7 +429,7 @@ impl<S: Storage> P2pServer<S> {
                 } {
                     let (block, cache) = match data {
                         Some(data) => {
-                            let block = self.request_block(peer, &hash, data.header).await?;
+                            let block = self.request_block_with_storage(peer, &hash, data.header, StorageHolder::Snapshot(snapshot)).await?;
                             let cache = PreVerifyBlock::Partial { block_hash: hash.clone(), pow_hash:  data.pow_hash };
                             (block, cache)
                         },
@@ -472,7 +472,7 @@ impl<S: Storage> P2pServer<S> {
                     let future = async move {
                         match res? {
                             ResponseHelper::Requested(block, pre_verify) => self.blockchain.add_new_block_with_storage(StorageHolder::Snapshot(snapshot), block, pre_verify, BroadcastOption::None, false).await,
-                            ResponseHelper::NotRequested(hash) => self.try_re_execution_block(hash).await,
+                            ResponseHelper::NotRequested(hash) => self.try_re_execution_block(hash, StorageHolder::Snapshot(snapshot)).await,
                         }
                     };
 
@@ -792,7 +792,7 @@ impl<S: Storage> P2pServer<S> {
                                     Ok(true)
                                 },
                                 ResponseHelper::NotRequested(hash) => {
-                                    if let Err(e) = self.try_re_execution_block(hash).await {
+                                    if let Err(e) = self.try_re_execution_block(hash, StorageHolder::Storage(self.blockchain.get_storage())).await {
                                         return Err(e)
                                     }
 
@@ -856,7 +856,7 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // Try to re-execute the block requested if its not included in DAG order (it has no topoheight assigned)
-    async fn try_re_execution_block(&self, hash: Immutable<Hash>) -> Result<(), BlockchainError> {
+    async fn try_re_execution_block(&self, hash: Immutable<Hash>, storage: StorageHolder<'_, S>) -> Result<(), BlockchainError> {
         trace!("check re execution block {}", hash);
         
         if self.disable_reexecute_blocks_on_sync {
@@ -865,7 +865,7 @@ impl<S: Storage> P2pServer<S> {
         }
 
         {
-            let storage = self.blockchain.get_storage().read().await;
+            let storage = storage.read().await?;
             if storage.is_block_topological_ordered(&hash).await? {
                 trace!("block {} is already ordered", hash);
                 return Ok(())
@@ -874,7 +874,7 @@ impl<S: Storage> P2pServer<S> {
 
         warn!("Forcing block {} re-execution", hash);
         let block = {
-            let mut storage = self.blockchain.get_storage().write().await;
+            let mut storage = storage.write().await?;
             debug!("storage write acquired for block forced re-execution");
 
             let block = storage.get_block_by_hash(&hash).await?;
@@ -895,6 +895,6 @@ impl<S: Storage> P2pServer<S> {
         };
 
         // Replicate same behavior as above branch
-        self.blockchain.add_new_block(block, PreVerifyBlock::Hash(hash), BroadcastOption::All, false).await
+        self.blockchain.add_new_block_with_storage(storage, block, PreVerifyBlock::Hash(hash), BroadcastOption::All, false).await
     }
 }

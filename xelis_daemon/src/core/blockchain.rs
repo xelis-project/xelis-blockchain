@@ -1050,21 +1050,25 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // Returns the P2p module used for blockchain if enabled
+    #[inline(always)]
     pub fn get_p2p(&self) -> &RwLock<Option<Arc<P2pServer<S>>>> {
         &self.p2p
     }
 
     // Returns the RPC server used for blockchain if enabled
+    #[inline(always)]
     pub fn get_rpc(&self) -> &RwLock<Option<SharedDaemonRpcServer<S>>> {
         &self.rpc
     }
 
     // Returns the storage used for blockchain
+    #[inline(always)]
     pub fn get_storage(&self) -> &RwLock<S> {
         &self.storage
     }
 
     // Returns the blockchain mempool used
+    #[inline(always)]
     pub fn get_mempool(&self) -> &RwLock<Mempool> {
         &self.mempool
     }
@@ -1288,7 +1292,13 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // retrieve the TX based on its hash by searching in mempool then on disk
+    #[inline(always)]
     pub async fn get_tx(&self, hash: &Hash) -> Result<Immutable<Transaction>, BlockchainError> {
+        self.get_tx_with_storage(hash, StorageHolder::Storage(&self.storage)).await
+    }
+
+    // retrieve the TX based on its hash by searching in mempool then on disk
+    pub async fn get_tx_with_storage(&self, hash: &Hash, storage: StorageHolder<'_, S>) -> Result<Immutable<Transaction>, BlockchainError> {
         trace!("get tx {} from blockchain", hash);
 
         // check in mempool first
@@ -1306,7 +1316,7 @@ impl<S: Storage> Blockchain<S> {
         // check in storage now
         {
             debug!("get tx {} storage lock", hash);
-            let storage = self.storage.read().await;
+            let storage = storage.read().await?;
             debug!("get tx {} storage read acquired", hash);
             if storage.has_transaction(&hash).await? {
                 debug!("tx {} is in storage", hash);

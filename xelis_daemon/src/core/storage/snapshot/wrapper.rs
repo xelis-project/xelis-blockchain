@@ -13,6 +13,17 @@ pub enum StorageHolder<'a, S: Storage> {
     Snapshot(&'a SnapshotWrapper<'a, S>),
 }
 
+impl<S: Storage> Clone for StorageHolder<'_, S> {
+    fn clone(&self) -> Self {
+        match self {
+            StorageHolder::Storage(storage) => StorageHolder::Storage(storage),
+            StorageHolder::Snapshot(wrapper) => StorageHolder::Snapshot(wrapper),
+        }
+    }
+}
+
+impl<S: Storage> Copy for StorageHolder<'_, S> {}
+
 pub enum StorageReadGuard<'a, S: Storage> {
     Storage(RwLockReadGuard<'a, S>),
     Snapshot(SnapshotGuard<'a, S>),
