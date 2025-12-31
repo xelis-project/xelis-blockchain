@@ -204,7 +204,7 @@ impl CiphertextValidityProof {
                 w * w_z_r,           // w * z_r
                 w * w_negated_c, // -w * c
                 w * w_negated,   // -w
-            ]);
+            ].map(|s| s * batch_factor));
 
             batch_collector.dynamic_points.extend([
                 P_source, // P_source
