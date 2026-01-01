@@ -71,7 +71,7 @@ use xelis_common::{
     utils::{
         calculate_tx_fee_extra,
         calculate_tx_fee_per_kb,
-        format_xelis
+        format_xelis,
     },
     tokio::{
         spawn_task,
@@ -81,7 +81,7 @@ use xelis_common::{
         sync::{RwLock, Semaphore}
     },
     varuint::VarUint,
-    contract::{ContractMetadata, build_environment},
+    contract::{ContractMetadata, ContractVersion, build_environment},
 };
 use xelis_vm::Environment;
 use crate::{
@@ -91,7 +91,7 @@ use crate::{
         MILLIS_PER_SECOND, SIDE_BLOCK_REWARD_MAX_BLOCKS, PRUNE_SAFETY_LIMIT,
         SIDE_BLOCK_REWARD_PERCENT, SIDE_BLOCK_REWARD_MIN_PERCENT,
         TIMESTAMP_IN_FUTURE_LIMIT, CHAIN_AVERAGE_BLOCK_TIME_N,
-        MAX_TIP_HEIGHT_DIFFERENCE,
+        MAX_TIP_HEIGHT_DIFFERENCE, DAA_WINDOW
     },
     core::{
         hard_fork,
@@ -133,6 +133,7 @@ use std::{
         HashSet,
         VecDeque
     },
+    iter,
     net::SocketAddr,
     sync::Arc,
     time::{Duration, Instant}
@@ -145,6 +146,7 @@ use super::storage::{
     BlocksAtHeightProvider,
     ClientProtocolProvider,
     PrunedTopoheightProvider,
+    snapshot::StorageHolder,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -187,6 +189,9 @@ impl PreVerifyBlock {
     }
 }
 
+// Contract environments map
+pub type ContractEnvironments = HashMap<ContractVersion, Arc<Environment<ContractMetadata>>>;
+
 pub struct Blockchain<S: Storage> {
     // mempool to retrieve/add all txs
     mempool: RwLock<Mempool>,
@@ -199,7 +204,7 @@ pub struct Blockchain<S: Storage> {
     // By default, set to N threads available
     pre_verify_block_semaphore: Semaphore,
     // Contract environment stdlib
-    environment: Environment<ContractMetadata>,
+    environments: ContractEnvironments,
     // P2p module
     p2p: RwLock<Option<Arc<P2pServer<S>>>>,
     // RPC module
@@ -228,6 +233,8 @@ pub struct Blockchain<S: Storage> {
     disable_zkp_cache: bool,
     // Max concurrency allowed for general tasks
     concurrency: usize,
+    // Cache for mining block header templates
+    mining_cache: RwLock<Option<BlockHeader>>,
 }
 
 impl<S: Storage> Blockchain<S> {
@@ -290,7 +297,10 @@ impl<S: Storage> Blockchain<S> {
         }
 
         let on_disk = storage.has_blocks().await?;
-        let environment = build_environment::<S>().build();
+        let environments = ContractVersion::variants()
+            .into_iter()
+            .map(|version| (version, Arc::new(build_environment::<S>(version).build())))
+            .collect();
 
         info!("Initializing chain...");
         let blockchain = Self {
@@ -298,7 +308,7 @@ impl<S: Storage> Blockchain<S> {
             storage: RwLock::new(storage),
             add_block_semaphore: Semaphore::new(1),
             pre_verify_block_semaphore: Semaphore::new(config.pre_verify_block_threads_count),
-            environment,
+            environments,
             p2p: RwLock::new(None),
             rpc: RwLock::new(None),
             skip_pow_verification: config.skip_pow_verification || config.simulator.is_some(),
@@ -310,7 +320,8 @@ impl<S: Storage> Blockchain<S> {
             txs_verification_threads_count: config.txs_verification_threads_count,
             flush_db_every_n_blocks: config.flush_db_every_n_blocks,
             disable_zkp_cache: config.disable_zkp_cache,
-            concurrency: config.concurrency
+            concurrency: config.concurrency,
+            mining_cache: RwLock::new(None),
         };
 
         // include genesis block
@@ -484,8 +495,8 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // get the environment stdlib for contract execution
-    pub fn get_contract_environment(&self) -> &Environment<ContractMetadata> {
-        &self.environment
+    pub fn get_contract_environments(&self) -> &ContractEnvironments {
+        &self.environments
     }
 
     // Get the configured threads count for TXS
@@ -559,7 +570,7 @@ impl<S: Storage> Blockchain<S> {
                 FEE_PER_KB
             };
 
-            mempool.clean_up(&*storage, &self.environment, chain_cache.stable_topoheight, chain_cache.topoheight, block_version, tx_base_fee, chain_cache.stable_height, true).await?;
+            mempool.clean_up(&*storage, &self.environments, chain_cache.stable_topoheight, chain_cache.topoheight, block_version, tx_base_fee, chain_cache.stable_height, true).await?;
         }
 
         Ok(())
@@ -590,6 +601,10 @@ impl<S: Storage> Blockchain<S> {
         chain_cache.stable_topoheight = stable_topoheight;
         chain_cache.tips = tips;
         chain_cache.difficulty = difficulty;
+
+        if self.mining_cache.write().await.take().is_some() {
+            debug!("Cleared mining cache");
+        }
 
         Ok(())
     }
@@ -630,7 +645,7 @@ impl<S: Storage> Blockchain<S> {
             } else {
                 warn!("No genesis block found!");
                 info!("Generating a new genesis block...");
-                let header = BlockHeader::new(BlockVersion::V0, 0, get_current_time_in_millis(), IndexSet::new(), [0u8; EXTRA_NONCE_SIZE], DEV_PUBLIC_KEY.clone(), IndexSet::new());
+                let header = BlockHeader::new(get_version_at_height(&self.network, 0), 0, get_current_time_in_millis(), IndexSet::new(), [0u8; EXTRA_NONCE_SIZE], DEV_PUBLIC_KEY.clone(), IndexSet::new());
                 let block = Block::new(header, Vec::new());
                 let block_hash = block.hash();
                 info!("Genesis generated: {} with {:?} {}", block.to_hex(), block_hash, block_hash);
@@ -829,6 +844,13 @@ impl<S: Storage> Blockchain<S> {
         debug!("get cumulative difficulty");
         let storage = self.storage.read().await;
         debug!("storage lock acquired for cumulative difficulty");
+
+        self.get_cumulative_difficulty_with_storage(&*storage).await
+    }
+
+    // Retrieve the cumulative difficulty of the chain with provided storage holder
+    pub async fn get_cumulative_difficulty_with_storage(&self, storage: &S) -> Result<CumulativeDifficulty, BlockchainError> {
+        trace!("get cumulative difficulty with storage");
         let top_block_hash = self.get_top_block_hash_for_storage(&storage).await?;
         storage.get_cumulative_difficulty_for_block_hash(&top_block_hash).await
     }
@@ -892,11 +914,11 @@ impl<S: Storage> Blockchain<S> {
     // We take the difficulty from the biggest tip, but compute the solve time from the newest tips
     pub async fn get_difficulty_at_tips<'a, P, I>(&self, provider: &P, tips: I) -> Result<(Difficulty, VarUint), BlockchainError>
     where
-        P: DifficultyProvider + DagOrderProvider + PrunedTopoheightProvider,
-        I: IntoIterator<Item = &'a Hash> + ExactSizeIterator + Clone,
-        I::IntoIter: ExactSizeIterator
+        P: DifficultyProvider + DagOrderProvider + PrunedTopoheightProvider + BlocksAtHeightProvider + CacheProvider,
+        I: Iterator<Item = &'a Hash> + ExactSizeIterator + Clone,
     {
         trace!("get difficulty at tips");
+        let start = Instant::now();
 
         // Get the height at the tips
         let height = blockdag::calculate_height_at_tips(provider, tips.clone().into_iter()).await?;
@@ -910,7 +932,7 @@ impl<S: Storage> Blockchain<S> {
         }
 
         // if simulator is enabled or we are too low in height, don't calculate difficulty
-        if height <= 1 || self.is_simulator_enabled() || *self.get_network() == Network::Devnet {
+        if height <= 1 || self.is_simulator_enabled() {
             let difficulty = difficulty::get_minimum_difficulty(self.get_network(), version);
             return Ok((difficulty, difficulty::get_covariance_p(version)))
         }
@@ -922,30 +944,79 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
-        // Search the highest difficulty available
         let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(provider, tips.clone().into_iter()).await?;
         let biggest_difficulty = provider.get_difficulty_for_block_hash(best_tip).await?;
-
-        // Search the newest tip available to determine the real solve time
-        let (_, newest_tip_timestamp) = blockdag::find_newest_tip_by_timestamp(provider, tips.clone().into_iter()).await?;
-
-        // Find the newest tips parent timestamp
-        let parent_tips = provider.get_past_blocks_for_block_hash(best_tip).await?;
-        let (_, parent_newest_tip_timestamp) = blockdag::find_newest_tip_by_timestamp(provider, parent_tips.iter()).await?;
-
         let p = provider.get_estimated_covariance_for_block_hash(best_tip).await?;
 
         // Get the minimum difficulty configured
         let minimum_difficulty = difficulty::get_minimum_difficulty(self.get_network(), version);
 
+        let solve_time = if version >= BlockVersion::V6 {
+            let (base, base_height) = blockdag::find_common_base(provider, tips, version).await?;
+            let base_topo_height = provider.get_topo_height_for_hash(&base).await?;
+
+            let order = blockdag::generate_full_order(provider, best_tip, &base, base_height, base_topo_height).await?;
+            debug_assert_eq!(order.first(), Some(&base));
+
+            let order_len = order.len() as u64;
+            let last_topoheight = base_topo_height + order_len;
+
+            // Take the newest 50 blocks from the order
+            let (first, last) = if order_len < DAA_WINDOW {
+                // Extend backwards via topoheight
+                let diff = DAA_WINDOW - order_len;
+                let first_topoheight = base_topo_height.saturating_sub(diff);
+                let first = Cow::Owned(provider.get_hash_at_topo_height(first_topoheight).await?);
+                let last = order.last().ok_or(BlockchainError::NotEnoughBlocks)?;
+                (first, last)
+            } else {
+                // Take last 50 blocks: from index (len - 50) to (len - 1)
+                let start_idx = order_len as usize - DAA_WINDOW as usize;
+                let first = order.get_index(start_idx)
+                    .map(Cow::Borrowed)
+                    .ok_or(BlockchainError::NotEnoughBlocks)?;
+                let last = order.last().ok_or(BlockchainError::NotEnoughBlocks)?;
+                (first, last)
+            };
+
+            let now_timestamp = provider.get_timestamp_for_block_hash(&first).await?;
+            let count_timestamp = provider.get_timestamp_for_block_hash(last).await?;
+
+            let time_span = count_timestamp.saturating_sub(now_timestamp);
+            let mut count = DAA_WINDOW;
+            if last_topoheight < DAA_WINDOW {
+                count = last_topoheight;
+            }
+
+            let solve_time = time_span / count;
+
+            trace!("Calculated solve time is {} between now {} and past {} (count: {})", solve_time, last, first, count);
+
+            solve_time
+        } else {
+            // Search the highest difficulty available
+
+            // Search the newest tip available to determine the real solve time
+            let (_, newest_tip_timestamp) = blockdag::find_newest_tip_by_timestamp(provider, tips.clone().into_iter()).await?;
+
+            // Find the newest tips parent timestamp
+            let parent_tips = provider.get_past_blocks_for_block_hash(best_tip).await?;
+            let (_, parent_newest_tip_timestamp) = blockdag::find_newest_tip_by_timestamp(provider, parent_tips.iter()).await?;
+
+            newest_tip_timestamp.saturating_sub(parent_newest_tip_timestamp)
+        };
+
         let (difficulty, p_new) = difficulty::calculate_difficulty(
-            parent_newest_tip_timestamp,
-            newest_tip_timestamp,
+            solve_time.max(1),
             biggest_difficulty,
             p,
             minimum_difficulty,
             version
         );
+
+        let elapsed = start.elapsed();
+        trace!("Difficulty calculated in {:?}", elapsed);
+        histogram!("xelis_difficulty_time_µs").record(elapsed.as_micros() as f64);
 
         Ok((difficulty, p_new))
     }
@@ -965,9 +1036,8 @@ impl<S: Storage> Blockchain<S> {
     // if the difficulty is valid, returns it (prevent to re-compute it)
     pub async fn verify_proof_of_work<'a, P, I>(&self, provider: &P, hash: &Hash, tips: I) -> Result<(Difficulty, VarUint), BlockchainError>
     where
-        P: DifficultyProvider + DagOrderProvider + PrunedTopoheightProvider,
-        I: IntoIterator<Item = &'a Hash> + ExactSizeIterator + Clone,
-        I::IntoIter: ExactSizeIterator
+        P: DifficultyProvider + DagOrderProvider + PrunedTopoheightProvider + CacheProvider + BlocksAtHeightProvider,
+        I: Iterator<Item = &'a Hash> + ExactSizeIterator + Clone,
     {
         trace!("Verifying proof of work for block {}", hash);
         let (difficulty, p) = self.get_difficulty_at_tips(provider, tips).await?;
@@ -980,21 +1050,25 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // Returns the P2p module used for blockchain if enabled
+    #[inline(always)]
     pub fn get_p2p(&self) -> &RwLock<Option<Arc<P2pServer<S>>>> {
         &self.p2p
     }
 
     // Returns the RPC server used for blockchain if enabled
+    #[inline(always)]
     pub fn get_rpc(&self) -> &RwLock<Option<SharedDaemonRpcServer<S>>> {
         &self.rpc
     }
 
     // Returns the storage used for blockchain
+    #[inline(always)]
     pub fn get_storage(&self) -> &RwLock<S> {
         &self.storage
     }
 
     // Returns the blockchain mempool used
+    #[inline(always)]
     pub fn get_mempool(&self) -> &RwLock<Mempool> {
         &self.mempool
     }
@@ -1081,7 +1155,7 @@ impl<S: Storage> Blockchain<S> {
 
             // NOTE: we do not verify / clean against requested base fee
             // to ensure no TX is orphaned, but only delayed until the chain congestion reduce
-            mempool.add_tx(storage, &self.environment, stable_topoheight, current_topoheight, FEE_PER_KB, stable_height, hash.clone(), tx.clone(), tx_size, version).await?;
+            mempool.add_tx(storage, &self.environments, stable_topoheight, current_topoheight, FEE_PER_KB, stable_height, hash.clone(), tx.clone(), tx_size, version).await?;
 
             debug!("TX {} has been added to the mempool", hash);
 
@@ -1218,7 +1292,13 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // retrieve the TX based on its hash by searching in mempool then on disk
+    #[inline(always)]
     pub async fn get_tx(&self, hash: &Hash) -> Result<Immutable<Transaction>, BlockchainError> {
+        self.get_tx_with_storage(hash, StorageHolder::Storage(&self.storage)).await
+    }
+
+    // retrieve the TX based on its hash by searching in mempool then on disk
+    pub async fn get_tx_with_storage(&self, hash: &Hash, storage: StorageHolder<'_, S>) -> Result<Immutable<Transaction>, BlockchainError> {
         trace!("get tx {} from blockchain", hash);
 
         // check in mempool first
@@ -1236,7 +1316,7 @@ impl<S: Storage> Blockchain<S> {
         // check in storage now
         {
             debug!("get tx {} storage lock", hash);
-            let storage = self.storage.read().await;
+            let storage = storage.read().await?;
             debug!("get tx {} storage read acquired", hash);
             if storage.has_transaction(&hash).await? {
                 debug!("tx {} is in storage", hash);
@@ -1259,7 +1339,19 @@ impl<S: Storage> Blockchain<S> {
         trace!("get block header template for storage");
         let start = Instant::now();
 
-        let extra_nonce: [u8; EXTRA_NONCE_SIZE] = rand::thread_rng().gen::<[u8; EXTRA_NONCE_SIZE]>(); // generate random bytes
+         // generate random bytes
+        let extra_nonce: [u8; EXTRA_NONCE_SIZE] = rand::thread_rng().gen::<[u8; EXTRA_NONCE_SIZE]>();
+
+        let mut lock = self.mining_cache.write().await;
+        if let Some(mut cached_template) = lock.as_ref().cloned() {
+            // Randomize the extra nonce
+            // to keep the same behavior
+            cached_template.extra_nonce = extra_nonce;
+            cached_template.miner = address;
+            cached_template.timestamp = get_current_time_in_millis();
+
+            return Ok(cached_template);
+        }
 
         let chain_cache = storage.chain_cache().await;
         let tips_set = chain_cache.tips.clone();
@@ -1278,12 +1370,12 @@ impl<S: Storage> Blockchain<S> {
             for hash in tips {
                 if best_tip != hash {
                     if !blockdag::validate_tips(storage, &best_tip, &hash).await? {
-                        warn!("Tip {} is invalid, not selecting it because difficulty can't be less than 91% of {}", hash, best_tip);
+                        debug!("Tip {} is invalid, not selecting it because difficulty can't be less than 91% of {}", hash, best_tip);
                         continue;
                     }
 
                     if !blockdag::is_near_enough_from_main_chain(storage, &hash, block_height_by_tips, version_at_height).await? {
-                        warn!("Tip {} is not selected for mining: too far from mainchain at height: {}", hash, current_height);
+                        debug!("Tip {} is not selected for mining: too far from mainchain at height: {}", hash, current_height);
                         continue;
                     }
 
@@ -1291,7 +1383,7 @@ impl<S: Storage> Blockchain<S> {
                     let tip_height = storage.get_height_for_block_hash(&hash).await?;
                     let height_diff = block_height_by_tips.saturating_sub(tip_height);
                     if height_diff > MAX_TIP_HEIGHT_DIFFERENCE {
-                        warn!("Tip {} has a height difference too big ({} > {})", hash, height_diff, MAX_TIP_HEIGHT_DIFFERENCE);
+                        debug!("Tip {} has a height difference too big ({} > {})", hash, height_diff, MAX_TIP_HEIGHT_DIFFERENCE);
                         continue;
                     }
                 }
@@ -1341,6 +1433,8 @@ impl<S: Storage> Blockchain<S> {
         let block = BlockHeader::new(get_version_at_height(self.get_network(), height), height, timestamp, sorted_tips, extra_nonce, address, IndexSet::new());
 
         histogram!("xelis_block_header_template_ms").record(start.elapsed().as_millis() as f64);
+
+        lock.replace(block.clone());
 
         Ok(block)
     }
@@ -1405,7 +1499,7 @@ impl<S: Storage> Blockchain<S> {
         // Find the base height for this block
         let base_height = blockdag::find_common_base_height(&*storage, block.get_tips(), block.get_version()).await?;
 
-        let mut chain_state = ChainState::new(storage, &self.environment, stable_topoheight, topoheight, block.get_version(), base_fee, base_height);
+        let mut chain_state = ChainState::new(storage, &self.environments, stable_topoheight, topoheight, block.get_version(), base_fee, base_height);
 
         if !tx_selector.is_empty() {
             let tx_cache = TxCache::new(storage, &mempool, self.disable_zkp_cache);
@@ -1596,7 +1690,13 @@ impl<S: Storage> Blockchain<S> {
     // Verification is done using read guards,
     // once the block is fully verified, we can include it
     // in our chain by acquiring a write guard
+    #[inline(always)]
     pub async fn add_new_block(&self, block: Block, pre_verify: PreVerifyBlock, broadcast: BroadcastOption, mining: bool) -> Result<(), BlockchainError> {
+        self.add_new_block_with_storage(StorageHolder::Storage(&self.storage), block, pre_verify, broadcast, mining).await
+    }
+
+    // Add a new block in chain with the given storage holder
+    pub async fn add_new_block_with_storage(&self, holder: StorageHolder<'_, S>, block: Block, pre_verify: PreVerifyBlock, broadcast: BroadcastOption, mining: bool) -> Result<(), BlockchainError> {
         let start = Instant::now();
 
         // Expected version for this block
@@ -1618,7 +1718,7 @@ impl<S: Storage> Blockchain<S> {
         debug!("acquiring add block semaphore");
         let _permit = self.add_block_semaphore.acquire().await?;
         debug!("add block semaphore acquired, locking storage for block verification");
-        let storage = self.storage.read().await;
+        let storage = holder.read().await?;
 
         debug!("Add new block {}", block_hash);
         if storage.has_block_with_hash(&block_hash).await? {
@@ -1961,7 +2061,7 @@ impl<S: Storage> Blockchain<S> {
                     }
 
                     let storage = &*storage;
-                    let environment = &self.environment;
+                    let environments = &self.environments;
                     let cache = &tx_cache;
 
                     // We run the batches in concurrent tasks
@@ -1969,12 +2069,12 @@ impl<S: Storage> Blockchain<S> {
                     // it will be multi-threaded by N threads
                     stream::iter(batches.into_iter().map(Ok))
                         .try_for_each_concurrent(self.txs_verification_threads_count, async |txs| {
-                            let mut chain_state = ChainState::new(storage, environment, stable_topoheight, current_topoheight, version, base_fee, base_height);
+                            let mut chain_state = ChainState::new(storage, environments, stable_topoheight, current_topoheight, version, base_fee, base_height);
                             Transaction::verify_batch(txs.iter(), &mut chain_state, cache).await
                         }).await
                 } else {
                     // Verify all valid transactions in one batch
-                    let mut chain_state = ChainState::new(&*storage, &self.environment, stable_topoheight, current_topoheight, version, base_fee, base_height);
+                    let mut chain_state = ChainState::new(&*storage, &self.environments, stable_topoheight, current_topoheight, version, base_fee, base_height);
                     let iter = txs_grouped.values()
                         .flatten();
                     Transaction::verify_batch(iter, &mut chain_state, &tx_cache).await
@@ -2032,40 +2132,52 @@ impl<S: Storage> Blockchain<S> {
 
         counter!("xelis_block_added").increment(1);
 
-        debug!("Acquiring storage write lock to save block {}", block_hash);
-        let mut storage = self.storage.write().await;
-        debug!("Storage write lock acquired for saving block {}", block_hash);
+        trace!("Acquiring storage write lock to save block {}", block_hash);
+        let mut storage = holder.write().await?;
+        trace!("Storage write lock acquired for saving block {}", block_hash);
 
         // Save transactions & block
         {
+
             debug!("Saving block {} on disk", block_hash);
             let start = Instant::now();
             storage.save_block(block.clone(), &txs, difficulty, cumulative_difficulty, p, new_block_size_ema, Immutable::Arc(block_hash.clone())).await?;
             storage.add_block_execution_to_order(&block_hash).await?;
 
             histogram!("xelis_block_store_ms").record(start.elapsed().as_millis() as f64);
+            debug!("Block {} saved on disk", block_hash);
         }
 
-        debug!("Block {} saved on disk", block_hash);
+        trace!("Re acquiring storage in read mode for block {}", block_hash);
+        let storage = storage.downgrade();
+        trace!("Storage read lock acquired for block {}", block_hash);
 
         let mut tips = storage.get_tips().await?;
         // TODO: best would be to not clone
         tips.insert(block_hash.as_ref().clone());
+
+        // remove block tips that are no longer tips
         for hash in block.get_tips() {
             tips.remove(hash);
         }
+
         debug!("New tips: {}", tips.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(","));
 
-        let (base_hash, base_height) = blockdag::find_common_base(&*storage, &tips, version).await?;
-        debug!("New base hash: {}, height: {}", base_hash, base_height);
-        let best_tip = blockdag::find_best_tip(&*storage, &tips, &base_hash, base_height).await?;
+        let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(&*storage, tips.iter()).await?;
         debug!("Best tip selected: {}", best_tip);
 
+        // Find a common base across all our TIPS in the chain
+        let (base_hash, base_height) = blockdag::find_common_base(&*storage, &tips, version).await?;
         let base_topo_height = storage.get_topo_height_for_hash(&base_hash).await?;
+        debug!("New base hash: {}, height: {}, topo height: {}", base_hash, base_height, base_topo_height);
+
         // generate a full order until base_topo_height
         let mut full_order = blockdag::generate_full_order(&*storage, &best_tip, &base_hash, base_height, base_topo_height).await?;
         debug!("Generated full order size: {}, with base ({}) topo height: {}", full_order.len(), base_hash, base_topo_height);
         trace!("Full order: {}", full_order.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", "));
+
+        trace!("Dropping storage read lock for block {}", block_hash);
+        drop(storage);
 
         // rpc server lock
         let rpc_server = self.rpc.read().await;
@@ -2093,6 +2205,10 @@ impl<S: Storage> Blockchain<S> {
             // detect which part of DAG reorg stay, for other part, undo all executed txs
             debug!("Detecting stable point of DAG and cleaning txs above it");
             {
+                trace!("Acquiring storage write lock to clean transactions above stable point");
+                let mut storage = holder.write().await?;
+                trace!("Storage write lock acquired for cleaning transactions above stable point");
+
                 let mut topoheight = base_topo_height;
                 while topoheight <= current_topoheight {
                     let hash_at_topo = storage.get_hash_at_topo_height(topoheight).await?;
@@ -2166,6 +2282,10 @@ impl<S: Storage> Blockchain<S> {
             for (i, hash) in full_order.into_iter().enumerate() {
                 highest_topo = base_topo_height + skipped + i as u64;
 
+                trace!("Processing block {} at topoheight {}", hash, highest_topo);
+                let storage = holder.read().await?;
+                trace!("Storage read lock acquired for ordering block {}", hash);
+
                 // if block is not re-ordered and it's not genesis block
                 // because we don't need to recompute everything as it's still good in chain
                 if !dag_is_overwritten && tips_count != 0 && storage.is_block_topological_ordered(&hash).await? && storage.get_topo_height_for_hash(&hash).await? == highest_topo {
@@ -2233,7 +2353,7 @@ impl<S: Storage> Blockchain<S> {
                 trace!("building chain state to execute TXs in block {} with required base fee {}", block_hash, required_tx_fee);
                 let mut chain_state = ApplicableChainState::new(
                     &*storage,
-                    &self.environment,
+                    &self.environments,
                     base_topo_height,
                     highest_topo,
                     version,
@@ -2461,6 +2581,12 @@ impl<S: Storage> Blockchain<S> {
 
                 // apply changes from Chain State
                 let finalizer = chain_state.finalize().await?;
+
+                drop(storage);
+                trace!("Re acquiring storage write lock to apply changes for block {}", hash);
+                let mut storage = holder.write().await?;
+                trace!("Storage write lock acquired to apply changes for block {}", hash);
+
                 finalizer.apply_changes(&mut *storage, past_emitted_supply, block_reward).await?;
 
                 if should_track_events.contains(&NotifyEvent::BlockOrdered) {
@@ -2485,102 +2611,103 @@ impl<S: Storage> Blockchain<S> {
             histogram!("xelis_dag_ordering_ms").record(start.elapsed().as_millis() as f64);
         }
 
-        let best_height = storage.get_height_for_block_hash(best_tip).await?;
+        trace!("Re acquiring storage read lock after ordering for block {}", block_hash);
+        let storage = holder.read().await?;
+        trace!("Storage read lock acquired after ordering for block {}", block_hash);
+
         let mut new_tips = Vec::new();
         let version_at_height = hard_fork::get_version_at_height(self.get_network(), current_height);
         for hash in tips {
-            if blockdag::is_near_enough_from_main_chain(&*storage, &hash, current_height, version_at_height).await? {
-                trace!("Adding {} as new tips", hash);
-                new_tips.push(hash);
-            } else {
-                info!("Rusty TIP declared stale {} with best height: {}", hash, best_height);
+            if !blockdag::is_near_enough_from_main_chain(&*storage, &hash, current_height, version_at_height).await? {
+                debug!("Tip {} is too far from main chain at height {}, skipping...", hash, current_height);
+                continue;
             }
+
+            trace!("Adding {} as new tips", hash);
+            new_tips.push(hash);
         }
 
         tips = HashSet::new();
         debug!("find best tip by cumulative difficulty");
         let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(&*storage, new_tips.iter()).await?.clone();
+        let expected_next_height = blockdag::calculate_height_at_tips(&*storage, iter::once(&best_tip)).await?;
+        debug!("Best tip is {}, expected next height is {}", best_tip, expected_next_height);
+
         for hash in new_tips {
             if best_tip != hash {
                 if !blockdag::validate_tips(&*storage, &best_tip, &hash).await? {
-                    info!("Rusty TIP {} declared stale", hash);
-                } else {
-                    debug!("Tip {} is valid, adding to final Tips list", hash);
-                    tips.insert(hash);
+                    debug!("Tip {} is not compatible with best tip {}, declaring it stale", hash, best_tip);
+                    continue;
                 }
+
+                let height = storage.get_height_for_block_hash(&hash).await?;
+                let height_diff = expected_next_height.saturating_sub(height);
+                if height_diff > MAX_TIP_HEIGHT_DIFFERENCE {
+                    debug!("Tip {} has a height difference too big ({} > {}), declaring it stale", hash, height_diff, MAX_TIP_HEIGHT_DIFFERENCE);
+                    continue;
+                }
+
+                debug!("Tip {} is valid, adding to final Tips list", hash);
+                tips.insert(hash);
             }
         }
         tips.insert(best_tip);
+
+        // Drop the storage again to re-acquire in write mode
+        drop(storage);
 
         // save highest topo height
         debug!("Highest topo height found: {}", highest_topo);
         // if the DAG has been reorganized, we update the topoheight
         let chain_topoheight_extended = current_height == 0 || highest_topo > current_topoheight || dag_is_overwritten;
-        if chain_topoheight_extended {
-            debug!("Blockchain height extended, current topoheight is now {} (previous was {})", highest_topo, current_topoheight);
-            storage.set_top_topoheight(highest_topo).await?;
-            current_topoheight = highest_topo;
-        }
-
-        // If block is directly orphaned
-        // Mark all TXs ourself as linked to it
-        if !block_is_ordered {
-            debug!("Block {} is orphaned, marking all TXs as linked to it", block_hash);
-            for tx_hash in block.get_txs_hashes() {
-                storage.add_block_linked_to_tx_if_not_present(&tx_hash, &block_hash).await?;
-            }
-        }
-
-        // auto prune mode
-        if let Some(keep_only) = self.auto_prune_keep_n_blocks.filter(|_| chain_topoheight_extended) {
-            // check that the topoheight is greater than the safety limit
-            // and that we can prune the chain using the config while respecting the safety limit
-            if current_topoheight % keep_only == 0 && current_topoheight - keep_only > 0 {
-                info!("Auto pruning chain until topoheight {} (keep only {} blocks)", current_topoheight - keep_only, keep_only);
-                let start = Instant::now();
-                if let Err(e) = self.prune_until_topoheight_for_storage(current_topoheight - keep_only, &mut *storage).await {
-                    error!("Error while trying to auto prune chain: {}", e);
-                }
-
-                info!("Auto pruning done in {}ms", start.elapsed().as_millis());
-            }
-        }
-
-        debug!("Storing new tips in storage");
-        // Store the new tips available
-        storage.store_tips(&tips).await?;
-
         let chain_height_extended = current_height == 0 || block.get_height() > current_height;
-        if chain_height_extended {
-            debug!("storing new top height {}", block.get_height());
-            storage.set_top_height(block.get_height()).await?;
-            current_height = block.get_height();
-        }
 
-        // update stable height and difficulty in cache
+        trace!("acquiring final storage write lock to update stats for {}", block_hash);
+        let mut storage = holder.write().await?;
+        trace!("final storage write lock acquired for {}", block_hash);
         {
-            if should_track_events.contains(&NotifyEvent::StableHeightChanged) {
-                // detect the change in stable height
-                if base_height != stable_height {
-                    let value = json!(StableHeightChangedEvent {
-                        previous_stable_height: stable_height,
-                        new_stable_height: base_height
-                    });
-                    events.entry(NotifyEvent::StableHeightChanged).or_insert_with(Vec::new).push(value);
+    
+            if chain_topoheight_extended {
+                debug!("Blockchain height extended, current topoheight is now {} (previous was {})", highest_topo, current_topoheight);
+                storage.set_top_topoheight(highest_topo).await?;
+                current_topoheight = highest_topo;
+            }
+
+            // If block is directly orphaned
+            // Mark all TXs ourself as linked to it
+            if !block_is_ordered {
+                debug!("Block {} is orphaned, marking all TXs as linked to it", block_hash);
+                for tx_hash in block.get_txs_hashes() {
+                    storage.add_block_linked_to_tx_if_not_present(&tx_hash, &block_hash).await?;
                 }
             }
 
-            if should_track_events.contains(&NotifyEvent::StableTopoHeightChanged) {
-                // detect the change in stable topoheight
-                if base_topo_height != stable_topoheight {
-                    let value = json!(StableTopoHeightChangedEvent {
-                        previous_stable_topoheight: stable_topoheight,
-                        new_stable_topoheight: base_topo_height
-                    });
-                    events.entry(NotifyEvent::StableTopoHeightChanged).or_insert_with(Vec::new).push(value);
+            // auto prune mode
+            if let Some(keep_only) = self.auto_prune_keep_n_blocks.filter(|_| chain_topoheight_extended) {
+                // check that the topoheight is greater than the safety limit
+                // and that we can prune the chain using the config while respecting the safety limit
+                if current_topoheight > keep_only && current_topoheight % keep_only == 0 && current_topoheight - keep_only > 0 {
+                    info!("Auto pruning chain until topoheight {} (keep only {} blocks)", current_topoheight - keep_only, keep_only);
+                    let start = Instant::now();
+                    if let Err(e) = self.prune_until_topoheight_for_storage(current_topoheight - keep_only, &mut *storage).await {
+                        error!("Error while trying to auto prune chain: {}", e);
+                    }
+    
+                    info!("Auto pruning done in {}ms", start.elapsed().as_millis());
                 }
             }
+    
+            debug!("Storing new tips in storage");
+            // Store the new tips available
+            storage.store_tips(&tips).await?;
 
+            if chain_height_extended {
+                debug!("storing new top height {}", block.get_height());
+                storage.set_top_height(block.get_height()).await?;
+                current_height = block.get_height();
+            }
+    
+            // update stable height and difficulty in cache
             debug!("update difficulty in cache for new tips");
             let (difficulty, _) = self.get_difficulty_at_tips(&*storage, tips.iter()).await?;
 
@@ -2602,6 +2729,43 @@ impl<S: Storage> Blockchain<S> {
             }
 
             gauge!("xelis_block_difficulty").set(difficulty.as_u64().unwrap_or(0) as f64);
+
+            let mut lock = self.mining_cache.write().await;
+            if lock.take().is_some() {
+                debug!("Clearing mining cache due to chain change");
+            }
+ 
+            // Flush to the disk
+            if self.flush_db_every_n_blocks.is_some_and(|n| current_topoheight % n == 0) {
+                debug!("force flushing storage");
+                storage.flush().await?;
+            }
+        }
+
+        trace!("Re acquiring storage read lock to finalize block {}", block_hash);
+        let storage = storage.downgrade();
+        trace!("Storage read lock acquired to finalize block {}", block_hash);
+
+        if should_track_events.contains(&NotifyEvent::StableHeightChanged) {
+            // detect the change in stable height
+            if base_height != stable_height {
+                let value = json!(StableHeightChangedEvent {
+                    previous_stable_height: stable_height,
+                    new_stable_height: base_height
+                });
+                events.entry(NotifyEvent::StableHeightChanged).or_insert_with(Vec::new).push(value);
+            }
+        }
+
+        if should_track_events.contains(&NotifyEvent::StableTopoHeightChanged) {
+            // detect the change in stable topoheight
+            if base_topo_height != stable_topoheight {
+                let value = json!(StableTopoHeightChangedEvent {
+                    previous_stable_topoheight: stable_topoheight,
+                    new_stable_topoheight: base_topo_height
+                });
+                events.entry(NotifyEvent::StableTopoHeightChanged).or_insert_with(Vec::new).push(value);
+            }
         }
 
         // Check if the event is tracked
@@ -2614,7 +2778,7 @@ impl<S: Storage> Blockchain<S> {
             let mut mempool = self.mempool.write().await;
 
             let start = Instant::now();
-            let orphaned = mempool.try_add_back_txs(&*storage, orphaned_transactions.into_iter(), &self.environment, base_topo_height, highest_topo, version, FEE_PER_KB, base_height).await?;
+            let orphaned = mempool.try_add_back_txs(&*storage, orphaned_transactions.into_iter(), &self.environments, base_topo_height, highest_topo, version, FEE_PER_KB, base_height).await?;
             if !orphan_event_tracked {
                 for (tx_hash, tx) in orphaned {
                     // We couldn't add it back to mempool, let's notify this event
@@ -2641,7 +2805,7 @@ impl<S: Storage> Blockchain<S> {
 
             let start = Instant::now();
             // NOTE: we don't remove any under-paid TX, they stay in mempool until fixed
-            let res = mempool.clean_up(&*storage, &self.environment, base_topo_height, highest_topo, version, FEE_PER_KB, base_height, dag_is_overwritten).await?;
+            let res = mempool.clean_up(&*storage, &self.environments, base_topo_height, highest_topo, version, FEE_PER_KB, base_height, dag_is_overwritten).await?;
             debug!("Took {:?} to clean mempool!", start.elapsed());
             histogram!("xelis_mempool_clean_up_ms").record(start.elapsed().as_millis() as f64);
 
@@ -2668,12 +2832,6 @@ impl<S: Storage> Blockchain<S> {
                 };
                 events.entry(NotifyEvent::TransactionOrphaned).or_insert_with(Vec::new).push(json!(data));
             }
-        }
-
-        // Flush to the disk
-        if self.flush_db_every_n_blocks.is_some_and(|n| current_topoheight % n == 0) {
-            debug!("force flushing storage");
-            storage.flush().await?;
         }
 
         let elapsed = start.elapsed().as_millis();
@@ -2746,7 +2904,8 @@ impl<S: Storage> Blockchain<S> {
         trace!("internal get block reward");
         let block_time_target = get_block_time_target_for_version(version);
         let mut block_reward = get_block_reward(past_supply, block_time_target);
-        if is_side_block {
+        // Starting version 6, side blocks have same reward as normal blocks
+        if is_side_block && version < BlockVersion::V6 {
             let side_block_percent = side_block_reward_percentage(side_blocks_count);
             trace!("side block reward: {}%", side_block_percent);
 

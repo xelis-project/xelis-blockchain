@@ -1,6 +1,7 @@
 mod changes;
 mod iterator_mode;
 mod bytes_view;
+mod wrapper;
 
 use std::{
     collections::HashMap,
@@ -19,6 +20,7 @@ use crate::core::{
 
 pub use iterator_mode::*;
 pub use bytes_view::*;
+pub use wrapper::*;
 
 pub enum EntryState<T> {
     // Has been added/modified in our snapshot

@@ -1,5 +1,7 @@
+use xelis_vm::ValueCell;
+
 use crate::{
-    contract::ScheduledExecutionKindLog,
+    contract::{ExitError, ScheduledExecutionKindLog},
     crypto::{Hash, PublicKey},
     serializer::*
 };
@@ -12,7 +14,7 @@ pub enum ContractLog {
         /// The amount of gas that is refunded
         amount: u64
     },
-    // Transfer some assets to another account
+    // Transfer an asset to another account
     Transfer {
         contract: Hash,
         /// The amount that is transferred
@@ -73,6 +75,21 @@ pub enum ContractLog {
         // at which topoheight it will be called
         kind: ScheduledExecutionKindLog,
     },
+    // Payload returned on contract exit
+    ExitPayload(ValueCell),
+    // Transfer an asset to another account with payload
+    TransferPayload {
+        contract: Hash,
+        /// The amount that is transferred
+        amount: u64,
+        /// The asset for this output
+        asset: Hash,
+        /// The destination of the transfer
+        destination: PublicKey,
+        /// The payload sent with the transfer
+        payload: ValueCell,
+    },
+    ExitError(ExitError),
 }
 
 impl Serializer for ContractLog {
@@ -130,7 +147,23 @@ impl Serializer for ContractLog {
                 contract.write(writer);
                 hash.write(writer);
                 kind.write(writer);
-            }
+            },
+            ContractLog::ExitPayload(payload) => {
+                writer.write_u8(10);
+                payload.write(writer);
+            },
+            ContractLog::TransferPayload { contract, amount, asset, destination, payload } => {
+                writer.write_u8(11);
+                contract.write(writer);
+                amount.write(writer);
+                asset.write(writer);
+                destination.write(writer);
+                payload.write(writer);
+            },
+            ContractLog::ExitError(err) => {
+                writer.write_u8(12);
+                err.write(writer);
+            },
         }
     }
 
@@ -182,6 +215,22 @@ impl Serializer for ContractLog {
                 hash: Hash::read(reader)?,
                 kind: ScheduledExecutionKindLog::read(reader)?,
             },
+            10 => {
+                let payload = ValueCell::read(reader)?;
+                ContractLog::ExitPayload(payload)
+            },
+            11 => {
+                let contract = Hash::read(reader)?;
+                let amount = u64::read(reader)?;
+                let asset = Hash::read(reader)?;
+                let destination = PublicKey::read(reader)?;
+                let payload = ValueCell::read(reader)?;
+                ContractLog::TransferPayload { contract, amount, asset, destination, payload }
+            },
+            12 => {
+                let err = ExitError::read(reader)?;
+                ContractLog::ExitError(err)
+            },
             _ => return Err(ReaderError::InvalidValue)
         })
     }
@@ -198,6 +247,9 @@ impl Serializer for ContractLog {
             ContractLog::RefundDeposits => 0,
             ContractLog::GasInjection { contract, amount } => contract.size() + amount.size(),
             ContractLog::ScheduledExecution { contract, hash, kind } => contract.size() + hash.size() + kind.size(),
+            ContractLog::ExitPayload(payload) => payload.size(),
+            ContractLog::TransferPayload { contract, amount, asset, destination, payload } => contract.size() + amount.size() + asset.size() + destination.size() + payload.size(),
+            ContractLog::ExitError(err) => err.size(),
         }
     }
 }

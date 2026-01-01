@@ -6,6 +6,7 @@ use chacha20poly1305::{
     ChaCha20Poly1305,
     KeyInit
 };
+use rand::Rng;
 use thiserror::Error;
 use xelis_common::tokio::sync::Mutex;
 use log::trace;
@@ -112,9 +113,12 @@ impl Encryption {
 
     // Generate a new random key
     pub fn generate_key(&self) -> Result<EncryptionKey, EncryptionError> {
-        ChaCha20Poly1305::generate_key()
-            .map(Into::into)
-            .map_err(|_| EncryptionError::Rng)
+        let mut key = EncryptionKey::default();
+        rand::thread_rng()
+            .try_fill(&mut key)
+            .map_err(|_| EncryptionError::Rng)?;
+
+        Ok(key)
     }
 
     // Encrypt a packet using the shared symetric key

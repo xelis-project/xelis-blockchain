@@ -36,7 +36,10 @@ use crate::{
         hard_fork,
         blockchain::{BroadcastOption, PreVerifyBlock},
         error::BlockchainError,
-        storage::Storage,
+        storage::{
+            Storage,
+            snapshot::{SnapshotWrapper, StorageHolder},
+        },
         blockdag,
     },
     p2p::{
@@ -403,7 +406,7 @@ impl<S: Storage> P2pServer<S> {
     // This may be faster, but we would use slightly more bandwidth
     // NOTE: ChainValidator must check the block hash and not trust it
     // as we are giving it the chain directly to prevent a re-compute
-    async fn handle_blocks_from_chain_validator(&self, peer: &Arc<Peer>, chain_validator: ChainValidator<'_, S>) -> Result<(), BlockchainError> {
+    async fn handle_blocks_from_chain_validator(&self, peer: &Arc<Peer>, chain_validator: ChainValidator<'_, S>, snapshot: &SnapshotWrapper<'_, S>) -> Result<(), BlockchainError> {
         // now retrieve all txs from all blocks header and add block in chain
 
         let capacity = if self.allow_boost_sync() {
@@ -420,10 +423,13 @@ impl<S: Storage> P2pServer<S> {
 
             let future = async move {
                 // we don't already have this block, lets retrieve its txs and add in our chain
-                if !self.blockchain.has_block(&hash).await? {
+                if {
+                    let storage = snapshot.lock().await?;
+                    !storage.has_block_with_hash(&hash).await?
+                } {
                     let (block, cache) = match data {
                         Some(data) => {
-                            let block = self.request_block(peer, &hash, data.header).await?;
+                            let block = self.request_block_with_storage(peer, &hash, data.header, StorageHolder::Snapshot(snapshot)).await?;
                             let cache = PreVerifyBlock::Partial { block_hash: hash.clone(), pow_hash:  data.pow_hash };
                             (block, cache)
                         },
@@ -465,8 +471,8 @@ impl<S: Storage> P2pServer<S> {
                 Some(res) = scheduler.next() => {
                     let future = async move {
                         match res? {
-                            ResponseHelper::Requested(block, pre_verify) => self.blockchain.add_new_block(block, pre_verify, BroadcastOption::Miners, false).await,
-                            ResponseHelper::NotRequested(hash) => self.try_re_execution_block(hash).await,
+                            ResponseHelper::Requested(block, pre_verify) => self.blockchain.add_new_block_with_storage(StorageHolder::Snapshot(snapshot), block, pre_verify, BroadcastOption::None, false).await,
+                            ResponseHelper::NotRequested(hash) => self.try_re_execution_block(hash, StorageHolder::Snapshot(snapshot)).await,
                         }
                     };
 
@@ -488,12 +494,16 @@ impl<S: Storage> P2pServer<S> {
 
     // Handle the chain validator by rewinding our current chain first
     // This should only be called with a commit point enabled
-    async fn handle_chain_validator_with_rewind(&self, peer: &Arc<Peer>, pop_count: u64, chain_validator: ChainValidator<'_, S>) -> Result<(Vec<(Hash, Immutable<Transaction>)>, Result<(), BlockchainError>), BlockchainError> {
+    async fn handle_chain_validator_with_rewind(&self, peer: &Arc<Peer>, pop_count: u64, chain_validator: ChainValidator<'_, S>, snapshot: &SnapshotWrapper<'_, S>) -> Result<(Vec<(Hash, Immutable<Transaction>)>, Result<(), BlockchainError>), BlockchainError> {
         // peer chain looks correct, lets rewind our chain
         warn!("Rewinding chain because of {} (pop count: {})", peer, pop_count);
-        let (topoheight, txs) = self.blockchain.rewind_chain(pop_count, false).await?;
+        let (topoheight, txs) = {
+            let mut snapshot = snapshot.lock().await?;
+            self.blockchain.rewind_chain_for_storage(&mut snapshot, pop_count, false).await?
+        };
+
         debug!("Rewinded chain until topoheight {}", topoheight);
-        let res = self.handle_blocks_from_chain_validator(peer, chain_validator).await;
+        let res = self.handle_blocks_from_chain_validator(peer, chain_validator, snapshot).await;
 
         if let Err(BlockchainError::ErrorOnP2p(e)) = &res {
             debug!("Mark {} as sync chain from validator failed: {}", peer, e);
@@ -625,29 +635,36 @@ impl<S: Storage> P2pServer<S> {
                     requested_max_size,
                 ).await?;
 
-                // Handle the chain validator
                 {
                     info!("Starting commit point for chain validator");
-                    let mut storage = self.blockchain.get_storage().write().await;
-                    storage.start_snapshot().await?;
-                    info!("Commit point started for chain validator");
-                }
-                let mut res = self.handle_chain_validator_with_rewind(peer, pop_count, chain_validator).await;
-                {
+                    let storage = SnapshotWrapper::new(self.blockchain.get_storage());
+                    let mut res = self.handle_chain_validator_with_rewind(peer, pop_count, chain_validator, &storage).await;
+
                     info!("Ending commit point for chain validator");
                     let apply = match res.as_ref() {
                         // In case we got a partially good chain only, and that its still better than ours
                         // we can partially switch to it if the topoheight AND the cumulative difficulty is bigger
-                        Ok((_, res)) => res.is_ok() || (our_previous_topoheight < self.blockchain.get_topo_height().await && current_cumulative_difficulty < self.blockchain.get_cumulative_difficulty().await?),
+                        Ok((_, res)) => {
+                            if res.is_ok() {
+                                true
+                            } else {
+                                let storage = storage.lock().await?;
+                                let chain_cache = storage.chain_cache().await;
+                                let topoheight = chain_cache.topoheight;
+
+                                let cumulative_difficulty = self.blockchain.get_cumulative_difficulty_with_storage(&*storage).await?;
+                                our_previous_topoheight < topoheight && current_cumulative_difficulty < cumulative_difficulty
+                            }
+                        },
                         Err(_) => false,
                     };
 
                     {
                         debug!("locking storage write mode for commit point");
-                        let mut storage = self.blockchain.get_storage().write().await;
+                        let mut storage = storage.lock().await?;
                         debug!("locked storage write mode for commit point");
 
-                        storage.end_snapshot(apply).await?;
+                        storage.end_snapshot(apply)?;
                         info!("Commit point ended for chain validator, apply: {}", apply);
                     }
 
@@ -671,6 +688,17 @@ impl<S: Storage> P2pServer<S> {
                                 }
                             }
                         }
+                    } else {
+                        // We must notify peers & miners asap
+                        self.ping_peers().await;
+                        debug!("Notified peers about our new chain state after applying snapshot");
+                        if let Some(getwork) = self.blockchain.get_rpc().read().await.as_ref().and_then(|rpc| rpc.getwork_server().as_ref()) {
+                            if let Err(e) = getwork.get_handler().notify_new_job().await {
+                                debug!("Error while notifying new job to miners after applying snapshot: {}", e);
+                            }
+                        }
+
+                        debug!("Chain validator commit point applied successfully");
                     }
 
                     // Return errors if any
@@ -764,7 +792,7 @@ impl<S: Storage> P2pServer<S> {
                                     Ok(true)
                                 },
                                 ResponseHelper::NotRequested(hash) => {
-                                    if let Err(e) = self.try_re_execution_block(hash).await {
+                                    if let Err(e) = self.try_re_execution_block(hash, StorageHolder::Storage(self.blockchain.get_storage())).await {
                                         return Err(e)
                                     }
 
@@ -828,7 +856,7 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // Try to re-execute the block requested if its not included in DAG order (it has no topoheight assigned)
-    async fn try_re_execution_block(&self, hash: Immutable<Hash>) -> Result<(), BlockchainError> {
+    async fn try_re_execution_block(&self, hash: Immutable<Hash>, storage: StorageHolder<'_, S>) -> Result<(), BlockchainError> {
         trace!("check re execution block {}", hash);
         
         if self.disable_reexecute_blocks_on_sync {
@@ -837,7 +865,7 @@ impl<S: Storage> P2pServer<S> {
         }
 
         {
-            let storage = self.blockchain.get_storage().read().await;
+            let storage = storage.read().await?;
             if storage.is_block_topological_ordered(&hash).await? {
                 trace!("block {} is already ordered", hash);
                 return Ok(())
@@ -846,7 +874,7 @@ impl<S: Storage> P2pServer<S> {
 
         warn!("Forcing block {} re-execution", hash);
         let block = {
-            let mut storage = self.blockchain.get_storage().write().await;
+            let mut storage = storage.write().await?;
             debug!("storage write acquired for block forced re-execution");
 
             let block = storage.get_block_by_hash(&hash).await?;
@@ -867,6 +895,6 @@ impl<S: Storage> P2pServer<S> {
         };
 
         // Replicate same behavior as above branch
-        self.blockchain.add_new_block(block, PreVerifyBlock::Hash(hash), BroadcastOption::All, false).await
+        self.blockchain.add_new_block_with_storage(storage, block, PreVerifyBlock::Hash(hash), BroadcastOption::All, false).await
     }
 }

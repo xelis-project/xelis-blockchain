@@ -89,6 +89,6 @@ impl VersionedNonceProvider for RocksStorage {
     // delete versioned nonces below topoheight
     async fn delete_versioned_nonces_below_topoheight(&mut self, topoheight: TopoHeight, keep_last: bool) -> Result<(), BlockchainError> {
         trace!("delete versioned nonces below topoheight {}", topoheight);
-        self.delete_versioned_below_topoheight::<Account, AccountId>(Column::Account, Column::VersionedNonces, topoheight, keep_last, |_, v| Ok((v.id, v.nonce_pointer)))
+        self.delete_versioned_below_topoheight::<AccountId, Account>(Column::Account, Column::VersionedNonces, topoheight, keep_last, |_, v| Ok((v.id, v.nonce_pointer)))
     }
 }

@@ -35,6 +35,7 @@ use xelis_environment::Environment;
 use xelis_vm::Module;
 use crate::core::{
     error::BlockchainError,
+    blockchain::ContractEnvironments,
     storage::Storage
 };
 
@@ -106,7 +107,7 @@ struct Account<'b> {
 pub struct ChainState<'s, 'b, S: Storage> {
     // Storage to read and write the balances and nonces
     storage: &'s S,
-    environment: &'s Environment<ContractMetadata>,
+    environments: &'s ContractEnvironments,
     // Balances of the receiver accounts
     receiver_balances: HashMap<Cow<'b, PublicKey>, HashMap<Cow<'b, Hash>, VersionedBalance>>,
     // Sender accounts
@@ -129,7 +130,7 @@ pub struct ChainState<'s, 'b, S: Storage> {
 impl<'s, 'b, S: Storage> ChainState<'s, 'b, S> {
     fn with(
         storage: &'s S,
-        environment: &'s Environment<ContractMetadata>,
+        environments: &'s ContractEnvironments,
         stable_topoheight: TopoHeight,
         topoheight: TopoHeight,
         block_version: BlockVersion,
@@ -138,7 +139,7 @@ impl<'s, 'b, S: Storage> ChainState<'s, 'b, S> {
     ) -> Self {
         Self {
             storage,
-            environment,
+            environments,
             receiver_balances: HashMap::new(),
             accounts: HashMap::new(),
             stable_topoheight,
@@ -151,10 +152,10 @@ impl<'s, 'b, S: Storage> ChainState<'s, 'b, S> {
         }
     }
 
-    pub fn new(storage: &'s S, environment: &'s Environment<ContractMetadata>, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion, tx_base_fee: u64, base_height: u64) -> Self {
+    pub fn new(storage: &'s S, environments: &'s ContractEnvironments, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion, tx_base_fee: u64, base_height: u64) -> Self {
         Self::with(
             storage,
-            environment,
+            environments,
             stable_topoheight,
             topoheight,
             block_version,
@@ -429,10 +430,11 @@ impl<'s, 'b, S: Storage> BlockchainVerificationState<'b, BlockchainError> for Ch
         Ok(account.multisig.as_ref().and_then(|(_, multisig)| multisig.as_ref()))
     }
 
-    /// Get the contract environment
-    async fn get_environment(&mut self, _: ContractVersion) -> Result<&Environment<ContractMetadata>, BlockchainError> {
-        // TODO: we may want to have different environments based on the version
-        Ok(self.environment)
+    /// Get the contract environments
+    async fn get_environment(&mut self, version: ContractVersion) -> Result<&Environment<ContractMetadata>, BlockchainError> {
+        self.environments.get(&version)
+            .map(|env| (*env).as_ref())
+            .ok_or(BlockchainError::ContractEnvironmentNotFound(version))
     }
 
     /// Set the contract module
@@ -459,14 +461,16 @@ impl<'s, 'b, S: Storage> BlockchainVerificationState<'b, BlockchainError> for Ch
         self.load_versioned_contract(hash).await
     }
 
-    /// Get the contract module with the environment
+    /// Get the contract module with the environments
     async fn get_contract_module_with_environment(
         &self,
         hash: &'b Hash
     ) -> Result<(&Module, &Environment<ContractMetadata>), BlockchainError> {
         let module = self.internal_get_contract_module(hash).await?;
 
-        // TODO: get the environment based on the module
-        Ok((&module.module, self.environment))
+        let environment = self.environments.get(&module.version)
+            .ok_or(BlockchainError::ContractEnvironmentNotFound(module.version))?;
+
+        Ok((&module.module, environment))
     }
 }

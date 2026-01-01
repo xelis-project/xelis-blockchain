@@ -39,6 +39,8 @@ pub enum MnemonicsError {
     InvalidLanguageIndex,
     #[error("Invalid language")]
     InvalidLanguage,
+    #[error("Unknown word: {0} at position {1}")]
+    UnknownWord(String, usize),
     #[error("Invalid key size")]
     InvalidKeySize,
     #[error("Invalid key from bytes")]
@@ -106,18 +108,51 @@ fn verify_checksum(words: &[&str], prefix_len: usize) -> Result<Option<bool>, Mn
     Ok(words.get(SEED_LENGTH).map(|v| v.eq_ignore_ascii_case(checksum_word)))
 }
 
+// Check if at least one of the words is unique to a language
+// This is used to report unknown words when converting mnemonics to key
+fn has_unique_word_for_a_language<'a>(words: impl Iterator<Item = &'a str>) -> bool {
+    'outer: for word in words {
+        let mut count = 0;
+        let word = word.trim().to_lowercase();
+        for language in LANGUAGES.iter() {
+            if language.get_words().iter().any(|v| v.to_lowercase() == word) {
+                count += 1;
+                if count > 1 {
+                    // This word is not unique
+                    // lets try another word
+                    continue 'outer;
+                }
+            }
+        }
+
+        // If we reach here, it means this word is unique
+        if count == 1 {
+            return true;
+        }
+    }
+
+    false
+}
+
 // Find the indices of the words in the languages
 fn find_indices(words: &[&str]) -> Result<Option<(Vec<usize>, usize)>, MnemonicsError> {
     'main: for (i, language) in LANGUAGES.iter().enumerate() {
-
         // find the indices of the words
         let mut indices = Vec::new();
-        for word in words.iter() {
-            if let Some(index) = language.get_words().iter().position(|v| v.eq_ignore_ascii_case(word)) {
+        for (i, word) in words.iter().enumerate() {
+            let trimmed = word.trim().to_lowercase();
+            if let Some(index) = language.get_words().iter().position(|v| v.to_lowercase() == trimmed) {
                 indices.push(index);
-            } else {
-                // incorrect language for this word, try the next one
+            } else if indices.is_empty() {
+                // incorrect language, try next one
                 continue 'main;
+            } else if has_unique_word_for_a_language(words.iter().take(i + 1).copied()) {
+                // We made sure that we don't have any duplicated words among languages
+                // So we can safely report an unknown word
+
+                // We have found some indices, but one word is invalid
+                // report it
+                return Err(MnemonicsError::UnknownWord(word.to_string(), indices.len()));
             }
         }
 
@@ -128,6 +163,7 @@ fn find_indices(words: &[&str]) -> Result<Option<(Vec<usize>, usize)>, Mnemonics
 
         return Ok(Some((indices, i)));
     }
+
     Ok(None)
 }
 
@@ -137,7 +173,9 @@ pub fn words_to_key(words: &[&str]) -> Result<PrivateKey, MnemonicsError> {
         return Err(MnemonicsError::InvalidWordsCount);
     }
 
-    let (indices, language_index) = find_indices(words)?.ok_or(MnemonicsError::NoIndicesFound)?;
+    let (indices, language_index) = find_indices(words)?
+        .ok_or(MnemonicsError::NoIndicesFound)?;
+
     debug!("Language found: {}", LANGUAGES[language_index].name);
 
     let mut dest = Vec::with_capacity(KEY_SIZE);
@@ -155,7 +193,7 @@ pub fn words_to_key(words: &[&str]) -> Result<PrivateKey, MnemonicsError> {
         dest.extend_from_slice(&val.to_le_bytes());
     }
 
-    Ok(PrivateKey::from_bytes(&dest).map_err(|_| MnemonicsError::InvalidKeyFromBytes)?)
+    PrivateKey::from_bytes(&dest).map_err(|_| MnemonicsError::InvalidKeyFromBytes)
 }
 
 // Transform a Private Key to a list of words based on the language index
@@ -181,10 +219,12 @@ pub fn key_to_words_with_language<'a>(key: &PrivateKey, language: &'a Language) 
         let a = val % WORDS_LIST_U32;
         let b = ((val / WORDS_LIST_U32) + a) % WORDS_LIST_U32;
         let c = ((val / WORDS_LIST_U32 / WORDS_LIST_U32) + b) % WORDS_LIST_U32;
-        
-        words.push(language.words[a as usize]);
-        words.push(language.words[b as usize]);
-        words.push(language.words[c as usize]);
+
+        words.extend([
+            language.words[a as usize],
+            language.words[b as usize],
+            language.words[c as usize],
+        ]);
     }
 
     let checksum = calculate_checksum_index(&words, language.prefix_length)?;
@@ -221,6 +261,23 @@ mod tests {
     fn test_ignore_case() {
         // Try a random seed with mixed case
         let seed = ["KiNG", "gleeFuL", "fidgET", "furnished", "agreed", "rowboat", "factual", "echo", "scrub", "enforce", "bygones", "muzzle", "mews", "abbey", "swiftly", "issued", "tonic", "cinema", "lettuce", "zapped", "sighting", "kettle", "leopard", "logic", "enforce"];
-        assert!(super::words_to_key(&seed).is_ok());
+        super::words_to_key(&seed).expect("Failed to convert words to key");
+    }
+
+    #[test]
+    fn test_ignore_case_non_ascii() {
+        // Try a random seed with mixed case and non-ascii characters
+        let seed = ["的", "一", "是", "在", "不", "了", "有", "和", "人", "这", "中", "大", "为", "上", "个", "国", "我", "以", "要", "他", "时", "来", "用", "们"];
+        super::words_to_key(&seed).expect("Failed to convert words to key");
+    }
+
+    #[test]
+    fn test_duplicated_word_among_languages() {
+        // album is present in French & English
+        assert!(!super::has_unique_word_for_a_language(["album"].iter().copied()));
+        // acheter is only present in French
+        assert!(super::has_unique_word_for_a_language(["acheter"].iter().copied()));
+        // acheter is unique, so it should return true
+        assert!(super::has_unique_word_for_a_language(["album", "acheter", "album"].iter().copied()));
     }
 }

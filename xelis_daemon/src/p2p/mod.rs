@@ -93,7 +93,7 @@ use crate::{
         },
         error::BlockchainError,
         hard_fork,
-        storage::Storage,
+        storage::{Storage, snapshot::StorageHolder},
         config::ProxyKind,
     },
     rpc::rpc::get_peer_entry
@@ -1423,7 +1423,7 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // Request a block using its block hash if we don't have enough TXs locally
-    async fn request_block(&self, peer: &Arc<Peer>, block_hash: &Hash, header: impl Into<Arc<BlockHeader>>) -> Result<Block, BlockchainError> {
+    async fn request_block_with_storage(&self, peer: &Arc<Peer>, block_hash: &Hash, header: impl Into<Arc<BlockHeader>>, storage: StorageHolder<'_, S>) -> Result<Block, BlockchainError> {
         let header = header.into();
 
         // All futures containing the TXs requested
@@ -1433,7 +1433,7 @@ impl<S: Storage> P2pServer<S> {
         let mut txs_to_request = 0;
 
         for tx_hash in header.get_txs_hashes() {
-            let tx = self.blockchain.get_tx(tx_hash).await.ok();
+            let tx = self.blockchain.get_tx_with_storage(tx_hash, storage).await.ok();
             if tx.is_none() {
                 txs_to_request += 1;
                 if txs_to_request > 1 {
@@ -1510,7 +1510,7 @@ impl<S: Storage> P2pServer<S> {
                     counter!("xelis_p2p_incoming_blocks_propagated_total").increment(1u64);
 
                     let future = async {
-                       let res = self.request_block(&peer, &block_hash, header).await;
+                       let res = self.request_block_with_storage(&peer, &block_hash, header, StorageHolder::Storage(self.blockchain.get_storage())).await;
 
                        (res, block_hash, peer)
                     };

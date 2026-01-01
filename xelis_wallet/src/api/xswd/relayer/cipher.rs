@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 
-use aes_gcm::{aead::Aead, KeyInit};
+use aes_gcm::{KeyInit, aead::{Aead, Nonce}};
+use rand::Rng;
 use thiserror::Error;
 
 use crate::api::EncryptionMode;
@@ -25,6 +26,8 @@ pub enum CipherError {
     DecryptionFailed,
     #[error("invalid nonce")]
     InvalidNonce,
+    #[error("random generation error")]
+    Rng,
 }
 
 pub struct Cipher {
@@ -48,8 +51,10 @@ impl Cipher {
     }
 
     fn encrypt_internal<'a, T: Aead>(data: &'a [u8], cipher: &T) -> Result<Cow<'a, [u8]>, CipherError> {
-        let nonce = T::generate_nonce()
-            .map_err(|_| CipherError::InvalidNonce)?;
+        let mut nonce = Nonce::<T>::default();
+        rand::thread_rng()
+            .try_fill(nonce.as_mut_slice())
+            .map_err(|_| CipherError::Rng)?;
 
         let encrypted_data = cipher.encrypt(&nonce, data)
             .map_err(|_| CipherError::EncryptionFailed)?;

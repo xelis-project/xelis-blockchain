@@ -137,14 +137,29 @@ pub async fn contract_call<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a
         .map(|v| v.to_owned().into())
         .collect::<VecDeque<_>>();
 
+    // For backward compatibility, we need to switch the environment
+    let environment = if metadata.metadata.contract_version != opaque.contract_module.version {
+        debug!("Contract version is different between caller ({}) and callee ({}).", metadata.metadata.contract_version, opaque.contract_module.version);
+        Some(
+            chain_state
+                .environments
+                .get(&opaque.contract_module.version)
+                .cloned()
+                .ok_or(EnvironmentError::Static("Contract environment not found"))?
+        )
+    } else {
+        None
+    };
+
     Ok(SysCallResult::ModuleCall {
         module: opaque.contract_module.module.clone(),
         metadata: Arc::new(ContractMetadata {
             contract_executor: opaque.hash.clone(),
+            contract_version: opaque.contract_module.version,
             contract_caller: Some(metadata.metadata.contract_executor.clone()),
             deposits,
         }),
-        environment: None,
+        environment,
         chunk: chunk_id,
         params: p,
     })

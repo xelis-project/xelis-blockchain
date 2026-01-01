@@ -21,6 +21,7 @@ use xelis_environment::Environment;
 use xelis_vm::Module;
 use crate::core::{
     error::BlockchainError,
+    blockchain::ContractEnvironments,
     mempool::Mempool,
     storage::Storage
 };
@@ -48,8 +49,8 @@ pub struct MempoolState<'a, S: Storage> {
     mempool: &'a Mempool,
     // Storage in case sender balances aren't in mempool cache
     storage: &'a S,
-    // Contract environment
-    environment: &'a Environment<ContractMetadata>,
+    // Contract environments
+    environments: &'a ContractEnvironments,
     // Receiver balances
     receiver_balances: HashMap<Cow<'a, PublicKey>, HashMap<Cow<'a, Hash>, Ciphertext>>,
     // Sender accounts
@@ -68,12 +69,12 @@ pub struct MempoolState<'a, S: Storage> {
 }
 
 impl<'a, S: Storage> MempoolState<'a, S> {
-    pub fn new(mempool: &'a Mempool, storage: &'a S, environment: &'a Environment<ContractMetadata>, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion, mainnet: bool, tx_base_fee: u64, base_height: u64) -> Self {
+    pub fn new(mempool: &'a Mempool, storage: &'a S, environments: &'a ContractEnvironments, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion, mainnet: bool, tx_base_fee: u64, base_height: u64) -> Self {
         Self {
             mainnet,
             mempool,
             storage,
-            environment,
+            environments,
             receiver_balances: HashMap::new(),
             accounts: HashMap::new(),
             contracts: HashMap::new(),
@@ -304,11 +305,11 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
             .ok_or_else(|| BlockchainError::AccountNotFound(account.as_address(self.storage.is_mainnet())))
     }
 
-    /// Get the contract environment
-    async fn get_environment(&mut self, _: ContractVersion) -> Result<&Environment<ContractMetadata>, BlockchainError> {
-        // Currently we have only one environment
-        // TODO: if we have multiple versions, we may want to return different environments
-        Ok(self.environment)
+    /// Get the contract environments
+    async fn get_environment(&mut self, version: ContractVersion) -> Result<&Environment<ContractMetadata>, BlockchainError> {
+        self.environments.get(&version)
+            .map(|env| (*env).as_ref())
+            .ok_or(BlockchainError::ContractEnvironmentNotFound(version))
     }
 
     /// Set the contract module
@@ -350,7 +351,8 @@ impl<'a, S: Storage> BlockchainVerificationState<'a, BlockchainError> for Mempoo
         let module = self.contracts.get(hash)
             .ok_or_else(|| BlockchainError::ContractNotFound(hash.clone()))?;
 
-        // TODO: get the environment based on the module
-        Ok((&module.module, self.environment))
+        let environment = self.environments.get(&module.version)
+            .ok_or(BlockchainError::ContractEnvironmentNotFound(module.version))?;
+        Ok((&module.module, environment))
     }
 }

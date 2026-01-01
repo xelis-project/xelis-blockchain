@@ -3,7 +3,6 @@ use std::{fmt, str::FromStr, sync::Arc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 pub use xelis_vm::Module;
-
 use crate::serializer::*;
 
 #[derive(Default, Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
@@ -12,6 +11,17 @@ use crate::serializer::*;
 pub enum ContractVersion {
     #[default]
     V0,
+    V1,
+}
+
+impl ContractVersion {
+    #[inline(always)]
+    pub const fn variants() -> [ContractVersion; 2] {
+        [
+            ContractVersion::V0,
+            ContractVersion::V1,
+        ]
+    }
 }
 
 impl FromStr for ContractVersion {
@@ -20,6 +30,7 @@ impl FromStr for ContractVersion {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "v0" | "0" => Ok(ContractVersion::V0),
+            "v1" | "1" => Ok(ContractVersion::V1),
             _ => Err("Invalid contract version"),
         }
     }
@@ -36,6 +47,7 @@ impl fmt::Display for ContractVersion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ContractVersion::V0 => write!(f, "v0"),
+            ContractVersion::V1 => write!(f, "v1"),
         }
     }
 }
@@ -48,6 +60,7 @@ impl Serializer for ContractVersion {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         match reader.read_u8()? {
             0 => Ok(ContractVersion::V0),
+            1 => Ok(ContractVersion::V1),
             _ => Err(ReaderError::InvalidValue),
         }
     }
@@ -75,5 +88,15 @@ impl Serializer for ContractModule {
 
     fn size(&self) -> usize {
         self.version.size() + self.module.size()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ordering() {
+        assert!(ContractVersion::V0 < ContractVersion::V1);
     }
 }

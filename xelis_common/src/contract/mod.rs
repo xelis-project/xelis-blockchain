@@ -8,6 +8,7 @@ mod scheduled_execution;
 mod permission;
 mod module;
 mod source;
+mod error;
 
 #[cfg(test)]
 pub mod tests;
@@ -17,7 +18,8 @@ pub mod vm;
 use std::{
     any::TypeId,
     borrow::Cow,
-    collections::{hash_map::Entry, HashMap},
+    collections::{HashMap, hash_map::Entry},
+    sync::Arc,
 };
 use anyhow::Context as AnyhowContext;
 use better_any::Tid;
@@ -38,6 +40,7 @@ use xelis_vm::{
     SysCallResult,
     Type,
     ValueCell,
+    Environment,
 };
 use crate::{
     account::CiphertextCache,
@@ -50,7 +53,9 @@ use crate::{
         FEE_PER_READ_CONTRACT,
         FEE_PER_STORE_CONTRACT,
         MAX_GAS_USAGE_PER_TX,
-        XELIS_ASSET
+        XELIS_ASSET,
+        CONTRACT_MAX_PAYLOAD_SIZE,
+        CONTRACT_PAYLOAD_FEE_PER_BYTE,
     },
     contract::vm::ContractCaller,
     crypto::{
@@ -76,6 +81,7 @@ pub use scheduled_execution::*;
 pub use permission::*;
 pub use module::*;
 pub use source::*;
+pub use error::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransferOutput {
@@ -85,6 +91,63 @@ pub struct TransferOutput {
     pub amount: u64,
     // The asset to transfer
     pub asset: Hash,
+}
+
+pub type ContractEnvironments = HashMap<ContractVersion, Arc<Environment<ContractMetadata>>>;
+
+#[derive(Debug, Clone, Default)]
+pub struct ExecutionsChanges {
+    // Registered executions during the current execution
+    pub executions: HashMap<Arc<Hash>, ScheduledExecution>,
+    // Hashes of scheduled executions to trigger at specific topoheights
+    pub at_topoheight: Vec<Arc<Hash>>,
+    // Hashes of scheduled executions to trigger at the end of the block
+    pub block_end: Vec<Arc<Hash>>,
+}
+
+pub struct ExecutionsManager<'a> {
+    // In case we are in a scheduled execution already, prevent from
+    // recursive scheduling
+    pub allow_executions: bool,
+    // all scheduled executions in the global chain state
+    pub global_executions: &'a HashMap<Arc<Hash>, ScheduledExecution>,
+    pub changes: ExecutionsChanges,
+}
+
+impl<'a> ExecutionsManager<'a> {
+    pub fn contains_key(&self, hash: &Hash) -> bool {
+        self.global_executions.contains_key(hash) || self.changes.executions.contains_key(hash)
+    }
+
+    pub fn get(&self, hash: &Hash) -> Result<&ScheduledExecution, EnvironmentError> {
+        if let Some(execution) = self.global_executions.get(hash) {
+            Ok(execution)
+        } else {
+            self.changes.executions.get(hash)
+                .ok_or(EnvironmentError::Static("scheduled execution not found in cache"))
+        }
+    }
+
+    pub fn get_mut(&mut self, hash: &Hash) -> Result<&mut ScheduledExecution, EnvironmentError> {
+        if let Some(execution) = self.changes.executions.get_mut(hash) {
+            Ok(execution)
+        } else {
+            Err(EnvironmentError::Static("scheduled execution not found in cache"))
+        }
+    }
+
+    pub fn insert(&mut self, execution: ScheduledExecution) -> bool {
+        if self.global_executions.contains_key(&execution.hash) || self.changes.executions.contains_key(&execution.hash) {
+            return false
+        }
+
+        match &execution.kind {
+            ScheduledExecutionKind::TopoHeight(_) => self.changes.at_topoheight.push(execution.hash.clone()),
+            ScheduledExecutionKind::BlockEnd => self.changes.block_end.push(execution.hash.clone()),
+        };
+
+        self.changes.executions.insert(execution.hash.clone(), execution).is_none()
+    }
 }
 
 // ChainState shared across each executions
@@ -131,14 +194,12 @@ pub struct ChainState<'a> {
     // it is kept in insertion order to rollback funds to contract
     // in case they were not fully used
     pub injected_gas: IndexMap<Source, u64>,
-    // Scheduled executions planned during the execution
-    // it can be TopoHeight or BlockEnd
-    pub scheduled_executions: IndexMap<Hash, ScheduledExecution>,
-    // In case we are in a scheduled execution already, prevent from
-    // recursive scheduling
-    pub allow_executions: bool,
+    // executions manager
+    pub executions: ExecutionsManager<'a>,
     // Permission for inter-contract calls
     pub permission: Cow<'a, InterContractPermission>,
+    // The contract environments available
+    pub environments: Cow<'a, ContractEnvironments>,
     // Gas fee accumulated during the execution
     pub gas_fee: u64,
     // Gas fee allowance for the execution
@@ -167,7 +228,7 @@ macro_rules! async_handler {
 }
 
 // Build the environment for the contract
-pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, ContractMetadata> {
+pub fn build_environment<P: ContractProvider>(version: ContractVersion) -> EnvironmentBuilder<'static, ContractMetadata> {
     debug!("Building environment for contract");
 
     let mut env = EnvironmentBuilder::default();
@@ -638,10 +699,10 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
             Some(hash_type.clone())
         );
         env.register_static_function(
-            "sha256",
+            "sha3",
             hash_type.clone(),
             vec![("input", Type::Bytes)],
-            FunctionHandler::Sync(sha256_fn),
+            FunctionHandler::Sync(sha3_fn),
             7500,
             Some(hash_type.clone())
         );
@@ -2058,6 +2119,23 @@ pub fn build_environment<P: ContractProvider>() -> EnvironmentBuilder<'static, C
         );
     }
 
+    if version >= ContractVersion::V1 {
+        // Transfer asset to an account
+        env.register_native_function(
+            "transfer_payload",
+            None,
+            vec![
+                ("destination", address_type.clone()),
+                ("amount", Type::U64),
+                ("asset", hash_type.clone()),
+                ("payload", Type::Any),
+            ],
+            FunctionHandler::Async(async_handler!(transfer_payload::<P>)),
+            550,
+            Some(Type::Bool)
+        );
+    }
+
     env
 }
 
@@ -2232,7 +2310,8 @@ pub async fn record_account_balance_credit<'a, 'b>(
     from_contract: Hash,
     address: Address,
     asset: Hash,
-    amount: u64
+    amount: u64,
+    payload: Option<ValueCell>,
 ) -> Result<(), anyhow::Error> {
     let key = address.to_public_key();
 
@@ -2259,7 +2338,10 @@ pub async fn record_account_balance_credit<'a, 'b>(
         .or_insert(amount);
 
     // Add the output
-    state.outputs.push(ContractLog::Transfer { contract: from_contract, destination: key, amount, asset });
+    state.outputs.push(match payload {
+        Some(payload) => ContractLog::TransferPayload { contract: from_contract, destination: key, amount, asset, payload },
+        None => ContractLog::Transfer { contract: from_contract, destination: key, amount, asset },
+    });
 
     Ok(())
 }
@@ -2414,8 +2496,30 @@ async fn get_contract_balance_for_asset<'a, 'ty, 'r, P: ContractProvider>(_: FnI
     Ok(SysCallResult::Return(balance.into()))
 }
 
-async fn transfer<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+async fn transfer_internal<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>, payload: bool) -> Result<bool, EnvironmentError> {
     debug!("Transfer called {:?}", params);
+
+    let payload = if payload {
+        let payload = params.remove(3)
+            .into_owned();
+
+        if !payload.is_json_serializable() || !payload.is_serializable() {
+            debug!("Payload is not serializable");
+            return Ok(false);
+        }
+
+        let bytes = data_size_in_bytes(&payload);
+        if bytes > CONTRACT_MAX_PAYLOAD_SIZE {
+            debug!("Payload size {} exceeds maximum allowed {}", bytes, CONTRACT_MAX_PAYLOAD_SIZE);
+            return Ok(false);
+        }
+
+        context.increase_gas_usage(CONTRACT_PAYLOAD_FEE_PER_BYTE * bytes as u64)?;
+
+        Some(payload)
+    } else {
+        None
+    };
 
     let asset: Hash = params.remove(2)
         .into_owned()
@@ -2430,7 +2534,7 @@ async fn transfer<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut param
         .into_opaque_type()?;
 
     if !destination.is_normal() {
-        return Ok(Primitive::Boolean(false).into());
+        return Ok(false);
     }
 
     {
@@ -2443,22 +2547,32 @@ async fn transfer<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut param
 
     let (provider, state) = from_context::<P>(context)?;
     if destination.is_mainnet() != state.mainnet {
-        return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
+        return Ok(false);
     }
 
     if amount == 0 {
-        return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
+        return Ok(false);
     }
 
     // We have to check if the contract has enough balance to transfer
     if !has_enough_balance_for_contract(provider, state, metadata.metadata.contract_executor.clone(), asset.clone(), amount).await? {
-        return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
+        return Ok(false);
     }
 
     record_balance_charge(provider, state, metadata.metadata.contract_executor.clone(), asset.clone(), amount).await?;
-    record_account_balance_credit(state, metadata.metadata.contract_executor.clone(), destination.clone(), asset.clone(), amount).await?;
+    record_account_balance_credit(state, metadata.metadata.contract_executor.clone(), destination.clone(), asset.clone(), amount, payload).await?;
 
-    Ok(SysCallResult::Return(Primitive::Boolean(true).into()))
+    Ok(true)
+}
+
+async fn transfer<'a, 'ty, 'r, P: ContractProvider>(instance: FnInstance<'a>, params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+    transfer_internal::<P>(instance, params, metadata, context, false).await
+        .map(|v| SysCallResult::Return(Primitive::Boolean(v).into()))
+}
+
+async fn transfer_payload<'a, 'ty, 'r, P: ContractProvider>(instance: FnInstance<'a>, params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+    transfer_internal::<P>(instance, params, metadata, context, true).await
+        .map(|v| SysCallResult::Return(Primitive::Boolean(v).into()))
 }
 
 async fn transfer_contract<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut Context<'ty, 'r>) -> FnReturnType<ContractMetadata> {

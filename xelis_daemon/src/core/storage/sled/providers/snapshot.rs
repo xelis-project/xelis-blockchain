@@ -1,10 +1,9 @@
 use async_trait::async_trait;
-use log::{debug, trace};
+use log::trace;
 use crate::core::{
     error::BlockchainError,
     storage::{
         sled::{Snapshot, TreeWrapper},
-        CacheProvider,
         SledStorage,
         SnapshotProvider
     }
@@ -31,7 +30,7 @@ impl SnapshotProvider for SledStorage {
         Ok(())
     }
 
-    async fn end_snapshot(&mut self, apply: bool) -> Result<(), BlockchainError> {
+    fn end_snapshot(&mut self, apply: bool) -> Result<(), BlockchainError> {
         trace!("end snapshot");
         let snapshot = self.snapshot.take()
             .ok_or(BlockchainError::CommitPointNotStarted)?;
@@ -48,16 +47,15 @@ impl SnapshotProvider for SledStorage {
                     };
                 }
             }
-        } else {
-            debug!("Clearing caches due to invalidation of the commit point");
-            self.clear_objects_cache().await?;
         }
+
+        // No need to clear the caches because its already done by swapping the snapshot
 
         Ok(())
     }
 
-    async fn swap_snapshot(&mut self, other: Snapshot) -> Result<Option<Snapshot>, BlockchainError> {
+    fn swap_snapshot(&mut self, other: Option<Snapshot>) -> Result<Option<Snapshot>, BlockchainError> {
         trace!("swap snapshot");
-        Ok(self.snapshot.replace(other))
+        Ok(std::mem::replace(&mut self.snapshot, other))
     }
 }

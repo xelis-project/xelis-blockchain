@@ -11,7 +11,7 @@ impl VersionedCacheProvider for SledStorage {
     async fn clear_versioned_data_caches(&mut self) -> Result<(), BlockchainError> {
         debug!("clear versioned data caches");
 
-        self.clear_caches();
+        self.cache_mut().clear_caches();
         Ok(())
     }
 }

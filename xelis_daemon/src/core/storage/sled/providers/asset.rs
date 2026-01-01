@@ -132,7 +132,7 @@ impl AssetProvider for SledStorage {
         let key = Self::get_asset_key(asset, topoheight);
         Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_assets, &key, data.to_bytes())?;
 
-        if let Some(cache) = self.cache.objects.as_mut().map(|o| o.assets_cache.get_mut()) {
+        if let Some(cache) = self.cache_mut().objects.as_mut().map(|o| o.assets_cache.get_mut()) {
             cache.put(asset.clone(), topoheight);
         }
         Ok(())

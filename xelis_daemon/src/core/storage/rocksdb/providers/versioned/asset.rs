@@ -55,7 +55,7 @@ impl VersionedAssetProvider for RocksStorage {
     async fn delete_versioned_assets_above_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         trace!("delete versioned assets above topoheight {}", topoheight);
         let start = (topoheight + 1).to_be_bytes();
-            let snapshot = self.snapshot.clone();
+        let snapshot = self.snapshot.clone();
         for res in Self::iter_raw_internal(&self.db, snapshot.as_ref(), IteratorMode::From(&start, Direction::Forward), Column::VersionedAssets)? {
             let (key, value) = res?;
             // Delete the version we've read
@@ -89,6 +89,6 @@ impl VersionedAssetProvider for RocksStorage {
     // delete versioned assets below topoheight
     async fn delete_versioned_assets_below_topoheight(&mut self, topoheight: TopoHeight, keep_last: bool) -> Result<(), BlockchainError> {
         trace!("delete versioned assets below topoheight {}", topoheight);
-        self.delete_versioned_below_topoheight::<Asset, AssetId>(Column::Assets, Column::VersionedAssetsSupply, topoheight, keep_last, |_, v| Ok((v.id, v.data_pointer)))
+        self.delete_versioned_below_topoheight::<AssetId, Asset>(Column::Assets, Column::VersionedAssets, topoheight, keep_last, |_, v| Ok((v.id, v.data_pointer)))
     }
 }

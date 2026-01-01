@@ -29,7 +29,6 @@ use xelis_common::{
         SubmitMinerWorkParams
     },
     block::{BlockHeader, MinerWork},
-    config::TIPS_LIMIT,
     crypto::{
         Address,
         Hash,
@@ -47,7 +46,7 @@ use xelis_common::{
     tokio::spawn_task
 };
 use crate::{
-    config::{DEV_PUBLIC_KEY, STABLE_LIMIT},
+    config::DEV_PUBLIC_KEY,
     core::{
         blockchain::{
             Blockchain,
@@ -105,7 +104,7 @@ impl<S: Storage> GetWorkServer<S> {
         let server = Arc::new(Self {
             miners: Mutex::new(HashMap::new()),
             blockchain,
-            mining_jobs: Mutex::new(LruCache::new(NonZeroUsize::new(STABLE_LIMIT as usize * TIPS_LIMIT).expect("Non zero mining jobs cache"))),
+            mining_jobs: Mutex::new(LruCache::new(NonZeroUsize::new(128).expect("Non zero mining jobs cache"))),
             last_header_hash: Mutex::new(None),
             last_notify: AtomicU64::new(0),
             is_job_dirty: AtomicBool::new(false),

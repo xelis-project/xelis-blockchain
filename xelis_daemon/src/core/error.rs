@@ -12,6 +12,7 @@ use xelis_common::{
         Hash,
         XelisHashError
     },
+    contract::ContractVersion,
     tokio::sync::AcquireError,
     account::Nonce,
     block::TopoHeight,
@@ -150,6 +151,10 @@ pub enum DiskContext {
 
 #[derive(Error, Debug, EnumDiscriminants)]
 pub enum BlockchainError {
+    #[error("contract environment not found for version: {0}")]
+    ContractEnvironmentNotFound(ContractVersion),
+    #[error("invalid contract version")]
+    InvalidContractVersion,
     #[error("tip is too far back in height from block being validated")]
     TipTooFarBack,
     #[error("transaction has an invalid reference: block height {0} is higher than stable height {1}")]

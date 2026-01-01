@@ -3,7 +3,7 @@ use super::{
     state::MempoolState,
     storage::Storage,
     TxCache,
-    blockchain::estimate_tx_fee_per_kb,
+    blockchain::{ContractEnvironments, estimate_tx_fee_per_kb},
 };
 use std::{
     collections::HashMap,
@@ -20,7 +20,6 @@ use xelis_common::{
     api::daemon::FeeRatesEstimated,
     block::{BlockVersion, TopoHeight},
     config::FEE_PER_KB,
-    contract::ContractMetadata,
     crypto::{
         elgamal::Ciphertext,
         Hash,
@@ -34,7 +33,6 @@ use xelis_common::{
         Transaction
     }
 };
-use xelis_vm::Environment;
 
 // Wrap a TX with its hash and size in bytes for faster access
 // size of tx can be heavy to compute, so we store it here
@@ -146,8 +144,8 @@ impl Mempool {
     }
 
     // All checks are made in Blockchain before calling this function
-    pub async fn add_tx<S: Storage>(&mut self, storage: &S, environment: &Environment<ContractMetadata>, stable_topoheight: TopoHeight, topoheight: TopoHeight, tx_base_fee: u64, base_height: u64, hash: Arc<Hash>, tx: Arc<Transaction>, size: usize, block_version: BlockVersion) -> Result<(), BlockchainError> {
-        let mut state = MempoolState::new(&self, storage, environment, stable_topoheight, topoheight, block_version, self.mainnet, tx_base_fee, base_height);
+    pub async fn add_tx<S: Storage>(&mut self, storage: &S, environments: &ContractEnvironments, stable_topoheight: TopoHeight, topoheight: TopoHeight, tx_base_fee: u64, base_height: u64, hash: Arc<Hash>, tx: Arc<Transaction>, size: usize, block_version: BlockVersion) -> Result<(), BlockchainError> {
+        let mut state = MempoolState::new(&self, storage, environments, stable_topoheight, topoheight, block_version, self.mainnet, tx_base_fee, base_height);
         let tx_cache = TxCache::new(storage, self, self.disable_zkp_cache);
         tx.verify(&hash, &mut state, &tx_cache).await?;
 
@@ -340,7 +338,7 @@ impl Mempool {
         &mut self,
         storage: &S,
         transactions: impl Iterator<Item = Hash>,
-        environment: &Environment<ContractMetadata>,
+        environments: &ContractEnvironments,
         stable_topoheight: TopoHeight,
         topoheight: TopoHeight,
         block_version: BlockVersion,
@@ -383,7 +381,7 @@ impl Mempool {
                     continue;
                 }
 
-                if let Err(e) = self.add_tx(storage, environment, stable_topoheight, topoheight, tx_base_fee, base_height, hash.clone(), transaction.clone(), size, block_version).await {
+                if let Err(e) = self.add_tx(storage, environments, stable_topoheight, topoheight, tx_base_fee, base_height, hash.clone(), transaction.clone(), size, block_version).await {
                     warn!("Error while adding back TX {} for {}: {}", hash, source.as_address(self.mainnet), e);
                     orphaned.push((hash, transaction));
                 }
@@ -404,7 +402,7 @@ impl Mempool {
     pub async fn clean_up<S: Storage>(
         &mut self,
         storage: &S,
-        environment: &Environment<ContractMetadata>,
+        environments: &ContractEnvironments,
         stable_topoheight: TopoHeight,
         topoheight: TopoHeight,
         block_version: BlockVersion,
@@ -534,7 +532,7 @@ impl Mempool {
 
                     let tx_cache = TxCache::new(storage, &self, self.disable_zkp_cache);
                     if let Some((next_tx, tx_hash)) = first_tx {
-                        let mut state = MempoolState::new(&self, storage, environment, stable_topoheight, topoheight, block_version, self.mainnet, tx_base_fee, base_height);
+                        let mut state = MempoolState::new(&self, storage, environments, stable_topoheight, topoheight, block_version, self.mainnet, tx_base_fee, base_height);
                         if let Err(e) = Transaction::verify(next_tx.get_tx(), &tx_hash, &mut state, &tx_cache).await {
                             warn!("Error while verifying TXs for source {}: {}", key.as_address(self.mainnet), e);
 

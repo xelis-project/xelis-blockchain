@@ -1,10 +1,9 @@
 use chacha20poly1305::{
-    aead::Aead,
+    aead::{Aead, KeyInit},
     XNonce,
     XChaCha20Poly1305,
-    AeadCore,
-    KeyInit
 };
+use rand::Rng;
 use xelis_common::crypto::{
     HASH_SIZE,
     hash
@@ -32,10 +31,12 @@ impl Cipher {
     // a Nonce is generated randomly at each call
     pub fn encrypt_value(&self, value: &[u8]) -> Result<Vec<u8>, WalletError> {
         // generate unique random nonce
-        let nonce = XChaCha20Poly1305::generate_nonce()
+        let mut nonce_bytes = [0u8; Self::NONCE_SIZE];
+        rand::thread_rng()
+            .try_fill(&mut nonce_bytes)
             .map_err(|_| WalletError::NonceGeneration)?;
 
-        self.encrypt_value_with_nonce(value, &nonce.into())
+        self.encrypt_value_with_nonce(value, &nonce_bytes)
     }
 
     // encrypt value passed in param and add plaintext nonce before encrypted value

@@ -8,9 +8,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use bulletproofs::RangeProof;
+use xelis_vm::ValueCell;
 use crate::{
     account::Nonce,
-    contract::{ContractLog, ScheduledExecutionKindLog},
+    contract::{ContractLog, ScheduledExecutionKindLog, ExitError},
     crypto::{
         elgamal::{CompressedCommitment, CompressedHandle},
         proofs::CiphertextValidityProof,
@@ -287,7 +288,20 @@ pub enum RPCContractLog<'a> {
         contract: Cow<'a, Hash>,
         hash: Cow<'a, Hash>,
         kind: Cow<'a, ScheduledExecutionKindLog>,
-    }
+    },
+    ExitPayload {
+        payload: Cow<'a, ValueCell>,
+    },
+    TransferPayload {
+        contract: Cow<'a, Hash>,
+        amount: u64,
+        asset: Cow<'a, Hash>,
+        destination: Cow<'a, Address>,
+        payload: Cow<'a, ValueCell>,
+    },
+    ExitError {
+        err: Cow<'a, ExitError>,
+    },
 }
 
 impl<'a> RPCContractLog<'a> {
@@ -328,6 +342,15 @@ impl<'a> RPCContractLog<'a> {
                 hash: Cow::Owned(hash),
                 kind: Cow::Owned(kind),
             },
+            ContractLog::ExitPayload(payload) => RPCContractLog::ExitPayload { payload: Cow::Owned(payload) },
+            ContractLog::TransferPayload { contract, amount, asset, destination, payload } => RPCContractLog::TransferPayload {
+                contract: Cow::Owned(contract),
+                amount,
+                asset: Cow::Owned(asset),
+                destination: Cow::Owned(destination.as_address(mainnet)),
+                payload: Cow::Owned(payload)
+            },
+            ContractLog::ExitError(err) => RPCContractLog::ExitError { err: Cow::Owned(err) },
         }
     }
 
@@ -368,6 +391,15 @@ impl<'a> RPCContractLog<'a> {
                 hash: Cow::Borrowed(hash),
                 kind: Cow::Borrowed(kind)
             },
+            ContractLog::ExitPayload(payload) => RPCContractLog::ExitPayload { payload: Cow::Borrowed(payload) },
+            ContractLog::TransferPayload { contract, amount, asset, destination, payload } => RPCContractLog::TransferPayload {
+                contract: Cow::Borrowed(contract),
+                amount: *amount,
+                asset: Cow::Borrowed(asset),
+                destination: Cow::Owned(destination.as_address(mainnet)),
+                payload: Cow::Borrowed(payload)
+            },
+            ContractLog::ExitError(err) => RPCContractLog::ExitError { err: Cow::Borrowed(err) },
         }
     }
 }
@@ -411,7 +443,16 @@ impl<'a> From<RPCContractLog<'a>> for ContractLog {
                 contract: contract.into_owned(),
                 hash: hash.into_owned(),
                 kind: kind.into_owned(),
-            }
+            },
+            RPCContractLog::ExitPayload { payload } => ContractLog::ExitPayload(payload.into_owned()),
+            RPCContractLog::TransferPayload { contract, amount, asset, destination, payload } => ContractLog::TransferPayload {
+                contract: contract.into_owned(),
+                amount,
+                asset: asset.into_owned(),
+                destination: destination.into_owned().to_public_key(),
+                payload: payload.into_owned()
+            },
+            RPCContractLog::ExitError { err } => ContractLog::ExitError(err.into_owned()),
         }
     }
 }

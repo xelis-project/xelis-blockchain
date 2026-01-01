@@ -2,6 +2,7 @@ use anyhow::Result;
 use xelis_common::{
     api::daemon::HardFork,
     block::{Algorithm, BlockVersion},
+    contract::ContractVersion,
     network::Network,
     transaction::TxVersion
 };
@@ -40,7 +41,7 @@ pub const fn get_pow_algorithm_for_version(version: BlockVersion) -> Algorithm {
     match version {
         BlockVersion::V0 => Algorithm::V1,
         BlockVersion::V1 | BlockVersion::V2 => Algorithm::V2,
-        BlockVersion::V3 | BlockVersion::V4 | BlockVersion::V5 => Algorithm::V3,
+        BlockVersion::V3 | BlockVersion::V4 | BlockVersion::V5 | BlockVersion::V6 => Algorithm::V3,
     }
 }
 
@@ -53,7 +54,7 @@ pub const fn get_block_time_target_for_version(version: BlockVersion) -> u64 {
         BlockVersion::V0
         | BlockVersion::V1
         | BlockVersion::V2 => 15 * MILLIS_PER_SECOND,
-        BlockVersion::V3 | BlockVersion::V4 | BlockVersion::V5 => 5 * MILLIS_PER_SECOND,
+        BlockVersion::V3 | BlockVersion::V4 | BlockVersion::V5 | BlockVersion::V6 => 5 * MILLIS_PER_SECOND,
     }
 }
 
@@ -101,6 +102,20 @@ pub fn is_version_enabled_at_height(network: &Network, height: u64, version: Blo
 #[inline(always)]
 pub const fn is_tx_version_allowed_in_block_version(tx_version: TxVersion, block_version: BlockVersion) -> bool {
     block_version.is_tx_version_allowed(tx_version)
+}
+
+// Verify if a contract version is allowed in a block version
+#[inline(always)]
+pub const fn is_contract_version_allowed_in_block_version(
+    contract_version: ContractVersion,
+    block_version: BlockVersion,
+) -> bool {
+    match block_version {
+        BlockVersion::V0 | BlockVersion::V1 | BlockVersion::V2 => false,
+        BlockVersion::V3 | BlockVersion::V4 | BlockVersion::V5 => matches!(contract_version, ContractVersion::V0),
+        // Starting from V6, we enable V1 contracts
+        BlockVersion::V6 => matches!(contract_version, ContractVersion::V0 | ContractVersion::V1),
+    }
 }
 
 #[cfg(test)]

@@ -17,7 +17,7 @@ lru = "0.15"
 hex = "0.4.3"
 async-trait = "0.1.77"
 chrono = "0.4.38"
-chacha20poly1305 = "0.11.0-rc.0"
+chacha20poly1305 = "0.11.0-rc"
 futures = "0.3.31"
 lazy_static = "1.4.0"
 rand = "0.8.5"
@@ -31,8 +31,7 @@ indexmap = { version = "2.10.0", features = ["serde"] }
 serde = { version = "1", features = ["derive", "rc"] }
 strum = { version = "0.27.1", features = ["derive"] }
 cfg-if = "1"
-# TODO: replace with new release when available
-tokio-tungstenite-wasm = { git = "https://github.com/TannerRogalsky/tokio-tungstenite-wasm.git", features = ["rustls-tls-webpki-roots"] }
+tokio-tungstenite-wasm = { version = "0.8.0", features = ["rustls-tls-webpki-roots"] }
 schemars = { version = "1.0.4", features = ["indexmap2"] }
 
 # cargo run --profile release-with-lto

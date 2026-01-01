@@ -629,7 +629,7 @@ async fn get_stable_balance<S: Storage>(context: &Context, params: GetBalancePar
         }
     }
 
-    let (stable_topoheight, version) = if let Some((topoheight, version)) = stable_version {
+    let (topoheight, version) = if let Some((topoheight, version)) = stable_version {
         (topoheight, version)
     } else {
         storage.get_balance_at_maximum_topoheight(params.address.get_public_key(), &params.asset, stable_topoheight).await?
@@ -638,6 +638,7 @@ async fn get_stable_balance<S: Storage>(context: &Context, params: GetBalancePar
 
     Ok(GetStableBalanceResult {
         version,
+        topoheight,
         stable_topoheight,
         stable_block_hash: storage.get_hash_at_topo_height(stable_topoheight).await.context("Error while retrieving hash at topo height")?
     })
@@ -1370,6 +1371,7 @@ async fn get_account_history<S: Storage>(context: &Context, params: GetAccountHi
                 for log in logs {
                     match log {
                         ContractLog::Transfer { destination, contract, amount, asset }
+                        | ContractLog::TransferPayload { destination, contract, amount, asset, .. }
                         if params.incoming_flow && destination == *params.address.get_public_key() && params.asset == asset  => {
                                 history.push(AccountHistoryEntry {
                                     topoheight: topo,
@@ -1389,6 +1391,7 @@ async fn get_account_history<S: Storage>(context: &Context, params: GetAccountHi
                             for execution_log in execution_logs {
                                 match execution_log {
                                     ContractLog::Transfer { destination, contract, amount, asset }
+                                    | ContractLog::TransferPayload { destination, contract, amount, asset, .. }
                                     if params.incoming_flow && destination == *params.address.get_public_key() && params.asset == asset => {
                                         history.push(AccountHistoryEntry {
                                             topoheight: topo,
@@ -2047,6 +2050,7 @@ async fn get_contracts_outputs<S: Storage>(context: &Context, params: GetContrac
             for log in logs {
                 match &log {
                     ContractLog::Transfer { destination, contract, amount, asset }
+                    | ContractLog::TransferPayload { destination, contract, amount, asset, .. }
                         if destination == params.address.get_public_key() => {
                             *executions.entry(ContractTransfersEntryKey {
                                 caller: Cow::Owned(tx_hash.clone()),
@@ -2076,6 +2080,7 @@ async fn get_contracts_outputs<S: Storage>(context: &Context, params: GetContrac
         for log in logs {
             match &log {
                 ContractLog::Transfer { destination, contract, .. }
+                | ContractLog::TransferPayload { destination, contract, .. }
                     if destination == params.address.get_public_key() => {
                         executions.entry(ContractTransfersEntryKey {
                             caller: Cow::Owned(hash.clone()),

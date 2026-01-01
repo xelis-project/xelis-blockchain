@@ -78,6 +78,6 @@ impl VersionedAssetsCirculatingSupplyProvider for RocksStorage {
 
     async fn delete_versioned_assets_supply_below_topoheight(&mut self, topoheight: TopoHeight, keep_last: bool) -> Result<(), BlockchainError> {
         trace!("delete versioned assets below topoheight {}", topoheight);
-        self.delete_versioned_below_topoheight::<Asset, AssetId>(Column::Assets, Column::VersionedAssetsSupply, topoheight, keep_last, |_, v| Ok((v.id, v.supply_pointer)))
+        self.delete_versioned_below_topoheight::<AssetId, Asset>(Column::Assets, Column::VersionedAssetsSupply, topoheight, keep_last, |_, v| Ok((v.id, v.supply_pointer)))
     }
 }

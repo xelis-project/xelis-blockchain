@@ -63,11 +63,14 @@ pub const PRUNE_SAFETY_LIMIT: u64 = 80;
 pub const STABLE_LIMIT: u64 = 8;
 // Maximum height difference allowed between a block and its tips
 pub const MAX_TIP_HEIGHT_DIFFERENCE: u64 = 8;
+// DAA window size
+// Number of blocks to consider for difficulty adjustment algorithm
+pub const DAA_WINDOW: u64 = 50;
 
 pub const fn get_stable_limit(version: BlockVersion) -> u64 {
     match version {
         BlockVersion::V0 | BlockVersion::V1 | BlockVersion::V2 => 8,
-        BlockVersion::V3 | BlockVersion::V4 | BlockVersion::V5 => 24,
+        BlockVersion::V3 | BlockVersion::V4 | BlockVersion::V5 | BlockVersion::V6 => 24,
     }
 }
 

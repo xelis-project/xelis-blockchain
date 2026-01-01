@@ -1,7 +1,7 @@
 use std::hash;
 use indexmap::IndexMap;
 use xelis_vm::ModuleMetadata as ModuleMetadataInner;
-use crate::{crypto::Hash, transaction::ContractDeposit};
+use crate::{contract::ContractVersion, crypto::Hash, transaction::ContractDeposit};
 
 pub type ModuleMetadata<'a> = ModuleMetadataInner<'a, ContractMetadata>;
 
@@ -24,6 +24,8 @@ pub struct ContractMetadata {
     // - For Contract B execution, contract_caller is None (as A delegated to B)
     // - For Contract C execution, contract_caller is Some(A's hash)
     pub contract_caller: Option<Hash>,
+    // stdlib version of the contract being executed
+    pub contract_version: ContractVersion,
     // All deposits made for this contract
     // This is a map of assets to deposit to the called contract
     // Entry point contains the deposits made by the user calling it

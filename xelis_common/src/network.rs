@@ -23,7 +23,7 @@ pub enum Network {
 #[cfg(feature = "clap")]
 impl clap::ValueEnum for Network {
     fn value_variants<'a>() -> &'a [Self] {
-        &[Self::Mainnet, Self::Testnet, Self::Devnet]
+        &[Self::Mainnet, Self::Testnet, Self::Stagenet, Self::Devnet]
     }
 
     fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {

@@ -149,7 +149,7 @@ pub fn blake3_fn(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, contex
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(hash)).into()))
 }
 
-pub fn sha256_fn(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
+pub fn sha3_fn(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, context: &mut Context) -> FnReturnType<ContractMetadata> {
     let input = params[0]
         .as_ref()
         .as_bytes()?;

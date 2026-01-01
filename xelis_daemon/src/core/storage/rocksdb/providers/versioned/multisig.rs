@@ -84,6 +84,6 @@ impl VersionedMultiSigProvider for RocksStorage {
     // delete versioned multisigs below topoheight
     async fn delete_versioned_multisigs_below_topoheight(&mut self, topoheight: TopoHeight, keep_last: bool) -> Result<(), BlockchainError> {
         trace!("delete versioned multisigs below topoheight {}", topoheight);
-        self.delete_versioned_below_topoheight::<Account, AccountId>(Column::Account, Column::VersionedMultisig, topoheight, keep_last, |_, v| Ok((v.id, v.multisig_pointer)))
+        self.delete_versioned_below_topoheight::<AccountId, Account>(Column::Account, Column::VersionedMultisig, topoheight, keep_last, |_, v| Ok((v.id, v.multisig_pointer)))
     }
 }

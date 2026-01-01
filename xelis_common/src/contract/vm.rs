@@ -4,6 +4,7 @@ use std::{
     sync::Arc
 };
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use curve25519_dalek::Scalar;
 use log::{debug, log, trace, warn, Level};
@@ -11,25 +12,28 @@ use indexmap::IndexMap;
 use xelis_vm::{ModuleMetadata, Reference, VM, VMError, ValueCell};
 
 use crate::{
-    config::{TX_GAS_BURN_PERCENT, XELIS_ASSET},
+    config::{TX_GAS_BURN_PERCENT, XELIS_ASSET, CONTRACT_MAX_PAYLOAD_SIZE, CONTRACT_PAYLOAD_FEE_PER_BYTE},
     contract::{
-        Source,
         ChainState,
+        ContractCache,
         ContractLog,
+        ContractMetadata,
         ContractProvider,
         ContractProviderWrapper,
+        ContractVersion,
         InterContractPermission,
-        ContractMetadata,
-        ContractCache
+        Source,
+        ExitError,
+        data_size_in_bytes,
     },
     crypto::{
-        elgamal::{Ciphertext, CompressedPublicKey},
-        Hash
+        Hash,
+        elgamal::{Ciphertext, CompressedPublicKey}
     },
     transaction::{
-        verify::{BlockchainApplyState, ContractEnvironment, DecompressedDepositCt},
         ContractDeposit,
-        Transaction
+        Transaction,
+        verify::{BlockchainApplyState, ContractEnvironment, DecompressedDepositCt}
     }
 };
 
@@ -78,6 +82,25 @@ pub enum ContractError<E> {
     DepositNotFound,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", content = "value")]
+pub enum ExitValue {
+    Error(ExitError),
+    ExitCode(u64),
+    Payload(ValueCell),
+}
+
+impl ExitValue {
+    #[inline]
+    pub fn is_success(&self) -> bool {
+        match self {
+            ExitValue::ExitCode(code) if *code == 0 => true,
+            ExitValue::Payload(_) => true,
+            _ => false,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ExecutionResult {
     // total gas used by the contract execution
@@ -88,14 +111,14 @@ pub struct ExecutionResult {
     pub fee_gas: u64,
     // max gas used by the VM (can be higher than used_gas if gas injections were made)
     pub vm_max_gas: u64,
-    // exit code returned by the contract (if any)
-    pub exit_code: Option<u64>,
+    // exit value returned by the contract (if any)
+    pub exit_value: ExitValue,
 }
 
 impl ExecutionResult {
     #[inline]
     pub fn is_success(&self) -> bool {
-        self.exit_code == Some(0)
+        self.exit_value.is_success()
     }
 }
 
@@ -108,13 +131,14 @@ pub(crate) async fn run_virtual_machine<'a, P: ContractProvider>(
     deposits: IndexMap<Hash, ContractDeposit>,
     parameters: impl DoubleEndedIterator<Item = ValueCell>,
     max_gas: u64,
-) -> Result<(u64, u64, Option<u64>), VMError> {
+) -> Result<(u64, u64, ExitValue), VMError> {
     debug!("run virtual machine with max gas {}", max_gas);
     let mut vm = VM::default();
 
     // Insert the module to load
     let metadata = ContractMetadata {
         contract_executor: contract.as_ref().clone(),
+        contract_version: contract_environment.version,
         contract_caller: None,
         deposits,
     };
@@ -133,17 +157,17 @@ pub(crate) async fn run_virtual_machine<'a, P: ContractProvider>(
         InvokeContract::Hook(hook) => {
             if !vm.invoke_hook_id(hook)? {
                 warn!("Invoke contract {} hook {} not found", contract, hook);
-                return Ok((0, max_gas, None))
+                return Ok((0, max_gas, ExitValue::Error(ExitError::UnknownHook)))
             }
         },
         InvokeContract::Chunk(chunk, allow_executions) => {
             if !contract_environment.module.is_callable_chunk(chunk as usize) {
                 warn!("Invoke contract {} chunk {} not found", contract, chunk);
-                return Ok((0, max_gas, None))
+                return Ok((0, max_gas, ExitValue::Error(ExitError::InvalidEntry)))
             }
 
             vm.invoke_chunk_id(chunk as usize)?;
-            chain_state.allow_executions = allow_executions;
+            chain_state.executions.allow_executions = allow_executions;
         }
     }
 
@@ -170,11 +194,13 @@ pub(crate) async fn run_virtual_machine<'a, P: ContractProvider>(
 
     // To be sure that we don't have any overflow
     // We take the minimum between the gas used and the max gas
-    let context = vm.context();
-    let gas_usage = context
-        .current_gas_usage()
-        .min(max_gas);
-    let vm_max_gas = context.get_gas_limit();
+    let context = vm.context_mut();
+
+    let error_level = if debug_mode {
+        Level::Error
+    } else {
+        Level::Debug
+    };
 
     let exit_code = match res {
         Ok(res) => {
@@ -183,21 +209,50 @@ pub(crate) async fn run_virtual_machine<'a, P: ContractProvider>(
             } else {
                 Level::Debug
             };
+
             log!(level, "Invoke contract {} result: {:#}", contract, res);
             // If the result return 0 as exit code, it means that everything went well
-            let exit_code = res.as_u64().ok();
+            let exit_code = match res.as_u64().ok() {
+                Some(v) => ExitValue::ExitCode(v),
+                None => {
+                    if contract_environment.version >= ContractVersion::V1 {
+                        // We must verify that it is serializable (json & binary)
+                        // and not too big (> MAX_ENTRY_SIZE_BYTES)
+                        let bytes = data_size_in_bytes(&res);
+                        if !res.is_json_serializable() || !res.is_serializable() || bytes > CONTRACT_MAX_PAYLOAD_SIZE {
+                            
+                            log!(error_level, "Invoke contract {} returned a non serializable value: {:#}", contract, res);
+                            ExitValue::Error(ExitError::InvalidEntryPayloadReturn)
+                        } else {
+                            let cost = CONTRACT_PAYLOAD_FEE_PER_BYTE * bytes as u64;
+                            debug!("Invoke contract {} returned payload of size {} bytes, costing {} gas", contract, bytes, cost);
+                            match context.increase_gas_usage(cost) {
+                                Ok(()) => ExitValue::Payload(res),
+                                Err(e) => {
+                                    log!(error_level, "Invoke contract {} cannot pay payload gas cost: {:#}", contract, e);
+                                    ExitValue::Error(e.into())
+                                }
+                            }
+                        }
+
+                    } else {
+                        ExitValue::Error(ExitError::MissingEntryExitCode)
+                    }
+                }
+            };
+
             exit_code
         },
         Err(err) => {
-            let level = if debug_mode {
-                Level::Error
-            } else {
-                Level::Debug
-            };
-            log!(level, "Invoke contract {} error: {:#}", contract, err);
-            None
+            log!(error_level, "Invoke contract {} error: {:#}", contract, err);
+            ExitValue::Error(err.into())
         }
     };
+
+    let gas_usage = context
+        .current_gas_usage()
+        .min(max_gas);
+    let vm_max_gas = context.get_gas_limit();
 
     Ok((gas_usage, vm_max_gas, exit_code))
 }
@@ -223,7 +278,7 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
         .map_err(ContractError::State)?;
 
     // Total used gas by the VM
-    let (mut used_gas, vm_max_gas, exit_code) = run_virtual_machine(
+    let (mut used_gas, vm_max_gas, exit_value) = run_virtual_machine(
         contract_environment,
         &mut chain_state,
         invoke,
@@ -233,7 +288,7 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
         max_gas
     ).await?;
 
-    let is_success = exit_code == Some(0);
+    let is_success = exit_value.is_success();
     // If the contract execution was successful, we need to merge the cache
     let mut outputs = chain_state.outputs;
 
@@ -269,7 +324,8 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
 
         let tracker = chain_state.tracker;
         let assets = chain_state.assets;
-        let executions = chain_state.scheduled_executions;
+        let executions = chain_state.executions.changes;
+
         let gas_fee = chain_state.gas_fee;
 
         // Some contract have injected gas to users
@@ -320,7 +376,7 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
         }
 
         // decompressed deposits may be empty because we only have plaintext deposits
-        if let Some((deposits, decompressed_deposits)) = deposits {
+        if let Some((deposits, decompressed_deposits)) = deposits.filter(|(v, _)| !v.is_empty()) {
             match &caller {
                 ContractCaller::Transaction(hash, tx) => {
                     debug!("refunding deposits for transaction {}", hash);
@@ -347,8 +403,29 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
         outputs.push(ContractLog::RefundGas { amount: refund_gas });
     }
 
-    // Push the exit code to the outputs
-    outputs.push(ContractLog::ExitCode(exit_code));
+    // Push the exit value to the outputs
+    match exit_value.clone() {
+        ExitValue::ExitCode(code) => {
+            debug!("Contract exited with code {}", code);
+            outputs.push(ContractLog::ExitCode(Some(code)));
+        },
+        ExitValue::Payload(payload) => {
+            debug!("Contract exited with payload");
+
+            outputs.extend([
+                ContractLog::ExitPayload(payload),
+                ContractLog::ExitCode(Some(0))
+            ]);
+        },
+        ExitValue::Error(err) => {
+            debug!("Contract exited with error: {}", err);
+
+            outputs.extend([
+                ContractLog::ExitError(err),
+                ContractLog::ExitCode(None)
+            ]);
+        },
+    };
 
     // Track the outputs
     state.set_contract_logs(caller, outputs).await
@@ -359,7 +436,7 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
         vm_max_gas,
         burned_gas,
         fee_gas,
-        exit_code,
+        exit_value,
     })
 }
 

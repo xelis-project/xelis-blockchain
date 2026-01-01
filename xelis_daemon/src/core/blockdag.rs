@@ -124,24 +124,16 @@ where
     let tips_len = tips.len();
     match tips_len {
         0 => Err(BlockchainError::ExpectedTips),
-        1 => {
-            let hash = tips.into_iter().next().unwrap();
-            let timestamp = provider.get_timestamp_for_block_hash(hash).await?;
-            Ok((hash, timestamp))
-        },
         _ => {
-            let mut timestamp = 0;
             let mut newest_tip = None;
             for hash in tips.into_iter() {
                 let tip_timestamp = provider.get_timestamp_for_block_hash(hash).await?;
-                if timestamp < tip_timestamp {
-                    timestamp = tip_timestamp;
-                    newest_tip = Some(hash);
-                
+                if newest_tip.is_none_or(|(_, v)| v < tip_timestamp) {
+                    newest_tip = Some((hash, tip_timestamp));
                 }
             }
 
-            Ok((newest_tip.ok_or(BlockchainError::ExpectedTips)?, timestamp))
+            newest_tip.ok_or(BlockchainError::ExpectedTips)
         }
     }
 }
@@ -188,32 +180,35 @@ where
         }
     }
 
-    // now lets check all blocks until STABLE_LIMIT height before the block
-    let stable_limit = get_stable_limit(block_version);
-    let stable_point = if block_height >= stable_limit {
-        block_height - stable_limit
-    } else {
-        stable_limit - block_height
-    };
-    let mut i = block_height.saturating_sub(1);
-    let mut pre_blocks = HashSet::new();
-    while i >= stable_point && i != 0 {
-        let blocks = provider.get_blocks_at_height(i).await?;
-        pre_blocks.extend(blocks);
-        i -= 1;
-    }
+    // Starting V6, we don't check the cumulative difficulty of previous blocks anymore
+    if block_version < BlockVersion::V6 {
+        // now lets check all blocks until STABLE_LIMIT height before the block
+        let sync_cumulative_difficulty = provider.get_cumulative_difficulty_for_block_hash(hash).await?;
 
-    let sync_block_cumulative_difficulty = provider.get_cumulative_difficulty_for_block_hash(hash).await?;
-    // if potential sync block has lower cumulative difficulty than one of past blocks, it is not a sync block
-    for pre_hash in pre_blocks {
-        // We compare only against block ordered otherwise we can have desync between node which could lead to fork
-        // This is rare event but can happen
-        if provider.is_block_topological_ordered(&pre_hash).await? {
-            let cumulative_difficulty = provider.get_cumulative_difficulty_for_block_hash(&pre_hash).await?;
-            if cumulative_difficulty >= sync_block_cumulative_difficulty {
-                debug!("Block {} at height {} is not a sync block, it has lower cumulative difficulty than block {} at height {}", hash, block_height, pre_hash, i);
-                return Ok(false)
+        let stable_limit = get_stable_limit(block_version);
+        let stable_point = if block_height >= stable_limit {
+            block_height - stable_limit
+        } else {
+            stable_limit - block_height
+        };
+        let mut i = block_height.saturating_sub(1);
+        while i >= stable_point && i != 0 {
+            let blocks_at_height = provider.get_blocks_at_height(i).await?;
+            for pre in blocks_at_height {
+                // compare only with ordered blocks
+                if provider.is_block_topological_ordered(&pre).await? {
+                    let cd = provider.get_cumulative_difficulty_for_block_hash(&pre).await?;
+                    if cd >= sync_cumulative_difficulty {
+                        debug!(
+                            "Block {} at height {} is not a sync block; {} at height {} has >= cumulative difficulty",
+                            hash, block_height, pre, i
+                        );
+                        return Ok(false);
+                    }
+                }
             }
+
+            i -= 1;
         }
     }
 
@@ -390,16 +385,16 @@ where
 pub async fn find_common_base<'a, P, I>(provider: &P, tips: I, block_version: BlockVersion) -> Result<(Hash, u64), BlockchainError>
 where
     P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider + CacheProvider,
-    I: IntoIterator<Item = &'a Hash> + Copy,
+    I: IntoIterator<Item = &'a Hash> + Clone,
 {
-    debug!("find common base for tips {}", tips.into_iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "));
+    debug!("find common base for tips {}", tips.clone().into_iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "));
     let chain_cache = provider.chain_cache().await;
 
     debug!("accessing common base cache");
     let mut cache = chain_cache.common_base_cache.lock().await;
     debug!("common base cache locked");
 
-    let combined_tips = get_combined_hash_for_tips(tips.into_iter());
+    let combined_tips = get_combined_hash_for_tips(tips.clone().into_iter());
     if let Some((hash, height)) = cache.get(&combined_tips) {
         debug!("Common base found in cache: {} at height {}", hash, height);
         return Ok((hash.clone(), *height))
@@ -407,7 +402,7 @@ where
 
     let mut best_height = 0;
     // first, we check the best (highest) height of all tips
-    for hash in tips.into_iter() {
+    for hash in tips.clone().into_iter() {
         let height = provider.get_height_for_block_hash(hash).await?;
         if height > best_height {
             best_height = height;
@@ -664,25 +659,6 @@ where
     cache.put((block_hash.clone(), base_block.clone(), base_block_height), (set.clone(), score));
 
     Ok((set, score))
-}
-
-// find the best tip (highest cumulative difficulty)
-// We get their cumulative difficulty and sort them then take the first one
-pub async fn find_best_tip<'a, P: DifficultyProvider + DagOrderProvider + CacheProvider>(provider: &P, tips: &'a HashSet<Hash>, base: &Hash, base_height: u64) -> Result<&'a Hash, BlockchainError> {
-    if tips.len() == 0 {
-        return Err(BlockchainError::ExpectedTips)
-    }
-
-    let mut scores = Vec::with_capacity(tips.len());
-    for hash in tips {
-        let block_tips = provider.get_past_blocks_for_block_hash(hash).await?;
-        let (_, cumulative_difficulty) = find_tip_work_score(provider, hash, block_tips.iter(), None, base, base_height).await?;
-        scores.push((hash, cumulative_difficulty));
-    }
-
-    sort_descending_by_cumulative_difficulty(&mut scores);
-    let (best_tip, _) = scores[0];
-    Ok(best_tip)
 }
 
 // this function generate a DAG paritial order into a full order using recursive calls.
