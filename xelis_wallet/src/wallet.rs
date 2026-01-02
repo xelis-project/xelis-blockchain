@@ -703,7 +703,8 @@ impl Wallet {
         let receiver = self.init_xswd_channel().await;
         let mut xswd = self.xswd_relayer.lock().await;
         if xswd.is_none() {
-            let handler = RPCHandler::new(Arc::clone(self), None);
+            let mut handler = RPCHandler::new(Arc::clone(self), None);
+            register_rpc_methods(&mut handler);
             *xswd = Some(XSWDRelayer::new(handler, self.concurrency));
         }
 
