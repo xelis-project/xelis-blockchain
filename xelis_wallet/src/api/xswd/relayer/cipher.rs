@@ -75,7 +75,7 @@ impl Cipher {
         let nonce = nonce_bytes.try_into()
             .map_err(|_| CipherError::InvalidNonce)?;
 
-        let decrypted_data = cipher.decrypt(&nonce, data)
+        let decrypted_data = cipher.decrypt(&nonce, &data[12..])
             .map_err(|_| CipherError::DecryptionFailed)?;
 
         Ok(Cow::Owned(decrypted_data))
