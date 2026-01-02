@@ -59,8 +59,8 @@ impl Client {
         &self.target
     }
 
-    pub async fn send_message(&self, msg: String) {
-        if let Err(e) = self.sender.send(InternalMessage::Send(msg)).await {
+    pub async fn send_message<V: ToString>(&self, msg: V) {
+        if let Err(e) = self.sender.send(InternalMessage::Send(msg.to_string())).await {
             error!("Error while sending message: {}", e);
         }
     }

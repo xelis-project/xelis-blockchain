@@ -5,7 +5,7 @@ use std::{borrow::Cow, collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
 use futures::{stream, StreamExt};
-use log::error;
+use log::{debug, error};
 use serde::Serialize;
 use serde_json::{json, Value};
 use xelis_common::{
@@ -98,12 +98,15 @@ where
         let state = Arc::new(AppState::new(app_data.app_data));
         let client = Client::new(app_data.relayer, Arc::clone(self), app_data.encryption_mode, state.clone()).await?;
 
+        let response = self.xswd.add_application(&state).await?;
+        client.send_message(response).await;
+
         {
+            debug!("XSWD Relayer: Added new application #{}", state.get_id());
             let mut applications = self.applications.write().await;
             applications.insert(state.clone(), (client, HashMap::new()));
         }
 
-        self.xswd.add_application(&state).await?;
         Ok(())
     }
 
