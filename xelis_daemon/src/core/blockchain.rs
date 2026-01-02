@@ -336,7 +336,21 @@ impl<S: Storage> Blockchain<S> {
             // also do some clean up in case of DB corruption
             if config.check_db_integrity {
                 let chain_cache = storage.chain_cache().await;
-                let topoheight = chain_cache.topoheight;
+                let mut topoheight = chain_cache.topoheight;
+
+                while topoheight > 0 {
+                    if storage.has_hash_at_topoheight(topoheight).await? {
+                        info!("Last valid topoheight found at {}", topoheight);
+                        break;
+                    }
+                    topoheight -= 1;
+                }
+
+                let chain_cache = storage.chain_cache_mut().await?;
+                if topoheight != chain_cache.topoheight {
+                    chain_cache.topoheight = topoheight;
+                    storage.set_top_topoheight(topoheight).await?;
+                }
 
                 info!("Cleaning data above topoheight {} in case of potential DB corruption", topoheight);
                 storage.delete_versioned_data_above_topoheight(topoheight).await?;
