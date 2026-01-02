@@ -793,6 +793,7 @@ impl<S: Storage> P2pServer<S> {
                                 },
                                 ResponseHelper::NotRequested(hash) => {
                                     if let Err(e) = self.try_re_execution_block(hash, StorageHolder::Storage(self.blockchain.get_storage())).await {
+                                        warn!("sync chain failed during block re-execution: {}", peer);
                                         return Err(e)
                                     }
 
