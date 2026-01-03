@@ -869,7 +869,7 @@ impl<S: Storage> P2pServer<S> {
         let block = {
             let mut storage = storage.write().await?;
             if storage.is_block_topological_ordered(&hash).await? {
-                trace!("block {} is already ordered", hash);
+                warn!("block {} is already ordered, skipping its re-execution", hash);
                 return Ok(())
             }
 

@@ -340,8 +340,11 @@ impl<S: Storage> Blockchain<S> {
 
                 while topoheight > 0 {
                     if storage.has_hash_at_topoheight(topoheight).await? {
-                        info!("Last valid topoheight found at {}", topoheight);
-                        break;
+                        let hash = storage.get_hash_at_topo_height(topoheight).await?;
+                        if storage.has_block_with_hash(&hash).await? {
+                            info!("Last valid topoheight found at {}", topoheight);
+                            break;
+                        }
                     }
                     topoheight -= 1;
                 }
