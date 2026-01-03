@@ -103,7 +103,10 @@ impl Client {
                         Err(e) => e.to_json()
                     };
 
-                    ws.send(response.to_string().into()).await?;
+                    // Encrypt response before sending
+                    let encrypted_response = cipher.encrypt(response.to_string().as_bytes())?
+                        .into_owned();
+                    ws.send(Message::Binary(encrypted_response.into())).await?;
                 },
                 msg = receiver.recv() => {
                     let Some(msg) = msg else {
