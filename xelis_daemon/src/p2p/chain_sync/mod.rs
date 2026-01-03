@@ -865,17 +865,14 @@ impl<S: Storage> P2pServer<S> {
             return Ok(())
         }
 
-        {
-            let storage = storage.read().await?;
+        warn!("Forcing block {} re-execution", hash);
+        let block = {
+            let mut storage = storage.write().await?;
             if storage.is_block_topological_ordered(&hash).await? {
                 trace!("block {} is already ordered", hash);
                 return Ok(())
             }
-        }
 
-        warn!("Forcing block {} re-execution", hash);
-        let block = {
-            let mut storage = storage.write().await?;
             debug!("storage write acquired for block forced re-execution");
 
             let block = storage.get_block_by_hash(&hash).await?;
