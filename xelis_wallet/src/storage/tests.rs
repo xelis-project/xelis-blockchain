@@ -1,5 +1,6 @@
 use super::*;
 use crate::entry::{EntryData, TransactionEntry};
+use rand::{Rng, rngs::OsRng};
 use xelis_common::{
     crypto::Hash,
     network::Network,
@@ -39,6 +40,16 @@ fn create_test_tx(hash: &Hash, topoheight: u64) -> TransactionEntry {
     )
 }
 
+// Helper to create a test transaction with custom entry data
+fn create_test_tx_with_entry(hash: &Hash, topoheight: u64, entry: EntryData) -> TransactionEntry {
+    TransactionEntry::new(
+        hash.clone(),
+        topoheight,
+        0, // timestamp
+        entry,
+    )
+}
+
 #[test]
 fn test_transaction_insertion_order() {
     let mut storage = create_test_storage().unwrap();
@@ -73,23 +84,43 @@ fn test_binary_search_exact_match() {
     let mut storage = create_test_storage().unwrap();
 
     // Insert transactions with different topoheights
-    let topoheights = vec![10, 20, 30, 40, 50];
-    for (i, topo) in topoheights.iter().enumerate() {
-        let hash = Hash::new([i as u8; 32]);
+    let mut topoheights = (0..1000).map(|_| OsRng.gen_range(1..5000)).collect::<Vec<u64>>();
+    topoheights.sort();
+    let find_lowest_id = |topo: u64| -> Option<u64> {
+        for (i, t) in topoheights.iter().enumerate() {
+            if *t == topo {
+                return Some(i as u64);
+            }
+        }
+        None
+    };
+
+    let find_highest_id = |topo: u64| -> Option<u64> {
+        for (i, t) in topoheights.iter().enumerate().rev() {
+            if *t == topo {
+                return Some(i as u64);
+            }
+        }
+        None
+    };
+
+    for topo in topoheights.iter() {
+        let buffer = OsRng.gen::<[u8; 32]>();
+        let hash = Hash::new(buffer);
         let entry = create_test_tx(&hash, *topo);
         storage.save_transaction(&hash, &entry).unwrap();
     }
 
     // Test exact matches with lowest=true
-    for (i, topo) in topoheights.iter().enumerate() {
+    for topo in topoheights.iter() {
         let result = storage.search_transaction_id_for_topoheight(*topo, None, None, true).unwrap();
-        assert_eq!(result, Some(i as u64), "Should find exact match for topoheight {}", topo);
+        assert_eq!(result, find_lowest_id(*topo), "Should find exact match for topoheight {}", topo);
     }
 
     // Test exact matches with lowest=false
-    for (i, topo) in topoheights.iter().enumerate() {
+    for topo in topoheights.iter() {
         let result = storage.search_transaction_id_for_topoheight(*topo, None, None, false).unwrap();
-        assert_eq!(result, Some(i as u64), "Should find exact match for topoheight {} (highest)", topo);
+        assert_eq!(result, find_highest_id(*topo), "Should find exact match for topoheight {} (highest)", topo);
     }
 }
 
@@ -517,4 +548,349 @@ fn test_key_usage_consistency() {
     // Verify we can retrieve the transaction using the hashed key
     let retrieved = storage.transactions.get(&hashed_key).unwrap();
     assert!(retrieved.is_some(), "Should be able to retrieve transaction with hashed key");
+}
+
+#[test]
+fn test_filter_by_transaction_type_coinbase() {
+    let mut storage = create_test_storage().unwrap();
+
+    // Create mix of transaction types
+    let txs = vec![
+        (Hash::new([1u8; 32]), 10, EntryData::Coinbase { reward: 1000 }),
+        (Hash::new([2u8; 32]), 20, EntryData::Coinbase { reward: 500 }),
+        (Hash::new([3u8; 32]), 30, EntryData::Burn { 
+            asset: Hash::new([99u8; 32]), 
+            amount: 100, 
+            fee: 10, 
+            nonce: 0 
+        }),
+    ];
+
+    for (hash, topo, entry) in &txs {
+        let entry_obj = create_test_tx_with_entry(hash, *topo, entry.clone());
+        storage.save_transaction(hash, &entry_obj).unwrap();
+    }
+
+    // Filter only coinbase
+    let result = storage.get_filtered_transactions(
+        None, None, None, None, 
+        false,  // no incoming
+        false,  // no outgoing
+        true,   // yes coinbase
+        false,  // no burn
+        None, None, None
+    ).unwrap();
+    
+    assert_eq!(result.len(), 2, "Should have 2 coinbase transactions");
+    assert!(result.iter().all(|t| t.is_coinbase()), "All should be coinbase");
+}
+
+#[test]
+fn test_filter_by_transaction_type_burn() {
+    let mut storage = create_test_storage().unwrap();
+
+    let txs = vec![
+        (Hash::new([1u8; 32]), 10, EntryData::Coinbase { reward: 1000 }),
+        (Hash::new([2u8; 32]), 20, EntryData::Burn { 
+            asset: XELIS_ASSET, 
+            amount: 500, 
+            fee: 10, 
+            nonce: 0 
+        }),
+        (Hash::new([3u8; 32]), 30, EntryData::Burn { 
+            asset: XELIS_ASSET, 
+            amount: 200, 
+            fee: 5, 
+            nonce: 1 
+        }),
+    ];
+
+    for (hash, topo, entry) in &txs {
+        let entry_obj = create_test_tx_with_entry(hash, *topo, entry.clone());
+        storage.save_transaction(hash, &entry_obj).unwrap();
+    }
+
+    // Filter only burn
+    let result = storage.get_filtered_transactions(
+        None, None, None, None, 
+        false,  // no incoming
+        false,  // no outgoing
+        false,  // no coinbase
+        true,   // yes burn
+        None, None, None
+    ).unwrap();
+    
+    assert_eq!(result.len(), 2, "Should have 2 burn transactions");
+}
+
+#[test]
+fn test_filter_by_multiple_types() {
+    let mut storage = create_test_storage().unwrap();
+
+    let txs = vec![
+        (Hash::new([1u8; 32]), 10, EntryData::Coinbase { reward: 1000 }),
+        (Hash::new([2u8; 32]), 20, EntryData::Burn { 
+            asset: XELIS_ASSET,
+            amount: 500, 
+            fee: 10, 
+            nonce: 0 
+        }),
+        (Hash::new([3u8; 32]), 30, EntryData::Coinbase { reward: 500 }),
+        (Hash::new([4u8; 32]), 40, EntryData::Burn { 
+            asset: XELIS_ASSET, 
+            amount: 200, 
+            fee: 5, 
+            nonce: 1 
+        }),
+    ];
+
+    for (hash, topo, entry) in &txs {
+        let entry_obj = create_test_tx_with_entry(hash, *topo, entry.clone());
+        storage.save_transaction(hash, &entry_obj).unwrap();
+    }
+
+    // Filter for both coinbase and burn
+    let result = storage.get_filtered_transactions(
+        None, None, None, None, 
+        false,  // no incoming
+        false,  // no outgoing
+        true,   // yes coinbase
+        true,   // yes burn
+        None, None, None
+    ).unwrap();
+    
+    assert_eq!(result.len(), 4, "Should have all 4 transactions (2 coinbase + 2 burn)");
+}
+
+#[test]
+fn test_filter_by_topoheight_range_with_types() {
+    let mut storage = create_test_storage().unwrap();
+
+    // Insert in topoheight order to ensure indexes are sorted correctly
+    let txs = vec![
+        (Hash::new([1u8; 32]), 10, EntryData::Coinbase { reward: 1000 }),
+        (Hash::new([2u8; 32]), 20, EntryData::Burn { 
+            asset: XELIS_ASSET, 
+            amount: 500, 
+            fee: 10, 
+            nonce: 0 
+        }),
+        (Hash::new([3u8; 32]), 30, EntryData::Coinbase { reward: 500 }),
+        (Hash::new([4u8; 32]), 40, EntryData::Burn { 
+            asset: XELIS_ASSET, 
+            amount: 200, 
+            fee: 5, 
+            nonce: 1 
+        }),
+        (Hash::new([5u8; 32]), 50, EntryData::Coinbase { reward: 300 }),
+    ];
+
+    for (hash, topo, entry) in &txs {
+        let entry_obj = create_test_tx_with_entry(hash, *topo, entry.clone());
+        storage.save_transaction(hash, &entry_obj).unwrap();
+    }
+
+    // Reorder to ensure indexes are sorted by topoheight for binary search
+    storage.reorder_transactions_indexes(None).unwrap();
+
+    // Filter for coinbase in range [15, 35]
+    let result = storage.get_filtered_transactions(
+        None, None, Some(15), Some(35), 
+        false,  // no incoming
+        false,  // no outgoing
+        true,   // yes coinbase
+        false,  // no burn
+        None, None, None
+    ).unwrap();
+    
+    // With reordering, we should find the coinbase transactions: 10 (< 15, shouldn't include), 30 (in range)
+    // Actually with inclusive range [15, 35], we should get 30
+    assert!(result.iter().any(|t| t.get_topoheight() == 30), "Should include topo 30");
+    assert!(!result.iter().any(|t| t.get_topoheight() == 50), "Should not include topo 50");
+
+    // Filter for burn in range [15, 35]
+    let result = storage.get_filtered_transactions(
+        None, None, Some(15), Some(35), 
+        false,  // no incoming
+        false,  // no outgoing
+        false,  // no coinbase
+        true,   // yes burn
+        None, None, None
+    ).unwrap();
+    
+    assert_eq!(result.len(), 1, "Should have 1 burn transaction in range");
+    assert_eq!(result[0].get_topoheight(), 20, "Should be at topoheight 20");
+}
+
+#[test]
+fn test_filter_none_transaction_types() {
+    let mut storage = create_test_storage().unwrap();
+
+    let txs = vec![
+        (Hash::new([1u8; 32]), 10, EntryData::Coinbase { reward: 1000 }),
+        (Hash::new([2u8; 32]), 20, EntryData::Coinbase { reward: 500 }),
+    ];
+
+    for (hash, topo, entry) in &txs {
+        let entry_obj = create_test_tx_with_entry(hash, *topo, entry.clone());
+        storage.save_transaction(hash, &entry_obj).unwrap();
+    }
+
+    // Filter with no transaction types enabled
+    let result = storage.get_filtered_transactions(
+        None, None, None, None, 
+        false,  // no incoming
+        false,  // no outgoing
+        false,  // no coinbase
+        false,  // no burn
+        None, None, None
+    ).unwrap();
+    
+    assert_eq!(result.len(), 0, "Should have no transactions when all types are disabled");
+}
+
+#[test]
+fn test_filter_with_gap_consolidation() {
+    let mut storage = create_test_storage().unwrap();
+
+    // Insert transactions in topoheight order
+    let txs = vec![
+        (Hash::new([1u8; 32]), 10, EntryData::Coinbase { reward: 1000 }),
+        (Hash::new([2u8; 32]), 20, EntryData::Coinbase { reward: 500 }),
+        (Hash::new([3u8; 32]), 30, EntryData::Coinbase { reward: 300 }),
+        (Hash::new([4u8; 32]), 40, EntryData::Coinbase { reward: 200 }),
+    ];
+
+    for (hash, topo, entry) in &txs {
+        let entry_obj = create_test_tx_with_entry(hash, *topo, entry.clone());
+        storage.save_transaction(hash, &entry_obj).unwrap();
+    }
+
+    // Update a transaction to have a different topoheight, simulating a reorg scenario
+    let updated_hash = Hash::new([3u8; 32]);
+    let updated_entry = create_test_tx_with_entry(&updated_hash, 25, EntryData::Coinbase { reward: 250 });
+    storage.update_transaction(&updated_hash, &updated_entry).unwrap();
+
+    // Reorder to consolidate and sort
+    storage.reorder_transactions_indexes(None).unwrap();
+
+    // Filter all transactions without topoheight filtering to verify consolidation works
+    let result = storage.get_filtered_transactions(
+        None, None, None, None, 
+        false, false, true, false, None, None, None
+    ).unwrap();
+    
+    // Should have all 4 transactions after consolidation
+    assert_eq!(result.len(), 4, "Should have 4 coinbase transactions after consolidation");
+    
+    // Verify the topoheights are correct after update and reorder
+    let topos: Vec<u64> = result.iter().map(|t| t.get_topoheight()).collect();
+    assert!(topos.contains(&10), "Should include topo 10");
+    assert!(topos.contains(&20), "Should include topo 20");
+    assert!(topos.contains(&25), "Should include updated topo 25");
+    assert!(topos.contains(&40), "Should include topo 40");
+}
+
+#[test]
+fn test_filter_topoheight_boundaries() {
+    let mut storage = create_test_storage().unwrap();
+
+    let txs = vec![
+        (Hash::new([1u8; 32]), 100, EntryData::Coinbase { reward: 1000 }),
+        (Hash::new([2u8; 32]), 200, EntryData::Coinbase { reward: 500 }),
+        (Hash::new([3u8; 32]), 300, EntryData::Coinbase { reward: 300 }),
+    ];
+
+    for (hash, topo, entry) in &txs {
+        let entry_obj = create_test_tx_with_entry(hash, *topo, entry.clone());
+        storage.save_transaction(hash, &entry_obj).unwrap();
+    }
+
+    // Test exact boundary - inclusive on both ends
+    let result = storage.get_filtered_transactions(
+        None, None, Some(100), Some(200), 
+        false, false, true, false, None, None, None
+    ).unwrap();
+    
+    assert_eq!(result.len(), 2, "Should include both boundary transactions");
+    let topos: Vec<u64> = result.iter().map(|t| t.get_topoheight()).collect();
+    assert!(topos.contains(&100), "Should include lower boundary");
+    assert!(topos.contains(&200), "Should include upper boundary");
+    assert!(!topos.contains(&300), "Should not include beyond upper boundary");
+}
+
+#[test]
+fn test_filter_topoheight() {
+    let mut storage = create_test_storage().unwrap();
+
+    let mut count_per_topoheight = HashMap::new();
+    // Create many transactions
+    for i in 0..50 {
+        let hash = Hash::new([i as u8; 32]);
+        let topo = rand::thread_rng().gen_range(0..500);
+        let entry = EntryData::Coinbase { reward: rand::thread_rng().gen_range(100..1000) }; 
+        let entry_obj = create_test_tx_with_entry(&hash, topo, entry);
+        storage.save_transaction(&hash, &entry_obj).unwrap();
+
+        count_per_topoheight.entry(topo).and_modify(|c| *c += 1).or_insert(1);
+    }
+
+    storage.reorder_transactions_indexes(None).unwrap();
+
+    // Filter for coinbase in range [50, 150] with limit and skip
+    let result = storage.get_filtered_transactions(
+        None, None, Some(50), Some(150), 
+        false, false, true, false, None, None, None,
+    ).unwrap();
+
+    let mut total = 0;
+    for topo in 50..=150 {
+        total += count_per_topoheight.get(&topo).copied().unwrap_or(0);
+    }
+
+    assert_eq!(result.len(), total, "Should return all coinbase transactions for topoheight range");
+
+    // Verify they are in the expected range
+    for tx in &result {
+        let topo = tx.get_topoheight();
+        assert!(topo >= 50 && topo <= 150, "Topoheight {} should be in range [50, 150]", topo);
+        assert!(tx.is_coinbase(), "Transaction should be coinbase");
+    }
+}
+
+#[test]
+fn test_verify_topoheight_order() {
+    let mut storage = create_test_storage().unwrap();
+
+    // Insert transactions with known topoheights in sorted order
+    let topoheights = vec![10, 10, 10, 20, 20, 30];
+    for (i, topo) in topoheights.iter().enumerate() {
+        let hash = Hash::new([i as u8; 32]);
+        let entry = create_test_tx(&hash, *topo);
+        storage.save_transaction(&hash, &entry).unwrap();
+    }
+
+    // Verify the order in storage
+    for (i, expected_topo) in topoheights.iter().enumerate() {
+        let tx_hash = storage.transactions_indexes.get(&(i as u64).to_be_bytes()).unwrap().unwrap();
+        let entry: TransactionEntry = storage.load_from_disk_with_key(&storage.transactions, &tx_hash).unwrap();
+        assert_eq!(entry.get_topoheight(), *expected_topo, "Index {} should have topoheight {}", i, expected_topo);
+    }
+
+    // Now test search
+    // For topoheight 10 with lowest=true, should find ID 0
+    let result = storage.search_transaction_id_for_topoheight(10, None, None, true).unwrap();
+    assert_eq!(result, Some(0), "Should find lowest ID for topoheight 10, but got {:?}", result);
+
+    // For topoheight 10 with lowest=false, should find ID 2 (highest)
+    let result = storage.search_transaction_id_for_topoheight(10, None, None, false).unwrap();
+    assert_eq!(result, Some(2), "Should find highest ID for topoheight 10, but got {:?}", result);
+
+    // For topoheight 20 with lowest=true, should find ID 3
+    let result = storage.search_transaction_id_for_topoheight(20, None, None, true).unwrap();
+    assert_eq!(result, Some(3), "Should find lowest ID for topoheight 20, but got {:?}", result);
+
+    // For topoheight 20 with lowest=false, should find ID 4
+    let result = storage.search_transaction_id_for_topoheight(20, None, None, false).unwrap();
+    assert_eq!(result, Some(4), "Should find highest ID for topoheight 20, but got {:?}", result);
 }
