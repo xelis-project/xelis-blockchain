@@ -134,8 +134,6 @@ pub const CHAIN_SYNC_RESPONSE_MIN_BLOCKS: usize = 512;
 pub const CHAIN_SYNC_DEFAULT_RESPONSE_BLOCKS: usize = 4096;
 // allows up to X blocks hashes sent for response
 pub const CHAIN_SYNC_RESPONSE_MAX_BLOCKS: usize = u16::MAX as _;
-// send last 10 heights
-pub const CHAIN_SYNC_TOP_BLOCKS: usize = 10;
 // average block time is calculated on the last N topoheight
 pub const CHAIN_AVERAGE_BLOCK_TIME_N: u64 = 50;
 
