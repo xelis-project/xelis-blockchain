@@ -110,28 +110,29 @@ fn verify_checksum(words: &[&str], prefix_len: usize) -> Result<Option<bool>, Mn
 
 // Check if at least one of the words is unique to a language
 // This is used to report unknown words when converting mnemonics to key
-fn has_unique_word_for_a_language<'a>(words: impl Iterator<Item = &'a str>) -> bool {
+fn has_unique_word_for_a_language<'a>(words: impl Iterator<Item = &'a str>) -> Option<&'a Language<'static>> {
     'outer: for word in words {
-        let mut count = 0;
+        let mut lang = None;
         let word = word.trim().to_lowercase();
         for language in LANGUAGES.iter() {
             if language.get_words().iter().any(|v| v.to_lowercase() == word) {
-                count += 1;
-                if count > 1 {
-                    // This word is not unique
-                    // lets try another word
+                if lang.is_some() {
+                    // This word is present in multiple languages
+                    // not unique
                     continue 'outer;
                 }
+
+                lang = Some(language);
             }
         }
 
         // If we reach here, it means this word is unique
-        if count == 1 {
-            return true;
+        if let Some(language) = lang {
+            return Some(language);
         }
     }
 
-    false
+    None
 }
 
 // Find the indices of the words in the languages
@@ -143,16 +144,19 @@ fn find_indices(words: &[&str]) -> Result<Option<(Vec<usize>, usize)>, Mnemonics
             let trimmed = word.trim().to_lowercase();
             if let Some(index) = language.get_words().iter().position(|v| v.to_lowercase() == trimmed) {
                 indices.push(index);
-            } else if indices.is_empty() {
+            } else {
+                // Check if we have any unique word for current language in our current parsed list of words
+                if i > 0 && has_unique_word_for_a_language(words.iter().take(i).copied()).is_some_and(|l| l.name == language.name) {
+                    // We made sure that we don't have any duplicated words among languages
+                    // So we can safely report an unknown word
+
+                    // We have found some indices, but one word is invalid
+                    // report it
+                    return Err(MnemonicsError::UnknownWord(word.to_string(), indices.len()));
+                }
+
                 // incorrect language, try next one
                 continue 'main;
-            } else if has_unique_word_for_a_language(words.iter().take(i + 1).copied()) {
-                // We made sure that we don't have any duplicated words among languages
-                // So we can safely report an unknown word
-
-                // We have found some indices, but one word is invalid
-                // report it
-                return Err(MnemonicsError::UnknownWord(word.to_string(), indices.len()));
             }
         }
 
@@ -274,10 +278,14 @@ mod tests {
     #[test]
     fn test_duplicated_word_among_languages() {
         // album is present in French & English
-        assert!(!super::has_unique_word_for_a_language(["album"].iter().copied()));
+        assert!(super::has_unique_word_for_a_language(["album"].iter().copied()).is_none());
         // acheter is only present in French
-        assert!(super::has_unique_word_for_a_language(["acheter"].iter().copied()));
+        assert!(super::has_unique_word_for_a_language(["acheter"].iter().copied()).is_some());
         // acheter is unique, so it should return true
-        assert!(super::has_unique_word_for_a_language(["album", "acheter", "album"].iter().copied()));
+        assert!(super::has_unique_word_for_a_language(["album", "acheter", "album"].iter().copied()).is_some());
+        // mambo is only present in Spanish
+        assert!(super::has_unique_word_for_a_language(["resto", "caos"].iter().copied()).is_none());
+        // mambo is only present in Spanish
+        assert!(super::has_unique_word_for_a_language(["resto", "caos", "mambo"].iter().copied()).is_some());
     }
 }
