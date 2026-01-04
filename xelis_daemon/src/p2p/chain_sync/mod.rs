@@ -502,6 +502,9 @@ impl<S: Storage> P2pServer<S> {
         // peer chain looks correct, lets rewind our chain
         warn!("Rewinding chain because of {} (pop count: {})", peer, pop_count);
         let (topoheight, txs) = {
+            let _permit = self.blockchain.storage_semaphore().acquire().await?;
+            debug!("storage semaphore acquired for rewinding chain");
+
             let mut snapshot = snapshot.lock().await?;
             self.blockchain.rewind_chain_for_storage(&mut snapshot, pop_count, false).await?
         };
@@ -664,6 +667,7 @@ impl<S: Storage> P2pServer<S> {
                     };
 
                     {
+                        let _permit = self.blockchain.storage_semaphore().acquire().await?;
                         debug!("locking storage write mode for commit point");
                         let mut storage = storage.lock().await?;
                         debug!("locked storage write mode for commit point");
@@ -871,6 +875,10 @@ impl<S: Storage> P2pServer<S> {
 
         warn!("Forcing block {} re-execution", hash);
         let block = {
+            debug!("acquiring storage semaphore for block forced re-execution");
+            let _permit = self.blockchain.storage_semaphore().acquire().await?;
+            debug!("storage semaphore acquired for block forced re-execution");
+
             let mut storage = storage.write().await?;
             if storage.is_block_topological_ordered(&hash).await? {
                 warn!("block {} is already ordered, skipping its re-execution", hash);
