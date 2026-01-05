@@ -249,9 +249,9 @@ fn test_delete_transactions_at_or_above_topoheight() {
     let mut storage = create_test_storage().unwrap();
 
     // Insert transactions
-    let topoheights = vec![10, 20, 30, 40, 50, 60, 70];
+    let topoheights = vec![10, 20, 30, 39, 40, 40, 41, 50, 60, 70];
     let hashes: Vec<Hash> = (0..topoheights.len())
-        .map(|i| Hash::new([i as u8; 32]))
+        .map(|_| Hash::new(OsRng.gen::<[u8; 32]>()))
         .collect();
 
     for (i, topo) in topoheights.iter().enumerate() {
@@ -259,22 +259,30 @@ fn test_delete_transactions_at_or_above_topoheight() {
         storage.save_transaction(&hashes[i], &entry).unwrap();
     }
 
-    // Delete transactions at or above topoheight 40
-    storage.delete_transactions_at_or_above_topoheight(40).unwrap();
+    // Delete transactions at or above topoheight delete_topoheight
+    let delete_topoheight = 35;
+    storage.delete_transactions_at_or_above_topoheight(delete_topoheight).unwrap();
 
-    // Verify transactions with topoheight >= 40 are deleted
+    // Verify transactions with topoheight >= delete_topoheight are deleted
     for (i, topo) in topoheights.iter().enumerate() {
         let exists = storage.has_transaction(&hashes[i]).unwrap();
-        if *topo >= 40 {
+        if *topo >= delete_topoheight {
             assert!(!exists, "Transaction at topoheight {} should be deleted", topo);
         } else {
             assert!(exists, "Transaction at topoheight {} should still exist", topo);
         }
     }
 
+    
     // Verify count
     let count = storage.get_transactions_count().unwrap();
     assert_eq!(count, 3, "Should have 3 transactions remaining");
+
+    // delete above 100 (no-op)
+    storage.delete_transactions_at_or_above_topoheight(100).unwrap();
+
+    let count = storage.get_transactions_count().unwrap();
+    assert_eq!(count, 3, "Should still have 3 transactions remaining after no-op delete");
 }
 
 #[test]
