@@ -134,6 +134,7 @@ pub async fn contract_call<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a
     }
 
     let p = p.into_iter()
+        .rev()
         .map(|v| v.to_owned().into())
         .collect::<VecDeque<_>>();
 

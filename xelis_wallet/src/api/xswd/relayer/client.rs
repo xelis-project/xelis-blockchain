@@ -59,8 +59,8 @@ impl Client {
         &self.target
     }
 
-    pub async fn send_message(&self, msg: String) {
-        if let Err(e) = self.sender.send(InternalMessage::Send(msg)).await {
+    pub async fn send_message<V: ToString>(&self, msg: V) {
+        if let Err(e) = self.sender.send(InternalMessage::Send(msg.to_string())).await {
             error!("Error while sending message: {}", e);
         }
     }
@@ -103,7 +103,10 @@ impl Client {
                         Err(e) => e.to_json()
                     };
 
-                    ws.send(response.to_string().into()).await?;
+                    // Encrypt response before sending
+                    let encrypted_response = cipher.encrypt(response.to_string().as_bytes())?
+                        .into_owned();
+                    ws.send(Message::Binary(encrypted_response.into())).await?;
                 },
                 msg = receiver.recv() => {
                     let Some(msg) = msg else {

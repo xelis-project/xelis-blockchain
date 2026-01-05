@@ -173,7 +173,7 @@ impl MaxSupplyMode {
     }
 
     pub fn is_mintable(&self) -> bool {
-        matches!(self, Self::Mintable(_))
+        matches!(self, Self::Mintable(_) | Self::None)
     }
 }
 

@@ -1030,12 +1030,14 @@ impl EncryptedStorage {
         trace!("delete transactions at or above topoheight {}", topoheight);
 
         let min = self.search_transaction_id_for_topoheight(topoheight, None, None, true)?;
-        let iterator = match min {
-            Some(min) => self.transactions_indexes.range(min.to_be_bytes()..),
-            None => self.transactions_indexes.iter()
+
+        // If no transaction found at or above this topoheight, nothing to delete
+        let Some(min) = min else {
+            debug!("no transactions found at or above topoheight {}", topoheight);
+            return Ok(());
         };
 
-        for el in iterator.rev() {
+        for el in self.transactions_indexes.range(min.to_be_bytes()..).rev() {
             let (id, tx_hash) = el?;
             self.delete_from_disk_with_key(&self.transactions, &tx_hash)?;
             self.delete_from_disk_with_key(&self.transactions_indexes, &id)?;
@@ -1075,51 +1077,68 @@ impl EncryptedStorage {
 
         let mut result: Option<u64> = None;
 
-        while left <= right {
+        'binary_search: while left <= right {
             let mid = left + (right - left) / 2;
 
-            let Some(tx_hash) = self.transactions_indexes.get(&mid.to_be_bytes())? else {
-                debug!("no transaction index found for {}", mid);
-                return Ok(None);
+            // Find the next available transaction at or after mid (handle gaps)
+            let mut current_id = mid;
+            let tx_hash = loop {
+                match self.transactions_indexes.get(&current_id.to_be_bytes())? {
+                    Some(hash) => break hash,
+                    None => {
+                        warn!("transaction id {} not found in index, checking next", current_id);
+                        // Gap found, try next ID
+                        current_id += 1;
+                        if current_id > right {
+                            // No more transactions in this direction, search left
+                            if mid == 0 {
+                                break 'binary_search;
+                            }
+                            right = mid - 1;
+                            continue 'binary_search;
+                        }
+                    }
+                }
             };
 
             let entry: Skip<HASH_SIZE, TopoHeight> =
                 self.load_from_disk_with_key(&self.transactions, &tx_hash)?;
             let mid_topo = entry.0;
 
-            trace!("mid: {}, mid_topo: {}, searching for topoheight: {}", mid, mid_topo, topoheight);
+            trace!("mid: {}, mid_topo: {}, searching for topoheight: {}", current_id, mid_topo, topoheight);
             match mid_topo.cmp(&topoheight) {
                 Ordering::Equal => {
-                    result = Some(mid);
+                    result = Some(current_id);
                     if lowest {
                         // keep searching left for the lowest matching topoheight
-                        if mid == 0 {
+                        if current_id == 0 {
                             break;
                         }
-                        right = mid - 1;
+                        right = current_id - 1;
                     } else {
                         // keep searching right for the highest matching topoheight
-                        left = mid + 1;
+                        left = current_id + 1;
                     }
                 }
                 Ordering::Less => {
                     // mid_topo < topoheight, search right
-                    left = mid + 1;
+                    left = current_id + 1;
                 }
                 Ordering::Greater => {
                     // mid_topo > topoheight
                     // This transaction has a higher topoheight than what we're searching for.
-                    // If no exact match exists, this could be the answer (first TX with topo >= search value).
-                    // Only update result if we don't have one yet, or if this is closer (smaller index).
-                    result = match result {
-                        None => Some(mid),
-                        Some(prev) if mid < prev => Some(mid),
-                        _ => result
-                    };
-                    if mid == 0 {
+                    // If lowest=true and no exact match exists, this could be the answer (first TX with topo >= search value).
+                    if lowest {
+                        result = match result {
+                            None => Some(current_id),
+                            Some(prev) if current_id < prev => Some(current_id),
+                            _ => result
+                        };
+                    }
+                    if current_id == 0 {
                         break;
                     }
-                    right = mid - 1;
+                    right = current_id - 1;
                 }
             }
         }
@@ -1206,7 +1225,7 @@ impl EncryptedStorage {
 
             if min_topoheight.is_some_and(|min| entry.get_topoheight() < min) ||
                max_topoheight.is_some_and(|max| entry.get_topoheight() > max) {
-                warn!("entry topoheight {} out of bounds", entry.get_topoheight());
+                debug!("entry topoheight {} out of bounds", entry.get_topoheight());
                 continue;
             }
 
@@ -1474,14 +1493,24 @@ impl EncryptedStorage {
         txs_with_topoheight.sort_by_key(|(topoheight, _)| *topoheight);
 
         // Rewrite the transactions_indexes tree from start_id onward
-        // Write in ascending order by topoheight (lowest topoheight first)
+        // Write in ascending order by topoheight (lowest topoheight first), consolidating IDs without gaps
         let len = txs_with_topoheight.len();
         for (i, (_, tx_hash)) in txs_with_topoheight.into_iter().enumerate() {
             let new_index = start_id + i as u64;
             self.transactions_indexes.insert(new_index.to_be_bytes(), tx_hash)?;
         }
 
-        debug!("Reordered {} transactions indexes from ID {}", len, start_id);
+        // Remove any orphaned indexes after consolidation (IDs that had missing entries get compacted)
+        if id.is_some() && len > 0 {
+            // If we had gaps, we've now consolidated them. Clean up old indexes beyond the new end
+            let new_end_id = start_id + len as u64 - 1;
+            debug!("Cleaning up orphaned transaction indexes from ID {} to {}", new_end_id + 1, end_id);
+            for tx_id in (new_end_id + 1)..=end_id {
+                self.transactions_indexes.remove(tx_id.to_be_bytes())?;
+            }
+        }
+
+        debug!("Reordered {} transactions indexes from ID {}, consolidated gaps", len, start_id);
 
         Ok(())
     }

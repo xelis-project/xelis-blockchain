@@ -199,7 +199,8 @@ pub struct Blockchain<S: Storage> {
     storage: RwLock<S>,
     // Current semaphore used to prevent
     // verifying more than one block at a time
-    add_block_semaphore: Semaphore,
+    // or modifying the storage concurrently
+    storage_semaphore: Semaphore,
     // Pre verify N blocks at same time
     // By default, set to N threads available
     pre_verify_block_semaphore: Semaphore,
@@ -306,7 +307,7 @@ impl<S: Storage> Blockchain<S> {
         let blockchain = Self {
             mempool: RwLock::new(Mempool::new(network, config.disable_zkp_cache)),
             storage: RwLock::new(storage),
-            add_block_semaphore: Semaphore::new(1),
+            storage_semaphore: Semaphore::new(1),
             pre_verify_block_semaphore: Semaphore::new(config.pre_verify_block_threads_count),
             environments,
             p2p: RwLock::new(None),
@@ -336,7 +337,24 @@ impl<S: Storage> Blockchain<S> {
             // also do some clean up in case of DB corruption
             if config.check_db_integrity {
                 let chain_cache = storage.chain_cache().await;
-                let topoheight = chain_cache.topoheight;
+                let mut topoheight = chain_cache.topoheight;
+
+                while topoheight > 0 {
+                    if storage.has_hash_at_topoheight(topoheight).await? {
+                        let hash = storage.get_hash_at_topo_height(topoheight).await?;
+                        if storage.has_block_with_hash(&hash).await? {
+                            info!("Last valid topoheight found at {}", topoheight);
+                            break;
+                        }
+                    }
+                    topoheight -= 1;
+                }
+
+                let chain_cache = storage.chain_cache_mut().await?;
+                if topoheight != chain_cache.topoheight {
+                    chain_cache.topoheight = topoheight;
+                    storage.set_top_topoheight(topoheight).await?;
+                }
 
                 info!("Cleaning data above topoheight {} in case of potential DB corruption", topoheight);
                 storage.delete_versioned_data_above_topoheight(topoheight).await?;
@@ -480,28 +498,40 @@ impl<S: Storage> Blockchain<S> {
         Ok(arc)
     }
 
+    #[inline]
     pub fn concurrency_limit(&self) -> usize {
         self.concurrency
     }
 
     // Detect if the simulator task has been started
+    #[inline]
     pub fn is_simulator_enabled(&self) -> bool {
         self.simulator.is_some()
     }
 
     // Skip PoW verification flag
+    #[inline]
     pub fn skip_pow_verification(&self) -> bool {
         self.skip_pow_verification
     }
 
     // get the environment stdlib for contract execution
+    #[inline]
     pub fn get_contract_environments(&self) -> &ContractEnvironments {
         &self.environments
     }
 
     // Get the configured threads count for TXS
+    #[inline]
     pub fn get_txs_verification_threads_count(&self) -> usize {
         self.txs_verification_threads_count
+    }
+
+    // Get the storage semaphore
+    // must be acquired before any storage modification
+    #[inline]
+    pub fn storage_semaphore(&self) -> &Semaphore {
+        &self.storage_semaphore
     }
 
     // Stop all blockchain modules
@@ -509,6 +539,15 @@ impl<S: Storage> Blockchain<S> {
     // So no deadlock occurs in case they are linked
     pub async fn stop(&self) {
         info!("Stopping modules...");
+        // Acquire the semaphore to wait for any ongoing storage operation
+        let _permit = match self.storage_semaphore().acquire().await {
+            Ok(permit) => Some(permit),
+            Err(e) => {
+                error!("Error while acquiring storage semaphore during stop: {}", e);
+                None
+            }
+        };
+
         {
             debug!("stopping p2p module");
             let mut p2p = self.p2p.write().await;
@@ -545,6 +584,9 @@ impl<S: Storage> Blockchain<S> {
     // Reload the storage and update all cache values
     // Clear the mempool also in case of not being up-to-date
     pub async fn reload_from_disk(&self) -> Result<(), BlockchainError> {
+        debug!("acquiring storage semaphore for reload from disk");
+        let _permit = self.storage_semaphore().acquire().await?;
+
         debug!("Reloading chain from disk");
         let mut storage = self.storage.write().await;
         debug!("storage lock acquired for reload from disk");
@@ -711,6 +753,8 @@ impl<S: Storage> Blockchain<S> {
     // This will delete all blocks / versioned balances / txs until topoheight in param
     pub async fn prune_until_topoheight(&self, topoheight: TopoHeight) -> Result<TopoHeight, BlockchainError> {
         debug!("prune until topoheight {}", topoheight);
+        let _permit = self.storage_semaphore().acquire().await?;
+        debug!("storage semaphore acquired for pruning");
         let mut storage = self.storage.write().await;
         debug!("storage write acquired for pruning");
         self.prune_until_topoheight_for_storage(topoheight, &mut *storage).await
@@ -1715,9 +1759,9 @@ impl<S: Storage> Blockchain<S> {
         };
 
         // Semaphore is required to ensure sequential verification of blocks
-        debug!("acquiring add block semaphore");
-        let _permit = self.add_block_semaphore.acquire().await?;
-        debug!("add block semaphore acquired, locking storage for block verification");
+        debug!("acquiring storage semaphore");
+        let _permit = self.storage_semaphore.acquire().await?;
+        debug!("storage semaphore acquired, locking storage for block verification");
         let storage = holder.read().await?;
 
         debug!("Add new block {}", block_hash);
@@ -2138,7 +2182,6 @@ impl<S: Storage> Blockchain<S> {
 
         // Save transactions & block
         {
-
             debug!("Saving block {} on disk", block_hash);
             let start = Instant::now();
             storage.save_block(block.clone(), &txs, difficulty, cumulative_difficulty, p, new_block_size_ema, Immutable::Arc(block_hash.clone())).await?;
@@ -2148,9 +2191,9 @@ impl<S: Storage> Blockchain<S> {
             debug!("Block {} saved on disk", block_hash);
         }
 
-        trace!("Re acquiring storage in read mode for block {}", block_hash);
-        let storage = storage.downgrade();
-        trace!("Storage read lock acquired for block {}", block_hash);
+        // trace!("Re acquiring storage in read mode for block {}", block_hash);
+        // let storage = storage.downgrade();
+        // trace!("Storage read lock acquired for block {}", block_hash);
 
         let mut tips = storage.get_tips().await?;
         // TODO: best would be to not clone
@@ -2176,8 +2219,8 @@ impl<S: Storage> Blockchain<S> {
         debug!("Generated full order size: {}, with base ({}) topo height: {}", full_order.len(), base_hash, base_topo_height);
         trace!("Full order: {}", full_order.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", "));
 
-        trace!("Dropping storage read lock for block {}", block_hash);
-        drop(storage);
+        // trace!("Dropping storage read lock for block {}", block_hash);
+        // drop(storage);
 
         // rpc server lock
         let rpc_server = self.rpc.read().await;
@@ -2205,9 +2248,9 @@ impl<S: Storage> Blockchain<S> {
             // detect which part of DAG reorg stay, for other part, undo all executed txs
             debug!("Detecting stable point of DAG and cleaning txs above it");
             {
-                trace!("Acquiring storage write lock to clean transactions above stable point");
-                let mut storage = holder.write().await?;
-                trace!("Storage write lock acquired for cleaning transactions above stable point");
+                // trace!("Acquiring storage write lock to clean transactions above stable point");
+                // let mut storage = holder.write().await?;
+                // trace!("Storage write lock acquired for cleaning transactions above stable point");
 
                 let mut topoheight = base_topo_height;
                 while topoheight <= current_topoheight {
@@ -2282,9 +2325,9 @@ impl<S: Storage> Blockchain<S> {
             for (i, hash) in full_order.into_iter().enumerate() {
                 highest_topo = base_topo_height + skipped + i as u64;
 
-                trace!("Processing block {} at topoheight {}", hash, highest_topo);
-                let storage = holder.read().await?;
-                trace!("Storage read lock acquired for ordering block {}", hash);
+                // trace!("Processing block {} at topoheight {}", hash, highest_topo);
+                // let storage = holder.read().await?;
+                // trace!("Storage read lock acquired for ordering block {}", hash);
 
                 // if block is not re-ordered and it's not genesis block
                 // because we don't need to recompute everything as it's still good in chain
@@ -2582,10 +2625,10 @@ impl<S: Storage> Blockchain<S> {
                 // apply changes from Chain State
                 let finalizer = chain_state.finalize().await?;
 
-                drop(storage);
-                trace!("Re acquiring storage write lock to apply changes for block {}", hash);
-                let mut storage = holder.write().await?;
-                trace!("Storage write lock acquired to apply changes for block {}", hash);
+                // drop(storage);
+                // trace!("Re acquiring storage write lock to apply changes for block {}", hash);
+                // let mut storage = holder.write().await?;
+                // trace!("Storage write lock acquired to apply changes for block {}", hash);
 
                 finalizer.apply_changes(&mut *storage, past_emitted_supply, block_reward).await?;
 
@@ -2611,9 +2654,9 @@ impl<S: Storage> Blockchain<S> {
             histogram!("xelis_dag_ordering_ms").record(start.elapsed().as_millis() as f64);
         }
 
-        trace!("Re acquiring storage read lock after ordering for block {}", block_hash);
-        let storage = holder.read().await?;
-        trace!("Storage read lock acquired after ordering for block {}", block_hash);
+        // trace!("Re acquiring storage read lock after ordering for block {}", block_hash);
+        // let storage = holder.read().await?;
+        // trace!("Storage read lock acquired after ordering for block {}", block_hash);
 
         let mut new_tips = Vec::new();
         let version_at_height = hard_fork::get_version_at_height(self.get_network(), current_height);
@@ -2653,8 +2696,8 @@ impl<S: Storage> Blockchain<S> {
         }
         tips.insert(best_tip);
 
-        // Drop the storage again to re-acquire in write mode
-        drop(storage);
+        // // Drop the storage again to re-acquire in write mode
+        // drop(storage);
 
         // save highest topo height
         debug!("Highest topo height found: {}", highest_topo);
@@ -2662,11 +2705,10 @@ impl<S: Storage> Blockchain<S> {
         let chain_topoheight_extended = current_height == 0 || highest_topo > current_topoheight || dag_is_overwritten;
         let chain_height_extended = current_height == 0 || block.get_height() > current_height;
 
-        trace!("acquiring final storage write lock to update stats for {}", block_hash);
-        let mut storage = holder.write().await?;
-        trace!("final storage write lock acquired for {}", block_hash);
+        // trace!("acquiring final storage write lock to update stats for {}", block_hash);
+        // let mut storage = holder.write().await?;
+        // trace!("final storage write lock acquired for {}", block_hash);
         {
-    
             if chain_topoheight_extended {
                 debug!("Blockchain height extended, current topoheight is now {} (previous was {})", highest_topo, current_topoheight);
                 storage.set_top_topoheight(highest_topo).await?;
@@ -3034,6 +3076,9 @@ impl<S: Storage> Blockchain<S> {
     // Rewind the chain by removing N blocks from the top
     pub async fn rewind_chain(&self, count: u64, until_stable_height: bool) -> Result<(TopoHeight, Vec<(Hash, Immutable<Transaction>)>), BlockchainError> {
         debug!("rewind chain of {} blocks (stable height: {})", count, until_stable_height);
+        let _permit = self.storage_semaphore.acquire().await?;
+        debug!("storage semaphore acquired for rewinding chain");
+
         let mut storage = self.storage.write().await;
         self.rewind_chain_for_storage(&mut storage, count, until_stable_height).await
     }

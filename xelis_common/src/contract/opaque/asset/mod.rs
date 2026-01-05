@@ -1,6 +1,7 @@
 mod manager;
 
 use anyhow::Context as AnyhowContext;
+use log::debug;
 use xelis_vm::{
     traits::{JSONHelper, Serializable},
     Context,
@@ -256,10 +257,14 @@ pub async fn asset_mint<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, 
         // Track supply changes
         // Also update the asset supply
 
+        let current_supply = changes.circulating_supply.1;
+        debug!("Current supply: {}, minting amount: {}", current_supply, amount);
+
         // Update the supply
-        let new_supply = changes.circulating_supply.1.checked_add(amount)
+        let new_supply = current_supply.checked_add(amount)
             .context("Overflow while minting supply")?;
 
+        debug!("New supply after minting: {}", new_supply);
         changes.circulating_supply.0.mark_updated();
         changes.circulating_supply.1 = new_supply;
     }
