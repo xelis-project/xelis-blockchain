@@ -1910,7 +1910,7 @@ async fn add_xswd_relayer(manager: &CommandManager, mut args: ArgumentManager) -
     let app_data = serde_json::from_str(&app_data)
         .context("Error while parsing app data as JSON")?;
 
-    match wallet.add_xswd_relayer(app_data).await {
+    match wallet.add_xswd_relayer_application(app_data).await {
         Ok(receiver) => {
             if let Some(receiver) = receiver {
                 let prompt = manager.get_prompt().clone();

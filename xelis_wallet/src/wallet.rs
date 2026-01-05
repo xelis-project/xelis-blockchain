@@ -656,10 +656,14 @@ impl Wallet {
         Ok(())
     }
 
+    // Initialize XSWD channel if not already done
+    // Returns receiver if a new channel was created
+    // Used internally by enable_xswd and init_xswd_relayer
+    /// Returns None if channel already exists and is not closed
     #[cfg(feature = "xswd")]
     async fn init_xswd_channel(&self) -> Option<UnboundedReceiver<XSWDEvent>> {
         let mut channel = self.xswd_channel.write().await;
-        if channel.is_some() {
+        if channel.as_ref().is_some_and(|v| !v.is_closed()) {
             return None
         }
 
@@ -703,6 +707,7 @@ impl Wallet {
     // Does NOT add application - call add_xswd_relayer_application after spawning handler
     pub async fn init_xswd_relayer(self: &Arc<Self>) -> Result<Option<UnboundedReceiver<XSWDEvent>>, Error> {
         let receiver = self.init_xswd_channel().await;
+
         let mut xswd = self.xswd_relayer.lock().await;
         if xswd.is_none() {
             let mut handler = RPCHandler::new(Arc::clone(self), None);
@@ -713,19 +718,14 @@ impl Wallet {
     }
 
     // Add application to XSWD relayer - requires handler to be running
-    pub async fn add_xswd_relayer_application(self: &Arc<Self>, app_data: ApplicationDataRelayer) -> Result<(), Error> {
+    pub async fn add_xswd_relayer_application(self: &Arc<Self>, app_data: ApplicationDataRelayer) -> Result<Option<UnboundedReceiver<XSWDEvent>>, Error> {
+        let channel = self.init_xswd_relayer().await?;
         let xswd = self.xswd_relayer.lock().await;
         if let Some(xswd) = xswd.as_ref() {
             xswd.add_application(app_data).await?;
         }
-        Ok(())
-    }
 
-    // Legacy combined method - still has deadlock issue if handler not spawned first
-    pub async fn add_xswd_relayer(self: &Arc<Self>, app_data: ApplicationDataRelayer) -> Result<Option<UnboundedReceiver<XSWDEvent>>, Error> {
-        let receiver = self.init_xswd_relayer().await?;
-        self.add_xswd_relayer_application(app_data).await?;
-        Ok(receiver)
+        Ok(channel)
     }
 
     #[cfg(feature = "xswd")]
