@@ -126,6 +126,7 @@ impl ExecutionResult {
 pub(crate) async fn run_virtual_machine<'a, P: ContractProvider>(
     contract_environment: ContractEnvironment<'a, P>,
     chain_state: &mut ChainState<'a>,
+    caller: &ContractCaller<'a>,
     invoke: InvokeContract,
     contract: Cow<'a, Hash>,
     deposits: IndexMap<Hash, ContractDeposit>,
@@ -210,7 +211,7 @@ pub(crate) async fn run_virtual_machine<'a, P: ContractProvider>(
                 Level::Debug
             };
 
-            log!(level, "Invoke contract {} result: {:#}", contract, res);
+            log!(level, "Invoke contract {} from {} result: {:#}", contract, caller.get_hash(), res);
             // If the result return 0 as exit code, it means that everything went well
             let exit_code = match res.as_u64().ok() {
                 Some(v) => ExitValue::ExitCode(v),
@@ -244,7 +245,7 @@ pub(crate) async fn run_virtual_machine<'a, P: ContractProvider>(
             exit_code
         },
         Err(err) => {
-            log!(error_level, "Invoke contract {} error: {:#}", contract, err);
+            log!(error_level, "Invoke contract {} from {} error: {:#}", contract, caller.get_hash(), err);
             ExitValue::Error(err.into())
         }
     };
@@ -281,6 +282,7 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
     let (mut used_gas, vm_max_gas, exit_value) = run_virtual_machine(
         contract_environment,
         &mut chain_state,
+        &caller,
         invoke,
         contract,
         deposits.map(|(d, _)| d.clone()).unwrap_or_default(),

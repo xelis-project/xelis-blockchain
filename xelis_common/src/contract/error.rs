@@ -181,6 +181,16 @@ impl<'de> Deserialize<'de> for ExitError {
     }
 }
 
+// Safely create a runtime error with a message truncated to 255 characters
+pub fn runtime_error(msg: impl Into<Cow<'static, str>>) -> ExitError {
+    let mut msg = msg.into();
+    if msg.len() > 255 {
+        msg.to_mut().truncate(255);
+    }
+
+    ExitError::RuntimeError(msg.into())
+}
+
 impl From<EnvironmentError> for ExitError {
     fn from(err: EnvironmentError) -> Self {
         match err {
@@ -189,8 +199,9 @@ impl From<EnvironmentError> for ExitError {
             EnvironmentError::NotEnoughGas { .. } => ExitError::NotEnoughGas,
             EnvironmentError::GasOverflow => ExitError::GasOverflow,
             EnvironmentError::DivisionByZero => ExitError::DivisionByZero,
-            EnvironmentError::Static(msg) => ExitError::RuntimeError(msg.into()),
+            EnvironmentError::Static(msg) => runtime_error(msg),
             EnvironmentError::OutOfBounds(_, _) => ExitError::OutOfBounds,
+            EnvironmentError::Expect(msg) => runtime_error(msg),
             _ => ExitError::IllegalState,
         }
     }
@@ -202,14 +213,7 @@ impl From<VMError> for ExitError {
             VMError::DivisionByZero => ExitError::DivisionByZero,
             VMError::EnvironmentError(err) => ExitError::from(err),
             VMError::OutOfMemory => ExitError::OutOfMemory,
-            VMError::Any(err) => {
-                let mut msg = err.to_string();
-                if msg.len() > 255 {
-                    msg.truncate(255);
-                }
-
-                ExitError::RuntimeError(msg.into())
-            }
+            VMError::Any(err) => runtime_error(err.to_string()),
             _ => ExitError::IllegalState,
         }
     }
