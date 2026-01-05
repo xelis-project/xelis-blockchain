@@ -6,7 +6,7 @@ mod tests;
 
 use std::{
     cmp::Ordering,
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, VecDeque},
     num::NonZeroUsize,
 };
 use indexmap::IndexMap;
@@ -564,6 +564,28 @@ impl EncryptedStorage {
         Ok(self.tracked_assets.len())
     }
 
+    pub fn get_untracked_assets<'a>(&'a self) -> Result<impl Iterator<Item = Result<Hash>> + 'a> {
+        trace!("get untracked assets");
+        self.get_assets()
+            .map(|iter| iter.map(|res| {
+                let hash = res?;
+                let is_tracked = self.is_asset_tracked_internal(&hash)?;
+                if is_tracked {
+                    Ok(None)
+                } else {
+                    Ok(Some(hash))
+                }
+            }).filter_map(Result::transpose))
+    }
+
+    pub fn get_untracked_assets_count(&self) -> Result<usize> {
+        trace!("get untracked assets count");
+        let assets_len = self.get_assets_count()?;
+        let tracked_len = self.get_tracked_assets_count()?;
+
+        Ok(assets_len.saturating_sub(tracked_len))
+    }
+
     // Set a multisig state
     pub async fn set_multisig_state(&mut self, state: MultiSig) -> Result<()> {
         trace!("set multisig state");
@@ -609,34 +631,15 @@ impl EncryptedStorage {
 
     // this function is specific because we save the key in encrypted form (and not hashed as others)
     // returns all saved assets
-    pub async fn get_assets(&self) -> Result<HashSet<Hash>> {
+    pub fn get_assets<'a>(&'a self) -> Result<impl Iterator<Item = Result<Hash>> + 'a> {
         trace!("get assets");
-        let mut cache = self.assets_cache.lock().await;
 
-        if cache.len() == self.assets.len() {
-            return Ok(cache.iter().map(|(k, _)| k.clone()).collect());
-        }
-
-        let mut assets = HashSet::new();
-        for res in self.assets.iter() {
-            let (key, value) = res?;
-            let raw_key = &self.cipher.decrypt_value(&key)?;
-            let mut reader = Reader::new(raw_key);
-            let asset = Hash::read(&mut reader)?;
-
-            if !cache.contains(&asset) {
-                let raw_value = &self.cipher.decrypt_value(&value)?;
-                let mut reader = Reader::new(raw_value);
-                let a = AssetData::read(&mut reader)?;
-
-                let is_tracked = self.is_asset_tracked_internal(&asset)?;
-                cache.put(asset.clone(), (a, is_tracked));
-            }
-
-            assets.insert(asset);
-        }
-
-        Ok(assets)
+        Ok(self.assets.iter().keys().map(move |res| {
+            let key = res?;
+            let raw_key = self.cipher.decrypt_value(&key)?;
+            let asset = Hash::from_bytes(&raw_key)?;
+            Ok(asset)
+        }))
     }
 
     pub fn get_assets_count(&self) -> Result<usize> {
