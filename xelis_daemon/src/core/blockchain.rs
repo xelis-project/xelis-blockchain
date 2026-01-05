@@ -498,30 +498,37 @@ impl<S: Storage> Blockchain<S> {
         Ok(arc)
     }
 
+    #[inline]
     pub fn concurrency_limit(&self) -> usize {
         self.concurrency
     }
 
     // Detect if the simulator task has been started
+    #[inline]
     pub fn is_simulator_enabled(&self) -> bool {
         self.simulator.is_some()
     }
 
     // Skip PoW verification flag
+    #[inline]
     pub fn skip_pow_verification(&self) -> bool {
         self.skip_pow_verification
     }
 
     // get the environment stdlib for contract execution
+    #[inline]
     pub fn get_contract_environments(&self) -> &ContractEnvironments {
         &self.environments
     }
 
     // Get the configured threads count for TXS
+    #[inline]
     pub fn get_txs_verification_threads_count(&self) -> usize {
         self.txs_verification_threads_count
     }
 
+    // Get the storage semaphore
+    // must be acquired before any storage modification
     #[inline]
     pub fn storage_semaphore(&self) -> &Semaphore {
         &self.storage_semaphore
@@ -2184,9 +2191,9 @@ impl<S: Storage> Blockchain<S> {
             debug!("Block {} saved on disk", block_hash);
         }
 
-        trace!("Re acquiring storage in read mode for block {}", block_hash);
-        let storage = storage.downgrade();
-        trace!("Storage read lock acquired for block {}", block_hash);
+        // trace!("Re acquiring storage in read mode for block {}", block_hash);
+        // let storage = storage.downgrade();
+        // trace!("Storage read lock acquired for block {}", block_hash);
 
         let mut tips = storage.get_tips().await?;
         // TODO: best would be to not clone
@@ -2212,8 +2219,8 @@ impl<S: Storage> Blockchain<S> {
         debug!("Generated full order size: {}, with base ({}) topo height: {}", full_order.len(), base_hash, base_topo_height);
         trace!("Full order: {}", full_order.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", "));
 
-        trace!("Dropping storage read lock for block {}", block_hash);
-        drop(storage);
+        // trace!("Dropping storage read lock for block {}", block_hash);
+        // drop(storage);
 
         // rpc server lock
         let rpc_server = self.rpc.read().await;
@@ -2241,9 +2248,9 @@ impl<S: Storage> Blockchain<S> {
             // detect which part of DAG reorg stay, for other part, undo all executed txs
             debug!("Detecting stable point of DAG and cleaning txs above it");
             {
-                trace!("Acquiring storage write lock to clean transactions above stable point");
-                let mut storage = holder.write().await?;
-                trace!("Storage write lock acquired for cleaning transactions above stable point");
+                // trace!("Acquiring storage write lock to clean transactions above stable point");
+                // let mut storage = holder.write().await?;
+                // trace!("Storage write lock acquired for cleaning transactions above stable point");
 
                 let mut topoheight = base_topo_height;
                 while topoheight <= current_topoheight {
@@ -2318,9 +2325,9 @@ impl<S: Storage> Blockchain<S> {
             for (i, hash) in full_order.into_iter().enumerate() {
                 highest_topo = base_topo_height + skipped + i as u64;
 
-                trace!("Processing block {} at topoheight {}", hash, highest_topo);
-                let storage = holder.read().await?;
-                trace!("Storage read lock acquired for ordering block {}", hash);
+                // trace!("Processing block {} at topoheight {}", hash, highest_topo);
+                // let storage = holder.read().await?;
+                // trace!("Storage read lock acquired for ordering block {}", hash);
 
                 // if block is not re-ordered and it's not genesis block
                 // because we don't need to recompute everything as it's still good in chain
@@ -2618,10 +2625,10 @@ impl<S: Storage> Blockchain<S> {
                 // apply changes from Chain State
                 let finalizer = chain_state.finalize().await?;
 
-                drop(storage);
-                trace!("Re acquiring storage write lock to apply changes for block {}", hash);
-                let mut storage = holder.write().await?;
-                trace!("Storage write lock acquired to apply changes for block {}", hash);
+                // drop(storage);
+                // trace!("Re acquiring storage write lock to apply changes for block {}", hash);
+                // let mut storage = holder.write().await?;
+                // trace!("Storage write lock acquired to apply changes for block {}", hash);
 
                 finalizer.apply_changes(&mut *storage, past_emitted_supply, block_reward).await?;
 
@@ -2647,9 +2654,9 @@ impl<S: Storage> Blockchain<S> {
             histogram!("xelis_dag_ordering_ms").record(start.elapsed().as_millis() as f64);
         }
 
-        trace!("Re acquiring storage read lock after ordering for block {}", block_hash);
-        let storage = holder.read().await?;
-        trace!("Storage read lock acquired after ordering for block {}", block_hash);
+        // trace!("Re acquiring storage read lock after ordering for block {}", block_hash);
+        // let storage = holder.read().await?;
+        // trace!("Storage read lock acquired after ordering for block {}", block_hash);
 
         let mut new_tips = Vec::new();
         let version_at_height = hard_fork::get_version_at_height(self.get_network(), current_height);
@@ -2689,8 +2696,8 @@ impl<S: Storage> Blockchain<S> {
         }
         tips.insert(best_tip);
 
-        // Drop the storage again to re-acquire in write mode
-        drop(storage);
+        // // Drop the storage again to re-acquire in write mode
+        // drop(storage);
 
         // save highest topo height
         debug!("Highest topo height found: {}", highest_topo);
@@ -2698,9 +2705,9 @@ impl<S: Storage> Blockchain<S> {
         let chain_topoheight_extended = current_height == 0 || highest_topo > current_topoheight || dag_is_overwritten;
         let chain_height_extended = current_height == 0 || block.get_height() > current_height;
 
-        trace!("acquiring final storage write lock to update stats for {}", block_hash);
-        let mut storage = holder.write().await?;
-        trace!("final storage write lock acquired for {}", block_hash);
+        // trace!("acquiring final storage write lock to update stats for {}", block_hash);
+        // let mut storage = holder.write().await?;
+        // trace!("final storage write lock acquired for {}", block_hash);
         {
             if chain_topoheight_extended {
                 debug!("Blockchain height extended, current topoheight is now {} (previous was {})", highest_topo, current_topoheight);
