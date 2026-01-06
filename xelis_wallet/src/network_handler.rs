@@ -1186,9 +1186,9 @@ impl NetworkHandler {
         // Should we sync new blocks ?
         let mut sync_new_blocks = false;
 
-        let wallet_topoheight: u64;
-        let daemon_topoheight: u64;
-        let daemon_block_hash: Hash;
+        let mut wallet_topoheight: u64;
+        let mut daemon_topoheight: u64;
+        let mut daemon_block_hash: Hash;
 
         // Handle the event
         if let Some(block) = event {
@@ -1250,19 +1250,38 @@ impl NetworkHandler {
             sync_new_blocks |= self.sync_head_state(&address, None, None, true, true).await?;
         }
 
-        // Update the topoheight and block hash for wallet
-        {
-            trace!("updating block reference in storage");
-            let mut storage = self.wallet.get_storage().write().await;
-            storage.set_synced_topoheight(daemon_topoheight)?;
-            storage.set_top_block_hash(&daemon_block_hash)?;
-        }
-
         // we have something that changed, sync transactions
         // prevent a double sync head state if history scan is disabled
         if sync_new_blocks && self.wallet.get_history_scan() {
-            debug!("Syncing new blocks");
-            self.sync_new_blocks(address, wallet_topoheight, None, true).await?;
+            // We have to loop until we are fully synced
+            // Because we have a fast block time, and the wallet can be on a low-end device.
+            // if the sync new blocks function takes too long, it will skip the blocks between
+            // daemon topoheight and new daemon topoheight, meaning some TXs are missed
+            // This can happen if you have a lot of transactions to process and the wallet is slow
+            loop {
+                debug!("Syncing new blocks from wallet topoheight {} to daemon topoheight {}", wallet_topoheight, daemon_topoheight);
+                self.sync_new_blocks(address, wallet_topoheight, None, true).await?;
+
+                // Update the topoheight and block hash for wallet
+                self.update_block_reference(daemon_topoheight, &daemon_block_hash).await?;
+
+                let (new_daemon_topoheight, new_daemon_block_hash, new_wallet_topoheight) = self.locate_sync_topoheight_and_clean().await?;
+                debug!("new daemon topoheight: {}, new wallet topoheight: {}", new_daemon_topoheight, new_wallet_topoheight);
+
+                let is_synced = daemon_topoheight >= new_daemon_topoheight;
+
+                daemon_topoheight = new_daemon_topoheight;
+                daemon_block_hash = new_daemon_block_hash;
+                wallet_topoheight = new_wallet_topoheight;
+
+                if is_synced {
+                    debug!("Wallet is synced to daemon topoheight {}", new_daemon_topoheight);
+                    break;
+                }
+            }
+        } else {
+            // Update the topoheight and block hash for wallet
+            self.update_block_reference(daemon_topoheight, &daemon_block_hash).await?;
         }
 
         {
@@ -1275,6 +1294,14 @@ impl NetworkHandler {
         // Propagate the event
         self.wallet.propagate_event(Event::NewTopoHeight { topoheight: daemon_topoheight }).await;
         debug!("Synced to topoheight {}", daemon_topoheight);
+        Ok(())
+    }
+
+    async fn update_block_reference(&self, topoheight: u64, block_hash: &Hash) -> Result<(), Error> {
+        trace!("updating block reference in storage");
+        let mut storage = self.wallet.get_storage().write().await;
+        storage.set_synced_topoheight(topoheight)?;
+        storage.set_top_block_hash(block_hash)?;
         Ok(())
     }
 
