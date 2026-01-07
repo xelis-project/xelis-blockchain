@@ -12,7 +12,7 @@ pub struct DynamicLen(pub usize);
 impl Serializer for DynamicLen {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let tag = reader.read_u8()?;
-                let len = match tag {
+        let len = match tag {
             n @ 0x00..=0xFC => n as usize,
             0xFD => reader.read_u16()? as usize,
             0xFE => reader.read_u32()? as usize,
