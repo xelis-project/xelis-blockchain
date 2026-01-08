@@ -376,6 +376,72 @@ When a peer's peer has disconnected from him and notified us.
 }
 ```
 
+### JSON-RPC (Private) Methods
+These methods must be enabled by starting the daemon with `--rpc-allow-private-methods` flag.
+
+#### Rewind Chain
+Rewind the chain by a specific count of blocks.
+
+##### Method `rewind_chain`
+
+##### Parameters
+|        Name        |   Type  | Required |                         Note                        |
+|:------------------:|:-------:|:--------:|:---------------------------------------------------:|
+|        count       | Integer | Required |                Count of blocks to pop               |
+|until_stable_height | Boolean | Optional |Rewind max to stable height if possible. Default false|
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "rewind_chain",
+    "params": {
+        "address": "xel:vs3mfyywt0fjys0rgslue7mm4wr23xdgejsjk0ld7f2kxng4d4nqqnkdufz",
+        "allow_integrated": false
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "topoheight": 18,
+        "txs": ["011a3af694cf821e39e694baf533f4cb323785519a593e952a3e43e59250d4ea"]
+    }
+}
+```
+
+
+#### Clear Caches
+Clear the current caches used by the daemon.
+
+##### Method `clear_caches`
+
+##### Parameters
+No parameters
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "clear_caches",
+    "id": 1
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": null
+}
+```
+
 ### JSON-RPC methods
 
 #### Get Version
