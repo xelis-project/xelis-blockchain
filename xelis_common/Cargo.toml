@@ -75,7 +75,7 @@ win32console = "0.1.5"
 # We need both crates version to support the WASM/JS
 # NOTE: You must set `RUSTFLAGS='--cfg getrandom_backend="wasm_js"'` when building
 getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
-getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
+getrandom_04 = { package = "getrandom", version = "0.4.0-rc.0", features = ["wasm_js"] }
 tokio_with_wasm = { version = "0.8.7", features = ["macros", "sync", "time", "rt"], optional = true }
 web-time = "1.1.0"
 
