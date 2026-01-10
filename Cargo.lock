@@ -1692,11 +1692,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
 dependencies = [
  "cfg-if",
- "js-sys",
  "libc",
  "r-efi",
  "wasip2",
- "wasm-bindgen",
 ]
 
 [[package]]
@@ -1706,10 +1704,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3b99f0d993a2b9b97b9a201193aa8ad21305cde06a3be9a7e1f8f4201e5cc27e"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi",
  "rand_core 0.10.0-rc-3",
  "wasip2",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -5043,7 +5043,7 @@ dependencies = [
  "futures",
  "futures-util",
  "getrandom 0.2.16",
- "getrandom 0.3.4",
+ "getrandom 0.4.0-rc.0",
  "hex",
  "indexmap 2.12.1",
  "lazy_static",
