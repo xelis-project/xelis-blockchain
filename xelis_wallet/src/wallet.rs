@@ -702,9 +702,9 @@ impl Wallet {
         &self.api_server
     }
 
-    #[cfg(feature = "xswd")]
     // Initialize XSWD relayer infrastructure and return event receiver
     // Does NOT add application - call add_xswd_relayer_application after spawning handler
+    #[cfg(feature = "xswd")]
     pub async fn init_xswd_relayer(self: &Arc<Self>) -> Result<Option<UnboundedReceiver<XSWDEvent>>, Error> {
         let receiver = self.init_xswd_channel().await;
 
@@ -718,6 +718,7 @@ impl Wallet {
     }
 
     // Add application to XSWD relayer - requires handler to be running
+    #[cfg(feature = "xswd")]
     pub async fn add_xswd_relayer_application(self: &Arc<Self>, app_data: ApplicationDataRelayer) -> Result<Option<UnboundedReceiver<XSWDEvent>>, Error> {
         let channel = self.init_xswd_relayer().await?;
         let xswd = self.xswd_relayer.lock().await;
