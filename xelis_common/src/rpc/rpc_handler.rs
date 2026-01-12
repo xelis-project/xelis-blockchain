@@ -22,14 +22,30 @@ use crate::{
     }
 };
 
+// WASM doesn't support Send futures (single-threaded runtime)
+#[cfg(not(target_arch = "wasm32"))]
 pub type Handler = Box<
     dyn for<'a> Fn(&'a Context, Value) -> Pin<Box<dyn Future<Output = Result<Value, InternalRpcError>> + Send + 'a>>
     + Send + Sync
 >;
 
+#[cfg(target_arch = "wasm32")]
+pub type Handler = Box<
+    dyn for<'a> Fn(&'a Context, Value) -> Pin<Box<dyn Future<Output = Result<Value, InternalRpcError>> + 'a>>
+    + Send + Sync
+>;
+
+#[cfg(not(target_arch = "wasm32"))]
 pub type HandlerParams<P, R> = for<'a> fn(&'a Context, P) -> Pin<Box<dyn Future<Output = Result<R, InternalRpcError>> + Send + 'a>>;
 
+#[cfg(target_arch = "wasm32")]
+pub type HandlerParams<P, R> = for<'a> fn(&'a Context, P) -> Pin<Box<dyn Future<Output = Result<R, InternalRpcError>> + 'a>>;
+
+#[cfg(not(target_arch = "wasm32"))]
 pub type HandlerNoParams<R> = for<'a> fn(&'a Context) -> Pin<Box<dyn Future<Output = Result<R, InternalRpcError>> + Send + 'a>>;
+
+#[cfg(target_arch = "wasm32")]
+pub type HandlerNoParams<R> = for<'a> fn(&'a Context) -> Pin<Box<dyn Future<Output = Result<R, InternalRpcError>> + 'a>>;
 
 // Information about an RPC method
 #[derive(Debug, Clone, Serialize, Deserialize)]
