@@ -46,7 +46,9 @@ where
     semaphore: Semaphore
 }
 
-#[async_trait]
+// WASM doesn't support Send bounds (single-threaded)
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait XSWDHandler {
     // Handler function to request permission to user
     async fn request_permission(&self, app_state: &AppStateShared, request: PermissionRequest<'_>) -> Result<PermissionResult, Error>;
@@ -70,7 +72,8 @@ pub trait XSWDHandler {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait XSWDProvider {
     async fn has_app_with_id(&self, id: &str) -> bool;
 }

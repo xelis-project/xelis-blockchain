@@ -1467,7 +1467,8 @@ pub enum XSWDEvent {
 }
 
 #[cfg(feature = "xswd")]
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl XSWDHandler for Arc<Wallet> {
     async fn request_permission(&self, app_state: &AppStateShared, request: PermissionRequest<'_>) -> Result<PermissionResult, Error> {
         if let Some(sender) = self.xswd_channel.read().await.as_ref() {
