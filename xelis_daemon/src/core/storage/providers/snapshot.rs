@@ -15,7 +15,7 @@ pub trait SnapshotProvider {
     async fn start_snapshot(&mut self) -> Result<(), BlockchainError>;
 
     // Apply the batch to the storage
-    fn end_snapshot(&mut self, apply: bool) -> Result<(), BlockchainError>;
+    async fn end_snapshot(&mut self, apply: bool) -> Result<(), BlockchainError>;
 
     fn swap_snapshot(&mut self, other: Option<Snapshot<Self::Column>>) -> Result<Option<Snapshot<Self::Column>>, BlockchainError>;
 }

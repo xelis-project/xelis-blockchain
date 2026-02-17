@@ -156,7 +156,7 @@ pub struct RocksStorage {
     network: Network,
     snapshot: Option<Snapshot>,
     cache: StorageCache,
-    concurrency: usize
+    concurrency: usize,
 }
 
 impl RocksStorage {
@@ -246,6 +246,25 @@ impl RocksStorage {
         }
     }
 
+    // Run a heavy blocking operation with semaphore-limited concurrency.
+    // Uses block_in_place to avoid blocking the tokio async worker.
+    #[inline(always)]
+    fn run_blocking<F, R>(&self, f: F) -> Result<R, BlockchainError>
+    where
+        F: FnOnce() -> Result<R, BlockchainError>,
+    {
+        tokio::block_in_place_safe(f)
+    }
+
+    // Run a heavy blocking operation that requires mutable access.
+    #[inline(always)]
+    fn run_blocking_mut<F, R>(&mut self, f: F) -> Result<R, BlockchainError>
+    where
+        F: FnOnce(&mut Self) -> Result<R, BlockchainError>,
+    {
+        tokio::block_in_place_safe(|| f(self))
+    }
+
     pub fn load_cache_from_disk(&mut self) {
         trace!("load cache from disk");
     }
@@ -290,17 +309,18 @@ impl RocksStorage {
     }
 
     // Count how many entries we have stored in a column
-    pub fn count_entries(&self, column: Column) -> Result<usize, BlockchainError> {
+    pub async fn count_entries(&self, column: Column) -> Result<usize, BlockchainError> {
         trace!("count entries {:?}", column);
+        self.run_blocking(|| {
+            let cf = cf_handle!(self.db, column);
+            let iterator = self.db.iterator_cf(&cf, InternalIteratorMode::Start);
 
-        let cf = cf_handle!(self.db, column);
-        let iterator = self.db.iterator_cf(&cf, InternalIteratorMode::Start);
+            if let Some(snapshot) = self.snapshot.as_ref() {
+                return Ok(snapshot.count_entries(column, iterator))
+            }
 
-        if let Some(snapshot) = self.snapshot.as_ref() {
-            return Ok(snapshot.count_entries(column, iterator))
-        }
-
-        Ok(iterator.count())
+            Ok(iterator.count())
+        })
     }
 
     pub fn load_optional_from_disk<K: AsRef<[u8]> + ?Sized, V: Serializer>(&self, column: Column, key: &K) -> Result<Option<V>, BlockchainError> {
@@ -558,10 +578,11 @@ impl Storage for RocksStorage {
     // Flush the inner DB after a block being written
     async fn flush(&mut self) -> Result<(), BlockchainError> {
         trace!("flush DB");
-        self.db.flush().context("Error while flushing DB")?;
-        debug!("DB flushed successfully");
-
-        Ok(())
+        self.run_blocking(|| {
+            self.db.flush().context("Error while flushing DB")?;
+            debug!("DB flushed successfully");
+            Ok(())
+        })
     }
 }
 

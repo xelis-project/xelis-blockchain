@@ -159,19 +159,21 @@ impl RocksStorage {
     async fn get_contract_data_topoheight_at_maximum_topoheight_for_internal(&self, contract_id: ContractId, contract_key_id: ContractDataId, maximum_topoheight: TopoHeight) -> Result<Option<TopoHeight>, BlockchainError> {
         trace!("get contract {} data {} at maximum topoheight {}", contract_id, contract_key_id, maximum_topoheight);
 
-        let mut versioned_key = Self::get_versioned_contract_data_key(contract_id, contract_key_id, maximum_topoheight);
-        let mut prev_topo: Option<TopoHeight> = self.load_optional_from_disk(Column::ContractsData, &versioned_key[8..])?;
+        self.run_blocking(|| {
+            let mut versioned_key = Self::get_versioned_contract_data_key(contract_id, contract_key_id, maximum_topoheight);
+            let mut prev_topo: Option<TopoHeight> = self.load_optional_from_disk(Column::ContractsData, &versioned_key[8..])?;
 
-        while let Some(topo) = prev_topo {
-            versioned_key[0..8].copy_from_slice(&topo.to_be_bytes());
-            if topo <= maximum_topoheight {
-                return Ok(Some(topo))
+            while let Some(topo) = prev_topo {
+                versioned_key[0..8].copy_from_slice(&topo.to_be_bytes());
+                if topo <= maximum_topoheight {
+                    return Ok(Some(topo))
+                }
+
+                prev_topo = self.load_optional_from_disk(Column::ContractsData, &versioned_key[8..])?;
             }
 
-            prev_topo = self.load_optional_from_disk(Column::ContractsData, &versioned_key[8..])?;
-        }
-
-        Ok(None)
+            Ok(None)
+        })
     }
 
     fn get_last_contract_data_id(&self) -> Result<ContractDataId, BlockchainError> {

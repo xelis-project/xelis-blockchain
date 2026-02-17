@@ -29,22 +29,26 @@ impl SnapshotProvider for RocksStorage {
         Ok(())
     }
 
-    fn end_snapshot(&mut self, apply: bool) -> Result<(), BlockchainError> {
+    async fn end_snapshot(&mut self, apply: bool) -> Result<(), BlockchainError> {
         trace!("end snapshot");
         let snapshot = self.snapshot.take()
             .ok_or(BlockchainError::CommitPointNotStarted)?;
 
         if apply {
             trace!("applying snapshot");
-            for (column, batch) in snapshot.trees {
-                for (key, value) in batch {
-                    if let Some(value) = value {
-                        self.insert_into_disk(column, &key.as_ref(), &value.as_ref())?;
-                    } else {
-                        self.remove_from_disk(column, &key.as_ref())?;
+            self.run_blocking_mut(|s| {
+                for (column, batch) in snapshot.trees {
+                    for (key, value) in batch {
+                        if let Some(value) = value {
+                            s.insert_into_disk(column, &key.as_ref(), &value.as_ref())?;
+                        } else {
+                            s.remove_from_disk(column, &key.as_ref())?;
+                        }
                     }
                 }
-            }
+
+                Ok(())
+            })?;
 
             self.cache = snapshot.cache;
         }

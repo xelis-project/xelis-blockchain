@@ -17,7 +17,7 @@ impl SnapshotProvider for MemoryStorage {
         Err(BlockchainError::UnsupportedOperation)
     }
 
-    fn end_snapshot(&mut self, _: bool) -> Result<(), BlockchainError> {
+    async fn end_snapshot(&mut self, _: bool) -> Result<(), BlockchainError> {
         Err(BlockchainError::UnsupportedOperation)
     }
 

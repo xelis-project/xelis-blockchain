@@ -45,32 +45,34 @@ impl ContractEventCallbackProvider for RocksStorage {
     ) -> Result<Option<(TopoHeight, VersionedEventCallbackRegistration)>, BlockchainError> {
         trace!("get event callback for contract {} event {} listener {} at maximum topoheight {}", contract, event_id, listener_contract, max_topoheight);
 
-        let Some(contract_id) = self.get_optional_contract_id(contract)? else {
-            return Ok(None);
-        };
-        let Some(listener_id) = self.get_optional_contract_id(listener_contract)? else {
-            return Ok(None);
-        };
+        self.run_blocking(|| {
+            let Some(contract_id) = self.get_optional_contract_id(contract)? else {
+                return Ok(None);
+            };
+            let Some(listener_id) = self.get_optional_contract_id(listener_contract)? else {
+                return Ok(None);
+            };
 
-        // Create key: {contract_id}{event_id}{listener_id}
-        let key = Self::get_event_callback_key(contract_id, event_id, listener_id);
+            // Create key: {contract_id}{event_id}{listener_id}
+            let key = Self::get_event_callback_key(contract_id, event_id, listener_id);
 
-        // Get the last topoheight for this listener
-        if let Some(last_topoheight) = self.load_from_disk(Column::ContractEventCallbacks, &key)? {
-            let versioned_key = Self::get_versioned_event_callback_key(last_topoheight, contract_id, event_id, listener_id);
+            // Get the last topoheight for this listener
+            if let Some(last_topoheight) = self.load_from_disk(Column::ContractEventCallbacks, &key)? {
+                let versioned_key = Self::get_versioned_event_callback_key(last_topoheight, contract_id, event_id, listener_id);
 
-            let mut topo = Some(max_topoheight);
-            while let Some(current_topoheight) = topo {
-                let version: VersionedEventCallbackRegistration = self.load_from_disk(Column::VersionedContractEventCallbacks, &versioned_key)?;
-                if current_topoheight <= max_topoheight {
-                    return Ok(Some((last_topoheight, version)))
+                let mut topo = Some(max_topoheight);
+                while let Some(current_topoheight) = topo {
+                    let version: VersionedEventCallbackRegistration = self.load_from_disk(Column::VersionedContractEventCallbacks, &versioned_key)?;
+                    if current_topoheight <= max_topoheight {
+                        return Ok(Some((last_topoheight, version)))
+                    }
+
+                    topo = version.get_previous_topoheight();
                 }
-
-                topo = version.get_previous_topoheight();
             }
-        }
 
-        Ok(None)
+            Ok(None)
+        })
     }
 
     async fn get_event_callbacks_for_event_at_maximum_topoheight<'a>(

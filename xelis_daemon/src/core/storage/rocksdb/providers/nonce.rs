@@ -61,41 +61,43 @@ impl NonceProvider for RocksStorage {
     // Get the nonce under or equal topoheight requested for an account
     async fn get_nonce_at_maximum_topoheight(&self, key: &PublicKey, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedNonce)>, BlockchainError> {
         trace!("get nonce at maximum topoheight for account {}", key.as_address(self.is_mainnet()));
-        let Some(account) = self.get_optional_account_type(key)? else {
-            trace!("no account found for key");
-            return Ok(None);
-        };
+        self.run_blocking(|| {
+            let Some(account) = self.get_optional_account_type(key)? else {
+                trace!("no account found for key");
+                return Ok(None);
+            };
 
-        // Check if the account has a nonce at the requested topoheight
-        // otherwise, we will use the pointer to the last topoheight
-        let Some(nonce_topoheight) = account.nonce_pointer else {
-            trace!("no nonce pointer found for account");
-            return Ok(None);
-        };
-
-        let mut next_topo = if nonce_topoheight > maximum_topoheight
-            && self.contains_data(Column::VersionedNonces, &Self::get_versioned_account_key(account.id, maximum_topoheight))? {
-            trace!("using maximum topoheight as start topo");
-            Some(maximum_topoheight)
-        } else {
-            trace!("using nonce pointer {:?} as start topo", account.nonce_pointer);
-            account.nonce_pointer
-        };
-
-        // Iterate over our linked list of versions
-        while let Some(topo) = next_topo {
             // Check if the account has a nonce at the requested topoheight
-            let versioned_key = Self::get_versioned_account_key(account.id, topo);
-            if topo <= maximum_topoheight {
-                trace!("found nonce at topoheight {} with maximum topoheight {}", topo, maximum_topoheight);
-                let version = self.load_from_disk(Column::VersionedNonces, &versioned_key)?;
-                return Ok(Some((topo, version)));
+            // otherwise, we will use the pointer to the last topoheight
+            let Some(nonce_topoheight) = account.nonce_pointer else {
+                trace!("no nonce pointer found for account");
+                return Ok(None);
+            };
+
+            let mut next_topo = if nonce_topoheight > maximum_topoheight
+                && self.contains_data(Column::VersionedNonces, &Self::get_versioned_account_key(account.id, maximum_topoheight))? {
+                trace!("using maximum topoheight as start topo");
+                Some(maximum_topoheight)
+            } else {
+                trace!("using nonce pointer {:?} as start topo", account.nonce_pointer);
+                account.nonce_pointer
+            };
+
+            // Iterate over our linked list of versions
+            while let Some(topo) = next_topo {
+                // Check if the account has a nonce at the requested topoheight
+                let versioned_key = Self::get_versioned_account_key(account.id, topo);
+                if topo <= maximum_topoheight {
+                    trace!("found nonce at topoheight {} with maximum topoheight {}", topo, maximum_topoheight);
+                    let version = self.load_from_disk(Column::VersionedNonces, &versioned_key)?;
+                    return Ok(Some((topo, version)));
+                }
+
+                next_topo = self.load_from_disk(Column::VersionedNonces, &versioned_key)?;
             }
 
-            next_topo = self.load_from_disk(Column::VersionedNonces, &versioned_key)?;
-        }
-
-        Ok(None)
+            Ok(None)
+        })
     }
 
     // set the new nonce at exact topoheight for account
