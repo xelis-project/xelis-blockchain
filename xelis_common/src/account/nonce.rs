@@ -3,6 +3,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use crate::{
     block::TopoHeight,
+    versioned_type::TopoHeightVersioned,
     serializer::{
         Reader,
         ReaderError,
@@ -72,5 +73,15 @@ impl Serializer for VersionedNonce {
 impl Display for VersionedNonce {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "Nonce[{}, previous: {:?}", self.nonce, self.previous_topoheight)
+    }
+}
+
+impl TopoHeightVersioned for VersionedNonce {
+    fn get_previous(&self) -> Option<TopoHeight> {
+        self.get_previous_topoheight()
+    }
+
+    fn set_previous(&mut self, previous: Option<TopoHeight>) {
+        self.set_previous_topoheight(previous);
     }
 }

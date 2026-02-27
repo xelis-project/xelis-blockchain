@@ -3,6 +3,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use crate::{
     block::TopoHeight,
+    versioned_type::TopoHeightVersioned,
     crypto::elgamal::{
         Ciphertext,
         CompressedCiphertext,
@@ -364,5 +365,15 @@ mod tests {
 
         let zero_bis = VersionedBalance::from_bytes(&zero.to_bytes()).unwrap();
         assert_eq!(zero, zero_bis);
+    }
+}
+
+impl TopoHeightVersioned for VersionedBalance {
+    fn get_previous(&self) -> Option<TopoHeight> {
+        self.get_previous_topoheight()
+    }
+
+    fn set_previous(&mut self, previous: Option<TopoHeight>) {
+        self.set_previous_topoheight(previous);
     }
 }

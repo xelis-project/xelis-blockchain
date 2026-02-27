@@ -111,18 +111,20 @@ impl VersionedState {
 // For serializer, previous_topoheight is written before the data
 // So we can go through all the previous versions without reading the actual data
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct Versioned<T: Serializer> {
+pub struct Versioned<T> {
     previous_topoheight: Option<TopoHeight>,
     data: T,
 }
 
-impl<T: Serializer + Clone> Clone for Versioned<T> {
+impl<T: Clone> Clone for Versioned<T> {
     fn clone(&self) -> Self {
         Self { previous_topoheight: self.previous_topoheight, data: self.data.clone() }
     }
 }
 
-impl<T: Serializer> Versioned<T> {
+impl<T: Copy> Copy for Versioned<T> {}
+
+impl<T> Versioned<T> {
     pub fn new(data: T, previous_topoheight: Option<TopoHeight>) -> Self {
         Self {
             data,
@@ -169,5 +171,21 @@ impl<T: Serializer> Serializer for Versioned<T> {
 
     fn size(&self) -> usize {
         self.previous_topoheight.size() + self.data.size()
+    }
+}
+
+/// A trait for versioned data that can be chained by topoheight
+pub trait TopoHeightVersioned {
+    fn get_previous(&self) -> Option<TopoHeight>;
+    fn set_previous(&mut self, previous: Option<TopoHeight>);
+}
+
+impl<T> TopoHeightVersioned for Versioned<T> {
+    fn get_previous(&self) -> Option<TopoHeight> {
+        self.get_previous_topoheight()
+    }
+
+    fn set_previous(&mut self, previous: Option<TopoHeight>) {
+        self.set_previous_topoheight(previous);
     }
 }
