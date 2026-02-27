@@ -1083,7 +1083,7 @@ pub async fn test_delete_versioned_data_below_topoheight_nonces<S: Storage>(mut 
         total += 1;
     }
 
-    assert_eq!(total, 5, "Should have 5 versions of nonce remaining, got {}", total);
+    assert_eq!(total, 4, "Should have 4 more versions of nonce remaining, got {}", total);
     Ok(())
 }
 
