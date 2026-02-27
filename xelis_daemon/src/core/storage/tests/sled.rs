@@ -179,3 +179,72 @@ async fn test_sled_versioned_data_max_topoheight_boundary() -> Result<()> {
     let storage = new_sled_storage(data.network, temp_dir.path().to_str().unwrap())?;
     test_versioned_data_max_topoheight_boundary(storage, &data).await
 }
+
+#[tokio::test]
+async fn test_sled_delete_versioned_data_at_topoheight_nonces() -> Result<()> {
+    let data = TestData::new()?;
+    let temp_dir = TempDir::new("storage_test")?;
+    let storage = new_sled_storage(data.network, temp_dir.path().to_str().unwrap())?;
+    test_delete_versioned_data_at_topoheight_nonces(storage, &data).await
+}
+
+#[tokio::test]
+async fn test_sled_delete_versioned_data_below_topoheight_nonces() -> Result<()> {
+    let data = TestData::new()?;
+    let temp_dir = TempDir::new("storage_test")?;
+    let storage = new_sled_storage(data.network, temp_dir.path().to_str().unwrap())?;
+    test_delete_versioned_data_below_topoheight_nonces(storage, &data).await
+}
+
+#[tokio::test]
+async fn test_sled_delete_versioned_data_above_topoheight_nonces() -> Result<()> {
+    let data = TestData::new()?;
+    let temp_dir = TempDir::new("storage_test")?;
+    let storage = new_sled_storage(data.network, temp_dir.path().to_str().unwrap())?;
+    test_delete_versioned_data_above_topoheight_nonces(storage, &data).await
+}
+
+#[tokio::test]
+async fn test_sled_delete_versioned_data_at_topoheight_contracts() -> Result<()> {
+    let temp_dir = TempDir::new("storage_test")?;
+    let storage = new_sled_storage(Network::Devnet, temp_dir.path().to_str().unwrap())?;
+    test_delete_versioned_data_at_topoheight_contracts(storage).await
+}
+
+#[tokio::test]
+async fn test_sled_delete_versioned_data_below_topoheight_contracts() -> Result<()> {
+    let temp_dir = TempDir::new("storage_test")?;
+    let storage = new_sled_storage(Network::Devnet, temp_dir.path().to_str().unwrap())?;
+    test_delete_versioned_data_below_topoheight_contracts(storage).await
+}
+
+#[tokio::test]
+async fn test_sled_delete_versioned_data_above_topoheight_contracts() -> Result<()> {
+    let temp_dir = TempDir::new("storage_test")?;
+    let storage = new_sled_storage(Network::Devnet, temp_dir.path().to_str().unwrap())?;
+    test_delete_versioned_data_above_topoheight_contracts(storage).await
+}
+
+#[tokio::test]
+async fn test_sled_delete_versioned_data_at_topoheight_mixed() -> Result<()> {
+    let data = TestData::new()?;
+    let temp_dir = TempDir::new("storage_test")?;
+    let storage = new_sled_storage(data.network, temp_dir.path().to_str().unwrap())?;
+    test_delete_versioned_data_at_topoheight_mixed(storage, &data).await
+}
+
+#[tokio::test]
+async fn test_sled_delete_versioned_data_below_topoheight_mixed() -> Result<()> {
+    let data = TestData::new()?;
+    let temp_dir = TempDir::new("storage_test")?;
+    let storage = new_sled_storage(data.network, temp_dir.path().to_str().unwrap())?;
+    test_delete_versioned_data_below_topoheight_mixed(storage, &data).await
+}
+
+#[tokio::test]
+async fn test_sled_delete_versioned_data_above_topoheight_mixed() -> Result<()> {
+    let data = TestData::new()?;
+    let temp_dir = TempDir::new("storage_test")?;
+    let storage = new_sled_storage(data.network, temp_dir.path().to_str().unwrap())?;
+    test_delete_versioned_data_above_topoheight_mixed(storage, &data).await
+}

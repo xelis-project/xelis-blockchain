@@ -141,3 +141,63 @@ async fn test_memory_versioned_data_max_topoheight_boundary() -> Result<()> {
     let storage = MemoryStorage::new(Network::Devnet, 1);
     test_versioned_data_max_topoheight_boundary(storage, &data).await
 }
+
+#[tokio::test]
+async fn test_memory_delete_versioned_data_at_topoheight_nonces() -> Result<()> {
+    let data = TestData::new()?;
+    let storage = MemoryStorage::new(data.network, 1);
+    test_delete_versioned_data_at_topoheight_nonces(storage, &data).await
+}
+
+#[tokio::test]
+async fn test_memory_delete_versioned_data_below_topoheight_nonces() -> Result<()> {
+    let data = TestData::new()?;
+    let storage = MemoryStorage::new(data.network, 1);
+    test_delete_versioned_data_below_topoheight_nonces(storage, &data).await
+}
+
+#[tokio::test]
+async fn test_memory_delete_versioned_data_above_topoheight_nonces() -> Result<()> {
+    let data = TestData::new()?;
+    let storage = MemoryStorage::new(data.network, 1);
+    test_delete_versioned_data_above_topoheight_nonces(storage, &data).await
+}
+
+#[tokio::test]
+async fn test_memory_delete_versioned_data_at_topoheight_contracts() -> Result<()> {
+    let storage = MemoryStorage::new(Network::Devnet, 1);
+    test_delete_versioned_data_at_topoheight_contracts(storage).await
+}
+
+#[tokio::test]
+async fn test_memory_delete_versioned_data_below_topoheight_contracts() -> Result<()> {
+    let storage = MemoryStorage::new(Network::Devnet, 1);
+    test_delete_versioned_data_below_topoheight_contracts(storage).await
+}
+
+#[tokio::test]
+async fn test_memory_delete_versioned_data_above_topoheight_contracts() -> Result<()> {
+    let storage = MemoryStorage::new(Network::Devnet, 1);
+    test_delete_versioned_data_above_topoheight_contracts(storage).await
+}
+
+#[tokio::test]
+async fn test_memory_delete_versioned_data_at_topoheight_mixed() -> Result<()> {
+    let data = TestData::new()?;
+    let storage = MemoryStorage::new(data.network, 1);
+    test_delete_versioned_data_at_topoheight_mixed(storage, &data).await
+}
+
+#[tokio::test]
+async fn test_memory_delete_versioned_data_below_topoheight_mixed() -> Result<()> {
+    let data = TestData::new()?;
+    let storage = MemoryStorage::new(data.network, 1);
+    test_delete_versioned_data_below_topoheight_mixed(storage, &data).await
+}
+
+#[tokio::test]
+async fn test_memory_delete_versioned_data_above_topoheight_mixed() -> Result<()> {
+    let data = TestData::new()?;
+    let storage = MemoryStorage::new(data.network, 1);
+    test_delete_versioned_data_above_topoheight_mixed(storage, &data).await
+}

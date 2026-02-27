@@ -1012,3 +1012,300 @@ pub async fn test_versioned_data_max_topoheight_boundary<S: Storage>(mut storage
     
     Ok(())
 }
+
+// Tests for versioned data cleanup operations
+pub async fn test_delete_versioned_data_at_topoheight_nonces<S: Storage>(mut storage: S, data: &TestData) -> Result<()> {
+    let public_key = data.public_key_pair.get_public_key().compress();
+    
+    // Store nonces at multiple topoheights with proper versioning
+    let nonce0 = VersionedNonce::new(0, None);
+    storage.set_last_nonce_to(&public_key, 0u64, &nonce0).await
+        .context("Failed to set nonce at topo 0")?;
+    
+    for topo in 1u64..10 {
+        let nonce = VersionedNonce::new(topo * 10, Some(topo - 1));
+        storage.set_last_nonce_to(&public_key, topo, &nonce).await
+            .context(format!("Failed to set nonce at topo {}", topo))?;
+    }
+
+    for topo in 5..10 {
+        // Delete data topoheight
+        storage.delete_versioned_data_at_topoheight(topo, false).await
+            .context(format!("Failed to delete versioned data at topoheight {}", topo))?;
+    }
+
+    // Verify we can still query data (implementation-dependent what's returned)
+    let (topoheight, mut nonce) = storage.get_last_nonce(&public_key).await?;
+
+    assert!(topoheight == 4u64, "Data at topoheight 4 should still exist, got {}", topoheight);
+    assert!(nonce.get_nonce() == 40, "Nonce at topoheight 4 should be 40, got {}", nonce.get_nonce());
+
+    // Check that all versions are still present
+    let mut total = 0;
+    while let Some(prev) = nonce.get_previous_topoheight() {
+        nonce = storage.get_nonce_at_exact_topoheight(&public_key, prev).await?;
+        total += 1;
+    }
+
+    assert_eq!(total, 4, "Should have 4 versions of nonce remaining, got {}", total);
+
+    Ok(())
+}
+
+pub async fn test_delete_versioned_data_below_topoheight_nonces<S: Storage>(mut storage: S, data: &TestData) -> Result<()> {
+    let public_key = data.public_key_pair.get_public_key().compress();
+    
+    // Store nonces at multiple topoheights with proper versioning
+    let nonce0 = VersionedNonce::new(0, None);
+    storage.set_last_nonce_to(&public_key, 0u64, &nonce0).await
+        .context("Failed to set nonce at topo 0")?;
+
+    for topo in 1u64..10 {
+        let nonce = VersionedNonce::new(topo * 10, Some(topo - 1));
+        storage.set_last_nonce_to(&public_key, topo, &nonce).await
+            .context(format!("Failed to set nonce at topo {}", topo))?;
+    }
+    
+    // Delete data below topoheight 5 (keep_last=true keeps one version below)
+    storage.delete_versioned_data_below_topoheight(5u64, true).await
+        .context("Failed to delete versioned data below topoheight 5")?;
+
+    // Verify we can still query data
+    let (topoheight, mut nonce) = storage.get_last_nonce(&public_key).await?;
+
+    assert!(topoheight == 9, "last topoheight should still be 9, got {}", topoheight);
+ 
+    // Check that all versions are still present
+    let mut total = 0;
+    while let Some(prev) = nonce.get_previous_topoheight() {
+        nonce = storage.get_nonce_at_exact_topoheight(&public_key, prev).await
+            .with_context(|| format!("Failed to get nonce at topoheight {}", prev))?;
+        total += 1;
+    }
+
+    assert_eq!(total, 5, "Should have 5 versions of nonce remaining, got {}", total);
+    Ok(())
+}
+
+pub async fn test_delete_versioned_data_above_topoheight_nonces<S: Storage>(mut storage: S, data: &TestData) -> Result<()> {
+    let public_key = data.public_key_pair.get_public_key().compress();
+    
+    // Store nonces at multiple topoheights with proper versioning
+    let nonce0 = VersionedNonce::new(0, None);
+    storage.set_last_nonce_to(&public_key, 0u64, &nonce0).await
+        .context("Failed to set nonce at topo 0")?;
+
+    for topo in 1u64..10 {
+        let nonce = VersionedNonce::new(topo * 10, Some(topo - 1));
+        storage.set_last_nonce_to(&public_key, topo, &nonce).await
+            .context(format!("Failed to set nonce at topo {}", topo))?;
+    }
+
+    // Delete data above topoheight 5
+    storage.delete_versioned_data_above_topoheight(5u64).await
+        .context("Failed to delete versioned data above topoheight 5")?;
+
+    // Verify we can still query data
+    let (topoheight, mut nonce) = storage.get_last_nonce(&public_key).await?;
+
+    assert!(topoheight == 5, "last topoheight should still be 5, got {}", topoheight);
+ 
+    // Check that all versions are still present
+    let mut total = 0;
+    while let Some(prev) = nonce.get_previous_topoheight() {
+        nonce = storage.get_nonce_at_exact_topoheight(&public_key, prev).await?;
+        total += 1;
+    }
+
+    assert_eq!(total, 5, "Should have 5 versions of nonce remaining, got {}", total);
+    
+    Ok(())
+}
+
+pub async fn test_delete_versioned_data_at_topoheight_contracts<S: Storage>(mut storage: S) -> Result<()> {
+    let contract_hash = Hash::new([200u8; 32]);
+    
+    // Store contract at multiple topoheights
+    for topo in 0u64..5 {
+        let module = Arc::new(Module::new());
+        let contract_module = ContractModule {
+            version: Default::default(),
+            module,
+        };
+        let versioned = Versioned::new(Some(Cow::Owned(contract_module)), None);
+        storage.set_last_contract_to(&contract_hash, topo, &versioned).await
+            .context(format!("Failed to set contract at topo {}", topo))?;
+    }
+    
+    // Delete data at topoheight 2
+    storage.delete_versioned_data_at_topoheight(2u64, false).await
+        .context("Failed to delete versioned data at topoheight 2")?;
+    
+    // Verify storage is still usable
+    let _ = storage.has_contract_at_maximum_topoheight(&contract_hash, 4u64).await?;
+    
+    Ok(())
+}
+
+pub async fn test_delete_versioned_data_below_topoheight_contracts<S: Storage>(mut storage: S) -> Result<()> {
+    let contract_hash = Hash::new([201u8; 32]);
+    
+    // Store contract at multiple topoheights
+    for topo in 0u64..8 {
+        let module = Arc::new(Module::new());
+        let contract_module = ContractModule {
+            version: Default::default(),
+            module,
+        };
+        let versioned = Versioned::new(Some(Cow::Owned(contract_module)), None);
+        storage.set_last_contract_to(&contract_hash, topo, &versioned).await
+            .context(format!("Failed to set contract at topo {}", topo))?;
+    }
+    
+    // Delete data below topoheight 4
+    storage.delete_versioned_data_below_topoheight(4u64, true).await
+        .context("Failed to delete versioned data below topoheight 4")?;
+    
+    // Verify storage is still usable
+    let _ = storage.has_contract_at_exact_topoheight(&contract_hash, 4u64).await?;
+    
+    Ok(())
+}
+
+pub async fn test_delete_versioned_data_above_topoheight_contracts<S: Storage>(mut storage: S) -> Result<()> {
+    let contract_hash = Hash::new([202u8; 32]);
+    
+    // Store contract at multiple topoheights
+    for topo in 0u64..8 {
+        let module = Arc::new(Module::new());
+        let contract_module = ContractModule {
+            version: Default::default(),
+            module,
+        };
+        let versioned = Versioned::new(Some(Cow::Owned(contract_module)), None);
+        storage.set_last_contract_to(&contract_hash, topo, &versioned).await
+            .context(format!("Failed to set contract at topo {}", topo))?;
+    }
+    
+    // Delete data above topoheight 4
+    storage.delete_versioned_data_above_topoheight(4u64).await
+        .context("Failed to delete versioned data above topoheight 4")?;
+    
+    // Verify storage is still usable
+    let _ = storage.has_contract_at_exact_topoheight(&contract_hash, 4u64).await?;
+    
+    Ok(())
+}
+
+pub async fn test_delete_versioned_data_at_topoheight_mixed<S: Storage>(mut storage: S, data: &TestData) -> Result<()> {
+    let public_key = data.public_key_pair.get_public_key().compress();
+    let contract_hash = Hash::new([210u8; 32]);
+    
+    // Store nonce data at multiple topoheights with versioning
+    let nonce0 = VersionedNonce::new(0, None);
+    storage.set_last_nonce_to(&public_key, 0u64, &nonce0).await
+        .context("Failed to set nonce at topo 0")?;
+    
+    let nonce2 = VersionedNonce::new(20, Some(0u64));
+    storage.set_last_nonce_to(&public_key, 2u64, &nonce2).await
+        .context("Failed to set nonce at topo 2")?;
+    
+    let nonce3 = VersionedNonce::new(30, Some(2u64));
+    storage.set_last_nonce_to(&public_key, 3u64, &nonce3).await
+        .context("Failed to set nonce at topo 3")?;
+    
+    let nonce4 = VersionedNonce::new(40, Some(3u64));
+    storage.set_last_nonce_to(&public_key, 4u64, &nonce4).await
+        .context("Failed to set nonce at topo 4")?;
+    
+    // Store contract data at topoheight 3
+    let module = Arc::new(Module::new());
+    let contract_module = ContractModule {
+        version: Default::default(),
+        module,
+    };
+    let versioned = Versioned::new(Some(Cow::Owned(contract_module)), None);
+    storage.set_last_contract_to(&contract_hash, 3u64, &versioned).await
+        .context("Failed to set contract at topo 3")?;
+    
+    // Delete data at topoheight 3
+    storage.delete_versioned_data_at_topoheight(3u64, false).await
+        .context("Failed to delete versioned data at topoheight 3")?;
+    
+    // Verify storage is still usable
+    let _ = storage.get_last_nonce(&public_key).await?;
+    
+    Ok(())
+}
+
+pub async fn test_delete_versioned_data_below_topoheight_mixed<S: Storage>(mut storage: S, data: &TestData) -> Result<()> {
+    let public_key = data.public_key_pair.get_public_key().compress();
+    let contract_hash = Hash::new([211u8; 32]);
+    
+    // Store data at multiple topoheights with proper versioning
+    let nonce0 = VersionedNonce::new(0, None);
+    storage.set_last_nonce_to(&public_key, 0u64, &nonce0).await
+        .context("Failed to set nonce at topo 0")?;
+    
+    for topo in 1u64..8 {
+        let nonce = VersionedNonce::new(topo * 10, Some(topo - 1));
+        storage.set_last_nonce_to(&public_key, topo, &nonce).await
+            .context(format!("Failed to set nonce at topo {}", topo))?;
+        
+        if topo < 6 {
+            let module = Arc::new(Module::new());
+            let contract_module = ContractModule {
+                version: Default::default(),
+                module,
+            };
+            let versioned = Versioned::new(Some(Cow::Owned(contract_module)), None);
+            storage.set_last_contract_to(&contract_hash, topo, &versioned).await
+                .context(format!("Failed to set contract at topo {}", topo))?;
+        }
+    }
+    
+    // Delete data below topoheight 4
+    storage.delete_versioned_data_below_topoheight(4u64, true).await
+        .context("Failed to delete versioned data below topoheight 4")?;
+    
+    // Verify storage is still usable
+    let _ = storage.get_last_nonce(&public_key).await?;
+    
+    Ok(())
+}
+
+pub async fn test_delete_versioned_data_above_topoheight_mixed<S: Storage>(mut storage: S, data: &TestData) -> Result<()> {
+    let public_key = data.public_key_pair.get_public_key().compress();
+    let contract_hash = Hash::new([212u8; 32]);
+    
+    // Store data at multiple topoheights with proper versioning
+    let nonce0 = VersionedNonce::new(0, None);
+    storage.set_last_nonce_to(&public_key, 0u64, &nonce0).await
+        .context("Failed to set nonce at topo 0")?;
+    
+    for topo in 1u64..8 {
+        let nonce = VersionedNonce::new(topo * 10, Some(topo - 1));
+        storage.set_last_nonce_to(&public_key, topo, &nonce).await
+            .context(format!("Failed to set nonce at topo {}", topo))?;
+        
+        if topo < 8 {
+            let module = Arc::new(Module::new());
+            let contract_module = ContractModule {
+                version: Default::default(),
+                module,
+            };
+            let versioned = Versioned::new(Some(Cow::Owned(contract_module)), None);
+            storage.set_last_contract_to(&contract_hash, topo, &versioned).await
+                .context(format!("Failed to set contract at topo {}", topo))?;
+        }
+    }
+    
+    // Delete data above topoheight 4
+    storage.delete_versioned_data_above_topoheight(4u64).await
+        .context("Failed to delete versioned data above topoheight 4")?;
+    
+    // Verify storage is still usable
+    let _ = storage.get_last_nonce(&public_key).await?;
+    
+    Ok(())
+}
