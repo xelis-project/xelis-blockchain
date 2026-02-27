@@ -10,9 +10,13 @@ use crate::{
         Writer
     }
 };
-
+/// Nonce is a u64 that represents the number of transactions sent by an account
+/// It is used to prevent replay attacks and to order transactions from the same account
 pub type Nonce = u64;
 
+/// VersionedNonce is a versioned type that represents the nonce of an account at a specific topoheight
+/// It is used to store the nonce of an account at different topoheights, so we can retrieve the nonce at a specific topoheight
+/// or the last nonce of an account
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
 pub struct VersionedNonce {
     nonce: Nonce,
