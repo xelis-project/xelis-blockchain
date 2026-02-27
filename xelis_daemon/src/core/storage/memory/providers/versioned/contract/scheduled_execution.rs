@@ -2,9 +2,8 @@ use async_trait::async_trait;
 use xelis_common::block::TopoHeight;
 use crate::core::{
     error::BlockchainError,
-    storage::VersionedScheduledExecutionsProvider,
+    storage::{VersionedScheduledExecutionsProvider, MemoryStorage},
 };
-use super::super::super::super::MemoryStorage;
 
 #[async_trait]
 impl VersionedScheduledExecutionsProvider for MemoryStorage {

@@ -2,9 +2,8 @@ use async_trait::async_trait;
 use xelis_common::block::TopoHeight;
 use crate::core::{
     error::BlockchainError,
-    storage::VersionedContractBalanceProvider,
+    storage::{VersionedContractBalanceProvider, MemoryStorage},
 };
-use super::super::super::super::MemoryStorage;
 
 #[async_trait]
 impl VersionedContractBalanceProvider for MemoryStorage {

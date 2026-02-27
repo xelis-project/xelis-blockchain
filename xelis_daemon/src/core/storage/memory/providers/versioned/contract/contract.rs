@@ -2,9 +2,8 @@ use async_trait::async_trait;
 use xelis_common::block::TopoHeight;
 use crate::core::{
     error::BlockchainError,
-    storage::VersionedContractProvider,
+    storage::{VersionedContractProvider, MemoryStorage},
 };
-use super::super::super::super::MemoryStorage;
 
 #[async_trait]
 impl VersionedContractProvider for MemoryStorage {
@@ -55,34 +54,23 @@ impl VersionedContractProvider for MemoryStorage {
         Ok(())
     }
 
-    async fn delete_versioned_contracts_below_topoheight(&mut self, topoheight: TopoHeight, _keep_last: bool) -> Result<(), BlockchainError> {
+    async fn delete_versioned_contracts_below_topoheight(&mut self, topoheight: TopoHeight, keep_last: bool) -> Result<(), BlockchainError> {
         self.contracts.iter_mut()
             .for_each(|(_, entry)| {
-                // TODO: if keep_last, we must check that the last value is not deleted, even if its below the topoheight.
-                let mut to_keep = entry.modules.split_off(&topoheight);
-                    to_keep.first_entry()
-                        .map(|mut entry| {
-                            entry.get_mut().set_previous_topoheight(None);
-                        });
-
-                entry.modules = to_keep;
+                Self::delete_versioned_data_below_topoheight(&mut entry.modules, topoheight, keep_last);
                 entry.data.retain(|_, data_map| {
-                    let to_keep = data_map.split_off(&topoheight);
-                    *data_map = to_keep;
+                    Self::delete_versioned_data_below_topoheight(data_map, topoheight, keep_last);
 
                     !data_map.is_empty()
                 });
                 entry.balances.retain(|_, balance_map| {
-                    let to_keep = balance_map.split_off(&topoheight);
-                    *balance_map = to_keep;
-
+                    Self::delete_versioned_data_below_topoheight(balance_map, topoheight, keep_last);
                     !balance_map.is_empty()
                 });
 
                 entry.events_callbacks.retain(|_, event_map| {
                     event_map.retain(|_, listeners_map| {
-                        let to_keep = listeners_map.split_off(&topoheight);
-                        *listeners_map = to_keep;
+                        Self::delete_versioned_data_below_topoheight(listeners_map, topoheight, keep_last);
 
                         !listeners_map.is_empty()
                     });

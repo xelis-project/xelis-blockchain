@@ -2,9 +2,11 @@ use async_trait::async_trait;
 use xelis_common::block::TopoHeight;
 use crate::core::{
     error::BlockchainError,
-    storage::VersionedNonceProvider,
+    storage::{
+        VersionedNonceProvider,
+        MemoryStorage,
+    },
 };
-use super::super::super::MemoryStorage;
 
 #[async_trait]
 impl VersionedNonceProvider for MemoryStorage {
@@ -24,18 +26,9 @@ impl VersionedNonceProvider for MemoryStorage {
         Ok(())
     }
 
-    async fn delete_versioned_nonces_below_topoheight(&mut self, topoheight: TopoHeight, _keep_last: bool) -> Result<(), BlockchainError> {
+    async fn delete_versioned_nonces_below_topoheight(&mut self, topoheight: TopoHeight, keep_last: bool) -> Result<(), BlockchainError> {
         self.accounts.values_mut()
-            .for_each(|acc| {
-                let mut to_keep = acc.nonces.split_off(&topoheight);
-                to_keep.first_entry()
-                    .map(|mut entry| {
-                        entry.get_mut()
-                            .set_previous_topoheight(None);
-                    });
-
-                acc.nonces = to_keep;
-            });
+            .for_each(|acc| Self::delete_versioned_data_below_topoheight(&mut acc.nonces, topoheight, keep_last));
 
         Ok(())
     }

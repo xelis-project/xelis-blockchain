@@ -2,9 +2,8 @@ use async_trait::async_trait;
 use xelis_common::block::TopoHeight;
 use crate::core::{
     error::BlockchainError,
-    storage::VersionedDagOrderProvider,
+    storage::{VersionedDagOrderProvider, MemoryStorage},
 };
-use super::super::super::MemoryStorage;
 
 #[async_trait]
 impl VersionedDagOrderProvider for MemoryStorage {
