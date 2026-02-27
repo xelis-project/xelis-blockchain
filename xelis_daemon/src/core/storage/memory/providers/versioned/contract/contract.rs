@@ -59,7 +59,13 @@ impl VersionedContractProvider for MemoryStorage {
         self.contracts.iter_mut()
             .for_each(|(_, entry)| {
                 // TODO: if keep_last, we must check that the last value is not deleted, even if its below the topoheight.
-                entry.modules.split_off(&topoheight);
+                let mut to_keep = entry.modules.split_off(&topoheight);
+                    to_keep.first_entry()
+                        .map(|mut entry| {
+                            entry.get_mut().set_previous_topoheight(None);
+                        });
+
+                entry.modules = to_keep;
                 entry.data.retain(|_, data_map| {
                     let to_keep = data_map.split_off(&topoheight);
                     *data_map = to_keep;

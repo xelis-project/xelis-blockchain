@@ -23,12 +23,17 @@ impl VersionedAssetProvider for MemoryStorage {
     }
 
     async fn delete_versioned_assets_below_topoheight(&mut self, topoheight: TopoHeight, _keep_last: bool) -> Result<(), BlockchainError> {
-        let iter = self.assets.iter_mut()
-            .map(|(_, entry)| (entry.data.split_off(&topoheight), &mut entry.data));
+        self.assets.iter_mut()
+            .for_each(|(_, entry)| {
+                let mut to_keep = entry.data.split_off(&topoheight);
+                to_keep.first_entry()
+                    .map(|mut entry| {
+                        entry.get_mut()
+                            .set_previous_topoheight(None);
+                    });
 
-        for (to_keep, data) in iter {
-            *data = to_keep;
-        }
+                entry.data = to_keep;
+            });
 
         Ok(())
     }

@@ -31,14 +31,19 @@ impl VersionedBalanceProvider for MemoryStorage {
     }
 
     async fn delete_versioned_balances_below_topoheight(&mut self, topoheight: TopoHeight, _keep_last: bool) -> Result<(), BlockchainError> {
-        let iter = self.accounts.iter_mut()
+        self.accounts.iter_mut()
             .map(|(_, acc)| acc.balances.iter_mut())
             .flatten()
-            .map(|(_, versions)| (versions.split_off(&topoheight), versions));
+            .for_each(|(_, versions)| {
+                let mut to_keep = versions.split_off(&topoheight);
+                to_keep.first_entry()
+                    .map(|mut entry| {
+                        entry.get_mut()
+                            .set_previous_topoheight(None);
+                    });
 
-        for (to_keep, versions) in iter {
-            *versions = to_keep;
-        }
+                *versions = to_keep;
+            });
 
         Ok(())
     }

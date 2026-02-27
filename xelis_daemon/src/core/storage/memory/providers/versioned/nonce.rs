@@ -25,12 +25,17 @@ impl VersionedNonceProvider for MemoryStorage {
     }
 
     async fn delete_versioned_nonces_below_topoheight(&mut self, topoheight: TopoHeight, _keep_last: bool) -> Result<(), BlockchainError> {
-        let iter = self.accounts.values_mut()
-            .map(|acc| (acc.nonces.split_off(&topoheight), &mut acc.nonces));
+        self.accounts.values_mut()
+            .for_each(|acc| {
+                let mut to_keep = acc.nonces.split_off(&topoheight);
+                to_keep.first_entry()
+                    .map(|mut entry| {
+                        entry.get_mut()
+                            .set_previous_topoheight(None);
+                    });
 
-        for (to_keep, versions) in iter {
-            *versions = to_keep;
-        }
+                acc.nonces = to_keep;
+            });
 
         Ok(())
     }

@@ -8,7 +8,7 @@ use xelis_common::{
 };
 use crate::core::{
     error::BlockchainError,
-    storage::NonceProvider,
+    storage::{NetworkProvider, NonceProvider},
 };
 use super::super::MemoryStorage;
 
@@ -25,21 +25,21 @@ impl NonceProvider for MemoryStorage {
     async fn get_last_topoheight_for_nonce(&self, key: &PublicKey) -> Result<TopoHeight, BlockchainError> {
         self.accounts.get(key)
         .and_then(|acc| acc.nonces.last_key_value().map(|(topo, _)| *topo))
-        .with_context(|| format!("Last topoheight for nonce not found for account {:?}", key))
+        .with_context(|| format!("Last topoheight for nonce not found for account {}",  key.as_address(self.is_mainnet())))
         .map_err(|e| e.into())
     }
 
     async fn get_last_nonce(&self, key: &PublicKey) -> Result<(TopoHeight, VersionedNonce), BlockchainError> {
         self.accounts.get(key)
             .and_then(|acc| acc.nonces.last_key_value().map(|(topo, nonce)| (*topo, nonce.clone())))
-            .with_context(|| format!("Last nonce not found for account {:?}", key))
+            .with_context(|| format!("Last nonce not found for account {}", key.as_address(self.is_mainnet())))
             .map_err(|e| e.into())
     }
 
     async fn get_nonce_at_exact_topoheight(&self, key: &PublicKey, topoheight: TopoHeight) -> Result<VersionedNonce, BlockchainError> {
         self.accounts.get(key)
             .and_then(|acc| acc.nonces.get(&topoheight).cloned())
-            .with_context(|| format!("Nonce not found for account {:?}, topoheight {}", key, topoheight))
+            .with_context(|| format!("Nonce not found for account {}, topoheight {}", key.as_address(self.is_mainnet()), topoheight))
             .map_err(|e| e.into())
     }
 

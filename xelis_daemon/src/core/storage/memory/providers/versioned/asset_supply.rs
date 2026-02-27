@@ -25,12 +25,17 @@ impl VersionedAssetsCirculatingSupplyProvider for MemoryStorage {
     }
 
     async fn delete_versioned_assets_supply_below_topoheight(&mut self, topoheight: TopoHeight, _keep_last: bool) -> Result<(), BlockchainError> {
-        let iter = self.assets.iter_mut()
-            .map(|(_, entry)| (entry.supply.split_off(&topoheight), &mut entry.supply));
+        self.assets.iter_mut()
+            .for_each(|(_, entry)| {
+                let mut to_keep = entry.supply.split_off(&topoheight);
+                to_keep.first_entry()
+                    .map(|mut entry| {
+                        entry.get_mut()
+                            .set_previous_topoheight(None);
+                    });
 
-        for (to_keep, supply) in iter {
-            *supply = to_keep;
-        }
+                entry.supply = to_keep;
+            });
 
         Ok(())
     }

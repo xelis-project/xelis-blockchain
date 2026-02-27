@@ -73,7 +73,7 @@ impl VersionedScheduledExecutionsProvider for MemoryStorage {
                             self.scheduled_executions_per_topoheight.remove(exec_topo);
                         }
                     });
-                    
+
                 contract_data.scheduled_executions = to_keep;
             });
         Ok(())
