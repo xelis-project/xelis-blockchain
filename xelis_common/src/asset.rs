@@ -6,7 +6,7 @@ use crate::{
     block::TopoHeight,
     crypto::Hash,
     serializer::{Reader, ReaderError, Serializer, Writer},
-    versioned_type::Versioned
+    versioned::Versioned
 };
 
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]

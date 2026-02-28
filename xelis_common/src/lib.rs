@@ -17,7 +17,7 @@ pub mod context;
 pub mod queue;
 pub mod varuint;
 pub mod time;
-pub mod versioned_type;
+pub mod versioned;
 
 pub mod tokio;
 

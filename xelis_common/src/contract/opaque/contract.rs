@@ -24,7 +24,7 @@ use crate::{
         ModuleMetadata,
         ContractModule
     },
-    versioned_type::VersionedState,
+    versioned::VersionedState,
     crypto::Hash,
     transaction::ContractDeposit
 };

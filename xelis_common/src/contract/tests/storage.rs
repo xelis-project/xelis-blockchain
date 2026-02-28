@@ -1,4 +1,4 @@
-use crate::{block::BlockVersion, versioned_type::VersionedState};
+use crate::{block::BlockVersion, versioned::VersionedState};
 
 use super::*;
 

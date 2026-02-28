@@ -5,7 +5,7 @@ use crate::{
     block::{Block, TopoHeight},
     contract::vm::ContractCaller,
     crypto::{Hash, PublicKey},
-    versioned_type::VersionedState
+    versioned::VersionedState
 };
 use super::*;
 

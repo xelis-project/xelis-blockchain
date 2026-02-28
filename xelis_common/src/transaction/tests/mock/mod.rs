@@ -41,7 +41,7 @@ use crate::{
         Transaction,
         verify::{BlockchainApplyState, BlockchainContractState, BlockchainVerificationState, ContractEnvironment}
     },
-    versioned_type::VersionedState
+    versioned::VersionedState
 };
 
 mod provider;

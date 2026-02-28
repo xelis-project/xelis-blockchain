@@ -21,7 +21,7 @@ use crate::{
         ModuleMetadata,
     },
     crypto::Hash,
-    versioned_type::VersionedState
+    versioned::VersionedState
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

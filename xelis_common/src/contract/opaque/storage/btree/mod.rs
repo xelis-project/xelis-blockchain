@@ -32,7 +32,7 @@ use crate::{
     },
     crypto::Hash,
     serializer::*,
-    versioned_type::VersionedState,
+    versioned::VersionedState,
 };
 
 use super::{MAX_KEY_SIZE, MAX_VALUE_SIZE, FEE_PER_BYTE_STORED_CONTRACT};

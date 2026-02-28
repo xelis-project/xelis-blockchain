@@ -28,7 +28,7 @@ use crate::{
         ModuleMetadata,
     },
     crypto::Hash,
-    versioned_type::VersionedState
+    versioned::VersionedState
 };
 use super::Serializer;
 

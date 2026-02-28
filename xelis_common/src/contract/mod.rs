@@ -69,7 +69,7 @@ use crate::{
     },
     serializer::Serializer,
     transaction::ContractDeposit,
-    versioned_type::VersionedState
+    versioned::VersionedState
 };
 
 pub use random::DeterministicRandom;

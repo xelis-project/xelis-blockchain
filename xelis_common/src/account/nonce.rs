@@ -3,7 +3,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use crate::{
     block::TopoHeight,
-    versioned_type::TopoHeightVersioned,
+    versioned::TopoHeightVersioned,
     serializer::{
         Reader,
         ReaderError,

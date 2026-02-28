@@ -25,7 +25,7 @@ use crate::{
         ModuleMetadata,
     },
     crypto::{Hash, HASH_SIZE},
-    versioned_type::VersionedState
+    versioned::VersionedState
 };
 use super::OpaqueAsset;
 

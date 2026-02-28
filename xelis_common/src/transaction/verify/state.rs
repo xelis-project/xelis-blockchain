@@ -31,7 +31,7 @@ use crate::{
         Reference,
         Transaction
     },
-    versioned_type::VersionedState
+    versioned::VersionedState
 };
 
 /// This trait is used by the batch verification function.

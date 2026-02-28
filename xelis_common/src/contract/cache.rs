@@ -5,7 +5,7 @@ use crate::{
     context::NoOpBuildHasher,
     contract::DeterministicRandom,
     crypto::Hash,
-    versioned_type::VersionedState
+    versioned::VersionedState
 };
 
 #[derive(Debug, Clone)]
