@@ -55,7 +55,7 @@ impl VersionedBalanceProvider for SledStorage {
                         prev_version = tmp;
 
                         // We can only patch if we are below the threshold and contains an output
-                        if prev_topo < topoheight && ty.contains_output() {
+                        if prev_topo <= topoheight && ty.contains_output() {
                             trace!("Patching versioned balance at topoheight {}", topoheight);
                             let mut data: Versioned<RawBytes> = Self::load_from_disk_internal(self.snapshot.as_ref(), &self.versioned_balances, &key, DiskContext::BalanceAtTopoHeight(prev_topo))?;
                             data.set_previous_topoheight(None);

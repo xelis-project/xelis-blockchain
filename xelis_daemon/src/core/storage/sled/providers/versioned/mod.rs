@@ -144,7 +144,7 @@ impl SledStorage {
                         prev_version = Self::load_from_disk_internal(snapshot.as_ref(), tree_versioned, &key, context)?;
 
                         // if we are below it, patch it
-                        if prev_topo < topoheight {
+                        if prev_topo <= topoheight {
                             trace!("Patching versioned data at topoheight {}", topoheight);
                             patched = true;
 

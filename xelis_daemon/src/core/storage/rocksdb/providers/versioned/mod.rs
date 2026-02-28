@@ -125,7 +125,7 @@ impl RocksStorage {
                     if patched {
                         trace!("deleting versioned data at topoheight {}", prev_topo);
                         Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), column_versioned, &versioned_key)?;
-                    } else if prev_topo < topoheight {
+                    } else if prev_topo <= topoheight {
                         trace!("Patching versioned data at topoheight {}", prev_topo);
                         patched = true;
 
