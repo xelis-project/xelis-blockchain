@@ -47,7 +47,7 @@ use xelis_common::{
         }
     },
     utils::format_xelis,
-    versioned_type::{Versioned, VersionedState}
+    versioned::{Versioned, VersionedState}
 };
 use xelis_vm::{Environment, ValueCell};
 use crate::core::{

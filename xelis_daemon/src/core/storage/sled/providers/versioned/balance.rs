@@ -4,7 +4,7 @@ use xelis_common::{
     account::BalanceType,
     block::TopoHeight,
     serializer::{RawBytes, Serializer},
-    versioned_type::Versioned
+    versioned::Versioned
 };
 use crate::core::{
     error::{BlockchainError, DiskContext},

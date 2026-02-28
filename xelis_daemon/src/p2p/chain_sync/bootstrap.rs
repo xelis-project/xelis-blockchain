@@ -9,7 +9,7 @@ use xelis_common::{
     account::{VersionedBalance, VersionedNonce},
     crypto::{Hash, PublicKey},
     immutable::Immutable,
-    versioned_type::State,
+    versioned::State,
     asset::VersionedAssetData,
     serializer::Serializer,
 };

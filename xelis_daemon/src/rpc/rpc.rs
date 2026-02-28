@@ -74,7 +74,7 @@ use xelis_common::{
         TransactionType
     },
     utils::format_hashrate,
-    versioned_type::Versioned
+    versioned::Versioned
 };
 use anyhow::Context as AnyContext;
 use human_bytes::human_bytes;

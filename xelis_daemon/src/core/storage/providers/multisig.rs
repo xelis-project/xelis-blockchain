@@ -5,7 +5,7 @@ use xelis_common::{
     block::TopoHeight,
     crypto::PublicKey,
     transaction::MultiSigPayload,
-    versioned_type::Versioned
+    versioned::Versioned
 };
 use crate::core::error::BlockchainError;
 

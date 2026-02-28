@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use futures::Stream;
-use xelis_common::{block::TopoHeight, crypto::Hash, contract::EventCallbackRegistration, versioned_type::Versioned};
+use xelis_common::{block::TopoHeight, crypto::Hash, contract::EventCallbackRegistration, versioned::Versioned};
 
 use crate::core::error::BlockchainError;
 

@@ -10,7 +10,7 @@ mod contract;
 
 use std::collections::BTreeMap;
 
-use xelis_common::{block::TopoHeight, versioned_type::TopoHeightVersioned};
+use xelis_common::{block::TopoHeight, versioned::TopoHeightVersioned};
 
 use crate::core::storage::{VersionedProvider, MemoryStorage};
 

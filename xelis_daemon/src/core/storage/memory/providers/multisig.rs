@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use xelis_common::{
     block::TopoHeight,
     crypto::PublicKey,
-    versioned_type::Versioned,
+    versioned::Versioned,
 };
 use crate::core::{
     error::BlockchainError,

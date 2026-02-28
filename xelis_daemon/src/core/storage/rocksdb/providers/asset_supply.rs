@@ -3,7 +3,7 @@ use log::trace;
 use xelis_common::{
     block::TopoHeight,
     crypto::Hash,
-    versioned_type::Versioned
+    versioned::Versioned
 };
 use crate::core::{
     error::BlockchainError,

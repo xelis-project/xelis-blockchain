@@ -29,7 +29,7 @@ use xelis_common::{
     },
     contract::{ContractMetadata, ContractModule, ContractVersion},
     utils::format_xelis,
-    versioned_type::VersionedState,
+    versioned::VersionedState,
 };
 use xelis_environment::Environment;
 use xelis_vm::Module;

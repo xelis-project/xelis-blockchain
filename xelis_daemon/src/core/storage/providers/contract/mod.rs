@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use xelis_common::{
     block::TopoHeight,
     crypto::Hash,
-    versioned_type::Versioned,
+    versioned::Versioned,
     contract::{
         ContractProvider as ContractInfoProvider,
         ContractModule,

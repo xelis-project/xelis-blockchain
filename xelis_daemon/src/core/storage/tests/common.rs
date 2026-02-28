@@ -11,7 +11,7 @@ use xelis_common::{
     immutable::Immutable,
     network::Network,
     varuint::VarUint,
-    versioned_type::Versioned,
+    versioned::Versioned,
 };
 use xelis_vm::Module;
 use crate::core::storage::Storage;

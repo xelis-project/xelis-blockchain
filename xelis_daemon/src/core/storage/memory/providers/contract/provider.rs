@@ -9,7 +9,7 @@ use xelis_common::{
     block::TopoHeight,
     contract::ContractModule,
     crypto::{Hash, PublicKey},
-    versioned_type::Versioned
+    versioned::Versioned
 };
 use xelis_common::contract::{
     ContractStorage,

@@ -4,7 +4,7 @@ use xelis_vm::ValueCell;
 use xelis_common::{
     block::TopoHeight,
     crypto::Hash,
-    versioned_type::Versioned,
+    versioned::Versioned,
 };
 use crate::core::error::BlockchainError;
 

@@ -17,7 +17,7 @@ use xelis_common::{
         Writer
     },
     transaction::MultiSigPayload,
-    versioned_type::State
+    versioned::State
 };
 use xelis_vm::ValueCell;
 use crate::{
