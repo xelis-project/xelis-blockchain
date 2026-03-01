@@ -561,13 +561,13 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
                             match parsed {
                                 Value::Array(responses) => {
                                     for response in responses {
-                                        if let Err(e) = self.process_response_value(response).await {
+                                        if let Err(e) = self.process_response_value(response, &mut write).await {
                                             debug!("Error while processing batch response: {:?}", e);
                                         }
                                     }
                                 }
                                 value => {
-                                    if let Err(e) = self.process_response_value(value).await {
+                                    if let Err(e) = self.process_response_value(value, &mut write).await {
                                         debug!("Error while processing response: {:?}", e);
                                     }
                                 }
@@ -588,7 +588,10 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
         Ok(())
     }
 
-    async fn process_response_value(&self, value: Value) -> JsonRPCResult<()> {
+    async fn process_response_value<W: SinkExt<Message> + Unpin>(&self, value: Value, write: &mut W) -> JsonRPCResult<()>
+    where 
+        JsonRPCError: From<W::Error>
+    {
         let mut response: JsonRPCResponse = serde_json::from_value(value)?;
         if let Some(id) = response.id {
             // send the response to the requester if it matches the ID
@@ -603,12 +606,33 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
             }
 
             // Check if this ID corresponds to a event subscribed
+            let mut delete = false;
             {
                 let mut handlers = self.handler_by_id.lock().await;
                 if let Some(sender) = handlers.get_mut(&id) {
                     if let Err(e) = sender.send(response.result.take().unwrap_or_default()) {
                         debug!("Error sending event to the request: {:?}", e);
+                        handlers.remove(&id);
+                        delete = true;
                     }
+                }
+            }
+
+            // If the event is not send to any handler, we need to unsubscribe from it because it means that the app is not listening anymore
+            if delete {
+                let mut events = self.events_to_id.lock().await;
+                // Find the key matching the id
+                let key = events.iter()
+                    .find_map(|(k, v)| if *v == id { Some(k.clone()) } else { None });
+                if let Some(key) = key {
+                    events.remove(&key);
+                    // Send the unsubscribe request to the server
+                    write.send(Message::Text(json!({
+                        "jsonrpc": JSON_RPC_VERSION,
+                        "method": "unsubscribe",
+                        "id": Value::Null,
+                        "params": key
+                    }).to_string().into())).await?;
                 }
             }
         }
