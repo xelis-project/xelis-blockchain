@@ -103,7 +103,7 @@ where
         self.xswd.verify_application(self.as_ref(), &app_data.app_data).await?;
 
         let state = Arc::new(AppState::new(app_data.app_data));
-        let client = ClientImpl::new(app_data.relayer, Arc::clone(self), app_data.encryption_mode, state.clone()).await?;
+        let client = ClientImpl::new(app_data.relayer, Arc::clone(self), app_data.encryption_mode, state.clone(), true).await?;
 
         let response = self.xswd.add_application(&state).await?;
         client.send_message(response).await;
