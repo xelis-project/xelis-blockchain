@@ -2003,7 +2003,7 @@ async fn add_xswd_relayer(manager: &CommandManager, mut args: ArgumentManager) -
         args.get_value("app_data")?.to_string_value()?
     } else {
         manager.get_prompt()
-            .read("App data").await
+            .read("JSON: ").await
             .context("Error while reading app data")?
     };
 
