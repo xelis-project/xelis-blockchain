@@ -9,7 +9,10 @@ use xelis_common::{
     varuint::VarUint
 };
 
-use crate::core::storage::types::TopoHeightMetadata;
+use crate::core::storage::{
+    types::TopoHeightMetadata,
+    MergeSet,
+};
 
 #[derive(Debug)]
 pub struct BlockMetadata {
@@ -17,6 +20,8 @@ pub struct BlockMetadata {
     pub hash: Hash,
     // topoheight metadata
     pub topoheight_metadata: TopoHeightMetadata,
+    // Mergeset of the block
+    pub mergeset: MergeSet,
     // Difficulty of the block
     pub difficulty: Difficulty,
     // Cumulative difficulty of the chain
@@ -47,6 +52,7 @@ impl Serializer for BlockMetadata {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let hash = reader.read_hash()?;
         let topoheight_metadata = TopoHeightMetadata::read(reader)?;
+        let mergeset = MergeSet::read(reader)?;
         let difficulty = Difficulty::read(reader)?;
         let cumulative_difficulty = CumulativeDifficulty::read(reader)?;
         let p = VarUint::read(reader)?;
@@ -67,6 +73,7 @@ impl Serializer for BlockMetadata {
         Ok(Self {
             hash,
             topoheight_metadata,
+            mergeset,
             difficulty,
             cumulative_difficulty,
             p,
@@ -78,6 +85,7 @@ impl Serializer for BlockMetadata {
     fn write(&self, writer: &mut Writer) {
         writer.write_hash(&self.hash);
         self.topoheight_metadata.write(writer);
+        self.mergeset.write(writer);
         self.difficulty.write(writer);
         self.cumulative_difficulty.write(writer);
         self.p.write(writer);
@@ -88,6 +96,7 @@ impl Serializer for BlockMetadata {
     fn size(&self) -> usize {
         self.hash.size()
         + self.topoheight_metadata.size()
+        + self.mergeset.size()
         + self.difficulty.size()
         + self.cumulative_difficulty.size()
         + self.p.size()

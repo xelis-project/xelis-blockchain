@@ -1,3 +1,10 @@
+mod mergeset;
+
+#[cfg(test)]
+mod mergeset_tests;
+
+pub use mergeset::*;
+
 use std::{cmp::Ordering, collections::{HashMap, HashSet, VecDeque}, sync::Arc};
 
 use linked_hash_table::LinkedHashSet;
@@ -899,7 +906,7 @@ where
 }
 
 // find the sum of work done
-pub async fn find_tip_work_score<'a, P, I>(
+pub async fn compute_tip_work_score<'a, P, I>(
     provider: &P,
     block_hash: &Hash,
     block_tips: I,
@@ -972,7 +979,7 @@ where
 }
 
 // this function generate a DAG paritial order into a full order using recursive calls.
-// hash represents the best tip (biggest cumulative difficulty)
+// hash represents the best tip (biggest cumulative difficulty / blue work)
 // base represents the block hash of a block already ordered and in stable height
 // the full order is re generated each time a new block is added based on new TIPS
 // first hash in order is the base hash
@@ -982,7 +989,7 @@ where
     P: DifficultyProvider + DagOrderProvider + ConcurrencyProvider,
     I: Iterator<Item = Hash> + ExactSizeIterator
 {
-    trace!("generate full order with base {}", base);
+    trace!("generate full order with base {} and {} tips", base, hashes.len());
     if hashes.len() == 0 {
         return Err(BlockchainError::ExpectedTips)
     }
@@ -1025,7 +1032,7 @@ where
                 })
             })
             .buffered(provider.concurrency())
-            .filter_map(|x| async move { x.transpose() })
+            .filter_map(|x| ready(x.transpose()))
             .boxed()
             .try_collect::<Vec<_>>().await?;
 
@@ -1116,6 +1123,7 @@ mod tests {
             .save_block(
                 Arc::new(header),
                 &[],
+                Default::default(),
                 Difficulty::from_u64(difficulty),
                 cumulative_difficulty.into(),
                 VarUint::from(0u64),
@@ -1804,7 +1812,7 @@ mod tests {
         assert!(map.contains_key(&a));
         assert!(!map.contains_key(&g));
 
-        let (set, score) = find_tip_work_score(
+        let (set, score) = compute_tip_work_score(
             &storage,
             &c,
             vec![&b].into_iter(),

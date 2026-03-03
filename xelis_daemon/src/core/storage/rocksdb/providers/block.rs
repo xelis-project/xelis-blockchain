@@ -25,6 +25,7 @@ use crate::core::{
         RocksStorage,
         TransactionProvider,
         ClientProtocolProvider,
+        MergeSet,
     }
 };
 
@@ -86,7 +87,17 @@ impl BlockProvider for RocksStorage {
     // Save a new block with its transactions and difficulty
     // Hash is Immutable to be stored efficiently in caches and sharing the same object
     // with others caches (like P2p or GetWork)
-    async fn save_block(&mut self, block: Arc<BlockHeader>, txs: &[Arc<Transaction>], difficulty: Difficulty, cumulative_difficulty: CumulativeDifficulty, covariance: VarUint, size_ema: u32, hash: Immutable<Hash>) -> Result<(), BlockchainError> {
+    async fn save_block(
+        &mut self,
+        block: Arc<BlockHeader>,
+        txs: &[Arc<Transaction>],
+        mergeset: MergeSet,
+        difficulty: Difficulty,
+        cumulative_difficulty: CumulativeDifficulty,
+        covariance: VarUint,
+        size_ema: u32,
+        hash: Immutable<Hash>
+    ) -> Result<(), BlockchainError> {
         trace!("save block {}", hash);
 
         let mut count_txs = 0;
@@ -103,7 +114,8 @@ impl BlockProvider for RocksStorage {
             covariance,
             difficulty,
             cumulative_difficulty,
-            size_ema
+            size_ema,
+            mergeset,
         };
         self.insert_into_disk(Column::BlockMetadata, hash.as_bytes(), &block_difficulty)?;
 

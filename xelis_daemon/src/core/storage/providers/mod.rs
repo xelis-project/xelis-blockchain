@@ -22,6 +22,7 @@ mod cache;
 mod state;
 mod asset_supply;
 mod concurrency;
+mod mergeset;
 
 pub use asset::*;
 pub use blocks_at_height::*;
@@ -47,3 +48,4 @@ pub use cache::*;
 pub use state::*;
 pub use asset_supply::*;
 pub use concurrency::*;
+pub use mergeset::*;

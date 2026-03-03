@@ -18,7 +18,9 @@ use crate::core::{
         BlocksAtHeightProvider,
         ClientProtocolProvider,
         DifficultyProvider,
-        TransactionProvider, memory::BlockEntry,
+        TransactionProvider,
+        MergeSet,
+        memory::BlockEntry,
     },
 };
 use super::super::{BlockMetadata, MemoryStorage};
@@ -75,6 +77,7 @@ impl BlockProvider for MemoryStorage {
         &mut self,
         block: Arc<BlockHeader>,
         txs: &[Arc<Transaction>],
+        mergeset: MergeSet,
         difficulty: Difficulty,
         cumulative_difficulty: CumulativeDifficulty,
         covariance: VarUint,
@@ -96,6 +99,7 @@ impl BlockProvider for MemoryStorage {
                 covariance,
                 size_ema,
             },
+            mergeset,
         });
 
         self.add_block_hash_at_height(&hash, height).await?;

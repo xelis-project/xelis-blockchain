@@ -50,7 +50,7 @@ pub trait Storage:
     + MerkleHashProvider + NetworkProvider + MultiSigProvider + TipsProvider
     + SnapshotProvider + ContractProvider + VersionedProvider + AssetCirculatingSupplyProvider
     + CacheProvider + StateProvider + ConcurrencyProvider
-    + Sync + Send + 'static {
+    + MergeSetProvider + Sync + Send + 'static {
     // delete block at topoheight, and all pointers (hash_at_topo, topo_by_hash, reward, supply, diff, cumulative diff...)
     async fn delete_block_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(Hash, Immutable<BlockHeader>, Vec<(Hash, Immutable<Transaction>)>), BlockchainError>;
 

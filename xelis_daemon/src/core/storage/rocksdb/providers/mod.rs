@@ -22,3 +22,4 @@ mod multisig;
 mod contract;
 mod versioned;
 mod concurrency;
+mod mergeset;

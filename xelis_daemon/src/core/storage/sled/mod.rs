@@ -112,6 +112,8 @@ pub struct SledStorage {
     pub(super) topo_by_hash: Tree,
     // hash at topo height on disk
     pub(super) hash_at_topo: Tree,
+    // mergeset data for each block hash on disk
+    pub(super) mergeset: Tree,
     // cumulative difficulty for each block hash on disk
     pub(super) cumulative_difficulty: Tree,
     // Difficulty estimated covariance (P)
@@ -264,6 +266,7 @@ impl SledStorage {
             extra: open_tree(&sled, "extra")?,
             topo_by_hash: open_tree(&sled, "topo_at_hash")?,
             hash_at_topo: open_tree(&sled, "hash_at_topo")?,
+            mergeset: open_tree(&sled, "mergeset")?,
             cumulative_difficulty: open_tree(&sled, "cumulative_difficulty")?,
             difficulty_covariance: open_tree(&sled, "difficulty_covariance")?,
             block_size_ema: open_tree(&sled, "block_size_ema")?,

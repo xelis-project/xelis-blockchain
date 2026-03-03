@@ -9,7 +9,7 @@ use xelis_common::{
     varuint::VarUint
 };
 use crate::core::error::BlockchainError;
-use super::{BlocksAtHeightProvider, DifficultyProvider, TransactionProvider};
+use super::{BlocksAtHeightProvider, DifficultyProvider, TransactionProvider, MergeSet};
 
 #[async_trait]
 pub trait BlockProvider: TransactionProvider + DifficultyProvider + BlocksAtHeightProvider {
@@ -42,6 +42,7 @@ pub trait BlockProvider: TransactionProvider + DifficultyProvider + BlocksAtHeig
         &mut self,
         block: Arc<BlockHeader>,
         txs: &[Arc<Transaction>],
+        mergeset: MergeSet,
         difficulty: Difficulty,
         cumulative_difficulty: CumulativeDifficulty,
         p: VarUint,

@@ -179,7 +179,7 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
         trace!("Common base: {} at height {} and hash {}", base, base_height, hash);
 
         // Find the cumulative difficulty for this block
-        let (_, cumulative_difficulty) = blockdag::find_tip_work_score(
+        let (_, cumulative_difficulty) = blockdag::compute_tip_work_score(
             &provider,
             &hash,
             header.get_tips().iter(),
@@ -434,5 +434,12 @@ impl<S: Storage> MerkleHashProvider for ChainValidatorProvider<'_, S> {
 
     async fn set_balances_merkle_hash_at_topoheight(&mut self,  _: TopoHeight, _: &Hash) -> Result<(), BlockchainError> {
         Err(BlockchainError::UnsupportedOperation)
+    }
+}
+
+#[async_trait]
+impl<S: Storage> MergeSetProvider for ChainValidatorProvider<'_, S> {
+    async fn get_mergeset(&self, hash: &Hash) -> Result<MergeSet, BlockchainError> {
+        self.storage.get_mergeset(hash).await
     }
 }
