@@ -67,7 +67,7 @@ impl TransactionProvider for MemoryStorage {
             .with_context(|| format!("Cannot delete transaction, not found: {}", hash))?;
 
         if let Some(contract) = entry.transaction.invoked_contract().and_then(|contract| self.contracts.get_mut(contract)) {
-            contract.transactions.shift_remove(hash);
+            contract.transactions.remove(hash);
         }
 
         Ok(Immutable::Arc(entry.transaction))

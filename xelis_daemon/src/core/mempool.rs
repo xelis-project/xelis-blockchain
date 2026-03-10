@@ -10,7 +10,7 @@ use std::{
     sync::Arc,
     mem,
 };
-use linked_hash_map::LinkedHashMap;
+use hashlink::{LinkedHashMap, LinkedHashSet};
 use schemars::JsonSchema;
 use serde::{Serialize, Deserialize};
 use indexmap::IndexSet;
@@ -58,7 +58,8 @@ pub struct AccountCache {
     // highest nonce used
     max: Nonce,
     // all txs for this user ordered by nonce
-    txs: IndexSet<Arc<Hash>>,
+    #[schemars(with = "Vec<Arc<Hash>>")]
+    txs: LinkedHashSet<Arc<Hash>>,
     // Expected balances after all txs in this cache
     // This is also used to verify the validity of the TX spendings
     balances: HashMap<Hash, Ciphertext>,
@@ -167,7 +168,7 @@ impl Mempool {
             cache.set_balances(balances);
             cache.set_multisig(multisig);
         } else {
-            let mut txs = IndexSet::new();
+            let mut txs = LinkedHashSet::new();
             txs.insert(hash.clone());
 
             // init the cache
@@ -211,8 +212,7 @@ impl Mempool {
         // True if no other TXs available for account
         let mut delete = false;
         if let Some(cache) = self.caches.get_mut(key) {
-            // Shift remove is O(n) on average, but we need to preserve the order
-            if !cache.txs.shift_remove(hash) {
+            if !cache.txs.remove(hash) {
                 warn!("TX {} not found in mempool while deleting", hash);
             }
 
@@ -298,17 +298,6 @@ impl Mempool {
     // Get the cache for a specific key
     pub fn get_cache_for(&self, key: &PublicKey) -> Option<&AccountCache> {
         self.caches.get(key)
-    }
-
-    // Check if the nonce is already used for user in mempool
-    pub fn is_nonce_used(&self, key: &PublicKey, nonce: u64) -> bool {
-        if let Some(cache) = self.caches.get(key) {
-            if nonce >= cache.min && nonce <= cache.max {
-                return cache.has_tx_with_same_nonce(nonce).is_some();
-            }
-        }
-
-        false
     }
 
     // Returns the count of txs in mempool
@@ -451,7 +440,7 @@ impl Mempool {
                 warn!("All TXs for {} are orphaned, deleting them because cache min is {} and last nonce is {}", key.as_address(self.mainnet), cache.get_min(), nonce);
 
                 // Don't let ghost TXs in mempool
-                for tx in cache.txs.drain(..) {
+                for tx in cache.txs.drain() {
                     let sorted_tx = self.txs.remove(&tx)
                         .ok_or_else(|| BlockchainError::TxNotFound(tx.as_ref().clone()))?;
 
@@ -525,7 +514,7 @@ impl Mempool {
                     // If we have deleted a TX from this cache, we need to verify the rest of them
                     // If we don't have to delete the cache, and we didn't have any nonce collision
                     // We don't have to reverify each TXs. They must be valid
-                    let first_tx =  cache.txs.first()
+                    let first_tx =  cache.txs.front()
                         .and_then(|hash| self.txs.get(hash)
                             .map(|tx| (tx, hash))
                         );
@@ -549,7 +538,7 @@ impl Mempool {
 
                 if delete_cache {
                     // We empty the cache, so we can delete all txs
-                    let mut local_cache = IndexSet::new();
+                    let mut local_cache = LinkedHashSet::new();
                     mem::swap(&mut local_cache, &mut cache.txs);
 
                     deleted_txs_hashes.extend(local_cache);
@@ -645,7 +634,7 @@ impl AccountCache {
     }
 
     // Get all txs hashes for this cache
-    pub fn get_txs(&self) -> &IndexSet<Arc<Hash>> {
+    pub fn get_txs(&self) -> &LinkedHashSet<Arc<Hash>> {
         &self.txs
     }
 
@@ -689,14 +678,14 @@ impl AccountCache {
     }
 
     // Verify if a TX is in cache using its nonce
-    pub fn has_tx_with_same_nonce(&self, nonce: Nonce) -> Option<&Arc<Hash>> {
+    pub fn has_tx_with_same_nonce(&self, nonce: Nonce) -> bool {
         if nonce < self.min || nonce > self.max || self.txs.is_empty() {
-            return None;
+            return false;
         }
 
         trace!("has tx with same nonce: {}, max: {}, min: {}, size: {}", nonce, self.max, self.min, self.txs.len());
         let index = ((nonce - self.min) % (self.max + 1 - self.min)) as usize;
-        self.txs.get_index(index)
+        index < self.txs.len()
     }
 }
 

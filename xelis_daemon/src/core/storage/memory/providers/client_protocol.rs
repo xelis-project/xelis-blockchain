@@ -45,7 +45,7 @@ impl ClientProtocolProvider for MemoryStorage {
 
     async fn unlink_transaction_from_block(&mut self, tx: &Hash, block: &Hash) -> Result<bool, BlockchainError> {
         if let Some(entry) = self.transactions.get_mut(tx) {
-            return Ok(entry.linked_blocks.shift_remove(block));
+            return Ok(entry.linked_blocks.remove(block));
         }
         Ok(false)
     }

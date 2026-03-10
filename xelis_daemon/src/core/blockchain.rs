@@ -1,5 +1,6 @@
 use anyhow::{Context, Error};
 use futures::{stream, TryStreamExt};
+use hashlink::LinkedHashSet;
 use indexmap::IndexSet;
 use metrics::{counter, gauge, histogram};
 use serde_json::{Value, json};
@@ -997,26 +998,31 @@ impl<S: Storage> Blockchain<S> {
             let base_topo_height = provider.get_topo_height_for_hash(&base).await?;
 
             let order = blockdag::generate_full_order(provider, best_tip, &base, base_height, base_topo_height).await?;
-            debug_assert_eq!(order.first(), Some(&base));
+            debug_assert_eq!(order.front(), Some(&base));
 
-            let order_len = order.len() as u64;
-            let last_topoheight = base_topo_height + order_len;
+            let order_len = order.len();
+            let last_topoheight = base_topo_height + order_len as u64;
 
             // Take the newest 50 blocks from the order
-            let (first, last) = if order_len < DAA_WINDOW {
+            let (first, last) = if (order_len as u64) < DAA_WINDOW {
                 // Extend backwards via topoheight
-                let diff = DAA_WINDOW - order_len;
+                let diff = DAA_WINDOW - order_len as u64;
                 let first_topoheight = base_topo_height.saturating_sub(diff);
                 let first = Cow::Owned(provider.get_hash_at_topo_height(first_topoheight).await?);
-                let last = order.last().ok_or(BlockchainError::NotEnoughBlocks)?;
+                let last = order.back().ok_or(BlockchainError::NotEnoughBlocks)?;
                 (first, last)
             } else {
                 // Take last 50 blocks: from index (len - 50) to (len - 1)
-                let start_idx = order_len as usize - DAA_WINDOW as usize;
-                let first = order.get_index(start_idx)
+                // TODO: in the full order generation, pass a param to directly generate the last 50 blocks to avoid generating the full order
+                let start_idx = order_len - DAA_WINDOW as usize;
+                let first = if start_idx <= order_len / 2 {
+                    order.iter().nth(start_idx)
+                } else {
+                    order.iter().rev().nth(order_len - 1 - start_idx)
+                }
                     .map(Cow::Borrowed)
                     .ok_or(BlockchainError::NotEnoughBlocks)?;
-                let last = order.last().ok_or(BlockchainError::NotEnoughBlocks)?;
+                let last = order.back().ok_or(BlockchainError::NotEnoughBlocks)?;
                 (first, last)
             };
 
@@ -1175,10 +1181,10 @@ impl<S: Storage> Blockchain<S> {
             // if presents, it means we have at least one tx from this owner in mempool
             if let Some(cache) = mempool.get_cache_for(tx.get_source()) {
                 // we accept to delete a tx from mempool if the new one has a higher fee
-                if let Some(hash2) = cache.has_tx_with_same_nonce(tx.get_nonce()) {
+                if cache.has_tx_with_same_nonce(tx.get_nonce()) {
                     // A TX with the same nonce is already in mempool
-                    debug!("TX {} nonce is already used by TX {}", hash, hash2);
-                    return Err(BlockchainError::TxNonceAlreadyUsed(tx.get_nonce(), hash2.as_ref().clone()))
+                    debug!("TX {} nonce is already used by another TX", hash);
+                    return Err(BlockchainError::TxNonceAlreadyUsed(tx.get_nonce()))
                 }
 
                 // check that the nonce is in the range
@@ -2239,7 +2245,7 @@ impl<S: Storage> Blockchain<S> {
         let mut events: HashMap<NotifyEvent, Vec<Value>> = HashMap::new();
         // Track all orphaned transactions
         // We keep in order all orphaned txs to try to re-add them in the mempool
-        let mut orphaned_transactions = IndexSet::new();
+        let mut orphaned_transactions = LinkedHashSet::new();
 
         // order the DAG (up to TOP_HEIGHT - STABLE_LIMIT)
         let mut highest_topo = 0;
@@ -2262,12 +2268,12 @@ impl<S: Storage> Blockchain<S> {
                     let hash_at_topo = storage.get_hash_at_topo_height(topoheight).await?;
                     trace!("Cleaning txs at topoheight {} ({})", topoheight, hash_at_topo);
                     if !dag_is_overwritten {
-                        if let Some(order) = full_order.first() {
+                        if let Some(order) = full_order.front() {
                             // Verify that the block is still at the same topoheight
                             if storage.is_block_topological_ordered(order).await? && *order == hash_at_topo {
                                 trace!("Hash {} at topo {} stay the same, skipping cleaning", hash_at_topo, topoheight);
                                 // remove the hash from the order because we don't need to recompute it
-                                full_order.shift_remove_index(0);
+                                full_order.pop_front();
                                 topoheight += 1;
                                 skipped += 1;
                                 continue;
@@ -2470,7 +2476,7 @@ impl<S: Storage> Blockchain<S> {
                         chain_state.mark_tx_as_executed_in_block(tx_hash, &hash)?;
 
                         // Delete the transaction from  the list if it was marked as orphaned
-                        if orphaned_transactions.shift_remove(tx_hash) {
+                        if orphaned_transactions.remove(tx_hash) {
                             trace!("Transaction {} was marked as orphaned, but got executed again", tx_hash);
                         }
 

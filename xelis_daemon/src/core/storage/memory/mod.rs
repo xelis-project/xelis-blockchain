@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use hashlink::LinkedHashSet;
 use indexmap::{IndexMap, IndexSet};
 use pooled_arc::*;
 use xelis_common::{
@@ -54,7 +55,7 @@ pub(crate) struct BlockEntry {
 pub(crate) struct TransactionEntry {
     pub transaction: Arc<Transaction>,
     pub executed_in_block: Option<PooledArc<Hash>>,
-    pub linked_blocks: IndexSet<PooledArc<Hash>>,
+    pub linked_blocks: LinkedHashSet<PooledArc<Hash>>,
 }
 
 // Internal asset structure
@@ -69,7 +70,7 @@ pub(crate) struct AssetEntry {
 pub(crate) struct ContractEntry {
     modules: BTreeMap<TopoHeight, VersionedContractModule<'static>>,
     data: HashMap<ValueCell, BTreeMap<TopoHeight, VersionedContractData>>,
-    transactions: IndexSet<PooledArc<Hash>>,
+    transactions: LinkedHashSet<PooledArc<Hash>>,
     balances: HashMap<PooledArc<Hash>, BTreeMap<TopoHeight, VersionedContractBalance>>,
     // Scheduled executions registered at said topoheight -> execution topoheight -> execution
     scheduled_executions: BTreeMap<TopoHeight, BTreeMap<TopoHeight, ScheduledExecution>>,

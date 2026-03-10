@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use indexmap::IndexMap;
+use hashlink::LinkedHashMap;
 use log::trace;
 use xelis_common::{
     account::Nonce,
@@ -13,7 +13,7 @@ use super::{storage::Storage, error::BlockchainError};
 struct AccountEntry {
     initial_nonce: Nonce,
     expected_nonce: Nonce,
-    used_nonces: IndexMap<Nonce, TopoHeight>
+    used_nonces: LinkedHashMap<Nonce, TopoHeight>
 }
 
 impl AccountEntry {
@@ -21,7 +21,7 @@ impl AccountEntry {
         Self {
             initial_nonce: nonce,
             expected_nonce: nonce,
-            used_nonces: IndexMap::new()
+            used_nonces: LinkedHashMap::new()
         }
     }
 
@@ -59,9 +59,9 @@ impl NonceChecker {
     // We remove it from the used nonces list and revert the expected nonce to the previous nonce if present.
     pub fn undo_nonce(&mut self, key: &PublicKey, nonce: Nonce) {
         if let Some(entry) = self.cache.get_mut(key) {
-            entry.used_nonces.shift_remove(&nonce);
+            entry.used_nonces.remove(&nonce);
 
-            if let Some((prev_nonce, _)) = entry.used_nonces.last() {
+            if let Some((prev_nonce, _)) = entry.used_nonces.back() {
                 entry.expected_nonce = *prev_nonce + 1;
             } else {
                 entry.expected_nonce = entry.initial_nonce;

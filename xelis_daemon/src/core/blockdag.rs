@@ -1,5 +1,6 @@
 use std::{cmp::Ordering, collections::{HashMap, HashSet, VecDeque}};
 
+use hashlink::LinkedHashSet;
 use indexmap::IndexSet;
 use itertools::Either;
 use log::{debug, error, trace};
@@ -732,7 +733,7 @@ where
 // the full order is re generated each time a new block is added based on new TIPS
 // first hash in order is the base hash
 // base_height is only used for the cache key
-pub async fn generate_full_order<P>(provider: &P, hash: &Hash, base: &Hash, base_height: u64, base_topo_height: TopoHeight) -> Result<IndexSet<Hash>, BlockchainError>
+pub async fn generate_full_order<P>(provider: &P, hash: &Hash, base: &Hash, base_height: u64, base_topo_height: TopoHeight) -> Result<LinkedHashSet<Hash>, BlockchainError>
 where
     P: DifficultyProvider + DagOrderProvider + CacheProvider + ConcurrencyProvider
 {
@@ -743,13 +744,13 @@ where
     let mut cache = chain_cache.full_order_cache.lock().await;
 
     // Full order that is generated
-    let mut full_order = IndexSet::new();
+    let mut full_order = LinkedHashSet::new();
     // Current stack of hashes that need to be processed
     let mut stack: VecDeque<Hash> = VecDeque::new();
     stack.push_back(hash.clone());
 
     // Keep track of processed hashes that got reinjected for correct order
-    let mut processed = IndexSet::new();
+    let mut processed = HashSet::new();
 
     'main: while let Some(current_hash) = stack.pop_back() {
         // If it is processed and got reinjected, its to maintains right order
@@ -772,7 +773,7 @@ where
 
         // if the block is genesis or its the base block, we can add it to the full order
         if block_tips.is_empty() || current_hash == *base {
-            let mut order = IndexSet::new();
+            let mut order = LinkedHashSet::new();
             order.insert(current_hash.clone());
             cache.put(cache_key, order.clone());
             full_order.extend(order);
@@ -803,9 +804,7 @@ where
         processed.insert(current_hash.clone());
         stack.push_back(current_hash);
 
-        for (tip_hash, _) in scores {
-            stack.push_back(tip_hash);
-        }
+        stack.extend(scores.into_iter().map(|(tip_hash, _)| tip_hash));
     }
 
     cache.put((hash.clone(), base.clone(), base_height), full_order.clone());

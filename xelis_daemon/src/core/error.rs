@@ -205,8 +205,8 @@ pub enum BlockchainError {
     InvalidBlockHeightStableHeight,
     #[error("Invalid difficulty")]
     InvalidDifficulty,
-    #[error("Tx nonce {} already used by Tx {}", _0, _1)]
-    TxNonceAlreadyUsed(Nonce, Hash),
+    #[error("Tx nonce {0} already used")]
+    TxNonceAlreadyUsed(Nonce),
     #[error("Block size is more than limit, expected maximum: {}, got {}", _0, _1)]
     InvalidBlockSize(usize, usize),
     #[error("Block contains invalid txs count: expected {}, got {} txs.", _0, _1)]
