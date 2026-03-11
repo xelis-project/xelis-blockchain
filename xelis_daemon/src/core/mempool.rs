@@ -30,7 +30,8 @@ use xelis_common::{
     time::{get_current_time_in_seconds, TimestampSeconds},
     transaction::{
         MultiSigPayload,
-        Transaction
+        Transaction,
+        verify::TrustedZKPCache
     }
 };
 
@@ -144,8 +145,24 @@ impl Mempool {
         Ok(Self::internal_estimate_fee_rates(fee_rates, base_fee))
     }
 
-    // All checks are made in Blockchain before calling this function
-    pub async fn add_tx<S: Storage>(&mut self, storage: &S, environments: &ContractEnvironments, stable_topoheight: TopoHeight, topoheight: TopoHeight, tx_base_fee: u64, base_height: u64, hash: Arc<Hash>, tx: Arc<Transaction>, size: usize, block_version: BlockVersion) -> Result<(), BlockchainError> {
+    /// Add a TX to mempool after verifying it
+    // All checks MUST be made AND are made in Blockchain before calling this function
+    #[inline]
+    pub async fn add_tx<S: Storage>(
+        &mut self,
+        storage: &S,
+        environments: &ContractEnvironments,
+        stable_topoheight: TopoHeight,
+        topoheight: TopoHeight,
+        tx_base_fee: u64,
+        base_height: u64,
+        hash: Arc<Hash>,
+        tx: Arc<Transaction>,
+        size: usize,
+        block_version: BlockVersion,
+    ) -> Result<(), BlockchainError> {
+        debug!("Adding TX {} to mempool", hash);
+
         let mut state = MempoolState::new(&self, storage, environments, stable_topoheight, topoheight, block_version, self.mainnet, tx_base_fee, base_height);
         let tx_cache = TxCache::new(storage, self, self.disable_zkp_cache);
         tx.verify(&hash, &mut state, &tx_cache).await?;
@@ -154,9 +171,53 @@ impl Mempool {
             .ok_or_else(|| BlockchainError::AccountNotFound(tx.get_source().as_address(self.mainnet)))?;
 
         let balances = balances.into_iter()
-            .map(|(asset, ciphertext)| (asset.clone(), ciphertext))
+            .map(|(k, v)| (k.clone(), v))
             .collect();
 
+        self.add_tx_internal(storage, stable_topoheight, hash, tx, size, block_version, balances, multisig).await
+    }
+
+    /// Add a TX to mempool without verifying the static proofs part of it
+    pub async fn add_known_tx<S: Storage>(
+        &mut self,
+        storage: &S,
+        environments: &ContractEnvironments,
+        stable_topoheight: TopoHeight,
+        topoheight: TopoHeight,
+        tx_base_fee: u64,
+        base_height: u64,
+        hash: Arc<Hash>,
+        tx: Arc<Transaction>,
+        size: usize,
+        block_version: BlockVersion,
+    ) -> Result<(), BlockchainError> {
+        debug!("Adding trusted TX {} to mempool", hash);
+
+        let mut state = MempoolState::new(&self, storage, environments, stable_topoheight, topoheight, block_version, self.mainnet, tx_base_fee, base_height);
+        tx.verify(&hash, &mut state, &TrustedZKPCache).await?;
+
+        let (balances, multisig) = state.get_sender_cache(tx.get_source())
+            .ok_or_else(|| BlockchainError::AccountNotFound(tx.get_source().as_address(self.mainnet)))?;
+
+        let balances = balances.into_iter()
+            .map(|(k, v)| (k.clone(), v))
+            .collect();
+
+        self.add_tx_internal(storage, stable_topoheight, hash, tx, size, block_version, balances, multisig).await
+    }
+
+    /// Add a TX to mempool without verifying it
+    async fn add_tx_internal<S: Storage>(
+        &mut self,
+        storage: &S,
+        stable_topoheight: TopoHeight,
+        hash: Arc<Hash>,
+        tx: Arc<Transaction>,
+        size: usize,
+        block_version: BlockVersion,
+        balances: HashMap<Hash, Ciphertext>,
+        multisig: Option<MultiSigPayload>
+    ) -> Result<(), BlockchainError> {
         let nonce = tx.get_nonce();
         // update the cache for this owner
         if let Some(cache) = self.caches.get_mut(tx.get_source()) {
@@ -361,17 +422,13 @@ impl Mempool {
                 }
             }
 
-            // Process TXs normally
-            // TODO: maybe we can batch it for faster results
-            // We can also mark them as verified in ZKP Cache to only check
-            // dynamic
             for (hash, size, transaction) in txs {
                 if self.contains_tx(&hash) {
                     continue;
                 }
 
-                if let Err(e) = self.add_tx(storage, environments, stable_topoheight, topoheight, tx_base_fee, base_height, hash.clone(), transaction.clone(), size, block_version).await {
-                    warn!("Error while adding back TX {} for {}: {}", hash, source.as_address(self.mainnet), e);
+                if let Err(e) = self.add_known_tx(storage, environments, stable_topoheight, topoheight, tx_base_fee, base_height, hash.clone(), transaction.clone(), size, block_version).await {
+                    debug!("Error while adding back TX in mempool {} for {}: {}", hash, source.as_address(self.mainnet), e);
                     orphaned.push((hash, transaction));
                 }
             }
