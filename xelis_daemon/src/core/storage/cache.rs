@@ -5,7 +5,7 @@ use std::{
     sync::Arc
 };
 
-use hashlink::LinkedHashSet;
+use linked_hash_table::LinkedHashSet;
 use lru::LruCache;
 use xelis_common::{
     tokio::sync::Mutex,

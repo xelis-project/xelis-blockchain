@@ -1,6 +1,6 @@
 use anyhow::{Context, Error};
 use futures::{stream, TryStreamExt};
-use hashlink::LinkedHashSet;
+use linked_hash_table::LinkedHashSet;
 use indexmap::IndexSet;
 use metrics::{counter, gauge, histogram};
 use serde_json::{Value, json};
@@ -2227,6 +2227,8 @@ impl<S: Storage> Blockchain<S> {
 
         // generate a full order until base_topo_height
         let mut full_order = blockdag::generate_full_order(&*storage, &best_tip, &base_hash, base_height, base_topo_height).await?;
+        debug_assert_eq!(full_order.front(), Some(&base_hash));
+
         debug!("Generated full order size: {}, with base ({}) topo height: {}", full_order.len(), base_hash, base_topo_height);
         trace!("Full order: {}", full_order.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", "));
 

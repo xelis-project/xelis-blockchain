@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use hashlink::LinkedHashMap;
+use linked_hash_table::LinkedHashMap;
 use log::trace;
 use xelis_common::{
     account::Nonce,

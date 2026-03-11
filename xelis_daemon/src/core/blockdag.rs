@@ -1,6 +1,6 @@
 use std::{cmp::Ordering, collections::{HashMap, HashSet, VecDeque}};
 
-use hashlink::LinkedHashSet;
+use linked_hash_table::LinkedHashSet;
 use indexmap::IndexSet;
 use itertools::Either;
 use log::{debug, error, trace};

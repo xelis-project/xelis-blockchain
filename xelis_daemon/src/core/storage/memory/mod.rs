@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use hashlink::LinkedHashSet;
+use linked_hash_table::LinkedHashSet;
 use indexmap::{IndexMap, IndexSet};
 use pooled_arc::*;
 use xelis_common::{

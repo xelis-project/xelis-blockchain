@@ -10,7 +10,7 @@ use std::{
     sync::Arc,
     mem,
 };
-use hashlink::{LinkedHashMap, LinkedHashSet};
+use linked_hash_table::{LinkedHashMap, LinkedHashSet};
 use schemars::JsonSchema;
 use serde::{Serialize, Deserialize};
 use indexmap::IndexSet;
@@ -466,7 +466,6 @@ impl Mempool {
                     cache.txs.retain(|hash| {
                         // Delete by default
                         let mut delete = true;
-    
                         if let Some(tx) = self.txs.get(hash) {
                             let tx_nonce = tx.get_tx().get_nonce();
                             // If TX is still compatible with new nonce, update bounds
