@@ -51,26 +51,28 @@ impl ContractBalanceProvider for RocksStorage {
     // Get the balance under or equal topoheight requested for asset and contract
     async fn get_contract_balance_at_maximum_topoheight(&self, contract: &Hash, asset: &Hash, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedContractBalance)>, BlockchainError> {
         trace!("get contract {} balance at maximum topoheight {} for {}", contract, maximum_topoheight, asset);
-        let Some(contract_id) = self.get_optional_contract_id(contract)? else {
-            return Ok(None)
-        };
-        let Some(asset_id) = self.get_optional_asset_id(asset)? else {
-            return Ok(None)
-        };
+        self.run_blocking(|| {
+            let Some(contract_id) = self.get_optional_contract_id(contract)? else {
+                return Ok(None)
+            };
+            let Some(asset_id) = self.get_optional_asset_id(asset)? else {
+                return Ok(None)
+            };
 
-        let key = Self::get_contract_balance_key(contract_id, asset_id);
-        let mut prev_topo = self.load_optional_from_disk(Column::ContractsBalances, &key)?;
-        while let Some(topo) = prev_topo {
-            let key = Self::get_versioned_contract_balance_key(contract_id, asset_id, topo);
-            if topo <= maximum_topoheight {
-                let version = self.load_from_disk(Column::VersionedContractsBalances, &key)?;
-                return Ok(Some((topo, version)))
+            let key = Self::get_contract_balance_key(contract_id, asset_id);
+            let mut prev_topo = self.load_optional_from_disk(Column::ContractsBalances, &key)?;
+            while let Some(topo) = prev_topo {
+                let key = Self::get_versioned_contract_balance_key(contract_id, asset_id, topo);
+                if topo <= maximum_topoheight {
+                    let version = self.load_from_disk(Column::VersionedContractsBalances, &key)?;
+                    return Ok(Some((topo, version)))
+                }
+
+                prev_topo = self.load_from_disk(Column::VersionedContractsBalances, &key)?;
             }
 
-            prev_topo = self.load_from_disk(Column::VersionedContractsBalances, &key)?;
-        }
-
-        Ok(None)
+            Ok(None)
+        })
     }
 
     // Get the last topoheight that the contract has a balance

@@ -1386,7 +1386,7 @@ async fn snapshot_mode<S: Storage>(manager: &CommandManager, _: ArgumentManager)
         let apply = manager.get_prompt()
             .ask_confirmation().await?;
 
-        storage.end_snapshot(apply)
+        storage.end_snapshot(apply).await
             .context("End commit point")?;
     } else {
         manager.message("Starting snapshot mode...");

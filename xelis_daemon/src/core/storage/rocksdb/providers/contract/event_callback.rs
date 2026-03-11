@@ -46,35 +46,36 @@ impl ContractEventCallbackProvider for RocksStorage {
     ) -> Result<Option<(TopoHeight, VersionedEventCallbackRegistration)>, BlockchainError> {
         trace!("get event callback for contract {} event {} listener {} at maximum topoheight {}", contract, event_id, listener_contract, max_topoheight);
 
-        let Some(contract_id) = self.get_optional_contract_id(contract)? else {
-            return Ok(None);
-        };
-        let Some(listener_id) = self.get_optional_contract_id(listener_contract)? else {
-            return Ok(None);
-        };
+        self.run_blocking(|| {
+            let Some(contract_id) = self.get_optional_contract_id(contract)? else {
+                return Ok(None);
+            };
+            let Some(listener_id) = self.get_optional_contract_id(listener_contract)? else {
+                return Ok(None);
+            };
 
-        let versioned_key = Self::get_versioned_event_callback_key(max_topoheight, contract_id, event_id, listener_id);
-        let mut topo = if self.contains_data(Column::VersionedContractEventCallbacks, &versioned_key)? {
-            Some(max_topoheight)
-        } else {
-            // Create key: {contract_id}{event_id}{listener_id}
-            let key = Self::get_event_callback_key(contract_id, event_id, listener_id);
-            // If the versioned key doesn't exist, we can check the non-versioned column for the last topoheight
-            self.load_optional_from_disk(Column::ContractEventCallbacks, &key)?
-        };
+            let versioned_key = Self::get_versioned_event_callback_key(max_topoheight, contract_id, event_id, listener_id);
+            let mut topo = if self.contains_data(Column::VersionedContractEventCallbacks, &versioned_key)? {
+                Some(max_topoheight)
+            } else {
+                // Create key: {contract_id}{event_id}{listener_id}
+                let key = Self::get_event_callback_key(contract_id, event_id, listener_id);
+                // If the versioned key doesn't exist, we can check the non-versioned column for the last topoheight
+                self.load_optional_from_disk(Column::ContractEventCallbacks, &key)?
+            };
 
+            while let Some(current_topoheight) = topo {
+                let versioned_key = Self::get_versioned_event_callback_key(current_topoheight, contract_id, event_id, listener_id);
+                let version: VersionedEventCallbackRegistration = self.load_from_disk(Column::VersionedContractEventCallbacks, &versioned_key)?;
+                if current_topoheight <= max_topoheight {
+                    return Ok(Some((current_topoheight, version)))
+                }
 
-        while let Some(current_topoheight) = topo {
-            let versioned_key = Self::get_versioned_event_callback_key(current_topoheight, contract_id, event_id, listener_id);
-            let version: VersionedEventCallbackRegistration = self.load_from_disk(Column::VersionedContractEventCallbacks, &versioned_key)?;
-            if current_topoheight <= max_topoheight {
-                return Ok(Some((current_topoheight, version)))
+                topo = version.get_previous_topoheight();
             }
 
-            topo = version.get_previous_topoheight();
-        }
-
-        Ok(None)
+            Ok(None)
+        })
     }
 
     async fn get_event_callbacks_for_event_at_maximum_topoheight<'a>(

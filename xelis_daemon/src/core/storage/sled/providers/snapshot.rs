@@ -30,7 +30,7 @@ impl SnapshotProvider for SledStorage {
         Ok(())
     }
 
-    fn end_snapshot(&mut self, apply: bool) -> Result<(), BlockchainError> {
+    async fn end_snapshot(&mut self, apply: bool) -> Result<(), BlockchainError> {
         trace!("end snapshot");
         let snapshot = self.snapshot.take()
             .ok_or(BlockchainError::CommitPointNotStarted)?;
