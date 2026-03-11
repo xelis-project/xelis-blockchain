@@ -1838,16 +1838,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hashlink"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ea0b22561a9c04a7cb1a302c013e0259cd3b4bb619f145b32f72b8b4bcbed230"
-dependencies = [
- "hashbrown 0.16.1",
- "serde",
-]
-
-[[package]]
 name = "hdrhistogram"
 version = "7.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2432,6 +2422,16 @@ dependencies = [
  "cc",
  "pkg-config",
  "vcpkg",
+]
+
+[[package]]
+name = "linked-hash-table"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11e84875128a48350cd35f37c4a66ee0849f208a48c8b060e60f31f6c9db2a57"
+dependencies = [
+ "hashbrown 0.16.1",
+ "serde",
 ]
 
 [[package]]
@@ -5269,13 +5269,13 @@ dependencies = [
  "chacha20poly1305",
  "clap",
  "futures",
- "hashlink",
  "hex",
  "human_bytes",
  "humantime",
  "indexmap 2.13.0",
  "itertools 0.14.0",
  "lazy_static",
+ "linked-hash-table",
  "log",
  "lru",
  "metrics",
