@@ -33,13 +33,10 @@ use xelis_common::{
 use crate::{
     config::{CHAIN_SYNC_DELAY, MILLIS_PER_SECOND, PEER_OBJECTS_CONCURRENCY, STABLE_LIMIT},
     core::{
-        blockchain::{BroadcastOption, PreVerifyBlock},
-        error::BlockchainError,
-        storage::{
+        blockchain::{BroadcastOption, PreVerifyBlock}, blockdag, error::BlockchainError, hard_fork, storage::{
             Storage,
             snapshot::{SnapshotWrapper, StorageHolder},
-        },
-        blockdag,
+        }
     },
     p2p::{
         error::P2pError,
@@ -184,7 +181,10 @@ impl<S: Storage> P2pServer<S> {
                         let position = storage.get_block_position_in_order(&hash).await?;
                         let previous_position = storage.get_block_position_in_order(&previous_hash).await?;
                         if position < previous_position {
-                            swap = true;
+                            let version = hard_fork::get_version_at_height(self.blockchain.get_network(), height);
+                            if blockdag::is_side_block_internal(&*storage, &hash, Some(topoheight), top_topoheight, version).await? {
+                                swap = true;
+                            }
                         }
                     }
                 }
