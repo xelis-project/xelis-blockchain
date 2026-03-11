@@ -881,7 +881,7 @@ impl<S: Storage> P2pServer<S> {
             return Ok(())
         }
 
-        warn!("Forcing block {} re-execution", hash);
+        debug!("trying to force block {} re-execution", hash);
         let block = {
             debug!("acquiring storage semaphore for block forced re-execution");
             let _permit = self.blockchain.storage_semaphore().acquire().await?;
@@ -889,7 +889,7 @@ impl<S: Storage> P2pServer<S> {
 
             let mut storage = storage.write().await?;
             if storage.is_block_topological_ordered(&hash).await? {
-                warn!("block {} is already ordered, skipping its re-execution", hash);
+                debug!("block {} is already ordered, skipping its re-execution", hash);
                 return Ok(())
             }
 
@@ -906,6 +906,7 @@ impl<S: Storage> P2pServer<S> {
             block
         };
 
+        warn!("Block {} is not in topological order, forcing its re-execution", hash);
         // Replicate same behavior as above branch
         self.blockchain.add_new_block_with_storage(storage, block, PreVerifyBlock::Hash(hash), BroadcastOption::All, false).await
     }
