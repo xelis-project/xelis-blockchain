@@ -674,7 +674,7 @@ impl Transaction {
             .map_err(VerificationStateError::State)?;
 
         if account_nonce != self.nonce {
-            return Err(VerificationError::InvalidNonce(tx_hash.clone(), account_nonce, self.nonce).into());
+            return Err(VerificationError::InvalidNonce(tx_hash.clone(), self.nonce, account_nonce).into());
         }
 
         // Nonce is valid, update it for next transactions if any
