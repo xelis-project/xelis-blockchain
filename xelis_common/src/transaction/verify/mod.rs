@@ -1050,13 +1050,14 @@ impl Transaction {
         Ok((transcript, final_commitments))
     }
 
-    pub async fn verify_batch<'a, H, E, B, C>(
-        txs: impl Iterator<Item = &'a (Arc<Transaction>, H)>,
+    /// Verify a batch of transactions.
+    /// This is more efficient than verifying them one by one because we can aggregate the ZK Proofs verification.
+    pub async fn verify_batch<'a, E, B, C>(
+        txs: impl Iterator<Item = (&'a Arc<Transaction>, &'a Hash)>,
         state: &mut B,
         cache: &C,
     ) -> Result<(), VerificationStateError<E>>
     where
-        H: AsRef<Hash> + 'a,
         B: BlockchainVerificationState<'a, E>,
         C: ZKPCache<E>
     {
@@ -1066,8 +1067,6 @@ impl Transaction {
         let start = Instant::now();
 
         for (tx, hash) in txs {
-            let hash = hash.as_ref();
-
             // In case the cache already know this TX
             // we don't need to spend time reverifying it again
             // because a TX is immutable, we can just verify the mutable parts
