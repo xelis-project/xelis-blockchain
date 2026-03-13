@@ -841,6 +841,12 @@ where
     let mut stack = VecDeque::new();
     stack.extend(hashes);
 
+    let best_tip = if stack.len() == 1 {
+        Some(stack[0].clone())
+    } else {
+        None
+    };
+
     // Keep track of processed hashes that got reinjected for correct order
     let mut processed = HashSet::new();
 
@@ -897,6 +903,10 @@ where
         stack.push_back(current_hash);
 
         stack.extend(scores.into_iter().map(|(tip_hash, _)| tip_hash));
+    }
+
+    if let Some(hash) = best_tip {
+        cache.put((hash, base.clone()), full_order.clone());
     }
 
     Ok(full_order)
