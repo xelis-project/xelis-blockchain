@@ -52,8 +52,8 @@ pub struct ChainCache {
     pub common_base_cache: Mutex<LruCache<Hash, (Hash, u64)>>,
     // tip work score is used to determine the best tip based on a block, tip base ands a base height
     pub tip_work_score_cache: Mutex<LruCache<(Hash, Hash, u64), (HashSet<Hash>, CumulativeDifficulty)>>,
-    // using base hash, current tip hash and base height, this cache is used to store the DAG order
-    pub full_order_cache: Mutex<LruCache<(Hash, Hash, u64), LinkedHashSet<Hash>>>,
+    // using tip hash, its base hash: this cache is used to store the DAG order until the said base
+    pub full_order_cache: Mutex<LruCache<(Hash, Hash), LinkedHashSet<Hash>>>,
     // current difficulty at tips
     // its used as cache to display current network hashrate
     pub difficulty: Difficulty,

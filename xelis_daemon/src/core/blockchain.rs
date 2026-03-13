@@ -1,7 +1,7 @@
-use anyhow::{Context, Error};
+use anyhow::Error;
 use futures::{stream, TryStreamExt};
 use linked_hash_table::LinkedHashSet;
-use indexmap::IndexSet;
+use indexmap::{IndexMap, IndexSet};
 use metrics::{counter, gauge, histogram};
 use serde_json::{Value, json};
 use xelis_common::{
@@ -994,10 +994,10 @@ impl<S: Storage> Blockchain<S> {
         let minimum_difficulty = difficulty::get_minimum_difficulty(self.get_network(), version);
 
         let solve_time = if version >= BlockVersion::V6 {
-            let (base, base_height) = blockdag::find_common_base(provider, tips, version).await?;
+            let (base, _) = blockdag::find_common_base(provider, tips.clone(), version).await?;
             let base_topo_height = provider.get_topo_height_for_hash(&base).await?;
 
-            let order = blockdag::generate_full_order(provider, best_tip, &base, base_height, base_topo_height).await?;
+            let order = blockdag::generate_full_order(provider, tips.clone().into_iter().cloned(), &base, base_topo_height).await?;
             debug_assert_eq!(order.front(), Some(&base));
 
             let order_len = order.len();
@@ -1624,7 +1624,7 @@ impl<S: Storage> Blockchain<S> {
                     if let Some(orphaned_txs) = grouped_orphaned_txs.get(&source).filter(|_| processed_sources.insert(source)) {
                         debug!("Verifying {} orphaned TXs for source {} before including TX {}", orphaned_txs.len(), source.as_address(self.network.is_mainnet()), hash);
                         if let Err(e) = Transaction::verify_batch(
-                            orphaned_txs.iter(),
+                            orphaned_txs.iter().map(|(tx, hash)| (tx, *hash)),
                             &mut chain_state,
                             &tx_cache,
                         ).await {
@@ -1834,7 +1834,7 @@ impl<S: Storage> Blockchain<S> {
             debug!("Height by tips: {}, stable height: {}", block_height_by_tips, stable_height);
 
             if block_height_by_tips < stable_height {
-                error!("block height by tips {} for this block ({}), its height is in stable height {}", block_height_by_tips, block_hash, stable_height);
+                debug!("block height by tips {} for this block ({}), its height is in stable height {}", block_height_by_tips, block_hash, stable_height);
                 return Err(BlockchainError::InvalidBlockHeightStableHeight)
             }
         }
@@ -1937,11 +1937,15 @@ impl<S: Storage> Blockchain<S> {
             (FEE_PER_KB, self.get_blocks_size_ema_at_tips(&*storage, block.get_tips().iter()).await?)
         };
 
+        // V6: don't verify the block from the global chain state, but only against its tips
+        // We let the DAG choose which branch is the best one for execution & verification.
+        let is_v6_enabled = version >= BlockVersion::V6;
+
         // find the common base block from tips
         // Compute cumulative difficulty for block
         // We retrieve it to pass it as a param below for p2p broadcast
-        let (cumulative_difficulty, base_height) = if tips_count == 0 {
-            (GENESIS_BLOCK_DIFFICULTY.into(), 0)
+        let (cumulative_difficulty, base_height, base_topoheight, nearest_base_topoheight) = if tips_count == 0 {
+            (GENESIS_BLOCK_DIFFICULTY.into(), 0, 0, 0)
         } else {
             debug!("Computing cumulative difficulty for block {}", block_hash);
             let (base, base_height) = blockdag::find_common_base(&*storage, block.get_tips(), version).await?;
@@ -1955,8 +1959,20 @@ impl<S: Storage> Blockchain<S> {
                 base_height
             ).await?.1;
 
-            (cumulative_difficulty, base_height)
+            let (base_topoheight, nearest_base_topoheight) = if is_v6_enabled {
+            let nearest_base_topoheight = blockdag::find_nearest_topoheight(&*storage, block.get_tips().iter().cloned()).await?;
+            let base_topoheight = storage.get_topo_height_for_hash(&base).await?;
+
+            (base_topoheight, nearest_base_topoheight)
+            } else {
+                (stable_topoheight, current_topoheight)
+            };
+
+
+            (cumulative_difficulty, base_height, base_topoheight, nearest_base_topoheight)
         };
+
+        debug!("base height: {}, base topoheight: {}, nearest base topoheight: {}", base_height, base_topoheight, nearest_base_topoheight);
 
         // Transaction verification
         // Here we are going to verify all TXs in the block
@@ -2005,7 +2021,34 @@ impl<S: Storage> Blockchain<S> {
                 IndexSet::new()
             };
 
-            if is_v3_enabled {
+            debug!("Grouping all TXs from parents by source for block {}", block_hash);
+            if is_v6_enabled {
+                // Starting V6, we retrieve the partial DAG order
+                let nearest_hash = storage.get_hash_at_topo_height(nearest_base_topoheight).await?;
+                let part_order = blockdag::generate_full_order(&*storage, block.get_tips().iter().cloned(), &nearest_hash, nearest_base_topoheight).await?;
+                assert_eq!(part_order.front(), Some(&nearest_hash), "The first block in the partial order should be the nearest base block");
+                // We skip the first block because it's the nearest base block, and we only want to group the TXs from the blocks between the nearest base block and the tips
+                // and also because the nearest base block is already included in the block state for verification, so we don't need to group its TXs again
+                for block_hash in part_order.iter().skip(1) {
+                    let header = storage.get_block_header_by_hash(block_hash).await?;
+                    for hash in header.get_txs_hashes() {
+                        if blockdag::is_tx_executed_for_topoheight(&*storage, hash, nearest_base_topoheight).await? {
+                            debug!("TX {} from parent is executed in DAG, skipping it", hash);
+                            continue;
+                        }
+
+                        let tx = storage.get_transaction(hash).await?
+                            .into_arc();
+                        
+                        let source = tx.get_source();
+                        info!("Adding parent TX {} from source {} to grouped parents for block {}", hash, source.as_address(self.network.is_mainnet()), block_hash);
+
+                        txs_grouped.entry(Cow::Owned(source.clone()))
+                            .or_insert_with(IndexMap::new)
+                            .insert(Cow::Owned(hash.clone()), tx);
+                    }
+                }
+            } else if is_v3_enabled {
                 // if V3 is enabled, we should also group the TXs by source
                 // to re inject them in case of orphaned blocks
                 debug!("Grouping all TXs from parents by source for block {}", block_hash);
@@ -2020,8 +2063,8 @@ impl<S: Storage> Blockchain<S> {
 
                     let source = tx.get_source();
                     txs_grouped.entry(Cow::Owned(source.clone()))
-                        .or_insert_with(Vec::new)
-                        .push((tx, hash));
+                        .or_insert_with(IndexMap::new)
+                        .insert(Cow::Borrowed(hash), tx);
                 }
             }
 
@@ -2055,6 +2098,13 @@ impl<S: Storage> Blockchain<S> {
                     }
                 }
 
+                // Starting V6, we verify against the block DAG only, not the current main chain.
+                let is_executed = if is_v6_enabled {
+                    blockdag::is_tx_executed_for_topoheight(&*storage, hash, nearest_base_topoheight).await?
+                } else {
+                    storage.is_tx_executed_in_a_block(hash).await?
+                };
+
                 // If the TX is already executed,
                 // we should check that the TX is not in block tips
                 // For v2 and above, all TXs that are presents in block TIPs are rejected
@@ -2080,8 +2130,8 @@ impl<S: Storage> Blockchain<S> {
                 // Transactions are behind a Arc because they are
                 // cloned for verify_batch which run a spawn_blocking thread
                 txs_grouped.entry(Cow::Borrowed(tx.get_source()))
-                    .or_insert_with(Vec::new)
-                    .push((Arc::clone(tx), hash));
+                    .or_insert_with(IndexMap::new)
+                    .insert(Cow::Borrowed(hash), Arc::clone(tx));
             }
 
             if !txs_grouped.is_empty() {
@@ -2124,16 +2174,17 @@ impl<S: Storage> Blockchain<S> {
                     // it will be multi-threaded by N threads
                     stream::iter(batches.into_iter().map(Ok))
                         .try_for_each_concurrent(self.txs_verification_threads_count, async |txs| {
-                            let mut chain_state = ChainState::new(storage, environments, stable_topoheight, current_topoheight, version, base_fee, base_height);
-                            Transaction::verify_batch(txs.iter(), &mut chain_state, cache).await
+                            let mut chain_state = ChainState::new(storage, environments, base_topoheight, nearest_base_topoheight, version, base_fee, base_height);
+                            Transaction::verify_batch(txs.iter().map(|(hash, tx)| (tx, hash.as_ref())), &mut chain_state, cache).await
                         }).await
                 } else {
                     // Verify all valid transactions in one batch
-                    let mut chain_state = ChainState::new(&*storage, &self.environments, stable_topoheight, current_topoheight, version, base_fee, base_height);
+                    let mut chain_state = ChainState::new(&*storage, &self.environments, base_topoheight, nearest_base_topoheight, version, base_fee, base_height);
                     let iter = txs_grouped.values()
-                        .flatten();
+                        .flatten()
+                        .map(|(hash, tx)| (tx, hash.as_ref()));
                     Transaction::verify_batch(iter, &mut chain_state, &tx_cache).await
-                }.context(format!("Failed to verify transactions in block {}", block_hash))?;
+                }.map_err(|e| BlockchainError::BlockVerification(block_hash.to_owned(), Box::new(e)))?;
 
                 debug!("Verified {} transactions in {}ms", total_txs, start.elapsed().as_millis());
 
@@ -2225,8 +2276,8 @@ impl<S: Storage> Blockchain<S> {
         let base_topo_height = storage.get_topo_height_for_hash(&base_hash).await?;
         debug!("New base hash: {}, height: {}, topo height: {}", base_hash, base_height, base_topo_height);
 
-        // generate a full order until base_topo_height
-        let mut full_order = blockdag::generate_full_order(&*storage, &best_tip, &base_hash, base_height, base_topo_height).await?;
+        // generate a full order until base_topo_height based on the best tip across all chain tips available
+        let mut full_order = blockdag::generate_full_order(&*storage, iter::once(best_tip.clone()), &base_hash, base_topo_height).await?;
         debug_assert_eq!(full_order.front(), Some(&base_hash));
 
         debug!("Generated full order size: {}, with base ({}) topo height: {}", full_order.len(), base_hash, base_topo_height);

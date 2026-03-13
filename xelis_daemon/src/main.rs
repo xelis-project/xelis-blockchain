@@ -596,7 +596,7 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
                 .context("Error while finding common base for tx verification")?;
 
             let mut state = ChainState::new(&*storage, blockchain.get_contract_environments(), 0, topo - 1, header.get_version(), required_base_fee, base_height);
-            Transaction::verify_batch(txs.iter(), &mut state, &NoZKPCache::default()).await
+            Transaction::verify_batch(txs.iter().map(|(tx, hash)| (tx, *hash)), &mut state, &NoZKPCache::default()).await
                 .context("Error while verifying txs")?;
 
             info!("Verified in {}ms", start.elapsed().as_millis());

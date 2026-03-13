@@ -1,9 +1,9 @@
-use std::{cmp::Ordering, collections::{HashMap, HashSet, VecDeque}};
+use std::{cmp::Ordering, collections::{HashMap, HashSet, VecDeque}, sync::Arc};
 
 use linked_hash_table::LinkedHashSet;
 use indexmap::IndexSet;
 use itertools::Either;
-use log::{debug, error, trace};
+use log::{debug, error, info, trace};
 use futures::{StreamExt, TryStreamExt, stream};
 use xelis_common::{
     block::{BlockVersion, TopoHeight, get_combined_hash_for_tips},
@@ -107,10 +107,11 @@ where
 }
 
 // find the best tip based on cumulative difficulty of the blocks
-pub async fn find_best_tip_by_cumulative_difficulty<'a, D, I>(provider: &D, tips: I) -> Result<&'a Hash, BlockchainError>
+pub async fn find_best_tip_by_cumulative_difficulty<'a, D, I, H>(provider: &D, tips: I) -> Result<H, BlockchainError>
 where
     D: DifficultyProvider + ConcurrencyProvider,
-    I: Iterator<Item = &'a Hash> + ExactSizeIterator + Send + Sync
+    I: Iterator<Item = H> + ExactSizeIterator + Send + Sync,
+    H: AsRef<Hash> + Send + Sync,
 {
     trace!("find best tip by cumulative difficulty");
     sort_tips(provider, tips).await?
@@ -427,7 +428,6 @@ where
         }).await?
         .ok_or(BlockchainError::ExpectedTips)?;
 
-
     let pruned_topoheight = provider.get_pruned_topoheight().await?.unwrap_or(0);
 
     let mut bases = stream::iter(tips.into_iter())
@@ -462,6 +462,94 @@ where
     }
 
     Ok((base_hash, base_height))
+}
+
+/// Find the nearest topoheight from all tips
+/// We keep iterating until a block is ordered and its the highest topoheight
+/// It also return a LinkedHashSet of all the tips that are not ordered until the said topoheight
+pub async fn find_nearest_topoheight<P, I>(provider: &P, tips: I) -> Result<TopoHeight, BlockchainError>
+where
+    P: DifficultyProvider + DagOrderProvider,
+    I: IntoIterator<Item = Hash> + Send + Sync,
+{
+    trace!("find nearest topoheight for tips");
+    let mut stack = VecDeque::new();
+    stack.extend(tips.into_iter());
+
+    while let Some(current) = stack.pop_front() {
+        if provider.is_block_topological_ordered(&current).await? {
+            return provider.get_topo_height_for_hash(&current).await
+        }
+
+        let past_blocks = provider.get_past_blocks_for_block_hash(&current).await?;
+        stack.extend(past_blocks.iter().cloned());
+    }
+
+    Err(BlockchainError::ExpectedTips)
+}
+
+/// Check if the transaction is executed in a block with topoheight lower or equal to the given topoheight
+pub async fn is_tx_executed_for_topoheight<P>(provider: &P, tx_hash: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError>
+where
+    P: DagOrderProvider + ClientProtocolProvider,
+{
+    if provider.is_tx_executed_in_a_block(tx_hash).await? {
+        info!("TX {} from parent is executed, verifying its DAG relation", tx_hash);
+        let executor = provider.get_block_executor_for_tx(tx_hash).await?;
+        let executor_topoheight = provider.get_topo_height_for_hash(&executor).await?;
+        // This means its not part of the DAG of the current block being verified, we don't skip it
+        Ok(executor_topoheight <= topoheight)
+    } else {
+        Ok(false)
+    }
+}
+
+/// Find the nearest base topoheight (ordered block) with main chain
+/// All tips will join at the said base hash.
+/// This function traces back from each tip to find the first ordered block (main chain) that is reachable.
+/// Then it returns the ordered block with the highest height/topoheight (nearest to tips) among those reachable from all tips.
+pub async fn find_nearest_base_topoheight<P, I>(provider: &P, tips: I, stable_height: u64) -> Result<TopoHeight, BlockchainError>
+where
+    P: DifficultyProvider + DagOrderProvider,
+    I: IntoIterator<Item = Hash> + ExactSizeIterator + Send + Sync,
+{
+    trace!("find nearest base with main chain for tips");
+
+    let tips_len = tips.len();
+    // Find ordered bases reachable from each tip
+    let mut stack = VecDeque::new();
+    stack.extend(tips.into_iter().map(|tip| (Arc::new(tip.clone()), tip)));
+    let mut bases_per_topoheight: HashMap<TopoHeight, HashSet<Arc<Hash>>> = HashMap::new();
+
+    while let Some((tip, current)) = stack.pop_front() {
+        let height = provider.get_height_for_block_hash(&current).await?;
+        if height < stable_height {
+            // Skip blocks below stable height
+            continue;
+        }
+
+        let past_blocks = provider.get_past_blocks_for_block_hash(&current).await?;
+
+        // if there is no tips, it is the genesis block, we consider it as a base candidate
+        if past_blocks.is_empty() || provider.is_block_topological_ordered(&current).await? {
+            info!("found ordered block {} at height {} while tracing back from tip {}, checking if it's a common base candidate", current, height, current);
+            // Found an ordered block (on main chain)
+            let topoheight = provider.get_topo_height_for_hash(&current).await?;
+
+            let bases = bases_per_topoheight.entry(topoheight)
+                .or_default();
+
+            if bases.insert(tip.clone()) && bases.len() == tips_len {
+                // If this is the first time we see this tip for this topoheight and that we have all tips in this topoheight, we can stop searching
+                info!("Found nearest base with main chain at topoheight {} for hash {} with all tips reachable", topoheight, current);
+                return Ok(topoheight);
+            }
+        }
+
+        stack.extend(past_blocks.iter().cloned().map(|past| (tip.clone(), past)));
+    }
+
+    Err(BlockchainError::ExpectedTips)
 }
 
 pub async fn build_reachability<P: DifficultyProvider>(provider: &P, hash: Hash, block_version: BlockVersion) -> Result<HashSet<Hash>, BlockchainError> {
@@ -733,21 +821,25 @@ where
 // the full order is re generated each time a new block is added based on new TIPS
 // first hash in order is the base hash
 // base_height is only used for the cache key
-pub async fn generate_full_order<P>(provider: &P, hash: &Hash, base: &Hash, base_height: u64, base_topo_height: TopoHeight) -> Result<LinkedHashSet<Hash>, BlockchainError>
+pub async fn generate_full_order<P, I>(provider: &P, hashes: I, base: &Hash, base_topo_height: TopoHeight) -> Result<LinkedHashSet<Hash>, BlockchainError>
 where
-    P: DifficultyProvider + DagOrderProvider + CacheProvider + ConcurrencyProvider
+    P: DifficultyProvider + DagOrderProvider + CacheProvider + ConcurrencyProvider,
+    I: Iterator<Item = Hash> + ExactSizeIterator
 {
-    trace!("generate full order for {} with base {}", hash, base);
+    trace!("generate full order with base {}", base);
+    if hashes.len() == 0 {
+        return Err(BlockchainError::ExpectedTips)
+    }
 
     let chain_cache = provider.chain_cache().await;
-    debug!("accessing full order cache for {} with base {}", hash, base);
+    debug!("accessing full order cache with base {}", base);
     let mut cache = chain_cache.full_order_cache.lock().await;
 
     // Full order that is generated
     let mut full_order = LinkedHashSet::new();
     // Current stack of hashes that need to be processed
-    let mut stack: VecDeque<Hash> = VecDeque::new();
-    stack.push_back(hash.clone());
+    let mut stack = VecDeque::new();
+    stack.extend(hashes);
 
     // Keep track of processed hashes that got reinjected for correct order
     let mut processed = HashSet::new();
@@ -762,7 +854,7 @@ where
         }
 
         // Search in the cache to retrieve faster the full order
-        let cache_key = (current_hash.clone(), base.clone(), base_height);
+        let cache_key = (current_hash.clone(), base.clone());
         if let Some(order_cache) = cache.get(&cache_key) {
             full_order.extend(order_cache.clone());
             continue 'main;
@@ -806,8 +898,6 @@ where
 
         stack.extend(scores.into_iter().map(|(tip_hash, _)| tip_hash));
     }
-
-    cache.put((hash.clone(), base.clone(), base_height), full_order.clone());
 
     Ok(full_order)
 }

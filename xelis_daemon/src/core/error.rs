@@ -155,6 +155,8 @@ pub enum DiskContext {
 #[derive(Error, Debug, EnumDiscriminants, IntoStaticStr)]
 #[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum BlockchainError {
+    #[error("block verification failed for block {}: {}", _0, _1)]
+    BlockVerification(Hash, Box<VerificationStateError<Self>>),
     #[error("transaction not found")]
     TransactionNotFound,
     #[error("invalid tips order for block {0}")]
