@@ -33,7 +33,10 @@ use xelis_common::{
 use crate::{
     config::{CHAIN_SYNC_DELAY, MILLIS_PER_SECOND, PEER_OBJECTS_CONCURRENCY, STABLE_LIMIT},
     core::{
-        blockchain::{BroadcastOption, PreVerifyBlock}, blockdag, error::BlockchainError, hard_fork, storage::{
+        blockchain::{BroadcastOption, PreVerifyBlock},
+        blockdag,
+        error::BlockchainError,
+        storage::{
             Storage,
             snapshot::{SnapshotWrapper, StorageHolder},
         }
@@ -125,116 +128,109 @@ impl<S: Storage> P2pServer<S> {
         
         let common_point = {
             let storage = self.blockchain.get_storage().read().await;
-            self.find_common_point(&*storage, blocks).await?
-        };
-        debug!("storage locked for chain request");
+            let common_point = self.find_common_point(&*storage, blocks).await?;
+            debug!("storage locked for chain request");
 
-        if let Some(common_point) = &common_point {
-            let mut topoheight = common_point.get_topoheight();
-            // used to detect if we find unstable height for alt tips
-            let mut unstable_height = None;
+            if let Some(common_point) = &common_point {
+                let mut topoheight = common_point.get_topoheight();
+                // used to detect if we find unstable height for alt tips
+                let mut unstable_height = None;
 
-            let (top_height, top_topoheight) = {
-                let storage = self.blockchain.get_storage().read().await;
-                // lets add all blocks ordered hash
-                let chain_cache = storage.chain_cache().await;
-                let top_topoheight = chain_cache.topoheight;
+                let (top_height, top_topoheight) = {
+                    // lets add all blocks ordered hash
+                    let chain_cache = storage.chain_cache().await;
+                    let top_topoheight = chain_cache.topoheight;
 
-                let top_height = chain_cache.height;
-                // check to see if we should search for alt tips (and above unstable height)
-                let should_search_alt_tips = top_topoheight - topoheight < accepted_response_size as u64;
+                    let top_height = chain_cache.height;
+                    // check to see if we should search for alt tips (and above unstable height)
+                    let should_search_alt_tips = top_topoheight - topoheight < accepted_response_size as u64;
 
-                // Don't search for block below our DAG common point order
-                if should_search_alt_tips {
-                    debug!("Peer is near to be synced, will send him alt tips blocks");
-                    let common_block_height = storage.get_height_for_block_hash(&common_point.get_hash()).await?;
-                    unstable_height = Some(chain_cache.stable_height.max(common_block_height) + 1);
-                }
+                    // Don't search for block below our DAG common point order
+                    if should_search_alt_tips {
+                        debug!("Peer is near to be synced, will send him alt tips blocks");
+                        let common_block_height = storage.get_height_for_block_hash(&common_point.get_hash()).await?;
+                        unstable_height = Some(chain_cache.stable_height.max(common_block_height) + 1);
+                    }
 
-                (top_height, top_topoheight)
-            };
-
-            // Search the lowest height
-            let mut lowest_height = top_height;
-
-            // complete ChainResponse blocks until we are full or that we reach the top topheight
-            while response_blocks.len() < accepted_response_size && topoheight <= top_topoheight {
-                trace!("looking for hash at topoheight {}", topoheight);
-                let (hash, height) = {
-                    let storage = self.blockchain.get_storage().read().await;
-                    let hash = storage.get_hash_at_topo_height(topoheight).await?;
-                    let height = storage.get_height_for_block_hash(&hash).await?;
-                    (hash, height)
+                    (top_height, top_topoheight)
                 };
 
-                // Find the lowest height
-                if height < lowest_height {
-                    lowest_height = height;
-                }
+                // Search the lowest height
+                let mut lowest_height = top_height;
 
-                let mut swap = false;
-                if let Some(previous_hash) = response_blocks.last() {
-                    let storage = self.blockchain.get_storage().read().await;
-                    // Due to the TX being orphaned, some TXs may be in the wrong order in V1
-                    // It has been sorted in V2 and should not happen anymore
-                    if storage.has_block_position_in_order(&hash).await? && storage.has_block_position_in_order(&previous_hash).await? {
-                        let position = storage.get_block_position_in_order(&hash).await?;
-                        let previous_position = storage.get_block_position_in_order(&previous_hash).await?;
-                        if position < previous_position {
-                            let version = hard_fork::get_version_at_height(self.blockchain.get_network(), height);
-                            if blockdag::is_side_block_internal(&*storage, &hash, Some(topoheight), top_topoheight, version).await? {
+                // complete ChainResponse blocks until we are full or that we reach the top topheight
+                while response_blocks.len() < accepted_response_size && topoheight <= top_topoheight {
+                    trace!("looking for hash at topoheight {}", topoheight);
+                    let hash = storage.get_hash_at_topo_height(topoheight).await?;
+                    let height = storage.get_height_for_block_hash(&hash).await?;
+
+                    // Find the lowest height
+                    if height < lowest_height {
+                        lowest_height = height;
+                    }
+
+                    let mut swap = false;
+                    if let Some(previous_hash) = response_blocks.last() {
+                        // Due to the TX being orphaned, some TXs may be in the wrong order in V1
+                        // It has been sorted in V2 and should not happen anymore
+                        let metadata = storage.get_metadata_at_topoheight(topoheight).await?;
+
+                        if metadata.is_side_block && storage.has_block_position_in_order(&hash).await? && storage.has_block_position_in_order(&previous_hash).await? {
+                            let position = storage.get_block_position_in_order(&hash).await?;
+                            let previous_position = storage.get_block_position_in_order(&previous_hash).await?;
+                            if position < previous_position {
                                 swap = true;
                             }
                         }
                     }
-                }
 
-                if swap {
-                    trace!("for chain request, swapping hash {} at topoheight {}", hash, topoheight);
-                    let previous = response_blocks.pop();
-                    response_blocks.insert(hash);
-                    if let Some(previous) = previous {
-                        response_blocks.insert(previous);
+                    if swap {
+                        trace!("for chain request, swapping hash {} at topoheight {}", hash, topoheight);
+                        let previous = response_blocks.pop();
+                        response_blocks.insert(hash);
+                        if let Some(previous) = previous {
+                            response_blocks.insert(previous);
+                        }
+                    } else {
+                        trace!("for chain request, adding hash {} at topoheight {}", hash, topoheight);
+                        response_blocks.insert(hash);
                     }
-                } else {
-                    trace!("for chain request, adding hash {} at topoheight {}", hash, topoheight);
-                    response_blocks.insert(hash);
+                    topoheight += 1;
                 }
-                topoheight += 1;
-            }
 
-            lowest_common_height = Some(lowest_height);
+                lowest_common_height = Some(lowest_height);
 
-            // now, lets check if peer is near to be synced, and send him alt tips blocks
-            if let Some(unstable_height) = unstable_height {
-                trace!("unstable height: {}, top height: {}", unstable_height, top_height);
-                let storage = self.blockchain.get_storage().read().await;
-                for height in unstable_height..=top_height {
-                    trace!("get blocks at height {} for top blocks", height);
-                    for hash in storage.get_blocks_at_height(height).await? {
-                        // If we don't have this block in response blocks and it's not already in topological order
-                        // we can add it to top blocks
-                        if !response_blocks.contains(&hash) && !storage.is_block_topological_ordered(&hash).await? {
-                            trace!("Adding top block at height {}: {}", height, hash);
-                            if !top_blocks.insert(hash) {
-                                debug!("Top block was already present in response top blocks");
+                // now, lets check if peer is near to be synced, and send him alt tips blocks
+                if let Some(unstable_height) = unstable_height {
+                    trace!("unstable height: {}, top height: {}", unstable_height, top_height);
+                    for height in unstable_height..=top_height {
+                        trace!("get blocks at height {} for top blocks", height);
+                        for hash in storage.get_blocks_at_height(height).await? {
+                            // If we don't have this block in response blocks and it's not already in topological order
+                            // we can add it to top blocks
+                            if !response_blocks.contains(&hash) && !storage.is_block_topological_ordered(&hash).await? {
+                                trace!("Adding top block at height {}: {}", height, hash);
+                                if !top_blocks.insert(hash) {
+                                    debug!("Top block was already present in response top blocks");
+                                }
+                            } else {
+                                trace!("Top block at height {}: {} was skipped because its already present in response blocks", height, hash);
                             }
-                        } else {
-                            trace!("Top block at height {}: {} was skipped because its already present in response blocks", height, hash);
                         }
                     }
                 }
+
+                // Too many top blocks, use the one with highest difficulty
+                if top_blocks.len() >= u8::MAX as usize {
+                    debug!("Too many top blocks ({}), sorting and keeping only the best ones", top_blocks.len());
+                    // sort and keep only the best ones
+                    let iter = blockdag::sort_tips(&*storage, top_blocks.into_iter()).await?;
+                    top_blocks = iter.take(u8::MAX as usize).collect();
+                }
             }
 
-            // Too many top blocks, use the one with highest difficulty
-            if top_blocks.len() >= u8::MAX as usize {
-                debug!("Too many top blocks ({}), sorting and keeping only the best ones", top_blocks.len());
-                // sort and keep only the best ones
-                let storage = self.blockchain.get_storage().read().await;
-                let iter = blockdag::sort_tips(&*storage, top_blocks.into_iter()).await?;
-                top_blocks = iter.take(u8::MAX as usize).collect();
-            }
-        }
+            common_point
+        };
 
         let elapsed = start.elapsed();
         histogram!("xelis_p2p_chain_request_s").record(elapsed.as_secs_f64());

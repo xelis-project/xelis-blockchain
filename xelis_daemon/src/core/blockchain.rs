@@ -2466,6 +2466,7 @@ impl<S: Storage> Blockchain<S> {
                     version,
                     &hash,
                     &block,
+                    is_side_block,
                     required_tx_fee,
                     base_height
                 );
@@ -3084,18 +3085,17 @@ impl<S: Storage> Blockchain<S> {
 
     // Get the block reward for a block
     // This will search all blocks at same height and verify which one are side blocks
-    pub async fn get_block_reward<P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + CacheProvider>(&self, provider: &P, hash: &Hash, past_supply: u64, current_topoheight: TopoHeight, version: BlockVersion) -> Result<u64, BlockchainError> {
-        let is_side_block = self.is_side_block(provider, hash, version).await?;
+    pub async fn get_block_reward<P: DifficultyProvider + BlocksAtHeightProvider + CacheProvider + BlockDagProvider>(&self, provider: &P, hash: &Hash, past_supply: u64, current_topoheight: TopoHeight, version: BlockVersion) -> Result<u64, BlockchainError> {
+        let is_side_block = self.is_side_block(provider, hash).await?;
         let mut side_blocks_count = 0;
         if is_side_block {
+            let height = provider.get_height_for_block_hash(hash).await?;
             if version >= BlockVersion::V4 {
-                side_blocks_count = self.count_side_blocks(provider, hash, current_topoheight, provider.get_height_for_block_hash(hash).await?).await?;
+                side_blocks_count = self.count_side_blocks(provider, hash, current_topoheight, height).await?;
             } else {
-                // get the block height for this hash
-                let height = provider.get_height_for_block_hash(hash).await?;
                 let blocks_at_height = provider.get_blocks_at_height(height).await?;
                 for block in blocks_at_height {
-                    if *hash != block && blockdag::is_side_block_internal(provider, &block, None, current_topoheight, version).await? {
+                    if *hash != block && self.is_side_block(provider, &block).await? {
                         side_blocks_count += 1;
                     }
                 }
@@ -3163,10 +3163,14 @@ impl<S: Storage> Blockchain<S> {
         Ok(!provider.is_block_topological_ordered(hash).await?)
     }
 
-    pub async fn is_side_block<P: DifficultyProvider + DagOrderProvider + CacheProvider + BlocksAtHeightProvider>(&self, provider: &P, hash: &Hash, version: BlockVersion) -> Result<bool, BlockchainError> {
-        let chain_cache = provider.chain_cache().await;
-        let topoheight = chain_cache.topoheight;
-        blockdag::is_side_block_internal(provider, hash, None, topoheight, version).await
+    pub async fn is_side_block<P: BlockDagProvider>(&self, provider: &P, hash: &Hash) -> Result<bool, BlockchainError> {
+        if !provider.is_block_topological_ordered(hash).await? {
+            return Ok(false);
+        }
+
+        let topoheight = provider.get_topo_height_for_hash(hash).await?;
+        provider.get_metadata_at_topoheight(topoheight).await
+            .map(|metadata| metadata.is_side_block)
     }
 
     // Rewind the chain by removing N blocks from the top

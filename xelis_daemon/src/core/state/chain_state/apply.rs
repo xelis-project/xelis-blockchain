@@ -91,6 +91,7 @@ pub struct ApplicableChainState<'s, 'b, S: Storage> {
     inner: ChainState<'s, 'b, S>,
     block_hash: &'b Hash,
     block: &'b Block,
+    is_side_block: bool,
     contract_manager: ContractManager<'b>,
     total_fees: u64,
     total_fees_burned: u64,
@@ -107,6 +108,8 @@ pub struct FinalizedChainState<'b> {
     contract_manager: ContractManager<'b>,
     // current block hash
     block_hash: &'b Hash,
+    // current block data
+    is_side_block: bool,
     // Transactions links to store: tx hash -> (blocks linked, executed in, contract)
     transactions_links: HashMap<&'b Hash, (IndexSet<&'b Hash>, Option<&'b Hash>, Option<&'b Hash>)>,
     // Balances of the receiver accounts
@@ -430,6 +433,7 @@ impl<'a> FinalizedChainState<'a> {
             emitted_supply,
             total_fees: self.total_fees,
             total_fees_burned: self.total_fees_burned,
+            is_side_block: self.is_side_block,
         };
 
         storage.set_metadata_at_topoheight(self.topoheight, metadata).await?;
@@ -882,6 +886,7 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
         block_version: BlockVersion,
         block_hash: &'b Hash,
         block: &'b Block,
+        is_side_block: bool,
         tx_base_fee: u64,
         base_height: u64,
     ) -> Self {
@@ -900,6 +905,7 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
             contract_manager: ContractManager::default(),
             block_hash,
             block,
+            is_side_block,
             transactions_links: HashMap::new(),
         }
     }
@@ -1174,6 +1180,7 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
 
         Ok(FinalizedChainState {
             block_hash: self.block_hash,
+            is_side_block: self.is_side_block,
             contract_manager: self.contract_manager,
             total_fees: self.total_fees + self.inner.gas_fee,
             total_fees_burned: self.total_fees_burned,

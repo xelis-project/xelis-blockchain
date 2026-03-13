@@ -108,13 +108,13 @@ const MAX_CONTRACTS: usize = 100;
 const MAX_CONTRACTS_ENTRIES: usize = 20;
 
 // Get the block type using the block hash and the blockchain current state
-pub async fn get_block_type_for_block<S: Storage, P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider + CacheProvider>(blockchain: &Blockchain<S>, provider: &P, hash: &Hash, version: BlockVersion) -> Result<BlockType, InternalRpcError> {
+pub async fn get_block_type_for_block<S: Storage, P: DifficultyProvider + BlockDagProvider + BlocksAtHeightProvider + PrunedTopoheightProvider + CacheProvider>(blockchain: &Blockchain<S>, provider: &P, hash: &Hash, version: BlockVersion) -> Result<BlockType, InternalRpcError> {
     Ok(if blockchain.is_block_orphaned_for_storage(provider, hash).await? {
         BlockType::Orphaned
+    } else if blockchain.is_side_block(provider, hash).await.context("Error while checking if block is side")? {
+        BlockType::Side
     } else if blockchain.is_sync_block(provider, hash, version).await.context("Error while checking if block is sync")? {
         BlockType::Sync
-    } else if blockchain.is_side_block(provider, hash, version).await.context("Error while checking if block is side")? {
-        BlockType::Side
     } else {
         BlockType::Normal
     })

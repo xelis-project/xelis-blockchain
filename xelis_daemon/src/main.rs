@@ -1357,6 +1357,7 @@ async fn replay_tx<S: Storage>(manager: &CommandManager, mut arguments: Argument
         block.get_version(),
         &executed_at,
         &block,
+        false, // weither it is side block or not, it is only used as an hint for future storage
         required_base_fee,
         base_height,
     );
