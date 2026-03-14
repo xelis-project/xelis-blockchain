@@ -2025,7 +2025,7 @@ impl<S: Storage> Blockchain<S> {
                 // Starting V6, we retrieve the partial DAG order
                 let nearest_hash = storage.get_hash_at_topo_height(nearest_base_topoheight).await?;
                 let part_order = blockdag::generate_full_order(&*storage, block.get_tips().iter().cloned(), &nearest_hash, nearest_base_topoheight).await?;
-                assert_eq!(part_order.front(), Some(&nearest_hash), "The first block in the partial order should be the nearest base block");
+                debug_assert_eq!(part_order.front(), Some(&nearest_hash), "The first block in the partial order should be the nearest base block");
                 // We skip the first block because it's the nearest base block, and we only want to group the TXs from the blocks between the nearest base block and the tips
                 // and also because the nearest base block is already included in the block state for verification, so we don't need to group its TXs again
                 for block_hash in part_order.iter().skip(1) {

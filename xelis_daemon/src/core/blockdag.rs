@@ -3,7 +3,7 @@ use std::{cmp::Ordering, collections::{HashMap, HashSet, VecDeque}, sync::Arc};
 use linked_hash_table::LinkedHashSet;
 use indexmap::IndexSet;
 use itertools::Either;
-use log::{debug, error, info, trace};
+use log::{debug, error, trace};
 use futures::{StreamExt, TryStreamExt, stream};
 use xelis_common::{
     block::{BlockVersion, TopoHeight, get_combined_hash_for_tips},
@@ -494,7 +494,7 @@ where
     P: DagOrderProvider + ClientProtocolProvider,
 {
     if provider.is_tx_executed_in_a_block(tx_hash).await? {
-        info!("TX {} from parent is executed, verifying its DAG relation", tx_hash);
+        debug!("TX {} from parent is executed, verifying its DAG relation", tx_hash);
         let executor = provider.get_block_executor_for_tx(tx_hash).await?;
         let executor_topoheight = provider.get_topo_height_for_hash(&executor).await?;
         // This means its not part of the DAG of the current block being verified, we don't skip it
@@ -532,7 +532,7 @@ where
 
         // if there is no tips, it is the genesis block, we consider it as a base candidate
         if past_blocks.is_empty() || provider.is_block_topological_ordered(&current).await? {
-            info!("found ordered block {} at height {} while tracing back from tip {}, checking if it's a common base candidate", current, height, current);
+            debug!("found ordered block {} at height {} while tracing back from tip {}, checking if it's a common base candidate", current, height, current);
             // Found an ordered block (on main chain)
             let topoheight = provider.get_topo_height_for_hash(&current).await?;
 
@@ -541,7 +541,7 @@ where
 
             if bases.insert(tip.clone()) && bases.len() == tips_len {
                 // If this is the first time we see this tip for this topoheight and that we have all tips in this topoheight, we can stop searching
-                info!("Found nearest base with main chain at topoheight {} for hash {} with all tips reachable", topoheight, current);
+                debug!("Found nearest base with main chain at topoheight {} for hash {} with all tips reachable", topoheight, current);
                 return Ok(topoheight);
             }
         }
@@ -831,21 +831,11 @@ where
         return Err(BlockchainError::ExpectedTips)
     }
 
-    let chain_cache = provider.chain_cache().await;
-    debug!("accessing full order cache with base {}", base);
-    let mut cache = chain_cache.full_order_cache.lock().await;
-
     // Full order that is generated
     let mut full_order = LinkedHashSet::new();
     // Current stack of hashes that need to be processed
     let mut stack = VecDeque::new();
     stack.extend(hashes);
-
-    let best_tip = if stack.len() == 1 {
-        Some(stack[0].clone())
-    } else {
-        None
-    };
 
     // Keep track of processed hashes that got reinjected for correct order
     let mut processed = HashSet::new();
@@ -854,15 +844,8 @@ where
         // If it is processed and got reinjected, its to maintains right order
         // We just need to insert current hash as it the "final hash" that got processed
         // after all tips
-        if processed.contains(&current_hash) {
+        if current_hash == *base || !processed.insert(current_hash.clone()) {
             full_order.insert(current_hash);
-            continue 'main;
-        }
-
-        // Search in the cache to retrieve faster the full order
-        let cache_key = (current_hash.clone(), base.clone());
-        if let Some(order_cache) = cache.get(&cache_key) {
-            full_order.extend(order_cache.clone());
             continue 'main;
         }
 
@@ -870,43 +853,30 @@ where
         let block_tips = provider.get_past_blocks_for_block_hash(&current_hash).await?;
 
         // if the block is genesis or its the base block, we can add it to the full order
-        if block_tips.is_empty() || current_hash == *base {
-            let mut order = LinkedHashSet::new();
-            order.insert(current_hash.clone());
-            cache.put(cache_key, order.clone());
-            full_order.extend(order);
+        if block_tips.is_empty() {
+            full_order.insert(current_hash);
             continue 'main;
         }
 
-        let mut scores = stream::iter(block_tips.iter())
+        // TODO: we can optimize it more by fully deleting it once the others optimizations are done
+        let scores = stream::iter(block_tips.iter())
             .map(|tip_hash| async move {
                 let is_ordered = provider.is_block_topological_ordered(tip_hash).await?;
-                if !is_ordered || provider.get_topo_height_for_hash(tip_hash).await? >= base_topo_height {
-                    let diff = provider.get_cumulative_difficulty_for_block_hash(tip_hash).await?;
-                    Ok::<Option<(Hash, Difficulty)>, BlockchainError>(Some((tip_hash.clone(), diff)))
+                Ok::<_, BlockchainError>(if !is_ordered || provider.get_topo_height_for_hash(tip_hash).await? >= base_topo_height {
+                    Some(tip_hash.clone())
                 } else {
-                    debug!("Block {} is skipped in generate_full_order, is ordered = {}, base topo height = {}", tip_hash, is_ordered, base_topo_height);
-                    Ok::<Option<(Hash, Difficulty)>, BlockchainError>(None)
-                }
+                    None
+                })
             })
-            .buffer_unordered(provider.concurrency())
+            .buffered(provider.concurrency())
             .filter_map(|x| async move { x.transpose() })
             .boxed()
             .try_collect::<Vec<_>>().await?;
 
-        // We sort by ascending cumulative difficulty because it is faster
-        // than doing a .reverse() on scores and give correct order for tips processing
-        // using our stack impl
-        sort_ascending_by_cumulative_difficulty(&mut scores);
-
         processed.insert(current_hash.clone());
         stack.push_back(current_hash);
 
-        stack.extend(scores.into_iter().map(|(tip_hash, _)| tip_hash));
-    }
-
-    if let Some(hash) = best_tip {
-        cache.put((hash, base.clone()), full_order.clone());
+        stack.extend(scores.into_iter().rev());
     }
 
     Ok(full_order)
