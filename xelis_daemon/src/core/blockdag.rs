@@ -902,3 +902,538 @@ pub async fn validate_tips<P: DifficultyProvider>(provider: &P, best_tip: &Hash,
 
     Ok(best_difficulty * MAX_DEVIATION / PERCENTAGE < block_difficulty)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use indexmap::IndexSet;
+    use xelis_common::{
+        account::CiphertextCache,
+        block::{BlockHeader, BlockVersion, EXTRA_NONCE_SIZE},
+        config::XELIS_ASSET,
+        crypto::elgamal::Ciphertext,
+        crypto::{Hash, KeyPair},
+        difficulty::Difficulty,
+        immutable::Immutable,
+        network::Network,
+        transaction::{
+            builder::{AccountState, FeeBuilder, FeeHelper, TransactionBuilder, TransactionTypeBuilder},
+            BurnPayload,
+            Reference,
+            TxVersion
+        },
+        varuint::VarUint,
+    };
+
+    use crate::{
+        config::DEV_PUBLIC_KEY,
+        core::storage::{
+            BlockProvider,
+            ClientProtocolProvider,
+            DagOrderProvider,
+            MemoryStorage,
+            PrunedTopoheightProvider,
+            TransactionProvider,
+        }
+    };
+
+    use super::*;
+
+    fn h(id: u8) -> Hash {
+        Hash::new([id; 32])
+    }
+
+    async fn add_block(
+        storage: &mut MemoryStorage,
+        hash: Hash,
+        height: u64,
+        timestamp: u64,
+        tips: Vec<Hash>,
+        difficulty: u64,
+        cumulative_difficulty: u64,
+        version: BlockVersion,
+        topoheight: Option<u64>,
+    ) {
+        let tips_set: IndexSet<Hash> = tips.into_iter().collect();
+        let header = BlockHeader::new(
+            version,
+            height,
+            timestamp,
+            tips_set,
+            [0u8; EXTRA_NONCE_SIZE],
+            DEV_PUBLIC_KEY.clone(),
+            IndexSet::new(),
+        );
+
+        storage
+            .save_block(
+                Arc::new(header),
+                &[],
+                Difficulty::from_u64(difficulty),
+                cumulative_difficulty.into(),
+                VarUint::from(0u64),
+                0,
+                Immutable::Owned(hash.clone()),
+            )
+            .await
+            .unwrap();
+
+        if let Some(topo) = topoheight {
+            storage.set_topo_height_for_block(&hash, topo).await.unwrap();
+        }
+    }
+
+    #[test]
+    fn test_sort_cumulative_difficulty_orders_and_tiebreakers() {
+        let mut descending = vec![
+            (h(1), 10u64.into()),
+            (h(3), 20u64.into()),
+            (h(2), 20u64.into()),
+        ];
+
+        sort_descending_by_cumulative_difficulty(&mut descending);
+        assert_eq!(descending[0].0, h(3));
+        assert_eq!(descending[1].0, h(2));
+        assert_eq!(descending[2].0, h(1));
+
+        let mut ascending = vec![
+            (h(9), 10u64.into()),
+            (h(1), 10u64.into()),
+            (h(8), 5u64.into()),
+        ];
+
+        sort_ascending_by_cumulative_difficulty(&mut ascending);
+        assert_eq!(ascending[0].0, h(8));
+        assert_eq!(ascending[1].0, h(1));
+        assert_eq!(ascending[2].0, h(9));
+    }
+
+    #[tokio::test]
+    async fn test_sort_tips_and_best_tip_edges() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+        let a = h(1);
+        let b = h(2);
+
+        add_block(&mut storage, a.clone(), 1, 10, vec![], 10, 50, BlockVersion::V6, None).await;
+        add_block(&mut storage, b.clone(), 1, 11, vec![], 10, 60, BlockVersion::V6, None).await;
+
+        let empty = Vec::<Hash>::new();
+        assert!(sort_tips(&storage, empty.into_iter()).await.is_err());
+
+        let single = vec![a.clone()];
+        let single_sorted: Vec<_> = sort_tips(&storage, single.into_iter()).await.unwrap().collect();
+        assert_eq!(single_sorted, vec![a.clone()]);
+
+        let multi = vec![a.clone(), b.clone()];
+        let sorted: Vec<_> = sort_tips(&storage, multi.into_iter()).await.unwrap().collect();
+        assert_eq!(sorted, vec![b.clone(), a.clone()]);
+
+        let best = find_best_tip_by_cumulative_difficulty(&storage, vec![a, b.clone()].into_iter())
+            .await
+            .unwrap();
+        assert_eq!(best, b);
+    }
+
+    #[tokio::test]
+    async fn test_calculate_height_and_newest_tip_edges() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+        let a = h(10);
+        let b = h(11);
+
+        add_block(&mut storage, a.clone(), 5, 100, vec![], 1, 1, BlockVersion::V6, None).await;
+        add_block(&mut storage, b.clone(), 7, 120, vec![], 1, 2, BlockVersion::V6, None).await;
+
+        let empty_height = calculate_height_at_tips(&storage, Vec::<&Hash>::new().into_iter())
+            .await
+            .unwrap();
+        assert_eq!(empty_height, 0);
+
+        let computed_height = calculate_height_at_tips(&storage, vec![&a, &b].into_iter())
+            .await
+            .unwrap();
+        assert_eq!(computed_height, 8);
+
+        assert!(find_newest_tip_by_timestamp(&storage, Vec::<&Hash>::new().into_iter())
+            .await
+            .is_err());
+
+        let (tip, ts) = find_newest_tip_by_timestamp(&storage, vec![&a, &b].into_iter())
+            .await
+            .unwrap();
+        assert_eq!(*tip, b);
+        assert_eq!(ts, 120);
+    }
+
+    #[tokio::test]
+    async fn test_is_sync_block_at_height_edges() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+        let genesis = h(20);
+        let a = h(21);
+        let b = h(22);
+
+        add_block(&mut storage, genesis.clone(), 0, 0, vec![], 1, 1, BlockVersion::V6, Some(0)).await;
+        add_block(&mut storage, a.clone(), 10, 10, vec![genesis.clone()], 2, 3, BlockVersion::V6, Some(10)).await;
+
+        assert!(is_sync_block_at_height(&storage, &genesis, 100, BlockVersion::V6)
+            .await
+            .unwrap());
+
+        // not stable enough yet
+        assert!(!is_sync_block_at_height(&storage, &a, 20, BlockVersion::V6)
+            .await
+            .unwrap());
+
+        // stable and alone at its height
+        assert!(is_sync_block_at_height(&storage, &a, 40, BlockVersion::V6)
+            .await
+            .unwrap());
+
+        // now 2 ordered blocks at same height => not sync
+        add_block(&mut storage, b.clone(), 10, 11, vec![genesis.clone()], 2, 4, BlockVersion::V6, Some(11)).await;
+        assert!(!is_sync_block_at_height(&storage, &a, 40, BlockVersion::V6)
+            .await
+            .unwrap());
+
+        // pruned block at pruned topoheight is sync
+        storage.set_pruned_topoheight(Some(11)).await.unwrap();
+        assert!(is_sync_block_at_height(&storage, &b, 40, BlockVersion::V6)
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_is_side_block_internal_edges() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+        let genesis = h(30);
+        let a = h(31);
+        let b = h(32);
+        let c = h(33);
+
+        add_block(&mut storage, genesis.clone(), 0, 0, vec![], 1, 1, BlockVersion::V6, Some(0)).await;
+        add_block(&mut storage, a.clone(), 1, 1, vec![genesis.clone()], 1, 2, BlockVersion::V6, Some(1)).await;
+        add_block(&mut storage, b.clone(), 2, 2, vec![a.clone()], 1, 3, BlockVersion::V6, Some(3)).await;
+        add_block(&mut storage, c.clone(), 2, 3, vec![a.clone()], 1, 4, BlockVersion::V6, Some(2)).await;
+
+        // genesis can never be a side block
+        assert!(!is_side_block_internal(&storage, &genesis, Some(0), 10, BlockVersion::V6)
+            .await
+            .unwrap());
+
+        // At same height, c has lower topoheight than b => b is side block
+        assert!(is_side_block_internal(&storage, &b, Some(3), 10, BlockVersion::V6)
+            .await
+            .unwrap());
+
+        // c is the earliest ordered block at its height => not side block
+        assert!(!is_side_block_internal(&storage, &c, Some(2), 10, BlockVersion::V6)
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_find_tip_base_and_common_base() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+        let g = h(50);
+        let a = h(51);
+        let b = h(52);
+        let c = h(53);
+
+        add_block(&mut storage, g.clone(), 0, 0, vec![], 1, 1, BlockVersion::V6, Some(0)).await;
+        add_block(&mut storage, a.clone(), 1, 1, vec![g.clone()], 2, 3, BlockVersion::V6, Some(1)).await;
+        add_block(&mut storage, b.clone(), 2, 2, vec![a.clone()], 3, 6, BlockVersion::V6, None).await;
+        add_block(&mut storage, c.clone(), 2, 3, vec![a.clone()], 3, 7, BlockVersion::V6, None).await;
+
+        let (base_hash, base_height) = find_tip_base(&storage, &b, 40, 0, BlockVersion::V6)
+            .await
+            .unwrap();
+        assert_eq!(base_hash, a);
+        assert_eq!(base_height, 1);
+
+        let tips: IndexSet<Hash> = vec![b.clone(), c.clone()].into_iter().collect();
+        let (common_hash, common_height) = find_common_base(&storage, tips.iter(), BlockVersion::V6)
+            .await
+            .unwrap();
+        assert_eq!(common_hash, h(50));
+        assert_eq!(common_height, 0);
+
+        let common_only_height = find_common_base_height(&storage, &tips, BlockVersion::V6)
+            .await
+            .unwrap();
+        assert_eq!(common_only_height, 0);
+
+        let empty_tips = IndexSet::new();
+        let h0 = find_common_base_height(&storage, &empty_tips, BlockVersion::V6)
+            .await
+            .unwrap();
+        assert_eq!(h0, 0);
+    }
+
+    #[tokio::test]
+    async fn test_find_tip_base_pruned_edge() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+        let g = h(60);
+        let a = h(61);
+
+        add_block(&mut storage, g.clone(), 0, 0, vec![], 1, 1, BlockVersion::V6, Some(0)).await;
+        add_block(&mut storage, a.clone(), 1, 1, vec![g.clone()], 2, 3, BlockVersion::V6, Some(1)).await;
+
+        let (base_hash, base_height) = find_tip_base(&storage, &a, 40, 1, BlockVersion::V6)
+            .await
+            .unwrap();
+        assert_eq!(base_hash, a);
+        assert_eq!(base_height, 1);
+    }
+
+    #[tokio::test]
+    async fn test_find_nearest_topoheight_and_nearest_base_topoheight() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+        let g = h(70);
+        let a = h(71);
+        let b = h(72);
+        let c = h(73);
+
+        add_block(&mut storage, g.clone(), 0, 0, vec![], 1, 1, BlockVersion::V6, Some(0)).await;
+        add_block(&mut storage, a.clone(), 1, 1, vec![g.clone()], 1, 2, BlockVersion::V6, Some(1)).await;
+        add_block(&mut storage, b.clone(), 2, 2, vec![a.clone()], 1, 3, BlockVersion::V6, None).await;
+        add_block(&mut storage, c.clone(), 2, 3, vec![a.clone()], 1, 4, BlockVersion::V6, None).await;
+
+        let topo = find_nearest_topoheight(&storage, vec![b.clone()]).await.unwrap();
+        assert_eq!(topo, 1);
+
+        let nearest_base = find_nearest_base_topoheight(&storage, vec![b.clone(), c.clone()].into_iter(), 0)
+            .await
+            .unwrap();
+        assert_eq!(nearest_base, 1);
+
+        assert!(find_nearest_topoheight(&storage, Vec::<Hash>::new())
+            .await
+            .is_err());
+
+        assert!(find_nearest_base_topoheight(&storage, vec![b, c].into_iter(), 100)
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn test_build_reachability_and_verify_non_reachability() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+        let g = h(80);
+        let a = h(81);
+        let b = h(82);
+        let c = h(83);
+
+        add_block(&mut storage, g.clone(), 0, 0, vec![], 1, 1, BlockVersion::V6, Some(0)).await;
+        add_block(&mut storage, a.clone(), 1, 1, vec![g.clone()], 1, 2, BlockVersion::V6, None).await;
+        add_block(&mut storage, b.clone(), 2, 2, vec![a.clone()], 1, 3, BlockVersion::V6, None).await;
+        add_block(&mut storage, c.clone(), 3, 3, vec![g.clone()], 1, 4, BlockVersion::V6, None).await;
+
+        let reach = build_reachability(&storage, b.clone(), BlockVersion::V6).await.unwrap();
+        assert!(reach.contains(&b));
+        assert!(reach.contains(&a));
+        assert!(reach.contains(&g));
+
+        let independent_tips: IndexSet<Hash> = vec![b.clone(), c.clone()].into_iter().collect();
+        assert!(verify_non_reachability(&storage, &independent_tips, BlockVersion::V6)
+            .await
+            .unwrap());
+
+        let invalid_tips: IndexSet<Hash> = vec![a.clone(), b.clone()].into_iter().collect();
+        assert!(!verify_non_reachability(&storage, &invalid_tips, BlockVersion::V6)
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_mainchain_distance_helpers() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+        let g = h(90);
+        let a = h(91);
+        let b = h(92);
+
+        add_block(&mut storage, g.clone(), 0, 0, vec![], 1, 1, BlockVersion::V6, Some(0)).await;
+        add_block(&mut storage, a.clone(), 10, 1, vec![g.clone()], 1, 2, BlockVersion::V6, Some(1)).await;
+        add_block(&mut storage, b.clone(), 11, 2, vec![a.clone()], 1, 3, BlockVersion::V6, None).await;
+
+        let lowest = find_lowest_height_from_mainchain(&storage, b.clone()).await.unwrap();
+        assert_eq!(lowest, Some(10));
+
+        let ordered_distance = calculate_distance_from_mainchain(&storage, &a).await.unwrap();
+        assert_eq!(ordered_distance, Some(10));
+
+        let unordered_distance = calculate_distance_from_mainchain(&storage, &b).await.unwrap();
+        assert_eq!(unordered_distance, Some(10));
+
+        assert!(!is_near_enough_from_main_chain(&storage, &b, 40, BlockVersion::V6)
+            .await
+            .unwrap());
+        assert!(is_near_enough_from_main_chain(&storage, &b, 20, BlockVersion::V6)
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_find_tip_work_score() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+        let g = h(100);
+        let a = h(101);
+        let b = h(102);
+        let c = h(103);
+
+        add_block(&mut storage, g.clone(), 0, 0, vec![], 1, 1, BlockVersion::V6, Some(0)).await;
+        add_block(&mut storage, a.clone(), 1, 1, vec![g.clone()], 2, 3, BlockVersion::V6, Some(1)).await;
+        add_block(&mut storage, b.clone(), 2, 2, vec![a.clone()], 3, 6, BlockVersion::V6, Some(2)).await;
+        add_block(&mut storage, c.clone(), 3, 3, vec![b.clone()], 4, 10, BlockVersion::V6, None).await;
+
+        let mut map = HashMap::new();
+        find_tip_work_score_internal(&storage, &mut map, &c, 1).await.unwrap();
+        assert!(map.contains_key(&c));
+        assert!(map.contains_key(&b));
+        assert!(map.contains_key(&a));
+        assert!(!map.contains_key(&g));
+
+        let (set, score) = find_tip_work_score(
+            &storage,
+            &c,
+            vec![&b].into_iter(),
+            None,
+            &a,
+            1,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(set.len(), 3);
+        assert!(set.contains(&a));
+        assert_eq!(score, 10u64.into());
+    }
+
+    #[tokio::test]
+    async fn test_generate_full_order_and_validate_tips() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+        let g = h(110);
+        let a = h(111);
+        let b = h(112);
+
+        add_block(&mut storage, g.clone(), 0, 0, vec![], 100, 100, BlockVersion::V6, Some(0)).await;
+        add_block(&mut storage, a.clone(), 1, 1, vec![g.clone()], 95, 195, BlockVersion::V6, Some(1)).await;
+        add_block(&mut storage, b.clone(), 2, 2, vec![a.clone()], 80, 275, BlockVersion::V6, None).await;
+
+        let full_order = generate_full_order(&storage, vec![b.clone()].into_iter(), &a, 1)
+            .await
+            .unwrap();
+        let ordered_hashes: Vec<Hash> = full_order.iter().cloned().collect();
+        assert_eq!(ordered_hashes, vec![a.clone(), b.clone()]);
+
+        assert!(validate_tips(&storage, &b, &a).await.unwrap());
+        assert!(!validate_tips(&storage, &a, &b).await.unwrap());
+
+        assert!(generate_full_order(&storage, Vec::<Hash>::new().into_iter(), &a, 1)
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn test_is_tx_executed_for_topoheight() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+        let tx = h(200);
+        let res = is_tx_executed_for_topoheight(&storage, &tx, 10).await.unwrap();
+        assert!(!res);
+
+        let tx_hash = h(210);
+        let block_hash = h(211);
+
+        add_block(&mut storage, block_hash.clone(), 1, 1, vec![], 1, 1, BlockVersion::V6, Some(5)).await;
+
+        let keypair = KeyPair::new();
+        let source = keypair.get_public_key().compress();
+        let tx = TransactionBuilder::new(
+            TxVersion::V2,
+            source,
+            None,
+            TransactionTypeBuilder::Burn(BurnPayload {
+                asset: XELIS_ASSET,
+                amount: 1,
+            }),
+            FeeBuilder::default(),
+        );
+
+        struct DummyState {
+            is_mainnet: bool,
+            nonce: u64,
+            reference: Reference,
+            balances: HashMap<Hash, (u64, CiphertextCache)>,
+        }
+
+        impl FeeHelper for DummyState {
+            type Error = ();
+
+            fn account_exists(&self, _: &xelis_common::crypto::elgamal::CompressedPublicKey) -> Result<bool, Self::Error> {
+                Ok(true)
+            }
+        }
+
+        impl AccountState for DummyState {
+            fn is_mainnet(&self) -> bool {
+                self.is_mainnet
+            }
+
+            fn get_account_balance(&self, asset: &Hash) -> Result<u64, Self::Error> {
+                self.balances.get(asset).map(|(balance, _)| *balance).ok_or(())
+            }
+
+            fn get_reference(&self) -> Reference {
+                self.reference.clone()
+            }
+
+            fn get_account_ciphertext(&self, asset: &Hash) -> Result<CiphertextCache, Self::Error> {
+                self.balances.get(asset).map(|(_, ct)| ct.clone()).ok_or(())
+            }
+
+            fn update_account_balance(&mut self, asset: &Hash, new_balance: u64, ciphertext: Ciphertext) -> Result<(), Self::Error> {
+                self.balances.insert(asset.clone(), (new_balance, CiphertextCache::Decompressed(None, ciphertext)));
+                Ok(())
+            }
+
+            fn get_nonce(&self) -> Result<u64, Self::Error> {
+                Ok(self.nonce)
+            }
+
+            fn update_nonce(&mut self, new_nonce: u64) -> Result<(), Self::Error> {
+                self.nonce = new_nonce;
+                Ok(())
+            }
+        }
+
+        let mut state = DummyState {
+            is_mainnet: false,
+            nonce: 0,
+            reference: Reference {
+                hash: Hash::zero(),
+                topoheight: 0,
+            },
+            balances: {
+                let mut balances = HashMap::new();
+                balances.insert(
+                    XELIS_ASSET,
+                    (
+                        1_000_000,
+                        CiphertextCache::Decompressed(
+                            None,
+                            keypair.get_public_key().encrypt(1_000_000u64),
+                        ),
+                    ),
+                );
+                balances
+            },
+        };
+
+        let built_tx = tx.build(&mut state, &keypair).unwrap();
+        storage.add_transaction(&tx_hash, &built_tx).await.unwrap();
+        storage.mark_tx_as_executed_in_block(&tx_hash, &block_hash).await.unwrap();
+
+        assert!(is_tx_executed_for_topoheight(&storage, &tx_hash, 5).await.unwrap());
+        assert!(!is_tx_executed_for_topoheight(&storage, &tx_hash, 4).await.unwrap());
+    }
+}
