@@ -5,7 +5,6 @@ use std::{
     sync::Arc
 };
 
-use linked_hash_table::LinkedHashSet;
 use lru::LruCache;
 use xelis_common::{
     tokio::sync::Mutex,
@@ -24,6 +23,12 @@ macro_rules! init_cache {
     ($cache_size: expr) => {{
         Mutex::new(LruCache::new(NonZeroUsize::new($cache_size).expect("Non zero value for cache")))
     }};
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub struct WorkScoreCacheKey {
+    pub tip: Hash,
+    pub base: Hash,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -51,9 +56,7 @@ pub struct ChainCache {
     // key is a combined hash of tips
     pub common_base_cache: Mutex<LruCache<Hash, (Hash, u64)>>,
     // tip work score is used to determine the best tip based on a block, tip base ands a base height
-    pub tip_work_score_cache: Mutex<LruCache<(Hash, Hash, u64), (HashSet<Hash>, CumulativeDifficulty)>>,
-    // using tip hash, its base hash: this cache is used to store the DAG order until the said base
-    pub full_order_cache: Mutex<LruCache<(Hash, Hash), LinkedHashSet<Hash>>>,
+    pub tip_work_score_cache: Mutex<LruCache<WorkScoreCacheKey, (HashSet<Hash>, CumulativeDifficulty)>>,
     // current difficulty at tips
     // its used as cache to display current network hashrate
     pub difficulty: Difficulty,
@@ -77,7 +80,6 @@ impl ChainCache {
         self.tip_base_cache.get_mut().clear();
         self.common_base_cache.get_mut().clear();
         self.tip_work_score_cache.get_mut().clear();
-        self.full_order_cache.get_mut().clear();
     }
 
     pub fn clone_mut(&mut self) -> Self {
@@ -85,7 +87,6 @@ impl ChainCache {
             tip_base_cache: Mutex::new(self.tip_base_cache.get_mut().clone()),
             common_base_cache: Mutex::new(self.common_base_cache.get_mut().clone()),
             tip_work_score_cache: Mutex::new(self.tip_work_score_cache.get_mut().clone()),
-            full_order_cache: Mutex::new(self.full_order_cache.get_mut().clone()),
             height: self.height,
             topoheight: self.topoheight,
             stable_height: self.stable_height,
@@ -103,7 +104,6 @@ impl Default for ChainCache {
             tip_base_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).expect("Default cache size for tip base must be above 0"))),
             tip_work_score_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).expect("Default cache size for tip work score must be above 0"))),
             common_base_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).expect("Default cache size for common base must be above 0"))),
-            full_order_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).expect("Default cache size for full order must be above 0"))),
             height: 0,
             topoheight: 0,
             stable_height: 0,

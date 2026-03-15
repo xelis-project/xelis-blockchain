@@ -1,7 +1,7 @@
 use std::{cmp::Ordering, collections::{HashMap, HashSet, VecDeque}, sync::Arc};
 
 use linked_hash_table::LinkedHashSet;
-use indexmap::IndexSet;
+use indexmap::{IndexMap, IndexSet};
 use itertools::Either;
 use log::{debug, error, trace};
 use futures::{StreamExt, TryStreamExt, stream};
@@ -287,25 +287,21 @@ where
     Ok(false)
 }
 
-pub async fn find_tip_base<P>(provider: &P, hash: &Hash, height: u64, pruned_topoheight: TopoHeight, block_version: BlockVersion) -> Result<(Hash, u64), BlockchainError>
+pub async fn find_tip_base<P>(provider: &P, hash: &Hash, best_height: u64, pruned_topoheight: TopoHeight, block_version: BlockVersion) -> Result<(Hash, u64), BlockchainError>
 where
     P: DifficultyProvider + DagOrderProvider + BlocksAtHeightProvider + PrunedTopoheightProvider + CacheProvider
 {
-    debug!("find tip base for {} at height {}", hash, height);
+    debug!("find tip base for {} at height {}", hash, best_height);
     let chain_cache = provider.chain_cache().await;
-
-    debug!("accessing tip base cache for {} at height {}", hash, height);
-    let mut cache = chain_cache.tip_base_cache.lock().await;
-    debug!("tip base cache locked for {} at height {}", hash, height);
 
     let mut stack: VecDeque<Hash> = VecDeque::new();
     stack.push_back(hash.clone());
 
-    let mut bases: IndexSet<(Hash, u64)> = IndexSet::new();
+    let mut bases: IndexMap<Hash, u64> = IndexMap::new();
     let mut processed = HashSet::new();
 
     'main: while let Some(current_hash) = stack.pop_back() {
-        trace!("Finding tip base for {} at height {}", current_hash, height);
+        trace!("Finding tip base for {} at height {}", current_hash, best_height);
         processed.insert(current_hash.clone());
         if pruned_topoheight > 0 && provider.is_block_topological_ordered(&current_hash).await? {
             let topoheight = provider.get_topo_height_for_hash(&current_hash).await?;
@@ -313,24 +309,25 @@ where
             if topoheight <= pruned_topoheight {
                 let block_height = provider.get_height_for_block_hash(&current_hash).await?;
                 debug!("Node is pruned, returns tip {} at {} as stable tip base", current_hash, block_height);
-                bases.insert((current_hash.clone(), block_height));
+                bases.insert(current_hash.clone(), block_height);
                 continue 'main;
             }
         }
 
         // first, check if we have it in cache
-        if let Some((base_hash, base_height)) = cache.get(&(current_hash.clone(), height)) {
-            trace!("Tip Base for {} at height {} found in cache: {} for height {}", current_hash, height, base_hash, base_height);
-            bases.insert((base_hash.clone(), *base_height));
-            continue 'main;
+        {
+            let mut cache = chain_cache.tip_base_cache.lock().await;
+            if let Some((base_hash, base_height)) = cache.get(&(current_hash.clone(), best_height)).cloned() {
+                trace!("Tip Base for {} at height {} found in cache: {} for height {}", current_hash, best_height, base_hash, base_height);
+                bases.insert(base_hash, base_height);
+                continue 'main;
+            }
         }
 
         let tips = provider.get_past_blocks_for_block_hash(&current_hash).await?;
         let tips_count = tips.len();
         if tips_count == 0 { // only genesis block can have 0 tips saved
-            // save in cache
-            cache.put((hash.clone(), height), (current_hash.clone(), height));
-            bases.insert((current_hash.clone(), 0));
+            bases.insert(current_hash.clone(), 0);
             continue 'main;
         }
 
@@ -341,17 +338,21 @@ where
                 if topoheight <= pruned_topoheight {
                     let block_height = provider.get_height_for_block_hash(&tip_hash).await?;
                     debug!("Node is pruned, returns tip {} at {} as stable tip base", tip_hash, block_height);
-                    bases.insert((tip_hash.clone(), block_height));
+                    bases.insert(tip_hash.clone(), block_height);
                     continue 'main;
                 }
             }
 
             // if block is sync, it is a tip base
-            if is_sync_block_at_height(provider, &tip_hash, height, block_version).await? {
+            if is_sync_block_at_height(provider, &tip_hash, best_height, block_version).await? {
                 let block_height = provider.get_height_for_block_hash(&tip_hash).await?;
                 // save in cache
-                cache.put((hash.clone(), height), (tip_hash.clone(), block_height));
-                bases.insert((tip_hash.clone(), block_height));
+                {
+                    let mut cache = chain_cache.tip_base_cache.lock().await;
+                    cache.put((hash.clone(), best_height), (tip_hash.clone(), block_height));
+                }
+
+                bases.insert(tip_hash.clone(), block_height);
                 continue 'main;
             }
 
@@ -363,19 +364,24 @@ where
     }
 
     if bases.is_empty() {
-        error!("Tip base for {} at height {} not found", hash, height);
+        error!("Tip base for {} at height {} not found", hash, best_height);
         return Err(BlockchainError::ExpectedTips)
     }
 
-    // now we sort descending by height and return the last element deleted
-    bases.sort_by(|(_, a), (_, b)| b.cmp(a));
-    debug_assert!(bases[0].1 >= bases[bases.len() - 1].1);
+    // now we sort descending by height and return the last element
+    bases.sort_by(|_, a, _, b| b.cmp(a));
+    debug_assert!(bases[0] >= bases[bases.len() - 1]);
 
-    let (base_hash, base_height) = bases.pop().ok_or(BlockchainError::ExpectedTips)?;
+    let (base_hash, base_height) = bases.pop()
+        .ok_or(BlockchainError::ExpectedTips)?;
 
     // save in cache
-    cache.put((hash.clone(), height), (base_hash.clone(), base_height));
-    trace!("Tip Base for {} at height {} found: {} for height {}", hash, height, base_hash, base_height);
+    {
+        let mut cache = chain_cache.tip_base_cache.lock().await;
+        cache.put((hash.clone(), best_height), (base_hash.clone(), base_height));
+    }
+
+    trace!("Tip Base for {} at height {} found: {} for height {}", hash, best_height, base_hash, base_height);
 
     Ok((base_hash, base_height))
 }
@@ -763,10 +769,15 @@ where
     trace!("find tip work score for {} at base {}", block_hash, base_block);
     let chain_cache = provider.chain_cache().await;
 
+    let key = WorkScoreCacheKey {
+        tip: block_hash.clone(),
+        base: base_block.clone(),
+    };
+
     {
         debug!("accessing tip work score cache for {} at height {}", block_hash, base_block_height);
         let mut cache = chain_cache.tip_work_score_cache.lock().await;
-        if let Some(value) = cache.get(&(block_hash.clone(), base_block.clone(), base_block_height)) {
+        if let Some(value) = cache.get(&key) {
             trace!("Found tip work score in cache: set [{}], height: {}", value.0.iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "), value.1);
             return Ok(value.clone())
         }
@@ -809,7 +820,7 @@ where
         debug!("accessing tip work score cache to save tip work score for {} at height {}", block_hash, base_block_height);
         let mut cache = chain_cache.tip_work_score_cache.lock().await;
         debug!("tip work score cache locked for write");
-        cache.put((block_hash.clone(), base_block.clone(), base_block_height), (set.clone(), score));
+        cache.put(key, (set.clone(), score));
     }
 
     Ok((set, score))
@@ -823,7 +834,7 @@ where
 // base_height is only used for the cache key
 pub async fn generate_full_order<P, I>(provider: &P, hashes: I, base: &Hash, base_topo_height: TopoHeight) -> Result<LinkedHashSet<Hash>, BlockchainError>
 where
-    P: DifficultyProvider + DagOrderProvider + CacheProvider + ConcurrencyProvider,
+    P: DifficultyProvider + DagOrderProvider + ConcurrencyProvider,
     I: Iterator<Item = Hash> + ExactSizeIterator
 {
     trace!("generate full order with base {}", base);
@@ -873,7 +884,6 @@ where
             .boxed()
             .try_collect::<Vec<_>>().await?;
 
-        processed.insert(current_hash.clone());
         stack.push_back(current_hash);
 
         stack.extend(scores.into_iter().rev());
