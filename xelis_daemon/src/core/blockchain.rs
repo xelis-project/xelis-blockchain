@@ -727,23 +727,25 @@ impl<S: Storage> Blockchain<S> {
             (block, difficulty)
         };
 
-        let algorithm = get_pow_algorithm_for_version(header.get_version());
-        let mut hash = header.get_pow_hash(algorithm)?;
-        let mut current_height = self.get_height().await;
-        while !self.is_simulator_enabled() && !self.skip_pow_verification && !check_difficulty(&hash, &difficulty)? {
-            let height = self.get_height().await;
-            if height != current_height {
-                current_height = height;
-                header = self.get_block_template(key.clone()).await?;
+        if !self.is_simulator_enabled() && !self.skip_pow_verification {
+            let algorithm = get_pow_algorithm_for_version(header.get_version());
+            let mut hash = header.get_pow_hash(algorithm)?;
+            let mut current_height = self.get_height().await;
+            while !check_difficulty(&hash, &difficulty)? {
+                let height = self.get_height().await;
+                if height != current_height {
+                    current_height = height;
+                    header = self.get_block_template(key.clone()).await?;
+                }
+                header.nonce += 1;
+                header.timestamp = get_current_time_in_millis();
+                hash = header.get_pow_hash(algorithm)?;
             }
-            header.nonce += 1;
-            header.timestamp = get_current_time_in_millis();
-            hash = header.get_pow_hash(algorithm)?;
         }
 
         let block = self.build_block_from_header(header).await?;
         let block_height = block.get_height();
-        debug!("Mined a new block with PoW {} at height {}", hash, block_height);
+        debug!("Mined a new block with at height {}", block_height);
         Ok(block)
     }
 
