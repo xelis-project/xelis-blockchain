@@ -1969,7 +1969,6 @@ impl<S: Storage> Blockchain<S> {
                 (stable_topoheight, current_topoheight)
             };
 
-
             (cumulative_difficulty, base_height, base_topoheight, nearest_base_topoheight)
         };
 
@@ -2023,7 +2022,7 @@ impl<S: Storage> Blockchain<S> {
             };
 
             debug!("Grouping all TXs from parents by source for block {}", block_hash);
-            if is_v6_enabled {
+            if is_v6_enabled && tips_count > 0 {
                 // Starting V6, we retrieve the partial DAG order
                 let nearest_hash = storage.get_hash_at_topo_height(nearest_base_topoheight).await?;
                 let part_order = blockdag::generate_full_order(&*storage, block.get_tips().iter().cloned(), &nearest_hash, nearest_base_topoheight).await?;

@@ -470,25 +470,47 @@ where
     Ok((base_hash, base_height))
 }
 
-/// Find the nearest topoheight from all tips
-/// We keep iterating until a block is ordered and its the highest topoheight
-/// It also return a LinkedHashSet of all the tips that are not ordered until the said topoheight
+/// Find the nearest topoheight of the nearest common dominator of all tips.
+/// A common dominator is any ordered block that is an ancestor of all tips.
+/// We trace back from each tip through past blocks and return the topoheight
+/// of the first ordered block reachable from all tips.
 pub async fn find_nearest_topoheight<P, I>(provider: &P, tips: I) -> Result<TopoHeight, BlockchainError>
 where
     P: DifficultyProvider + DagOrderProvider,
     I: IntoIterator<Item = Hash> + Send + Sync,
+    I::IntoIter: ExactSizeIterator + Send + Sync,
 {
     trace!("find nearest topoheight for tips");
-    let mut stack = VecDeque::new();
-    stack.extend(tips.into_iter());
+    let iterator = tips.into_iter();
+    let tips_len = iterator.len();
 
-    while let Some(current) = stack.pop_front() {
+    if tips_len == 0 {
+        return Err(BlockchainError::ExpectedTips);
+    }
+
+    let mut stack = VecDeque::new();
+    // Track which tips have reached each block
+    let mut visited: HashMap<Hash, HashSet<usize>> = HashMap::new();
+
+    for (i, tip) in iterator.enumerate() {
+        visited.entry(tip.clone()).or_default().insert(i);
+        stack.push_back((i, tip));
+    }
+
+    while let Some((tip_idx, current)) = stack.pop_front() {
         if provider.is_block_topological_ordered(&current).await? {
-            return provider.get_topo_height_for_hash(&current).await
+            if visited.get(&current).map_or(false, |s| s.len() == tips_len) {
+                return provider.get_topo_height_for_hash(&current).await;
+            }
         }
 
         let past_blocks = provider.get_past_blocks_for_block_hash(&current).await?;
-        stack.extend(past_blocks.iter().cloned());
+        for past in past_blocks.iter() {
+            let entry = visited.entry(past.clone()).or_default();
+            if entry.insert(tip_idx) {
+                stack.push_back((tip_idx, past.clone()));
+            }
+        }
     }
 
     Err(BlockchainError::ExpectedTips)
@@ -1214,6 +1236,226 @@ mod tests {
         assert!(find_nearest_base_topoheight(&storage, vec![b, c].into_iter(), 100)
             .await
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn test_find_nearest_topoheight_two_unordered_tips_same_parent() {
+        // g(topo=0) -> a(topo=1) -> b(unordered)
+        //                        -> c(unordered)
+        // Both b and c trace back to a, so common dominator is a at topo=1
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+        let g = h(140);
+        let a = h(141);
+        let b = h(142);
+        let c = h(143);
+
+        add_block(&mut storage, g.clone(), 0, 0, vec![], 1, 1, BlockVersion::V6, Some(0)).await;
+        add_block(&mut storage, a.clone(), 1, 1, vec![g.clone()], 1, 2, BlockVersion::V6, Some(1)).await;
+        add_block(&mut storage, b.clone(), 2, 2, vec![a.clone()], 1, 3, BlockVersion::V6, None).await;
+        add_block(&mut storage, c.clone(), 2, 3, vec![a.clone()], 1, 4, BlockVersion::V6, None).await;
+
+        let topo = find_nearest_topoheight(&storage, vec![b, c]).await.unwrap();
+        assert_eq!(topo, 1);
+    }
+
+    #[tokio::test]
+    async fn test_find_nearest_topoheight_single_ordered_tip() {
+        // g(topo=0) -> a(topo=1)
+        // Single ordered tip returns its own topoheight
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+        let g = h(150);
+        let a = h(151);
+
+        add_block(&mut storage, g.clone(), 0, 0, vec![], 1, 1, BlockVersion::V6, Some(0)).await;
+        add_block(&mut storage, a.clone(), 1, 1, vec![g.clone()], 1, 2, BlockVersion::V6, Some(1)).await;
+
+        let topo = find_nearest_topoheight(&storage, vec![a]).await.unwrap();
+        assert_eq!(topo, 1);
+    }
+
+    #[tokio::test]
+    async fn test_find_nearest_topoheight_different_ordered_parents() {
+        // g(topo=0) -> a(topo=1) -> c(unordered)
+        //           -> b(topo=2) -> d(unordered)
+        // c traces to a, d traces to b. Common dominator is g at topo=0
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+        let g = h(160);
+        let a = h(161);
+        let b = h(162);
+        let c = h(163);
+        let d = h(164);
+
+        add_block(&mut storage, g.clone(), 0, 0, vec![], 1, 1, BlockVersion::V6, Some(0)).await;
+        add_block(&mut storage, a.clone(), 1, 1, vec![g.clone()], 1, 2, BlockVersion::V6, Some(1)).await;
+        add_block(&mut storage, b.clone(), 1, 2, vec![g.clone()], 1, 2, BlockVersion::V6, Some(2)).await;
+        add_block(&mut storage, c.clone(), 2, 3, vec![a.clone()], 1, 3, BlockVersion::V6, None).await;
+        add_block(&mut storage, d.clone(), 2, 4, vec![b.clone()], 1, 3, BlockVersion::V6, None).await;
+
+        let topo = find_nearest_topoheight(&storage, vec![c, d]).await.unwrap();
+        assert_eq!(topo, 0);
+    }
+
+    #[tokio::test]
+    async fn test_find_nearest_topoheight_one_ordered_one_unordered() {
+        // g(topo=0) -> a(topo=1) -> b(topo=2)
+        //                        -> c(unordered)
+        // b is ordered but only reachable from b, not c. Common dominator is a at topo=1
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+        let g = h(170);
+        let a = h(171);
+        let b = h(172);
+        let c = h(173);
+
+        add_block(&mut storage, g.clone(), 0, 0, vec![], 1, 1, BlockVersion::V6, Some(0)).await;
+        add_block(&mut storage, a.clone(), 1, 1, vec![g.clone()], 1, 2, BlockVersion::V6, Some(1)).await;
+        add_block(&mut storage, b.clone(), 2, 2, vec![a.clone()], 1, 3, BlockVersion::V6, Some(2)).await;
+        add_block(&mut storage, c.clone(), 2, 3, vec![a.clone()], 1, 4, BlockVersion::V6, None).await;
+
+        let topo = find_nearest_topoheight(&storage, vec![b, c]).await.unwrap();
+        assert_eq!(topo, 1);
+    }
+
+    #[tokio::test]
+    async fn test_find_nearest_topoheight_both_ordered() {
+        // g(topo=0) -> a(topo=1) -> b(topo=2)
+        //                        -> c(topo=3)
+        // Both ordered, common dominator is a at topo=1
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+        let g = h(180);
+        let a = h(181);
+        let b = h(182);
+        let c = h(183);
+
+        add_block(&mut storage, g.clone(), 0, 0, vec![], 1, 1, BlockVersion::V6, Some(0)).await;
+        add_block(&mut storage, a.clone(), 1, 1, vec![g.clone()], 1, 2, BlockVersion::V6, Some(1)).await;
+        add_block(&mut storage, b.clone(), 2, 2, vec![a.clone()], 1, 3, BlockVersion::V6, Some(2)).await;
+        add_block(&mut storage, c.clone(), 2, 3, vec![a.clone()], 1, 4, BlockVersion::V6, Some(3)).await;
+
+        let topo = find_nearest_topoheight(&storage, vec![b, c]).await.unwrap();
+        assert_eq!(topo, 1);
+    }
+
+    #[tokio::test]
+    async fn test_find_nearest_topoheight_diamond_merge() {
+        // g(topo=0) -> a(topo=1) -> c(unordered, tips=[a, b])
+        //           -> b(topo=2) -> c
+        //                        -> d(unordered, tips=[b])
+        // c has parents [a, b], d has parent [b]
+        // Common dominator of c and d is b at topo=2
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+        let g = h(190);
+        let a = h(191);
+        let b = h(192);
+        let c = h(193);
+        let d = h(194);
+
+        add_block(&mut storage, g.clone(), 0, 0, vec![], 1, 1, BlockVersion::V6, Some(0)).await;
+        add_block(&mut storage, a.clone(), 1, 1, vec![g.clone()], 1, 2, BlockVersion::V6, Some(1)).await;
+        add_block(&mut storage, b.clone(), 1, 2, vec![g.clone()], 1, 2, BlockVersion::V6, Some(2)).await;
+        add_block(&mut storage, c.clone(), 2, 3, vec![a.clone(), b.clone()], 1, 3, BlockVersion::V6, None).await;
+        add_block(&mut storage, d.clone(), 2, 4, vec![b.clone()], 1, 3, BlockVersion::V6, None).await;
+
+        let topo = find_nearest_topoheight(&storage, vec![c, d]).await.unwrap();
+        assert_eq!(topo, 2);
+    }
+
+    #[tokio::test]
+    async fn test_find_nearest_topoheight_deep_chain() {
+        // g(topo=0) -> a(topo=1) -> b(unordered) -> c(unordered) -> d(unordered)
+        //                        -> e(unordered) -> f(unordered)
+        // d and f both trace back to a at topo=1
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+        let g = h(220);
+        let a = h(221);
+        let b = h(222);
+        let c = h(223);
+        let d = h(224);
+        let e = h(225);
+        let f = h(226);
+
+        add_block(&mut storage, g.clone(), 0, 0, vec![], 1, 1, BlockVersion::V6, Some(0)).await;
+        add_block(&mut storage, a.clone(), 1, 1, vec![g.clone()], 1, 2, BlockVersion::V6, Some(1)).await;
+        add_block(&mut storage, b.clone(), 2, 2, vec![a.clone()], 1, 3, BlockVersion::V6, None).await;
+        add_block(&mut storage, c.clone(), 3, 3, vec![b.clone()], 1, 4, BlockVersion::V6, None).await;
+        add_block(&mut storage, d.clone(), 4, 4, vec![c.clone()], 1, 5, BlockVersion::V6, None).await;
+        add_block(&mut storage, e.clone(), 2, 5, vec![a.clone()], 1, 3, BlockVersion::V6, None).await;
+        add_block(&mut storage, f.clone(), 3, 6, vec![e.clone()], 1, 4, BlockVersion::V6, None).await;
+
+        let topo = find_nearest_topoheight(&storage, vec![d, f]).await.unwrap();
+        assert_eq!(topo, 1);
+    }
+
+    #[tokio::test]
+    async fn test_find_nearest_topoheight_three_tips() {
+        // g(topo=0) -> a(topo=1) -> b(unordered)
+        //                        -> c(unordered)
+        //                        -> d(unordered)
+        // All three trace back to a at topo=1
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+        let g = h(230);
+        let a = h(231);
+        let b = h(232);
+        let c = h(233);
+        let d = h(234);
+
+        add_block(&mut storage, g.clone(), 0, 0, vec![], 1, 1, BlockVersion::V6, Some(0)).await;
+        add_block(&mut storage, a.clone(), 1, 1, vec![g.clone()], 1, 2, BlockVersion::V6, Some(1)).await;
+        add_block(&mut storage, b.clone(), 2, 2, vec![a.clone()], 1, 3, BlockVersion::V6, None).await;
+        add_block(&mut storage, c.clone(), 2, 3, vec![a.clone()], 1, 4, BlockVersion::V6, None).await;
+        add_block(&mut storage, d.clone(), 2, 4, vec![a.clone()], 1, 5, BlockVersion::V6, None).await;
+
+        let topo = find_nearest_topoheight(&storage, vec![b, c, d]).await.unwrap();
+        assert_eq!(topo, 1);
+    }
+
+    #[tokio::test]
+    async fn test_find_nearest_topoheight_three_tips_partial_overlap() {
+        // g(topo=0) -> a(topo=1) -> c(unordered)
+        //           -> b(topo=2) -> c (c has tips=[a, b])
+        //                        -> d(unordered, tips=[b])
+        //                        -> e(unordered, tips=[b])
+        // tips = [c, d, e]
+        // c reaches a and b, d reaches b, e reaches b
+        // Common dominator is b at topo=2
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+        let g = h(240);
+        let a = h(241);
+        let b = h(242);
+        let c = h(243);
+        let d = h(244);
+        let e = h(245);
+
+        add_block(&mut storage, g.clone(), 0, 0, vec![], 1, 1, BlockVersion::V6, Some(0)).await;
+        add_block(&mut storage, a.clone(), 1, 1, vec![g.clone()], 1, 2, BlockVersion::V6, Some(1)).await;
+        add_block(&mut storage, b.clone(), 1, 2, vec![g.clone()], 1, 2, BlockVersion::V6, Some(2)).await;
+        add_block(&mut storage, c.clone(), 2, 3, vec![a.clone(), b.clone()], 1, 3, BlockVersion::V6, None).await;
+        add_block(&mut storage, d.clone(), 2, 4, vec![b.clone()], 1, 3, BlockVersion::V6, None).await;
+        add_block(&mut storage, e.clone(), 2, 5, vec![b.clone()], 1, 3, BlockVersion::V6, None).await;
+
+        let topo = find_nearest_topoheight(&storage, vec![c, d, e]).await.unwrap();
+        assert_eq!(topo, 2);
+    }
+
+    #[tokio::test]
+    async fn test_find_nearest_topoheight_genesis_is_common_dominator() {
+        // g(topo=0) -> a(unordered) -> c(unordered)
+        //           -> b(unordered) -> d(unordered)
+        // No intermediate ordered blocks, common dominator is genesis at topo=0
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+        let g = h(250);
+        let a = h(251);
+        let b = h(252);
+        let c = h(253);
+        let d = h(254);
+
+        add_block(&mut storage, g.clone(), 0, 0, vec![], 1, 1, BlockVersion::V6, Some(0)).await;
+        add_block(&mut storage, a.clone(), 1, 1, vec![g.clone()], 1, 2, BlockVersion::V6, None).await;
+        add_block(&mut storage, b.clone(), 1, 2, vec![g.clone()], 1, 2, BlockVersion::V6, None).await;
+        add_block(&mut storage, c.clone(), 2, 3, vec![a.clone()], 1, 3, BlockVersion::V6, None).await;
+        add_block(&mut storage, d.clone(), 2, 4, vec![b.clone()], 1, 3, BlockVersion::V6, None).await;
+
+        let topo = find_nearest_topoheight(&storage, vec![c, d]).await.unwrap();
+        assert_eq!(topo, 0);
     }
 
     #[tokio::test]
