@@ -361,8 +361,10 @@ impl<'a> FinalizedChainState<'a> {
 
             for (listener_contract, callback) in listeners {
                 trace!("storing event callback registration for event {} of contract {} to listener {} at topoheight {}", event_id, contract, listener_contract, self.topoheight);
-                if processed_listeners.as_mut().map_or(false, |v| v.remove(&contract)) {
-                    trace!("removing previous event callback registrations for event {} of contract {} at topoheight {}", event_id, contract, self.topoheight);
+                // If this listener was consumed (triggered) earlier in the same block and is now
+                // re-registering, remove it from the tombstone set so it won't be written as None.
+                if processed_listeners.as_mut().map_or(false, |v| v.remove(&listener_contract)) {
+                    trace!("listener {} re-registered after being consumed for event {} of contract {}, keeping new registration", listener_contract, event_id, contract);
                 }
 
                 let prev_topo = storage.get_event_callback_for_contract_at_maximum_topoheight(
@@ -1029,7 +1031,7 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
                         .unwrap_or_default()
                 },
                 Entry::Vacant(entry) => {
-                    debug!("event {} for contract {} already processed, skipping", event.event_id, event.contract);
+                    debug!("event {} for contract {} not yet processed, loading from storage", event.event_id, event.contract);
                     let topoheight = self.inner.topoheight;
                     let mut callbacks = self.inner.storage.get_event_callbacks_available_at_maximum_topoheight(&event.contract, event.event_id, topoheight).await?
                         .try_collect::<Vec<_>>().await?;
@@ -1037,11 +1039,21 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
                     // Sort by contract hash to have a deterministic order
                     callbacks.sort_by(|a, b| a.0.cmp(&b.0));
 
+                    // Only storage callbacks need a tombstone written on apply
                     entry.insert(
                         callbacks.iter()
                             .map(|(contract, _)| contract.clone())
                             .collect()
                     );
+
+                    // Also fire listeners registered in this same block before the event was emitted.
+                    // They are consumed here, removed from events_listeners, and must NOT be added
+                    // to events_processed because they were never stored (no tombstone needed).
+                    let mem_callbacks = self.contract_manager.events_listeners
+                        .remove(&contract_key)
+                        .unwrap_or_default();
+                    callbacks.extend(mem_callbacks);
+                    callbacks.sort_by(|a, b| a.0.cmp(&b.0));
 
                     callbacks
                 }
