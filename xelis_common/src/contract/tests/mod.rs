@@ -17,7 +17,7 @@ use crate::{
         vm::{self, ContractCaller, ContractStateError, InvokeContract}
     },
     crypto::Hash,
-    transaction::{tests::MockChainState, verify::BlockchainContractState}
+    transaction::{mock::MockChainState, verify::BlockchainContractState}
 };
 
 mod gas;

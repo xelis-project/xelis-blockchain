@@ -15,7 +15,6 @@ use crate::{
         Address,
         Hash,
         Hashable,
-        KeyPair,
         PublicKey
     },
     serializer::Serializer,
@@ -38,6 +37,7 @@ use crate::{
             PlaintextData
         },
         verify::{NoZKPCache, VerificationError, VerificationStateError, ZKPCache},
+        mock::*,
         BurnPayload,
         MultiSigPayload,
         Reference,
@@ -49,83 +49,33 @@ use crate::{
     },
 };
 
-mod mock;
-
-pub use mock::*;
-
-#[derive(Clone)]
-pub struct Balance {
-    pub ciphertext: CiphertextCache,
-    pub balance: u64,
-}
-
-#[derive(Clone)]
-pub struct Account {
-    pub balances: HashMap<Hash, Balance>,
-    pub keypair: KeyPair,
-    pub nonce: Nonce,
-}
-
-impl Account {
-    pub fn new() -> Self {
-        Self {
-            balances: HashMap::new(),
-            keypair: KeyPair::new(),
-            nonce: 0,
-        }
-    }
-
-    pub fn set_balance(&mut self, asset: Hash, balance: u64) {
-        let ciphertext = self.keypair.get_public_key().encrypt(balance);
-        self.balances.insert(asset, Balance {
-            balance,
-            ciphertext: CiphertextCache::Decompressed(None, ciphertext),
-        });
-    }
-
-    pub fn address(&self) -> Address {
-        self.keypair.get_public_key().to_address(false)
-    }
-}
-
 pub struct AccountStateImpl {
-    pub balances: HashMap<Hash, Balance>,
+    pub balances: HashMap<Hash, TrackedBalance>,
     pub reference: Reference,
     pub nonce: Nonce,
 }
 
-fn create_tx_for(account: Account, destination: Address, amount: u64, extra_data: Option<DataElement>) -> Arc<Transaction> {
-    let mut state = AccountStateImpl {
-        balances: account.balances,
-        nonce: account.nonce,
-        reference: Reference {
-            topoheight: 0,
-            hash: Hash::zero(),
-        },
+fn create_tx_for(mut account: TrackedAccount, destination: Address, amount: u64, extra_data: Option<DataElement>) -> Arc<Transaction> {
+    let reference = Reference {
+        topoheight: 0,
+        hash: Hash::zero(),
     };
 
-    let data = TransactionTypeBuilder::Transfers(vec![TransferBuilder {
-        amount,
+    let balance_before = account.get_balance(&XELIS_ASSET).unwrap();
+    let tx = create_transfer_tx_for_account(
+        &mut account,
         destination,
-        asset: XELIS_ASSET,
+        amount,
         extra_data,
-        encrypt_extra_data: true,
-    }]);
-
-
-    let balance = state.balances[&XELIS_ASSET].balance;
-    let builder = TransactionBuilder::new(TxVersion::V1, account.keypair.get_public_key().compress(), None, data, FeeBuilder::default());
-    let estimated_size = builder.estimate_size();
-    let tx = builder.build(&mut state, &account.keypair).unwrap();
-    assert!(estimated_size == tx.size(), "expected {} bytes got {} bytes", tx.size(), estimated_size);
-    assert!(tx.to_bytes().len() == estimated_size);
-    // this is done by the AccountStateImpl
+        TxVersion::V1,
+        reference,
+    ).unwrap();
+    
     assert!(tx.fee * 2 == tx.fee_limit);
-
     let total_spend = amount + tx.fee_limit;
-    let new_balance = state.balances[&XELIS_ASSET].balance;
-    let expected_balance = balance - total_spend;
-    assert!(new_balance == expected_balance, "expected balance {} got {}", expected_balance, new_balance);
+    let balance_after = account.get_balance(&XELIS_ASSET).unwrap();
+    let expected_balance = balance_before - total_spend;
+    assert!(balance_after == expected_balance, "expected balance {} got {}", expected_balance, balance_after);
 
     Arc::new(tx)
 }
@@ -145,13 +95,13 @@ fn test_encrypt_decrypt() {
 
 #[test]
 fn test_encrypt_decrypt_two_parties() {
-    let mut alice = Account::new();
-    alice.balances.insert(XELIS_ASSET, Balance {
+    let mut alice = TrackedAccount::new();
+    alice.balances.insert(XELIS_ASSET, TrackedBalance {
         balance: 100 * COIN_VALUE,
         ciphertext: CiphertextCache::Decompressed(None, alice.keypair.get_public_key().encrypt(100 * COIN_VALUE)),
     });
 
-    let bob = Account::new();
+    let bob = TrackedAccount::new();
 
     let payload = DataElement::Value(DataValue::String("Hello, World!".to_string()));
     let tx = create_tx_for(alice.clone(), bob.address(), 50, Some(payload.clone()));
@@ -182,8 +132,8 @@ fn test_encrypt_decrypt_two_parties() {
 
 #[tokio::test]
 async fn test_tx_verify() {
-    let mut alice = Account::new();
-    let mut bob = Account::new();
+    let mut alice = TrackedAccount::new();
+    let mut bob = TrackedAccount::new();
 
     alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
     bob.set_balance(XELIS_ASSET, 0);
@@ -230,8 +180,8 @@ async fn test_tx_verify() {
 
 #[tokio::test]
 async fn test_tx_verify_with_zkp_cache() {
-    let mut alice = Account::new();
-    let mut bob = Account::new();
+    let mut alice = TrackedAccount::new();
+    let mut bob = TrackedAccount::new();
 
     alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
     bob.set_balance(XELIS_ASSET, 0);
@@ -294,7 +244,7 @@ async fn test_tx_verify_with_zkp_cache() {
 
 #[tokio::test]
 async fn test_burn_tx_verify() {
-    let mut alice = Account::new();
+    let mut alice = TrackedAccount::new();
     alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
 
     let tx = {
@@ -344,7 +294,7 @@ async fn test_burn_tx_verify() {
 
 #[tokio::test]
 async fn test_tx_invoke_contract() {
-    let mut alice = Account::new();
+    let mut alice = TrackedAccount::new();
 
     alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
 
@@ -417,7 +367,7 @@ async fn test_tx_invoke_contract() {
 
 #[tokio::test]
 async fn test_tx_deploy_contract() {
-    let mut alice = Account::new();
+    let mut alice = TrackedAccount::new();
 
     alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
 
@@ -489,8 +439,8 @@ async fn test_tx_deploy_contract() {
 
 #[tokio::test]
 async fn test_max_transfers() {
-    let mut alice = Account::new();
-    let mut bob = Account::new();
+    let mut alice = TrackedAccount::new();
+    let mut bob = TrackedAccount::new();
 
     alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
     bob.set_balance(XELIS_ASSET, 0);
@@ -558,9 +508,9 @@ async fn test_max_transfers() {
 
 #[tokio::test]
 async fn test_multisig_setup() {
-    let mut alice = Account::new();
-    let mut bob = Account::new();
-    let charlie = Account::new();
+    let mut alice = TrackedAccount::new();
+    let mut bob = TrackedAccount::new();
+    let charlie = TrackedAccount::new();
 
     alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
     bob.set_balance(XELIS_ASSET, 0);
@@ -621,12 +571,12 @@ async fn test_multisig_setup() {
 
 #[tokio::test]
 async fn test_multisig() {
-    let mut alice = Account::new();
-    let mut bob = Account::new();
+    let mut alice = TrackedAccount::new();
+    let mut bob = TrackedAccount::new();
 
     // Signers
-    let charlie = Account::new();
-    let dave = Account::new();
+    let charlie = TrackedAccount::new();
+    let dave = TrackedAccount::new();
 
     alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
     bob.set_balance(XELIS_ASSET, 0);
@@ -728,7 +678,7 @@ impl AccountState for AccountStateImpl {
     }
 
     fn update_account_balance(&mut self, asset: &Hash, balance: u64, ciphertext: Ciphertext) -> Result<(), Self::Error> {
-        self.balances.insert(asset.clone(), Balance {
+        self.balances.insert(asset.clone(), TrackedBalance {
             balance,
             ciphertext: CiphertextCache::Decompressed(None, ciphertext),
         });

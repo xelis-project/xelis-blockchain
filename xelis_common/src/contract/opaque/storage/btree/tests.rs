@@ -12,7 +12,8 @@ use xelis_vm::Module;
 
 use crate::{
     contract::{ContractModule, ContractVersion, vm::ContractCaller},
-    crypto::Hash, transaction::{tests::{MockChainState, MockStorageProvider}, verify::BlockchainContractState}
+    crypto::Hash,
+    transaction::{mock::{MockChainState, MockStorageProvider}, verify::BlockchainContractState}
 };
 
 async fn insert_key(
