@@ -31,6 +31,12 @@ impl<T> Immutable<T> {
     }
 }
 
+impl<T: Default> Default for Immutable<T> {
+    fn default() -> Self {
+        Immutable::Owned(T::default())
+    }
+}
+
 impl<T: Clone> Immutable<T> {
     pub fn make_arc(&mut self) -> Arc<T> {
         match self {
