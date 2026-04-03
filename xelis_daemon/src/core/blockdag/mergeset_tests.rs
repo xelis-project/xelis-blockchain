@@ -610,7 +610,7 @@ async fn test_full_order_linear() -> Result<()> {
     create_block(&mut storage, &b, 2, tips.clone(), 100, 300).await;
     process_block(&mut storage, &b, &tips, 100).await;
 
-    let order = blockdag::generate_full_order(&storage, iter::once(b.clone()), &genesis, 0).await?;
+    let order = blockdag::generate_full_order::<_, _, LinkedHashSet<Hash>>(&storage, iter::once(b.clone()), &genesis, 0).await?;
     // Order should be: genesis, A, B
     assert_eq!(order.len(), 3);
     assert!(order.contains(&genesis));
@@ -647,7 +647,7 @@ async fn test_full_order_with_merge() -> Result<()> {
     create_block(&mut storage, &c, 2, tips.clone(), 100, 300).await;
     process_block(&mut storage, &c, &tips, 100).await;
 
-    let order = blockdag::generate_full_order(&storage, iter::once(c.clone()), &genesis, 0).await?;
+    let order = blockdag::generate_full_order::<_, _, LinkedHashSet<Hash>>(&storage, iter::once(c.clone()), &genesis, 0).await?;
     // All 4 blocks should be in the order
     assert_eq!(order.len(), 4);
     assert!(order.contains(&genesis));

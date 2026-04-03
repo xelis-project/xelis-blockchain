@@ -1,13 +1,14 @@
 mod mergeset;
+mod ordered;
 
 #[cfg(test)]
 mod mergeset_tests;
 
 pub use mergeset::*;
+pub use ordered::*;
 
 use std::{cmp::Ordering, collections::{HashMap, HashSet, VecDeque}, sync::Arc};
 
-use linked_hash_table::LinkedHashSet;
 use indexmap::{IndexMap, IndexSet};
 use itertools::Either;
 use log::{debug, error, trace};
@@ -984,10 +985,11 @@ where
 // the full order is re generated each time a new block is added based on new TIPS
 // first hash in order is the base hash
 // base_height is only used for the cache key
-pub async fn generate_full_order<P, I>(provider: &P, hashes: I, base: &Hash, base_topo_height: TopoHeight) -> Result<LinkedHashSet<Hash>, BlockchainError>
+pub async fn generate_full_order<P, I, S>(provider: &P, hashes: I, base: &Hash, base_topo_height: TopoHeight) -> Result<S, BlockchainError>
 where
     P: DifficultyProvider + DagOrderProvider + ConcurrencyProvider,
-    I: Iterator<Item = Hash> + ExactSizeIterator
+    I: Iterator<Item = Hash> + ExactSizeIterator,
+    S: OrderedSet<Hash> + Default
 {
     trace!("generate full order with base {} and {} tips", base, hashes.len());
     if hashes.len() == 0 {
@@ -995,7 +997,7 @@ where
     }
 
     // Full order that is generated
-    let mut full_order = LinkedHashSet::new();
+    let mut full_order = S::default();
     // Current stack of hashes that need to be processed
     let mut stack = VecDeque::new();
     stack.extend(hashes);
@@ -1061,6 +1063,7 @@ mod tests {
     use std::sync::Arc;
 
     use indexmap::IndexSet;
+    use linked_hash_table::LinkedHashSet;
     use xelis_common::{
         account::CiphertextCache,
         block::{BlockHeader, BlockVersion, EXTRA_NONCE_SIZE},
@@ -1839,7 +1842,7 @@ mod tests {
         add_block(&mut storage, a.clone(), 1, 1, vec![g.clone()], 95, 195, BlockVersion::V6, Some(1)).await;
         add_block(&mut storage, b.clone(), 2, 2, vec![a.clone()], 80, 275, BlockVersion::V6, None).await;
 
-        let full_order = generate_full_order(&storage, vec![b.clone()].into_iter(), &a, 1)
+        let full_order = generate_full_order::<_, _, LinkedHashSet<Hash>>(&storage, vec![b.clone()].into_iter(), &a, 1)
             .await
             .unwrap();
         let ordered_hashes: Vec<Hash> = full_order.iter().cloned().collect();
@@ -1848,7 +1851,7 @@ mod tests {
         assert!(validate_tips(&storage, &b, &a).await.unwrap());
         assert!(!validate_tips(&storage, &a, &b).await.unwrap());
 
-        assert!(generate_full_order(&storage, Vec::<Hash>::new().into_iter(), &a, 1)
+        assert!(generate_full_order::<_, _, LinkedHashSet<Hash>>(&storage, Vec::<Hash>::new().into_iter(), &a, 1)
             .await
             .is_err());
     }
