@@ -169,6 +169,8 @@ pub enum BlockchainError {
     InvalidContractVersion,
     #[error("tip is too far back in height from block being validated")]
     TipTooFarBack,
+    #[error("tips common base is too far below the merge block height, branches have diverged too much")]
+    TipsCommonBaseTooFar,
     #[error("transaction has an invalid reference: block height {0} is higher than stable height {1}")]
     InvalidReferenceBlockHeight(u64, u64),
     #[error("unknown circulating supply for asset {0}")]

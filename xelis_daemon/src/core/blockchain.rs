@@ -1406,16 +1406,18 @@ impl<S: Storage> Blockchain<S> {
         let tips_set = chain_cache.tips.clone();
         let current_height = chain_cache.height;
 
-        let mut tips = tips_set.into_iter()
-            .collect::<Vec<_>>();
+        let mut sorted_tips: IndexSet<_> = if tips_set.len() > 1 {
+            let tips = blockdag::sort_tips(storage, tips_set.into_iter()).await?
+                .collect::<Vec<_>>();
 
-        if tips.len() > 1 {
-            let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(storage, tips.iter()).await?.clone();
+            // Best tip is always the first one of the sorted tips, as they are sorted by cumulative difficulty
+            let best_tip = tips[0].clone();
             let block_height_by_tips = blockdag::calculate_height_at_tips(storage, tips.iter()).await?;
 
             debug!("Best tip selected for this block template is {}", best_tip);
-            let mut selected_tips = Vec::with_capacity(tips.len());
+            let mut selected_tips = IndexSet::with_capacity(tips.len());
             let version_at_height = get_version_at_height(self.get_network(), current_height);
+
             for hash in tips {
                 if best_tip != hash {
                     if !blockdag::validate_tips(storage, &best_tip, &hash).await? {
@@ -1428,6 +1430,14 @@ impl<S: Storage> Blockchain<S> {
                         continue;
                     }
 
+                    if !selected_tips.is_empty() {
+                        let iter = selected_tips.iter().chain(iter::once(&hash));
+                        if !blockdag::has_common_base_at_or_above_stable_height(storage, iter, block_height_by_tips, version_at_height).await? {
+                            warn!("Tip {} is not selected for mining: no common base before stable height", hash);
+                            continue;
+                        }
+                    }
+
                     // Check that the tip is not too far in height from best height
                     let tip_height = storage.get_height_for_block_hash(&hash).await?;
                     let height_diff = block_height_by_tips.saturating_sub(tip_height);
@@ -1436,18 +1446,19 @@ impl<S: Storage> Blockchain<S> {
                         continue;
                     }
                 }
-                selected_tips.push(hash);
+                selected_tips.insert(hash);
             }
-            tips = selected_tips;
 
-            if tips.is_empty() {
+            if selected_tips.is_empty() {
                 warn!("No valid tips found for block template, using best tip {}", best_tip);
-                tips.push(best_tip);
+                selected_tips.insert(best_tip);
             }
-        }
 
-        let mut sorted_tips: IndexSet<_> = blockdag::sort_tips(storage, tips.into_iter()).await?
-            .collect();
+            selected_tips
+        } else {
+            tips_set.into_iter().collect()
+        };
+
         if sorted_tips.len() > TIPS_LIMIT {
             // keep only first 3 heavier tips
             // We drain any tips above the limit
@@ -1878,6 +1889,12 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
+        // V6: don't verify the block from the global chain state, but only against its tips
+        // We let the DAG choose which branch is the best one for execution & verification.
+        // We also only accept merge blocks for DAG branches that have a common base before stable height,
+        // to prevent too much reorgs on the main chain
+        let is_v6_enabled = version >= BlockVersion::V6;
+
         if tips_count > 1 {
             let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(&*storage, block.get_tips().iter()).await?;
             debug!("Best tip selected for this new block is {}", best_tip);
@@ -1895,6 +1912,13 @@ impl<S: Storage> Blockchain<S> {
                 if expected != got {
                     debug!("Invalid tips order, expected {} but got {} for this block {}", expected, got, block_hash);
                     return Err(BlockchainError::InvalidTipsOrder(block_hash.into_owned()))
+                }
+            }
+
+            if is_v6_enabled {
+                if !blockdag::has_common_base_at_or_above_stable_height(&*storage, block.get_tips().iter(), block_height_by_tips, version).await? {
+                    debug!("Block {} has common base before stable height, which is not allowed", block_hash);
+                    return Err(BlockchainError::TipsCommonBaseTooFar)
                 }
             }
         }
@@ -1938,10 +1962,6 @@ impl<S: Storage> Blockchain<S> {
         } else {
             (FEE_PER_KB, self.get_blocks_size_ema_at_tips(&*storage, block.get_tips().iter()).await?)
         };
-
-        // V6: don't verify the block from the global chain state, but only against its tips
-        // We let the DAG choose which branch is the best one for execution & verification.
-        let is_v6_enabled = version >= BlockVersion::V6;
 
         // find the common base block from tips
         // Compute cumulative difficulty for block

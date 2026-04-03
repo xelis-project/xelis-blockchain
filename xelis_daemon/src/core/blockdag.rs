@@ -4,7 +4,7 @@ use linked_hash_table::LinkedHashSet;
 use indexmap::{IndexMap, IndexSet};
 use itertools::Either;
 use log::{debug, error, trace};
-use futures::{StreamExt, TryStreamExt, stream};
+use futures::{StreamExt, TryStreamExt, future::ready, stream};
 use xelis_common::{
     block::{BlockVersion, TopoHeight, get_combined_hash_for_tips},
     crypto::Hash,
@@ -399,6 +399,131 @@ where
     Ok(base_height)
 }
 
+// Check if all tips have a common base at or above stable height limit,
+// which means they have forked and merged again in the last STABLE_LIMIT blocks
+// This prevents too deep/big reorgs
+pub async fn has_common_base_at_or_above_stable_height<'a, P, I>(provider: &P, tips: I, block_height: u64, version: BlockVersion) -> Result<bool, BlockchainError>
+where
+    P: DifficultyProvider + ConcurrencyProvider,
+    I: Iterator<Item = &'a Hash> + Send + Sync,
+{
+    let stable_limit = get_stable_limit(version);
+    // Because block height is calculated as max tip height + 1, the highest tip height is block_height - 1
+    let highest_tip_height = block_height.saturating_sub(1);
+    // min_height = highest_tip_height - stable_limit, if highest_tip_height >= stable_limit, otherwise 0
+    let min_height = highest_tip_height.saturating_sub(stable_limit);
+
+    // For each tip, collect ancestors reachable within the height window,
+    // and also record each block's parents (restricted to the window) for
+    // the bypass check.
+    let ancestor_sets = stream::iter(tips)
+        .map(|tip| async move {
+            let mut visited = HashSet::new();
+            let mut stack = VecDeque::new();
+            stack.push_back(tip.clone());
+
+            while let Some(current) = stack.pop_back() {
+                if !visited.insert(current.clone()) {
+                    continue;
+                }
+
+                let height = provider.get_height_for_block_hash(&current).await?;
+                if height >= min_height {
+                    let parents = provider.get_past_blocks_for_block_hash(&current).await?;
+                    for parent in parents.iter() {
+                        if !visited.contains(parent) {
+                            stack.push_back(parent.clone());
+                        }
+                    }
+                }
+            }
+
+            Ok::<_, BlockchainError>(visited)
+        })
+        .buffer_unordered(provider.concurrency())
+        .boxed()
+        .try_collect::<Vec<_>>().await?;
+
+    // Find all common ancestors above the search floor.
+    // Because the BFS never adds blocks at/below min_height to visited,
+    // every entry in the intersection is already above the floor.
+    // If the intersection is empty, the dominator is at or below the floor.
+    let (first, rest) = ancestor_sets.split_first()
+        .ok_or(BlockchainError::ExpectedTips)?;
+
+    let mut common = Vec::new();
+    for hash in first.iter().filter(|h| rest.iter().all(|s| s.contains(*h))) {
+        let height = provider.get_height_for_block_hash(hash).await?;
+        common.push((hash.clone(), height));
+    }
+
+    if common.is_empty() {
+        return Ok(false)
+    }
+
+    // Sort by height descending (we want the highest dominator)
+    common.sort_by(|a, b| b.1.cmp(&a.1));
+
+    // For each candidate (highest first), check if it is a true dominator:
+    // A candidate C at height h_c is a dominator if no tip can reach any block
+    // at height < h_c without going through C.
+    for (candidate_hash, candidate_height) in common {
+        let mut is_dominator = true;
+
+        'tip_check: for ancestor_set in ancestor_sets.iter() {
+            // BFS/DFS from all blocks in this tip's ancestor set that are
+            // the tip itself or above the candidate, skipping the candidate.
+            // If we can reach any block at height < candidate_height, it's not a dominator.
+            let mut visited = HashSet::new();
+            let mut stack = VecDeque::new();
+
+            // Start from the tip's ancestors that are strictly above the candidate
+            // (or the tips themselves)
+            for hash in ancestor_set {
+                if *hash == candidate_hash {
+                    continue;
+                }
+
+                let h = provider.get_height_for_block_hash(hash).await?;
+                if h >= candidate_height {
+                    // Only seed blocks that have parents going below
+                    stack.push_back(hash.clone());
+                }
+            }
+
+            while let Some(current) = stack.pop_back() {
+                if current == candidate_hash || !visited.insert(current.clone()) {
+                    continue;
+                }
+
+                let parents = provider.get_past_blocks_for_block_hash(&current).await?;
+                for parent in parents.iter() {
+                    if *parent == candidate_hash {
+                        continue; // don't traverse through candidate
+                    }
+
+                    let parent_height = provider.get_height_for_block_hash(parent).await?;
+                    if parent_height < candidate_height {
+                        // Found a bypass! This candidate is NOT a dominator.
+                        is_dominator = false;
+                        break 'tip_check;
+                    }
+
+                    if !visited.contains(parent) {
+                        stack.push_back(parent.clone());
+                    }
+                }
+            }
+        }
+
+        if is_dominator {
+            return Ok(highest_tip_height.saturating_sub(candidate_height) < stable_limit)
+        }
+    }
+
+    Ok(false)
+}
+
 // find the common base (block hash and block height) of all tips
 pub async fn find_common_base<'a, P, I>(provider: &P, tips: I, block_version: BlockVersion) -> Result<(Hash, u64), BlockchainError>
 where
@@ -425,13 +550,11 @@ where
         .map(|hash| provider.get_height_for_block_hash(hash))
         .buffer_unordered(provider.concurrency())
         .boxed()
-        .try_fold(None, |current_height, tip_height| async move {
-            match (current_height, tip_height) {
+        .try_fold(None, |current_height, tip_height| ready(match (current_height, tip_height) {
                 (None, tip_height) => Ok(Some(tip_height)),
                 (Some(current), tip_height) if tip_height > current => Ok(Some(tip_height)),
                 (current, _) => Ok(current),
-            }
-        }).await?
+            })).await?
         .ok_or(BlockchainError::ExpectedTips)?;
 
     let pruned_topoheight = provider.get_pruned_topoheight().await?.unwrap_or(0);
@@ -670,7 +793,7 @@ where
             })
             .buffer_unordered(provider.concurrency())
             .boxed()
-            .try_fold((&mut lowest_height, &mut stack), |(lowest_height, stack), helper| async move {
+            .try_fold((&mut lowest_height, &mut stack), |(lowest_height, stack), helper| ready({
                 match helper {
                     Helper::Height(height) => {
                         if lowest_height.is_none_or(|h| h > height) {
@@ -681,7 +804,7 @@ where
                 }
 
                 Ok((lowest_height, stack))
-            }).await?;
+            })).await?;
 
         processed.insert(current_hash);
     }
@@ -763,12 +886,12 @@ where
                 })
                 .buffer_unordered(provider.concurrency())
                 .boxed()
-                .try_fold(&mut stack, |stack, tip_hash| async move {
+                .try_fold(&mut stack, |stack, tip_hash| ready({
                     if let Some(tip_hash) = tip_hash {
                         stack.push_back(tip_hash);
                     }
                     Ok(stack)
-                }).await?;
+                })).await?;
         }
     }
 
@@ -1190,6 +1313,152 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(h0, 0);
+    }
+
+    // has_common_base_before_stable_height returns true when the tips' dominator is
+    // at or below the stable floor (i.e., span >= stable_limit), meaning the merge
+    // would drag the stable point too far back.
+    #[tokio::test]
+    async fn test_find_tips_dominator() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+
+        // Genesis at height 0
+        let genesis = h(0);
+        add_block(&mut storage, genesis.clone(), 0, 0, vec![], 1, 1, BlockVersion::V6, Some(0)).await;
+
+        // Two branches from genesis; each 10 blocks tall (heights 1-10)
+        // STABLE_LIMIT = 24 for V6
+        let mut a_prev = genesis.clone();
+        for i in 1..=10u8 {
+            let b = h(10 + i);
+            add_block(&mut storage, b.clone(), i as u64, i as u64, vec![a_prev.clone()], 1, 2, BlockVersion::V6, None).await;
+            a_prev = b;
+        }
+        let mut b_prev = genesis.clone();
+        for i in 1..=10u8 {
+            let b = h(100 + i);
+            add_block(&mut storage, b.clone(), i as u64, i as u64, vec![b_prev.clone()], 1, 2, BlockVersion::V6, None).await;
+            b_prev = b;
+        }
+
+        // Tips at height 10; merge block_height = 11; span = 10 < 24 -> ok
+        let tips: IndexSet<Hash> = vec![a_prev.clone(), b_prev.clone()].into_iter().collect();
+        assert!(has_common_base_at_or_above_stable_height(&storage, tips.iter(), 11, BlockVersion::V6).await.unwrap(),
+            "span 10 should be within the stable window");
+
+        // Extend branch A to height 23; merge block_height = 24; span = 23 < 24 -> still ok
+        for i in 11u8..=23 {
+            let b = h(10 + i);
+            add_block(&mut storage, b.clone(), i as u64, i as u64, vec![a_prev.clone()], 1, 2, BlockVersion::V6, None).await;
+            a_prev = b;
+        }
+        let tips23: IndexSet<Hash> = vec![a_prev.clone(), b_prev.clone()].into_iter().collect();
+        assert!(has_common_base_at_or_above_stable_height(&storage, tips23.iter(), 24, BlockVersion::V6).await.unwrap(),
+            "span 23 should still be within the stable window");
+
+        // Add one more to A: height 24; merge block_height = 25; span = 24 >= 24 -> too far
+        let a24 = h(34u8);
+        add_block(&mut storage, a24.clone(), 24, 24, vec![a_prev.clone()], 1, 2, BlockVersion::V6, None).await;
+        let tips24: IndexSet<Hash> = vec![a24.clone(), b_prev.clone()].into_iter().collect();
+        assert!(!has_common_base_at_or_above_stable_height(&storage, tips24.iter(), 25, BlockVersion::V6).await.unwrap(),
+            "span 24 should be rejected as too far");
+
+        // Fork from an ordered mid-chain block m1 (height 1): two 10-block branches (tips at height 11)
+        // Dominator = m1 (height 1); span from merge = 10 < 24 -> ok
+        let m1 = h(200u8);
+        let m2 = h(201u8);
+        add_block(&mut storage, m1.clone(), 1, 1, vec![genesis.clone()], 1, 2, BlockVersion::V6, Some(1)).await;
+        add_block(&mut storage, m2.clone(), 2, 2, vec![m1.clone()], 1, 3, BlockVersion::V6, Some(2)).await;
+
+        let mut c_prev = m1.clone();
+        for i in 1..=10u8 {
+            let b = h(210 + i);
+            add_block(&mut storage, b.clone(), (1 + i) as u64, (1 + i) as u64, vec![c_prev.clone()], 1, 2, BlockVersion::V6, None).await;
+            c_prev = b;
+        }
+        let mut d_prev = m1.clone();
+        for i in 1..=10u8 {
+            let b = h(220 + i);
+            add_block(&mut storage, b.clone(), (1 + i) as u64, (1 + i) as u64, vec![d_prev.clone()], 1, 2, BlockVersion::V6, None).await;
+            d_prev = b;
+        }
+
+        let tips_mid: IndexSet<Hash> = vec![c_prev.clone(), d_prev.clone()].into_iter().collect();
+        assert!(has_common_base_at_or_above_stable_height(&storage, tips_mid.iter(), 12, BlockVersion::V6).await.unwrap(),
+            "fork from m1 at height 1 with span 10 should be ok");
+
+        // Diamond: genesis → X(h=1) and genesis → Z(h=1), both parent of Y(h=2);
+        // tip_e(h=3) and tip_f(h=3) both through Y.
+        // Y IS the dominator (all paths from both tips go through Y).
+        // span from merge = 1 < 24 -> ok
+        let x = h(240);
+        let z = h(241);
+        let y = h(242);
+        let tip_e = h(243);
+        let tip_f = h(244);
+        add_block(&mut storage, x.clone(), 1, 1, vec![genesis.clone()], 1, 2, BlockVersion::V6, None).await;
+        add_block(&mut storage, z.clone(), 1, 1, vec![genesis.clone()], 1, 2, BlockVersion::V6, None).await;
+        add_block(&mut storage, y.clone(), 2, 2, vec![x.clone(), z.clone()], 1, 2, BlockVersion::V6, None).await;
+        add_block(&mut storage, tip_e.clone(), 3, 3, vec![y.clone()], 1, 2, BlockVersion::V6, None).await;
+        add_block(&mut storage, tip_f.clone(), 3, 3, vec![y.clone()], 1, 2, BlockVersion::V6, None).await;
+        let tips_diamond: IndexSet<Hash> = vec![tip_e.clone(), tip_f.clone()].into_iter().collect();
+        assert!(has_common_base_at_or_above_stable_height(&storage, tips_diamond.iter(), 4, BlockVersion::V6).await.unwrap(),
+            "diamond through Y at height 2, span = 1, should be ok");
+
+        // Bypass test: genesis -> P(h=1) -> Q(h=2, parents=[P,R]) -> tip1(h=3)
+        //              genesis -> R(h=1) -> tip2(h=3)
+        // R is a common ancestor of both tips, but tip1 can bypass R via Q->P->genesis.
+        // So the true dominator is genesis (below the floor) -> span = 3 < 24 -> ok
+        let p = h(250);
+        let r = h(251);
+        let q = h(252);
+        let tip1 = h(253);
+        let tip2 = h(254);
+        add_block(&mut storage, p.clone(), 1, 1, vec![genesis.clone()], 1, 2, BlockVersion::V6, None).await;
+        add_block(&mut storage, r.clone(), 1, 1, vec![genesis.clone()], 1, 2, BlockVersion::V6, None).await;
+        add_block(&mut storage, q.clone(), 2, 2, vec![p.clone(), r.clone()], 1, 2, BlockVersion::V6, None).await;
+        add_block(&mut storage, tip1.clone(), 3, 3, vec![q.clone()], 1, 2, BlockVersion::V6, None).await;
+        add_block(&mut storage, tip2.clone(), 3, 3, vec![r.clone()], 1, 2, BlockVersion::V6, None).await;
+        let tips_bypass: IndexSet<Hash> = vec![tip1.clone(), tip2.clone()].into_iter().collect();
+        assert!(has_common_base_at_or_above_stable_height(&storage, tips_bypass.iter(), 4, BlockVersion::V6).await.unwrap(),
+            "bypass case: true dominator is genesis, span = 3, should be ok");
+    }
+
+    // Two independent branches that only meet at genesis.
+    // When the span (highest_tip_height - genesis_height) reaches the stable limit,
+    // the merge must be rejected.
+    #[tokio::test]
+    async fn test_common_base_only_at_genesis_below_stable_height() {
+        // Use a fresh storage with its own genesis to avoid hash collisions.
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+        let genesis = Hash::new([255u8; 32]);
+        add_block(&mut storage, genesis.clone(), 0, 0, vec![], 1, 1, BlockVersion::V6, Some(0)).await;
+
+        // STABLE_LIMIT = 24 for V6.
+        // Build branch A: 25 blocks (heights 1-25), IDs 0xAA01..0xAA19
+        let mut a_prev = genesis.clone();
+        for i in 1u64..=25 {
+            let mut id = [0xAAu8; 32];
+            id[31] = i as u8;
+            let b = Hash::new(id);
+            add_block(&mut storage, b.clone(), i, i, vec![a_prev.clone()], 1, 2, BlockVersion::V6, None).await;
+            a_prev = b;
+        }
+        // Build branch B: 25 blocks (heights 1-25), IDs 0xBB01..0xBB19
+        let mut b_prev = genesis.clone();
+        for i in 1u64..=25 {
+            let mut id = [0xBBu8; 32];
+            id[31] = i as u8;
+            let b = Hash::new(id);
+            add_block(&mut storage, b.clone(), i, i, vec![b_prev.clone()], 1, 2, BlockVersion::V6, None).await;
+            b_prev = b;
+        }
+
+        // Both tips at height 25; merge block_height = 26.
+        // Dominator = genesis at height 0; span = 25 >= 24 → false (merge too deep).
+        let tips: IndexSet<Hash> = vec![a_prev.clone(), b_prev.clone()].into_iter().collect();
+        assert!(!has_common_base_at_or_above_stable_height(&storage, tips.iter(), 26, BlockVersion::V6).await.unwrap(),
+            "dominator at genesis (height 0) with span 25 must be rejected");
     }
 
     #[tokio::test]
@@ -1677,5 +1946,108 @@ mod tests {
 
         assert!(is_tx_executed_for_topoheight(&storage, &tx_hash, 5).await.unwrap());
         assert!(!is_tx_executed_for_topoheight(&storage, &tx_hash, 4).await.unwrap());
+    }
+
+    // Test that a deep parallel chain (same heights, all unordered) is rejected
+    // even though heights are close. This is the key property:
+    // is_near_enough_from_main_chain checks divergence from the ORDERED chain,
+    // not just height difference.
+    #[tokio::test]
+    async fn test_parallel_chain_rejected_by_ordered_distance() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+
+        // Genesis - ordered at topo 0
+        let genesis = h(0);
+        add_block(&mut storage, genesis.clone(), 0, 0, vec![], 1, 1, BlockVersion::V6, Some(0)).await;
+
+        // Main chain: 30 ordered blocks at heights 1..=30
+        let mut main_prev = genesis.clone();
+        for i in 1..=30u8 {
+            let block = h(i);
+            add_block(&mut storage, block.clone(), i as u64, i as u64, vec![main_prev.clone()], 1, (i + 1) as u64, BlockVersion::V6, Some(i as u64)).await;
+            main_prev = block;
+        }
+
+        // Parallel chain from genesis: same heights 1..=30 but ALL unordered
+        let mut par_prev = genesis.clone();
+        for i in 0..30u8 {
+            let block = h(100 + i);
+            add_block(&mut storage, block.clone(), (i + 1) as u64, (i + 1) as u64, vec![par_prev.clone()], 1, (i + 2) as u64, BlockVersion::V6, None).await;
+            par_prev = block;
+        }
+        // par_prev = h(129) at height 30, nearest ordered ancestor = genesis at height 0
+
+        // Height-only would give: 30 - 30 = 0 (would pass)
+        // Ordered check gives: 30 - 0 = 30 >= 24 → rejected
+        assert!(
+            !is_near_enough_from_main_chain(&storage, &par_prev, 30, BlockVersion::V6).await.unwrap(),
+            "deep parallel chain at same height must be rejected"
+        );
+
+        // A short parallel chain (5 blocks) from genesis should still be accepted
+        let mut short_prev = genesis.clone();
+        for i in 0..5u8 {
+            let block = h(200 + i);
+            add_block(&mut storage, block.clone(), (i + 1) as u64, (i + 1) as u64, vec![short_prev.clone()], 1, (i + 2) as u64, BlockVersion::V6, None).await;
+            short_prev = block;
+        }
+        // Nearest ordered ancestor = genesis at height 0
+        // chain_height 20: 20 - 0 = 20 < 24 → accepted
+        assert!(
+            is_near_enough_from_main_chain(&storage, &short_prev, 20, BlockVersion::V6).await.unwrap(),
+            "short parallel chain should be accepted when within stable limit"
+        );
+        // chain_height 24: 24 - 0 = 24 >= 24 → rejected
+        assert!(
+            !is_near_enough_from_main_chain(&storage, &short_prev, 24, BlockVersion::V6).await.unwrap(),
+            "short parallel chain should be rejected once at stable limit boundary"
+        );
+    }
+
+    // Test that a parallel chain branching from a mid-chain ordered block
+    // is accepted until the fork point becomes too deep relative to chain_height.
+    #[tokio::test]
+    async fn test_parallel_chain_fork_from_midchain() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+
+        let genesis = h(0);
+        add_block(&mut storage, genesis.clone(), 0, 0, vec![], 1, 1, BlockVersion::V6, Some(0)).await;
+
+        // Main chain: 40 ordered blocks
+        let mut main_prev = genesis.clone();
+        for i in 1..=40u8 {
+            let block = h(i);
+            add_block(&mut storage, block.clone(), i as u64, i as u64, vec![main_prev.clone()], 1, (i + 1) as u64, BlockVersion::V6, Some(i as u64)).await;
+            main_prev = block;
+        }
+
+        // Fork point: h(15) at height 15 (ordered at topo 15)
+        // Parallel chain: 20 unordered blocks from h(15), heights 16..=35
+        let fork_point = h(15);
+        let mut par_prev = fork_point.clone();
+        for i in 0..20u8 {
+            let block = h(100 + i);
+            add_block(&mut storage, block.clone(), (16 + i) as u64, (16 + i) as u64, vec![par_prev.clone()], 1, (i + 2) as u64, BlockVersion::V6, None).await;
+            par_prev = block;
+        }
+        // par_prev at height 35, nearest ordered ancestor = h(15) at height 15
+
+        // chain_height 38: 38 - 15 = 23 < 24 → accepted (just within limit)
+        assert!(
+            is_near_enough_from_main_chain(&storage, &par_prev, 38, BlockVersion::V6).await.unwrap(),
+            "fork from height 15 should be accepted at chain_height 38 (distance 23)"
+        );
+
+        // chain_height 39: 39 - 15 = 24 >= 24 → rejected (at the boundary)
+        assert!(
+            !is_near_enough_from_main_chain(&storage, &par_prev, 39, BlockVersion::V6).await.unwrap(),
+            "fork from height 15 should be rejected at chain_height 39 (distance 24)"
+        );
+
+        // chain_height 50: 50 - 15 = 35 >= 24 → rejected
+        assert!(
+            !is_near_enough_from_main_chain(&storage, &par_prev, 50, BlockVersion::V6).await.unwrap(),
+            "fork from height 15 should be rejected at chain_height 50"
+        );
     }
 }
