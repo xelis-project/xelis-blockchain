@@ -427,6 +427,7 @@ impl<S: Storage> P2pServer<S> {
                     .map(|topoheight| async move {
                         let hash = storage.get_hash_at_topo_height(topoheight).await?;
                         let topoheight_metadata = storage.get_metadata_at_topoheight(topoheight).await?;
+                        let mergeset = storage.get_mergeset(&hash).await?;
                         let difficulty = storage.get_difficulty_for_block_hash(&hash).await?;
                         let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&hash).await?;
                         let p = storage.get_estimated_covariance_for_block_hash(&hash).await?;
@@ -443,7 +444,7 @@ impl<S: Storage> P2pServer<S> {
                             }
                         }
 
-                        Ok::<_, BlockchainError>(BlockMetadata { hash, topoheight_metadata, difficulty, cumulative_difficulty, p, size_ema, executed_transactions })
+                        Ok::<_, BlockchainError>(BlockMetadata { hash, topoheight_metadata, mergeset, difficulty, cumulative_difficulty, p, size_ema, executed_transactions })
                     })
                     .buffered(self.stream_concurrency)
                     .try_collect()
@@ -750,7 +751,7 @@ impl<S: Storage> P2pServer<S> {
                             }
 
                             // save the block with its transactions, difficulty
-                            storage.save_block(Arc::new(header), &txs, metadata.difficulty, metadata.cumulative_difficulty, metadata.p, metadata.size_ema, Immutable::Owned(hash)).await?;
+                            storage.save_block(Arc::new(header), &txs, metadata.mergeset, metadata.difficulty, metadata.cumulative_difficulty, metadata.p, metadata.size_ema, Immutable::Owned(hash)).await?;
 
                             Ok(())
                         }).await?;

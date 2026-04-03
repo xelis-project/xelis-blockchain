@@ -86,6 +86,7 @@ pub async fn test_block_operations<S: Storage>(mut storage: S, data: &TestData) 
     storage.save_block(
         block_arc,
         &[],
+        Default::default(),
         Difficulty::zero(),
         0u64.into(),
         VarUint::from(0u32),
@@ -152,6 +153,7 @@ pub async fn test_multiple_blocks<S: Storage>(mut storage: S, data: &TestData) -
         storage.save_block(
             block_arc,
             &[],
+            Default::default(),
             Difficulty::zero(),
             0u64.into(),
             VarUint::from(0u32),
@@ -599,6 +601,7 @@ pub async fn test_cleanup_above_topoheight_with_mixed_data<S: Storage>(mut stora
         storage.save_block(
             block_arc,
             &[],
+            Default::default(),
             Difficulty::zero(),
             0u64.into(),
             VarUint::from(0u32),
@@ -773,6 +776,7 @@ pub async fn test_cleanup_all_data_types_at_topoheight<S: Storage>(mut storage: 
     storage.save_block(
         block_arc,
         &[],
+        Default::default(),
         Difficulty::zero(),
         0u64.into(),
         VarUint::from(0u32),

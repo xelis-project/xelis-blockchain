@@ -1,4 +1,10 @@
-use xelis_common::{difficulty::{CumulativeDifficulty, Difficulty}, serializer::*, varuint::VarUint};
+use xelis_common::{
+    difficulty::{CumulativeDifficulty, Difficulty},
+    serializer::*,
+    varuint::VarUint
+};
+
+use crate::core::storage::MergeSet;
 
 // All needed difficulty for a block
 pub struct BlockMetadata {
@@ -6,6 +12,7 @@ pub struct BlockMetadata {
     pub cumulative_difficulty: CumulativeDifficulty,
     pub covariance: VarUint,
     pub size_ema: u32,
+    pub mergeset: MergeSet,
 }
 
 impl Serializer for BlockMetadata {
@@ -14,12 +21,14 @@ impl Serializer for BlockMetadata {
         let cumulative_difficulty = CumulativeDifficulty::read(reader)?;
         let covariance = VarUint::read(reader)?;
         let size_ema = u32::read(reader)?;
+        let mergeset = MergeSet::read(reader)?;
 
         Ok(Self {
             difficulty,
             cumulative_difficulty,
             covariance,
             size_ema,
+            mergeset,
         })
     }
 
@@ -28,6 +37,7 @@ impl Serializer for BlockMetadata {
         self.cumulative_difficulty.write(writer);
         self.covariance.write(writer);
         self.size_ema.write(writer);
+        self.mergeset.write(writer);
     }
 
     fn size(&self) -> usize {
@@ -35,5 +45,6 @@ impl Serializer for BlockMetadata {
         + self.cumulative_difficulty.size()
         + self.covariance.size()
         + self.size_ema.size()
+        + self.mergeset.size()
     }
 }

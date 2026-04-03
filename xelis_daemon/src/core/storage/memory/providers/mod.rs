@@ -22,3 +22,4 @@ mod versioned;
 mod cache;
 mod state;
 mod concurrency;
+mod mergeset;

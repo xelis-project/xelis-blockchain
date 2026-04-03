@@ -30,6 +30,7 @@ use crate::core::{
         ClientProtocolProvider,
         DagOrderProvider,
         DifficultyProvider,
+        MergeSet,
         Storage,
         TransactionProvider,
         VersionedContractBalance,
@@ -50,6 +51,7 @@ pub(crate) struct AccountEntry {
 pub(crate) struct BlockEntry {
     pub header: Arc<BlockHeader>,
     pub metadata: BlockMetadata,
+    pub mergeset: MergeSet,
 }
 
 pub(crate) struct TransactionEntry {

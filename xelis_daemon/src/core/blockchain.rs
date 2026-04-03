@@ -999,8 +999,8 @@ impl<S: Storage> Blockchain<S> {
             let (base, _) = blockdag::find_common_base(provider, tips.clone(), version).await?;
             let base_topo_height = provider.get_topo_height_for_hash(&base).await?;
 
-            let order = blockdag::generate_full_order(provider, tips.clone().into_iter().cloned(), &base, base_topo_height).await?;
-            debug_assert_eq!(order.front(), Some(&base));
+            let order = blockdag::generate_full_order::<_, _, IndexSet<Hash>>(provider, tips.clone().into_iter().cloned(), &base, base_topo_height).await?;
+            debug_assert_eq!(order.first(), Some(&base));
 
             let order_len = order.len();
             let last_topoheight = base_topo_height + order_len as u64;
@@ -1011,35 +1011,32 @@ impl<S: Storage> Blockchain<S> {
                 let diff = DAA_WINDOW - order_len as u64;
                 let first_topoheight = base_topo_height.saturating_sub(diff);
                 let first = Cow::Owned(provider.get_hash_at_topo_height(first_topoheight).await?);
-                let last = order.back().ok_or(BlockchainError::NotEnoughBlocks)?;
+                let last = order.last().ok_or(BlockchainError::NotEnoughBlocks)?;
                 (first, last)
             } else {
                 // Take last 50 blocks: from index (len - 50) to (len - 1)
                 // TODO: in the full order generation, pass a param to directly generate the last 50 blocks to avoid generating the full order
                 let start_idx = order_len - DAA_WINDOW as usize;
-                let first = if start_idx <= order_len / 2 {
-                    order.iter().nth(start_idx)
-                } else {
-                    order.iter().rev().nth(order_len - 1 - start_idx)
-                }
+                let first = order.get_index(start_idx)
                     .map(Cow::Borrowed)
                     .ok_or(BlockchainError::NotEnoughBlocks)?;
-                let last = order.back().ok_or(BlockchainError::NotEnoughBlocks)?;
+                let last = order.last().ok_or(BlockchainError::NotEnoughBlocks)?;
                 (first, last)
             };
 
-            let now_timestamp = provider.get_timestamp_for_block_hash(&first).await?;
-            let count_timestamp = provider.get_timestamp_for_block_hash(last).await?;
+            let first_timestamp = provider.get_timestamp_for_block_hash(&first).await?;
+            let last_timestamp = provider.get_timestamp_for_block_hash(last).await?;
 
-            let time_span = count_timestamp.saturating_sub(now_timestamp);
+            let time_span = last_timestamp.saturating_sub(first_timestamp);
             let mut count = DAA_WINDOW;
             if last_topoheight < DAA_WINDOW {
                 count = last_topoheight;
             }
 
-            let solve_time = time_span / count;
+            // Divide by (count - 1) because count blocks span count-1 intervals.
+            let solve_time = time_span / (count.saturating_sub(1)).max(1);
 
-            trace!("Calculated solve time is {} between now {} and past {} (count: {})", solve_time, last, first, count);
+            trace!("Calculated solve time is {} between first {} and last {} (intervals: {})", solve_time, first, last, (count - 1).max(1));
 
             solve_time
         } else {
@@ -1964,22 +1961,12 @@ impl<S: Storage> Blockchain<S> {
         };
 
         // find the common base block from tips
-        // Compute cumulative difficulty for block
         // We retrieve it to pass it as a param below for p2p broadcast
-        let (cumulative_difficulty, base_height, base_topoheight, nearest_base_topoheight) = if tips_count == 0 {
-            (GENESIS_BLOCK_DIFFICULTY.into(), 0, 0, 0)
+        let (base, base_height, base_topoheight, nearest_base_topoheight) = if tips_count == 0 {
+            (None, 0, 0, 0)
         } else {
             debug!("Computing cumulative difficulty for block {}", block_hash);
             let (base, base_height) = blockdag::find_common_base(&*storage, block.get_tips(), version).await?;
-            debug!("Common base found: {}, height: {}, calculating cumulative difficulty", base, base_height);
-            let cumulative_difficulty = blockdag::find_tip_work_score(
-                &*storage,
-                &block_hash,
-                block.get_tips().iter(),
-                Some(difficulty),
-                &base,
-                base_height
-            ).await?.1;
 
             let (base_topoheight, nearest_base_topoheight) = if is_v6_enabled {
                 let nearest_base_topoheight = blockdag::find_nearest_topoheight(&*storage, block.get_tips().iter().cloned()).await?;
@@ -1989,7 +1976,7 @@ impl<S: Storage> Blockchain<S> {
                 (stable_topoheight, current_topoheight)
             };
 
-            (cumulative_difficulty, base_height, base_topoheight, nearest_base_topoheight)
+            (Some(base), base_height, base_topoheight, nearest_base_topoheight)
         };
 
         debug!("base height: {}, base topoheight: {}, nearest base topoheight: {}", base_height, base_topoheight, nearest_base_topoheight);
@@ -2042,30 +2029,32 @@ impl<S: Storage> Blockchain<S> {
             };
 
             debug!("Grouping all TXs from parents by source for block {}", block_hash);
-            if is_v6_enabled && tips_count > 0 {
-                // Starting V6, we retrieve the partial DAG order
-                let nearest_hash = storage.get_hash_at_topo_height(nearest_base_topoheight).await?;
-                let part_order = blockdag::generate_full_order(&*storage, block.get_tips().iter().cloned(), &nearest_hash, nearest_base_topoheight).await?;
-                debug_assert_eq!(part_order.front(), Some(&nearest_hash), "The first block in the partial order should be the nearest base block");
-                // We skip the first block because it's the nearest base block, and we only want to group the TXs from the blocks between the nearest base block and the tips
-                // and also because the nearest base block is already included in the block state for verification, so we don't need to group its TXs again
-                for block_hash in part_order.iter().skip(1) {
-                    let header = storage.get_block_header_by_hash(block_hash).await?;
-                    for hash in header.get_txs_hashes() {
-                        if blockdag::is_tx_executed_for_topoheight(&*storage, hash, nearest_base_topoheight).await? {
-                            debug!("TX {} from parent is executed in DAG, skipping it", hash);
-                            continue;
+            if is_v6_enabled {
+                if tips_count > 0 {
+                    // Starting V6, we retrieve the partial DAG order
+                    let nearest_hash = storage.get_hash_at_topo_height(nearest_base_topoheight).await?;
+                    let part_order = blockdag::generate_full_order::<_, _, LinkedHashSet<Hash>>(&*storage, block.get_tips().iter().cloned(), &nearest_hash, nearest_base_topoheight).await?;
+                    debug_assert_eq!(part_order.front(), Some(&nearest_hash), "The first block in the partial order should be the nearest base block");
+                    // We skip the first block because it's the nearest base block, and we only want to group the TXs from the blocks between the nearest base block and the tips
+                    // and also because the nearest base block is already included in the block state for verification, so we don't need to group its TXs again
+                    for block_hash in part_order.iter().skip(1) {
+                        let header = storage.get_block_header_by_hash(block_hash).await?;
+                        for hash in header.get_txs_hashes() {
+                            if blockdag::is_tx_executed_for_topoheight(&*storage, hash, nearest_base_topoheight).await? {
+                                debug!("TX {} from parent is executed in DAG, skipping it", hash);
+                                continue;
+                            }
+    
+                            let tx = storage.get_transaction(hash).await?
+                                .into_arc();
+                            
+                            let source = tx.get_source();
+                            info!("Adding parent TX {} from source {} to grouped parents for block {}", hash, source.as_address(self.network.is_mainnet()), block_hash);
+    
+                            txs_grouped.entry(Cow::Owned(source.clone()))
+                                .or_insert_with(IndexMap::new)
+                                .insert(Cow::Owned(hash.clone()), tx);
                         }
-
-                        let tx = storage.get_transaction(hash).await?
-                            .into_arc();
-                        
-                        let source = tx.get_source();
-                        info!("Adding parent TX {} from source {} to grouped parents for block {}", hash, source.as_address(self.network.is_mainnet()), block_hash);
-
-                        txs_grouped.entry(Cow::Owned(source.clone()))
-                            .or_insert_with(IndexMap::new)
-                            .insert(Cow::Owned(hash.clone()), tx);
                     }
                 }
             } else if is_v3_enabled {
@@ -2214,6 +2203,25 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
+        // Compute cumulative difficulty for block
+        let (mergeset, _, blue_work) = blockdag::compute_block_mergesets(&*storage, &block_hash, block.get_tips(), difficulty).await?;
+        let cumulative_difficulty = if version >= BlockVersion::V6 {
+            blue_work
+        } else if let Some(base) = base {
+            let (_, cumulative_difficulty) = blockdag::compute_tip_work_score(
+                &*storage,
+                &block_hash,
+                block.get_tips().iter(),
+                Some(difficulty),
+                &base,
+                base_height
+            ).await?;
+
+            cumulative_difficulty
+        } else {
+            GENESIS_BLOCK_DIFFICULTY.into()
+        };
+
         debug!("Cumulative difficulty for block {}: {}", block_hash, cumulative_difficulty);
 
         let (block, txs) = block.split();
@@ -2266,7 +2274,17 @@ impl<S: Storage> Blockchain<S> {
         {
             debug!("Saving block {} on disk", block_hash);
             let start = Instant::now();
-            storage.save_block(block.clone(), &txs, difficulty, cumulative_difficulty, p, new_block_size_ema, Immutable::Arc(block_hash.clone())).await?;
+            storage.save_block(
+                block.clone(),
+                &txs,
+                mergeset,
+                difficulty,
+                cumulative_difficulty,
+                p,
+                new_block_size_ema,
+                Immutable::Arc(block_hash.clone())
+            ).await?;
+
             storage.add_block_execution_to_order(&block_hash).await?;
 
             histogram!("xelis_block_store_ms").record(start.elapsed().as_millis() as f64);
@@ -2297,7 +2315,7 @@ impl<S: Storage> Blockchain<S> {
         debug!("New base hash: {}, height: {}, topo height: {}", base_hash, base_height, base_topo_height);
 
         // generate a full order until base_topo_height based on the best tip across all chain tips available
-        let mut full_order = blockdag::generate_full_order(&*storage, iter::once(best_tip.clone()), &base_hash, base_topo_height).await?;
+        let mut full_order = blockdag::generate_full_order::<_, _, LinkedHashSet<Hash>>(&*storage, iter::once(best_tip.clone()), &base_hash, base_topo_height).await?;
         debug_assert_eq!(full_order.front(), Some(&base_hash));
 
         debug!("Generated full order size: {}, with base ({}) topo height: {}", full_order.len(), base_hash, base_topo_height);

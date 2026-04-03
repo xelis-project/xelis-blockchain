@@ -20,6 +20,7 @@ use crate::core::{
         DifficultyProvider,
         TransactionProvider,
         SledStorage,
+        MergeSet,
     }
 };
 
@@ -72,7 +73,17 @@ impl BlockProvider for SledStorage {
         self.load_from_disk(&self.block_size_ema, hash.as_bytes(), DiskContext::BlockSizeEma)
     }
 
-    async fn save_block(&mut self, block: Arc<BlockHeader>, txs: &[Arc<Transaction>], difficulty: Difficulty, cumulative_difficulty: CumulativeDifficulty, p: VarUint, size_ema: u32, hash: Immutable<Hash>) -> Result<(), BlockchainError> {
+    async fn save_block(
+        &mut self,
+        block: Arc<BlockHeader>,
+        txs: &[Arc<Transaction>],
+        mergeset: MergeSet,
+        difficulty: Difficulty,
+        cumulative_difficulty: CumulativeDifficulty,
+        p: VarUint,
+        size_ema: u32,
+        hash: Immutable<Hash>
+    ) -> Result<(), BlockchainError> {
         debug!("Storing new {} with hash: {}, difficulty: {}, snapshot mode: {}", block, hash, difficulty, self.snapshot.is_some());
 
         // Store transactions
@@ -107,6 +118,9 @@ impl BlockProvider for SledStorage {
 
         // Store EMA
         Self::insert_into_disk(self.snapshot.as_mut(), &self.block_size_ema, hash.as_bytes(), size_ema.to_bytes())?;
+
+        // Store mergeset
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.mergeset, hash.as_bytes(), mergeset.to_bytes())?;
 
         self.add_block_hash_at_height(&hash, block.get_height()).await?;
 

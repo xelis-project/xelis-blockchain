@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 use serde::{Serialize, Deserialize};
-use log::{info, error};
+use log::{debug, error};
 use rand::{rngs::OsRng, Rng};
 use xelis_common::{
     tokio::time::interval,
@@ -80,7 +80,7 @@ impl Simulator {
     // It generates random miner keys and mine blocks with them
     pub async fn start<S: Storage>(&self, blockchain: Arc<Blockchain<S>>) {
         let millis_interval = match self {
-            Self::Stress => 300,
+            Self::Stress => 5,
             _ => 5000
         };
 
@@ -95,7 +95,6 @@ impl Simulator {
 
         loop {
             interval.tick().await;
-            info!("Adding new simulated block...");
             // Number of blocks to generate
             let blocks_count = match self {
                 Self::BlockDag => rng.gen_range(1..=TIPS_LIMIT),
@@ -127,7 +126,7 @@ impl Simulator {
     }
 
     async fn generate_blocks(&self, max_blocks: usize, rng: &mut OsRng, keys: &Vec<KeyPair>, blockchain: &Arc<Blockchain<impl Storage>>) -> Vec<Block> {
-        info!("Adding simulated blocks");
+        debug!("Adding simulated blocks");
         let n = rng.gen_range(1..=max_blocks);
         let mut blocks = Vec::with_capacity(n);
         for _ in 0..n {

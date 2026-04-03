@@ -1,6 +1,14 @@
+mod mergeset;
+mod ordered;
+
+#[cfg(test)]
+mod mergeset_tests;
+
+pub use mergeset::*;
+pub use ordered::*;
+
 use std::{cmp::Ordering, collections::{HashMap, HashSet, VecDeque}, sync::Arc};
 
-use linked_hash_table::LinkedHashSet;
 use indexmap::{IndexMap, IndexSet};
 use itertools::Either;
 use log::{debug, error, trace};
@@ -899,7 +907,7 @@ where
 }
 
 // find the sum of work done
-pub async fn find_tip_work_score<'a, P, I>(
+pub async fn compute_tip_work_score<'a, P, I>(
     provider: &P,
     block_hash: &Hash,
     block_tips: I,
@@ -972,23 +980,24 @@ where
 }
 
 // this function generate a DAG paritial order into a full order using recursive calls.
-// hash represents the best tip (biggest cumulative difficulty)
+// hash represents the best tip (biggest cumulative difficulty / blue work)
 // base represents the block hash of a block already ordered and in stable height
 // the full order is re generated each time a new block is added based on new TIPS
 // first hash in order is the base hash
 // base_height is only used for the cache key
-pub async fn generate_full_order<P, I>(provider: &P, hashes: I, base: &Hash, base_topo_height: TopoHeight) -> Result<LinkedHashSet<Hash>, BlockchainError>
+pub async fn generate_full_order<P, I, S>(provider: &P, hashes: I, base: &Hash, base_topo_height: TopoHeight) -> Result<S, BlockchainError>
 where
     P: DifficultyProvider + DagOrderProvider + ConcurrencyProvider,
-    I: Iterator<Item = Hash> + ExactSizeIterator
+    I: Iterator<Item = Hash> + ExactSizeIterator,
+    S: OrderedSet<Hash> + Default
 {
-    trace!("generate full order with base {}", base);
+    trace!("generate full order with base {} and {} tips", base, hashes.len());
     if hashes.len() == 0 {
         return Err(BlockchainError::ExpectedTips)
     }
 
     // Full order that is generated
-    let mut full_order = LinkedHashSet::new();
+    let mut full_order = S::default();
     // Current stack of hashes that need to be processed
     let mut stack = VecDeque::new();
     stack.extend(hashes);
@@ -1025,7 +1034,7 @@ where
                 })
             })
             .buffered(provider.concurrency())
-            .filter_map(|x| async move { x.transpose() })
+            .filter_map(|x| ready(x.transpose()))
             .boxed()
             .try_collect::<Vec<_>>().await?;
 
@@ -1054,6 +1063,7 @@ mod tests {
     use std::sync::Arc;
 
     use indexmap::IndexSet;
+    use linked_hash_table::LinkedHashSet;
     use xelis_common::{
         account::CiphertextCache,
         block::{BlockHeader, BlockVersion, EXTRA_NONCE_SIZE},
@@ -1116,6 +1126,7 @@ mod tests {
             .save_block(
                 Arc::new(header),
                 &[],
+                Default::default(),
                 Difficulty::from_u64(difficulty),
                 cumulative_difficulty.into(),
                 VarUint::from(0u64),
@@ -1804,7 +1815,7 @@ mod tests {
         assert!(map.contains_key(&a));
         assert!(!map.contains_key(&g));
 
-        let (set, score) = find_tip_work_score(
+        let (set, score) = compute_tip_work_score(
             &storage,
             &c,
             vec![&b].into_iter(),
@@ -1831,7 +1842,7 @@ mod tests {
         add_block(&mut storage, a.clone(), 1, 1, vec![g.clone()], 95, 195, BlockVersion::V6, Some(1)).await;
         add_block(&mut storage, b.clone(), 2, 2, vec![a.clone()], 80, 275, BlockVersion::V6, None).await;
 
-        let full_order = generate_full_order(&storage, vec![b.clone()].into_iter(), &a, 1)
+        let full_order = generate_full_order::<_, _, LinkedHashSet<Hash>>(&storage, vec![b.clone()].into_iter(), &a, 1)
             .await
             .unwrap();
         let ordered_hashes: Vec<Hash> = full_order.iter().cloned().collect();
@@ -1840,7 +1851,7 @@ mod tests {
         assert!(validate_tips(&storage, &b, &a).await.unwrap());
         assert!(!validate_tips(&storage, &a, &b).await.unwrap());
 
-        assert!(generate_full_order(&storage, Vec::<Hash>::new().into_iter(), &a, 1)
+        assert!(generate_full_order::<_, _, LinkedHashSet<Hash>>(&storage, Vec::<Hash>::new().into_iter(), &a, 1)
             .await
             .is_err());
     }
