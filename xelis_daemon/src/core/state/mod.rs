@@ -66,9 +66,9 @@ pub async fn verify_fee<P: AccountProvider>(
 // Check if a miner is in the unstable height of a reference block
 async fn is_miner_until_base_height<S: Storage>(storage: &S, miner: &PublicKey, stable_height: u64, reference: &Hash) -> Result<bool, BlockchainError> {
     let mut stack = Vec::new();
-    stack.push((reference.clone(), 0));
+    stack.push(reference.clone());
 
-    while let Some((current_hash, depth)) = stack.pop() {
+    while let Some(current_hash) = stack.pop() {
         let block_height = storage.get_height_for_block_hash(&current_hash).await?;
         if block_height <= stable_height {
             continue;
@@ -84,7 +84,7 @@ async fn is_miner_until_base_height<S: Storage>(storage: &S, miner: &PublicKey, 
 
         // Add parents to stack
         for parent in block.get_tips() {
-            stack.push((parent.clone(), depth + 1));
+            stack.push(parent.clone());
         }
     }
 
