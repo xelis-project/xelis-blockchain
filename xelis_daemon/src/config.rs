@@ -252,7 +252,7 @@ const HARD_FORKS: [HardFork; 6] = [
 ];
 
 // Testnet / Stagenet / Devnet hard forks
-const OTHERS_NETWORK_HARD_FORKS: [HardFork; 6] = [
+const OTHERS_NETWORK_HARD_FORKS: [HardFork; 7] = [
     HardFork {
         height: 0,
         version: BlockVersion::V0,
@@ -286,6 +286,12 @@ const OTHERS_NETWORK_HARD_FORKS: [HardFork; 6] = [
     HardFork {
         height: 25,
         version: BlockVersion::V5,
+        changelog: "TX Base fee improvements",
+        version_requirement: Some(">=1.21.0")
+    },
+    HardFork {
+        height: 30,
+        version: BlockVersion::V6,
         changelog: "TX Base fee improvements",
         version_requirement: Some(">=1.21.0")
     }
