@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use anyhow::Context;
+use curve25519_dalek::Scalar;
 
 use crate::{
     account::{CiphertextCache, Nonce},
@@ -12,6 +13,7 @@ use crate::{
         Hash,
         KeyPair,
         PublicKey,
+        proofs::G
     },
     transaction::{
         builder::{
@@ -101,6 +103,7 @@ impl TrackedAccount {
             .balances
             .get(&XELIS_ASSET)
             .context("tracked account is missing XELIS balance")?;
+
         let ciphertext = tracked
             .ciphertext
             .clone()
@@ -108,14 +111,14 @@ impl TrackedAccount {
             .context("failed to decode tracked ciphertext")?;
 
         let point = self.keypair.decrypt_to_point(&ciphertext);
-        let expected_point = self
-            .keypair
-            .decrypt_to_point(&self.keypair.get_public_key().encrypt(expected));
+        let expected_point = Scalar::from(expected) * &(*G);
+
         anyhow::ensure!(
             point == expected_point,
             "balance mismatch: expected {}, but got different decrypted point",
             expected
         );
+
         Ok(())
     }
 }
