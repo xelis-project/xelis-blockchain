@@ -2032,6 +2032,10 @@ impl<S: Storage> Blockchain<S> {
             if is_v6_enabled {
                 if tips_count > 0 {
                     // Starting V6, we retrieve the partial DAG order
+                    // This is required to group the TXs from the nearest base block to the tips,
+                    // and skip the TXs from blocks that are below the nearest base block because they are already executed and finalized in DAG
+                    // ChainState::new will be initialized with the nearest base block, so we group TXs between nearest base block & this block
+                    // to make sure its verification will stay deterministic.
                     let nearest_hash = storage.get_hash_at_topo_height(nearest_base_topoheight).await?;
                     let part_order = blockdag::generate_full_order::<_, _, LinkedHashSet<Hash>>(&*storage, block.get_tips().iter().cloned(), &nearest_hash, nearest_base_topoheight).await?;
                     debug_assert_eq!(part_order.front(), Some(&nearest_hash), "The first block in the partial order should be the nearest base block");
@@ -3523,6 +3527,16 @@ impl<S: Storage> Blockchain<S> {
         let storage = self.storage.read().await;
         self.predicate_required_base_fee_internal(&*storage).await
     }
+}
+
+
+// Get block rewards splitted between miner & fee based on height and reward
+pub fn get_block_rewards(height: u64, reward: u64) -> (u64, u64) {
+    let dev_fee_percentage = get_block_dev_fee(height);
+    let dev_reward = reward * dev_fee_percentage / 100;
+    let miner_reward = reward - dev_reward;
+
+    (dev_reward, miner_reward)
 }
 
 // Calculate the required dynamic base fee based on the block size EMA

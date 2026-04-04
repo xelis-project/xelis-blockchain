@@ -11,6 +11,7 @@ use crate::{
             get_block_dev_fee,
             get_block_reward,
             calculate_required_base_fee,
+            get_block_rewards,
             Blockchain,
             BroadcastOption,
             PreVerifyBlock,
@@ -200,14 +201,6 @@ where
     })
 }
 
-// Get block rewards based on height and reward
-fn get_block_rewards(height: u64, reward: u64) -> (u64, u64) {
-    let dev_fee_percentage = get_block_dev_fee(height);
-    let dev_reward = reward * dev_fee_percentage / 100;
-    let miner_reward = reward - dev_reward;
-
-    (dev_reward, miner_reward)
-}
 
 // Get a block response based on data in chain and from parameters
 pub async fn get_block_response_for_hash<S: Storage>(blockchain: &Blockchain<S>, storage: &S, hash: &Hash, include_txs: bool) -> Result<Value, InternalRpcError> {
