@@ -2018,16 +2018,16 @@ impl<S: Storage> Blockchain<S> {
             // Cache to retrieve only one time all TXs hashes until stable height from our TIPS
             // This include all TXs that were executed (or not if any TIP branch is orphaned)
             let parents_txs = if !block.get_txs_hashes().is_empty() {
-                debug!("Loading all TXs until height {} for block {} (executed only: {})", stable_height, block_hash, !is_v2_enabled);
+                debug!("Loading all TXs until height {} for block {} (executed only: {})", base_height, block_hash, !is_v2_enabled);
                 self.get_all_txs_until_height(
                     &*storage,
-                    stable_height,
+                    base_height,
                     block.get_tips().iter().cloned(),
                     !is_v2_enabled,
                     is_v3_enabled,
                 ).await?
             } else {
-                IndexSet::new()
+                LinkedHashSet::new()
             };
 
             debug!("Grouping all TXs from parents by source for block {}", block_hash);
@@ -2113,9 +2113,9 @@ impl<S: Storage> Blockchain<S> {
                     debug!("Tx {} was executed in {}", hash, block_executor);
                     let block_executor_height = storage.get_height_for_block_hash(&block_executor).await?;
                     // if the tx was executed below stable height, reject whole block!
-                    if block_executor_height <= stable_height {
-                        debug!("Block {} contains a dead tx {} from stable height {}", block_hash, tx_hash, stable_height);
-                        return Err(BlockchainError::DeadTxFromStableHeight(block_hash.into_owned(), tx_hash, stable_height, block_executor))
+                    if block_executor_height <= base_height {
+                        debug!("Block {} contains a dead tx {} from stable height {}", block_hash, tx_hash, base_height);
+                        return Err(BlockchainError::DeadTxFromStableHeight(block_hash.into_owned(), tx_hash, base_height, block_executor))
                     }
                 }
 
@@ -3151,20 +3151,20 @@ impl<S: Storage> Blockchain<S> {
 
     // retrieve all txs hashes until height or until genesis block
     // for this we get all tips and recursively retrieve all txs from tips until we reach height
-    async fn get_all_txs_until_height<P>(&self, provider: &P, until_height: u64, tips: impl Iterator<Item = Hash>, txs_executed_only: bool, blocks_orphaned_only: bool) -> Result<IndexSet<Hash>, BlockchainError>
+    async fn get_all_txs_until_height<P>(&self, provider: &P, until_height: u64, tips: impl Iterator<Item = Hash>, txs_executed_only: bool, blocks_orphaned_only: bool) -> Result<LinkedHashSet<Hash>, BlockchainError>
     where
         P: DifficultyProvider + ClientProtocolProvider + DagOrderProvider
     {
         trace!("get all txs until height {}", until_height);
         // All transactions hashes found under the stable height
-        let mut hashes = IndexSet::new();
+        let mut hashes = LinkedHashSet::new();
         // Current queue of blocks to process
-        let mut queue = IndexSet::new();
+        let mut queue = Vec::new();
         // All already processed blocks
-        let mut processed = IndexSet::new();
+        let mut processed = HashSet::new();
         queue.extend(tips);
 
-        // get last element from queue (order doesn't matter and its faster than moving all elements)
+        // get last element from queue
         while let Some(hash) = queue.pop() {
             // Only go through orphaned blocks if required
             if blocks_orphaned_only && provider.is_block_topological_ordered(&hash).await? {
@@ -3189,9 +3189,8 @@ impl<S: Storage> Blockchain<S> {
 
                 // add all tips from block (but check that we didn't already added it)
                 for tip in block.get_tips() {
-                    if !processed.contains(tip) {
-                        processed.insert(tip.clone());
-                        queue.insert(tip.clone());
+                    if !processed.insert(tip.clone()) {
+                        queue.push(tip.clone());
                     }
                 }
             }
