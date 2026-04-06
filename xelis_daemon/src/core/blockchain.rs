@@ -2789,7 +2789,8 @@ impl<S: Storage> Blockchain<S> {
         // trace!("Storage read lock acquired after ordering for block {}", block_hash);
 
         let mut new_tips = Vec::new();
-        let version_at_height = hard_fork::get_version_at_height(self.get_network(), current_height);
+        // Find the version at the highest height between current chain and new block, to be able to apply the correct tip selection rules
+        let version_at_height = hard_fork::get_version_at_height(self.get_network(), current_height.max(block.get_height()));
         for hash in tips {
             if !blockdag::is_near_enough_from_main_chain(&*storage, &hash, current_height, version_at_height).await? {
                 debug!("Tip {} is too far from main chain at height {}, skipping...", hash, current_height);
