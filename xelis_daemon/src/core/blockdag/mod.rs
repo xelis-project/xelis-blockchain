@@ -410,7 +410,7 @@ where
 // Check if all tips have a common base at or above stable height limit,
 // which means they have forked and merged again in the last STABLE_LIMIT blocks
 // This prevents too deep/big reorgs
-pub async fn has_common_base_at_or_above_stable_height<'a, P, I>(provider: &P, tips: I, block_height: u64, version: BlockVersion) -> Result<bool, BlockchainError>
+pub async fn find_common_base_at_or_above_stable_height<'a, P, I>(provider: &P, tips: I, block_height: u64, version: BlockVersion) -> Result<Option<(Hash, u64)>, BlockchainError>
 where
     P: DifficultyProvider + ConcurrencyProvider,
     I: Iterator<Item = &'a Hash> + Send + Sync,
@@ -456,17 +456,21 @@ where
     // Because the BFS never adds blocks at/below min_height to visited,
     // every entry in the intersection is already above the floor.
     // If the intersection is empty, the dominator is at or below the floor.
-    let (first, rest) = ancestor_sets.split_first()
-        .ok_or(BlockchainError::ExpectedTips)?;
+    let (first, rest) = match ancestor_sets.split_first() {
+        Some(pair) => pair,
+        None => return Ok(None)
+    };
 
     let mut common = Vec::new();
     for hash in first.iter().filter(|h| rest.iter().all(|s| s.contains(*h))) {
         let height = provider.get_height_for_block_hash(hash).await?;
-        common.push((hash.clone(), height));
+        if highest_tip_height.saturating_sub(height) < stable_limit {
+            common.push((hash.clone(), height));
+        }
     }
 
     if common.is_empty() {
-        return Ok(false)
+        return Ok(None)
     }
 
     // Sort by height descending (we want the highest dominator)
@@ -525,11 +529,11 @@ where
         }
 
         if is_dominator {
-            return Ok(highest_tip_height.saturating_sub(candidate_height) < stable_limit)
+            return Ok(Some((candidate_hash, candidate_height)))
         }
     }
 
-    Ok(false)
+    Ok(None)
 }
 
 // find the common base (block hash and block height) of all tips
@@ -1326,7 +1330,7 @@ mod tests {
         assert_eq!(h0, 0);
     }
 
-    // has_common_base_before_stable_height returns true when the tips' dominator is
+    // find_common_base_at_or_above_stable_height returns true when the tips' dominator is
     // at or below the stable floor (i.e., span >= stable_limit), meaning the merge
     // would drag the stable point too far back.
     #[tokio::test]
@@ -1354,7 +1358,7 @@ mod tests {
 
         // Tips at height 10; merge block_height = 11; span = 10 < 24 -> ok
         let tips: IndexSet<Hash> = vec![a_prev.clone(), b_prev.clone()].into_iter().collect();
-        assert!(has_common_base_at_or_above_stable_height(&storage, tips.iter(), 11, BlockVersion::V6).await.unwrap(),
+        assert!(find_common_base_at_or_above_stable_height(&storage, tips.iter(), 11, BlockVersion::V6).await.unwrap().is_some(),
             "span 10 should be within the stable window");
 
         // Extend branch A to height 23; merge block_height = 24; span = 23 < 24 -> still ok
@@ -1364,14 +1368,14 @@ mod tests {
             a_prev = b;
         }
         let tips23: IndexSet<Hash> = vec![a_prev.clone(), b_prev.clone()].into_iter().collect();
-        assert!(has_common_base_at_or_above_stable_height(&storage, tips23.iter(), 24, BlockVersion::V6).await.unwrap(),
+        assert!(find_common_base_at_or_above_stable_height(&storage, tips23.iter(), 24, BlockVersion::V6).await.unwrap().is_some(),
             "span 23 should still be within the stable window");
 
         // Add one more to A: height 24; merge block_height = 25; span = 24 >= 24 -> too far
         let a24 = h(34u8);
         add_block(&mut storage, a24.clone(), 24, 24, vec![a_prev.clone()], 1, 2, BlockVersion::V6, None).await;
         let tips24: IndexSet<Hash> = vec![a24.clone(), b_prev.clone()].into_iter().collect();
-        assert!(!has_common_base_at_or_above_stable_height(&storage, tips24.iter(), 25, BlockVersion::V6).await.unwrap(),
+        assert!(find_common_base_at_or_above_stable_height(&storage, tips24.iter(), 25, BlockVersion::V6).await.unwrap().is_none(),
             "span 24 should be rejected as too far");
 
         // Fork from an ordered mid-chain block m1 (height 1): two 10-block branches (tips at height 11)
@@ -1395,7 +1399,7 @@ mod tests {
         }
 
         let tips_mid: IndexSet<Hash> = vec![c_prev.clone(), d_prev.clone()].into_iter().collect();
-        assert!(has_common_base_at_or_above_stable_height(&storage, tips_mid.iter(), 12, BlockVersion::V6).await.unwrap(),
+        assert!(find_common_base_at_or_above_stable_height(&storage, tips_mid.iter(), 12, BlockVersion::V6).await.unwrap().is_some(),
             "fork from m1 at height 1 with span 10 should be ok");
 
         // Diamond: genesis → X(h=1) and genesis → Z(h=1), both parent of Y(h=2);
@@ -1413,7 +1417,7 @@ mod tests {
         add_block(&mut storage, tip_e.clone(), 3, 3, vec![y.clone()], 1, 2, BlockVersion::V6, None).await;
         add_block(&mut storage, tip_f.clone(), 3, 3, vec![y.clone()], 1, 2, BlockVersion::V6, None).await;
         let tips_diamond: IndexSet<Hash> = vec![tip_e.clone(), tip_f.clone()].into_iter().collect();
-        assert!(has_common_base_at_or_above_stable_height(&storage, tips_diamond.iter(), 4, BlockVersion::V6).await.unwrap(),
+        assert!(find_common_base_at_or_above_stable_height(&storage, tips_diamond.iter(), 4, BlockVersion::V6).await.unwrap().is_some(),
             "diamond through Y at height 2, span = 1, should be ok");
 
         // Bypass test: genesis -> P(h=1) -> Q(h=2, parents=[P,R]) -> tip1(h=3)
@@ -1431,7 +1435,7 @@ mod tests {
         add_block(&mut storage, tip1.clone(), 3, 3, vec![q.clone()], 1, 2, BlockVersion::V6, None).await;
         add_block(&mut storage, tip2.clone(), 3, 3, vec![r.clone()], 1, 2, BlockVersion::V6, None).await;
         let tips_bypass: IndexSet<Hash> = vec![tip1.clone(), tip2.clone()].into_iter().collect();
-        assert!(has_common_base_at_or_above_stable_height(&storage, tips_bypass.iter(), 4, BlockVersion::V6).await.unwrap(),
+        assert!(find_common_base_at_or_above_stable_height(&storage, tips_bypass.iter(), 4, BlockVersion::V6).await.unwrap().is_some(),
             "bypass case: true dominator is genesis, span = 3, should be ok");
     }
 
@@ -1468,7 +1472,7 @@ mod tests {
         // Both tips at height 25; merge block_height = 26.
         // Dominator = genesis at height 0; span = 25 >= 24 → false (merge too deep).
         let tips: IndexSet<Hash> = vec![a_prev.clone(), b_prev.clone()].into_iter().collect();
-        assert!(!has_common_base_at_or_above_stable_height(&storage, tips.iter(), 26, BlockVersion::V6).await.unwrap(),
+        assert!(find_common_base_at_or_above_stable_height(&storage, tips.iter(), 26, BlockVersion::V6).await.unwrap().is_none(),
             "dominator at genesis (height 0) with span 25 must be rejected");
     }
 

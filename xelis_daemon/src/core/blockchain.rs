@@ -1429,7 +1429,7 @@ impl<S: Storage> Blockchain<S> {
 
                     if !selected_tips.is_empty() {
                         let iter = selected_tips.iter().chain(iter::once(&hash));
-                        if !blockdag::has_common_base_at_or_above_stable_height(storage, iter, block_height_by_tips, version_at_height).await? {
+                        if blockdag::find_common_base_at_or_above_stable_height(storage, iter, block_height_by_tips, version_at_height).await?.is_none() {
                             warn!("Tip {} is not selected for mining: no common base before stable height", hash);
                             continue;
                         }
@@ -1913,10 +1913,12 @@ impl<S: Storage> Blockchain<S> {
             }
 
             if is_v6_enabled {
-                if !blockdag::has_common_base_at_or_above_stable_height(&*storage, block.get_tips().iter(), block_height_by_tips, version).await? {
+                let Some((stable_base, stable_base_height)) = blockdag::find_common_base_at_or_above_stable_height(&*storage, block.get_tips().iter(), block_height_by_tips, version).await? else {
                     debug!("Block {} has common base before stable height, which is not allowed", block_hash);
                     return Err(BlockchainError::TipsCommonBaseTooFar)
-                }
+                };
+
+                debug!("Common base before stable height for tips is {} at height {}", stable_base, stable_base_height);
             }
         }
 
@@ -2099,7 +2101,13 @@ impl<S: Storage> Blockchain<S> {
 
                 debug!("Verifying TX {}", tx_hash);
                 // check that the TX included is not executed in stable height
-                let is_executed = storage.is_tx_executed_in_a_block(hash).await?;
+                // Starting V6, we verify against the block DAG only, not the current main chain.
+                let is_executed = if is_v6_enabled {
+                    blockdag::is_tx_executed_for_topoheight(&*storage, hash, nearest_base_topoheight).await?
+                } else {
+                    storage.is_tx_executed_in_a_block(hash).await?
+                };
+
                 if is_executed {
                     let block_executor = storage.get_block_executor_for_tx(hash).await?;
                     debug!("Tx {} was executed in {}", hash, block_executor);
@@ -2110,13 +2118,6 @@ impl<S: Storage> Blockchain<S> {
                         return Err(BlockchainError::DeadTxFromStableHeight(block_hash.into_owned(), tx_hash, stable_height, block_executor))
                     }
                 }
-
-                // Starting V6, we verify against the block DAG only, not the current main chain.
-                let is_executed = if is_v6_enabled {
-                    blockdag::is_tx_executed_for_topoheight(&*storage, hash, nearest_base_topoheight).await?
-                } else {
-                    storage.is_tx_executed_in_a_block(hash).await?
-                };
 
                 // If the TX is already executed,
                 // we should check that the TX is not in block tips
