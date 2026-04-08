@@ -1971,8 +1971,8 @@ impl<S: Storage> Blockchain<S> {
             let (base, base_height) = blockdag::find_common_base(&*storage, block.get_tips(), version).await?;
 
             let (base_topoheight, nearest_base_topoheight) = if is_v6_enabled {
-                let nearest_base_topoheight = blockdag::find_nearest_base_topoheight(&*storage, block.get_tips().iter().cloned(), base_height).await?;
                 let base_topoheight = storage.get_topo_height_for_hash(&base).await?;
+                let nearest_base_topoheight = blockdag::find_nearest_base_topoheight(&*storage, block.get_tips().iter().cloned(), base_topoheight, &base).await?;
                 (base_topoheight, nearest_base_topoheight)
             } else {
                 (stable_topoheight, current_topoheight)

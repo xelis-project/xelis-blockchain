@@ -4,6 +4,7 @@ mod ordered;
 #[cfg(test)]
 mod mergeset_tests;
 
+use linked_hash_table::LinkedHashSet;
 pub use mergeset::*;
 pub use ordered::*;
 
@@ -622,112 +623,28 @@ where
 }
 
 /// Find the nearest base topoheight (ordered block) with main chain
-/// All tips will join at the said base hash.
-/// The block must be the dominator of all tips: all tips can reach it, and no tip can bypass it to reach a block with lower topoheight.
-/// This function traces back from each tip to find the first ordered block (main chain) that is reachable.
-/// Then it returns the ordered block with the highest height/topoheight (nearest to tips) among those reachable from all tips.
-pub async fn find_nearest_base_topoheight<P, I>(provider: &P, tips: I, base_height: u64) -> Result<TopoHeight, BlockchainError>
+/// Instead of collecting all ancestors from all tips and try to find a common base
+/// we simply generate the full order from the tips and find the nearest ordered block with main chain
+/// As long as the block is ordered and at the expected topoheight, we update the nearest base topoheight, otherwise we stop
+/// This trick allows to be much more efficient in a really simple way
+pub async fn find_nearest_base_topoheight<P, I>(provider: &P, tips: I, base_topoheight: TopoHeight, base: &Hash) -> Result<TopoHeight, BlockchainError>
 where
     P: DifficultyProvider + DagOrderProvider + ConcurrencyProvider,
-    I: IntoIterator<Item = Hash> + ExactSizeIterator + Clone + Send + Sync,
-    I::IntoIter: Send + Sync
+    I: Iterator<Item = Hash> + ExactSizeIterator + Send + Sync,
 {
-    trace!("find nearest base with main chain for tips");
+    let order = generate_full_order::<_, _, LinkedHashSet<_>>(provider, tips, base, base_topoheight).await?;
 
-    // Phase 1: For each tip, collect all blocks reachable within the height window.
-    let reachable_per_tip: Vec<HashSet<Hash>> = stream::iter(tips.clone().into_iter())
-        .map(|tip| async move {
-            let mut visited = HashSet::new();
-            let mut stack = VecDeque::new();
-            stack.push_back(tip.clone());
-
-            while let Some(current) = stack.pop_front() {
-                if !visited.insert(current.clone()) {
-                    continue;
-                }
-
-                let height = provider.get_height_for_block_hash(&current).await?;
-                if height < base_height {
-                    continue;
-                }
-
-                let past_blocks = provider.get_past_blocks_for_block_hash(&current).await?;
-                stack.extend(past_blocks.iter().cloned());
-            }
-
-            Ok::<_, BlockchainError>(visited)
-        })
-        .buffer_unordered(provider.concurrency())
-        .boxed()
-        .try_collect().await?;
-
-    // Find the intersection: blocks reachable from every tip.
-    let (first, rest) = reachable_per_tip.split_first().ok_or(BlockchainError::ExpectedTips)?;
-
-    // Phase 2: Among common ancestors, keep only ordered (or genesis) blocks and resolve their
-    // topoheights, then sort by topoheight descending (nearest first).
-    let mut candidates: Vec<(Hash, TopoHeight)> = Vec::new();
-    for hash in first.iter().filter(|h| rest.iter().all(|s| s.contains(*h))) {
-        if provider.is_block_topological_ordered(hash).await? {
-            let topo = provider.get_topo_height_for_hash(hash).await?;
-            candidates.push((hash.clone(), topo));
+    let mut highest_topo = base_topoheight;
+    for hash in order.into_iter().skip(1) {
+        let expected_topo = highest_topo + 1;
+        if provider.is_block_topological_ordered(&hash).await? && provider.get_topo_height_for_hash(&hash).await? == expected_topo {
+            highest_topo = expected_topo;
+        } else {
+            break;
         }
     }
 
-    if candidates.is_empty() {
-        return Err(BlockchainError::ExpectedTips);
-    }
-
-    candidates.sort_by(|(_, a), (_, b)| b.cmp(a));
-
-    // Phase 3: For each candidate (highest topoheight first), verify it is a true
-    // dominator: no tip can bypass it to reach a lower-topoheight ordered block.
-    'candidate: for (candidate, candidate_topo) in candidates {
-        for tip in tips.clone().into_iter() {
-            let mut visited = HashSet::new();
-            let mut stack = VecDeque::new();
-            stack.push_back(tip.clone());
-
-            while let Some(current) = stack.pop_front() {
-                if current == candidate || !visited.insert(current.clone()) {
-                    continue;
-                }
-
-                let height = provider.get_height_for_block_hash(&current).await?;
-                if height < base_height {
-                    continue;
-                }
-
-                let past_blocks = provider.get_past_blocks_for_block_hash(&current).await?;
-                for parent in past_blocks.iter() {
-                    if *parent == candidate {
-                        continue;
-                    }
-
-                    let parent_height = provider.get_height_for_block_hash(parent).await?;
-                    if parent_height < base_height {
-                        continue;
-                    }
-
-                    if provider.is_block_topological_ordered(parent).await? {
-                        let parent_topo = provider.get_topo_height_for_hash(parent).await?;
-                        if parent_topo < candidate_topo {
-                            continue 'candidate;
-                        }
-                    }
-
-                    if !visited.contains(parent) {
-                        stack.push_back(parent.clone());
-                    }
-                }
-            }
-        }
-
-        debug!("Found nearest base with main chain at topoheight {} for hash {} with no bypass", candidate_topo, candidate);
-        return Ok(candidate_topo);
-    }
-
-    Err(BlockchainError::ExpectedTips)
+    Ok(highest_topo)
 }
 
 pub async fn build_reachability<P: DifficultyProvider>(provider: &P, hash: Hash, block_version: BlockVersion) -> Result<HashSet<Hash>, BlockchainError> {
@@ -999,10 +916,11 @@ where
 }
 
 // this function generate a DAG paritial order into a full order using recursive calls.
-// hash represents the best tip (biggest cumulative difficulty / blue work)
+// hash represents the best tip (by biggest cumulative difficulty / blue work)
 // base represents the block hash of a block already ordered and in stable height
 // the full order is re generated each time a new block is added based on new TIPS
 // first hash in order is the base hash
+// Hashes is expected to be sorted by cumulative difficulty / blue work descending
 // base_height is only used for the cache key
 pub async fn generate_full_order<P, I, S>(provider: &P, hashes: I, base: &Hash, base_topo_height: TopoHeight) -> Result<S, BlockchainError>
 where
@@ -1059,13 +977,15 @@ where
 
         stack.push_back(current_hash);
 
+        // We don't have to sort the tips here because when a block is added
+        // to the ledger, we already verify that its tips are sorted by cumulative difficulty / blue work descending
         stack.extend(scores.into_iter().rev());
     }
 
     Ok(full_order)
 }
 
-// confirms whether the actual tip difficulty is withing 9% deviation with best tip (reference)
+// confirms whether the actual tip difficulty is within 9% deviation with best tip (reference)
 pub async fn validate_tips<P: DifficultyProvider>(provider: &P, best_tip: &Hash, tip: &Hash) -> Result<bool, BlockchainError> {
     const MAX_DEVIATION: Difficulty = Difficulty::from_u64(91);
     const PERCENTAGE: Difficulty = Difficulty::from_u64(100);
@@ -1520,19 +1440,15 @@ mod tests {
         add_block(&mut storage, b.clone(), 2, 2, vec![a.clone()], 1, 3, BlockVersion::V6, None).await;
         add_block(&mut storage, c.clone(), 2, 3, vec![a.clone()], 1, 4, BlockVersion::V6, None).await;
 
-        let topo = find_nearest_base_topoheight(&storage, vec![b.clone()].into_iter(), 0).await.unwrap();
+        let topo = find_nearest_base_topoheight(&storage, vec![b.clone()].into_iter(), 0, &g).await.unwrap();
         assert_eq!(topo, 1);
 
-        let nearest_base = find_nearest_base_topoheight(&storage, vec![b.clone(), c.clone()].into_iter(), 0)
+        let nearest_base = find_nearest_base_topoheight(&storage, vec![b.clone(), c.clone()].into_iter(), 0, &g)
             .await
             .unwrap();
         assert_eq!(nearest_base, 1);
 
-        assert!(find_nearest_base_topoheight(&storage, Vec::<Hash>::new().into_iter(), 0)
-            .await
-            .is_err());
-
-        assert!(find_nearest_base_topoheight(&storage, vec![b, c].into_iter(), 100)
+        assert!(find_nearest_base_topoheight(&storage, Vec::<Hash>::new().into_iter(), 0, &g)
             .await
             .is_err());
     }
@@ -1553,7 +1469,7 @@ mod tests {
         add_block(&mut storage, b.clone(), 2, 2, vec![a.clone()], 1, 3, BlockVersion::V6, None).await;
         add_block(&mut storage, c.clone(), 2, 3, vec![a.clone()], 1, 4, BlockVersion::V6, None).await;
 
-        let topo = find_nearest_base_topoheight(&storage, vec![b, c].into_iter(), 0).await.unwrap();
+        let topo = find_nearest_base_topoheight(&storage, vec![b, c].into_iter(), 0, &g).await.unwrap();
         assert_eq!(topo, 1);
     }
 
@@ -1568,7 +1484,7 @@ mod tests {
         add_block(&mut storage, g.clone(), 0, 0, vec![], 1, 1, BlockVersion::V6, Some(0)).await;
         add_block(&mut storage, a.clone(), 1, 1, vec![g.clone()], 1, 2, BlockVersion::V6, Some(1)).await;
 
-        let topo = find_nearest_base_topoheight(&storage, vec![a].into_iter(), 0).await.unwrap();
+        let topo = find_nearest_base_topoheight(&storage, vec![a].into_iter(), 0, &g).await.unwrap();
         assert_eq!(topo, 1);
     }
 
@@ -1590,7 +1506,7 @@ mod tests {
         add_block(&mut storage, c.clone(), 2, 3, vec![a.clone()], 1, 3, BlockVersion::V6, None).await;
         add_block(&mut storage, d.clone(), 2, 4, vec![b.clone()], 1, 3, BlockVersion::V6, None).await;
 
-        let topo = find_nearest_base_topoheight(&storage, vec![c, d].into_iter(), 0).await.unwrap();
+        let topo = find_nearest_base_topoheight(&storage, vec![c, d].into_iter(), 0, &g).await.unwrap();
         assert_eq!(topo, 0);
     }
 
@@ -1610,7 +1526,7 @@ mod tests {
         add_block(&mut storage, b.clone(), 2, 2, vec![a.clone()], 1, 3, BlockVersion::V6, Some(2)).await;
         add_block(&mut storage, c.clone(), 2, 3, vec![a.clone()], 1, 4, BlockVersion::V6, None).await;
 
-        let topo = find_nearest_base_topoheight(&storage, vec![b, c].into_iter(), 0).await.unwrap();
+        let topo = find_nearest_base_topoheight(&storage, vec![b, c].into_iter(), 0, &g).await.unwrap();
         assert_eq!(topo, 1);
     }
 
@@ -1630,7 +1546,7 @@ mod tests {
         add_block(&mut storage, b.clone(), 2, 2, vec![a.clone()], 1, 3, BlockVersion::V6, Some(2)).await;
         add_block(&mut storage, c.clone(), 2, 3, vec![a.clone()], 1, 4, BlockVersion::V6, Some(3)).await;
 
-        let topo = find_nearest_base_topoheight(&storage, vec![b, c].into_iter(), 0).await.unwrap();
+        let topo = find_nearest_base_topoheight(&storage, vec![b, c].into_iter(), 0, &g).await.unwrap();
         assert_eq!(topo, 1);
     }
 
@@ -1654,7 +1570,7 @@ mod tests {
         add_block(&mut storage, c.clone(), 2, 3, vec![a.clone(), b.clone()], 1, 3, BlockVersion::V6, None).await;
         add_block(&mut storage, d.clone(), 2, 4, vec![b.clone()], 1, 3, BlockVersion::V6, None).await;
 
-        let topo = find_nearest_base_topoheight(&storage, vec![c, d].into_iter(), 0).await.unwrap();
+        let topo = find_nearest_base_topoheight(&storage, vec![c, d].into_iter(), 0, &g).await.unwrap();
         assert_eq!(topo, 0);
     }
 
@@ -1682,7 +1598,7 @@ mod tests {
         add_block(&mut storage, d.clone(), 2, 4, vec![a.clone()], 1, 3, BlockVersion::V6, None).await;
         add_block(&mut storage, e.clone(), 3, 5, vec![d.clone(), b.clone()], 1, 4, BlockVersion::V6, None).await;
 
-        let topo = find_nearest_base_topoheight(&storage, vec![c, e].into_iter(), 0).await.unwrap();
+        let topo = find_nearest_base_topoheight(&storage, vec![c, e].into_iter(), 0, &g).await.unwrap();
         assert_eq!(topo, 1);
     }
 
@@ -1708,7 +1624,7 @@ mod tests {
         add_block(&mut storage, e.clone(), 2, 5, vec![a.clone()], 1, 3, BlockVersion::V6, None).await;
         add_block(&mut storage, f.clone(), 3, 6, vec![e.clone()], 1, 4, BlockVersion::V6, None).await;
 
-        let topo = find_nearest_base_topoheight(&storage, vec![d, f].into_iter(), 0).await.unwrap();
+        let topo = find_nearest_base_topoheight(&storage, vec![d, f].into_iter(), 0, &g).await.unwrap();
         assert_eq!(topo, 1);
     }
 
@@ -1731,7 +1647,7 @@ mod tests {
         add_block(&mut storage, c.clone(), 2, 3, vec![a.clone()], 1, 4, BlockVersion::V6, None).await;
         add_block(&mut storage, d.clone(), 2, 4, vec![a.clone()], 1, 5, BlockVersion::V6, None).await;
 
-        let topo = find_nearest_base_topoheight(&storage, vec![b, c, d].into_iter(), 0).await.unwrap();
+        let topo = find_nearest_base_topoheight(&storage, vec![b, c, d].into_iter(), 0, &g).await.unwrap();
         assert_eq!(topo, 1);
     }
 
@@ -1759,7 +1675,7 @@ mod tests {
         add_block(&mut storage, d.clone(), 2, 4, vec![b.clone()], 1, 3, BlockVersion::V6, None).await;
         add_block(&mut storage, e.clone(), 2, 5, vec![b.clone()], 1, 3, BlockVersion::V6, None).await;
 
-        let topo = find_nearest_base_topoheight(&storage, vec![c, d, e].into_iter(), 0).await.unwrap();
+        let topo = find_nearest_base_topoheight(&storage, vec![c, d, e].into_iter(), 0, &g).await.unwrap();
         assert_eq!(topo, 0);
     }
 
@@ -1781,7 +1697,7 @@ mod tests {
         add_block(&mut storage, c.clone(), 2, 3, vec![a.clone()], 1, 3, BlockVersion::V6, None).await;
         add_block(&mut storage, d.clone(), 2, 4, vec![b.clone()], 1, 3, BlockVersion::V6, None).await;
 
-        let topo = find_nearest_base_topoheight(&storage, vec![c, d].into_iter(), 0).await.unwrap();
+        let topo = find_nearest_base_topoheight(&storage, vec![c, d].into_iter(), 0, &g).await.unwrap();
         assert_eq!(topo, 0);
     }
 
@@ -1901,6 +1817,44 @@ mod tests {
         assert!(generate_full_order::<_, _, LinkedHashSet<Hash>>(&storage, Vec::<Hash>::new().into_iter(), &a, 1)
             .await
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn test_generate_full_order_high_cd_tip_ordered_first() {
+        // DAG layout:
+        //
+        //   g (topo 0) --> base_a (topo 1) --> low_cd  (cumul_diff=9,  unordered)
+        //                                  --> high_cd (cumul_diff=14, unordered)
+        //                                  --> merge   (parents=[high_cd, low_cd], unordered)
+        //
+        // merge stores its parents in descending-CD order: [high_cd, low_cd]
+        // Expected full order from base_a: [base_a, high_cd, low_cd, merge]
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+        let g      = h(120);
+        let base_a = h(121);
+        let low_cd  = h(122); // cumulative_difficulty = 9
+        let high_cd = h(123); // cumulative_difficulty = 14
+        let merge  = h(124);
+
+        add_block(&mut storage, g.clone(), 0, 0, vec![], 1,  1, BlockVersion::V6, Some(0)).await;
+        add_block(&mut storage, base_a.clone(), 1, 1, vec![g.clone()], 5,  6, BlockVersion::V6, Some(1)).await;
+        add_block(&mut storage, low_cd.clone(), 2, 2, vec![base_a.clone()], 3,  9, BlockVersion::V6, None).await;
+        add_block(&mut storage, high_cd.clone(),2, 3, vec![base_a.clone()], 8, 14, BlockVersion::V6, None).await;
+        // Parents in descending-CD order as the protocol guarantees: high_cd first, low_cd second
+        add_block(&mut storage, merge.clone(), 3, 4, vec![high_cd.clone(), low_cd.clone()], 2, 16, BlockVersion::V6, None).await;
+
+        let order = generate_full_order::<_, _, LinkedHashSet<Hash>>(
+            &storage,
+            vec![merge.clone()].into_iter(),
+            &base_a,
+            1,
+        )
+        .await
+        .unwrap();
+
+        let ordered: Vec<Hash> = order.iter().cloned().collect();
+        // high_cd must appear before low_cd because it has more cumulative work
+        assert_eq!(ordered, vec![base_a, high_cd, low_cd, merge]);
     }
 
     #[tokio::test]
