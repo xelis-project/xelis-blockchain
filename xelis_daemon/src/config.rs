@@ -292,8 +292,8 @@ const OTHERS_NETWORK_HARD_FORKS: [HardFork; 7] = [
     HardFork {
         height: 30,
         version: BlockVersion::V6,
-        changelog: "TX Base fee improvements",
-        version_requirement: Some(">=1.21.0")
+        changelog: "BlockDAG improvements",
+        version_requirement: Some(">=1.23.0")
     }
 ];
 
