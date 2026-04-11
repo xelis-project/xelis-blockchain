@@ -2388,6 +2388,11 @@ async fn listen_event_fn<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>,
     let chunk_id = params.remove(1)
         .as_u16()?;
 
+    // Check if the chunk_id is valid and callable
+    if !metadata.module.is_callable_chunk(chunk_id as _) {
+        return Ok(SysCallResult::Return(Primitive::Null.into()));
+    }
+
     let event_id = params.remove(0)
         .as_u64()?;
 
