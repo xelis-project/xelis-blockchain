@@ -25,6 +25,7 @@ mod gas;
 mod events;
 mod storage;
 mod btree;
+mod permission;
 
 /// Compiles the given contract code into a Module
 #[track_caller]
