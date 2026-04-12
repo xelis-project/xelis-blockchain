@@ -13,6 +13,7 @@ use crate::{
         ContractMetadata,
         ContractModule,
         ContractVersion,
+        InterContractPermission,
         Source,
         vm::{self, ContractCaller, ContractStateError, InvokeContract}
     },
@@ -85,6 +86,22 @@ pub async fn invoke_contract(
     entry: InvokeContract,
     params: Vec<ValueCell>,
 ) -> Result<vm::ExecutionResult, ContractStateError<anyhow::Error>> {
+    invoke_contract_with_permission(
+        state,
+        contract,
+        entry,
+        params,
+        InterContractPermission::default(),
+    ).await
+}
+
+pub async fn invoke_contract_with_permission<'a>(
+    state: &mut MockChainState,
+    contract: &Hash,
+    entry: InvokeContract,
+    params: Vec<ValueCell>,
+    permission: InterContractPermission,
+) -> Result<vm::ExecutionResult, ContractStateError<anyhow::Error>> {
     vm::invoke_contract(
         ContractCaller::System,
         state,
@@ -94,7 +111,7 @@ pub async fn invoke_contract(
         IndexMap::new(),
         1_000_000,
         entry,
-        Cow::Owned(Default::default()),
+        Cow::Owned(permission),
         true,
     ).await
 }

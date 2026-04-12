@@ -2456,13 +2456,21 @@ fn get_contract_entry(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, contex
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(state.entry_contract.as_ref().clone())).into()))
 }
 
-fn get_contract_caller(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
-    let value = metadata.metadata.contract_caller
-        .as_ref()
-        .map(|v| Primitive::Opaque(OpaqueWrapper::new(v.clone())).into())
-        .unwrap_or_default();
+fn get_contract_caller(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+    // For inter-contract calls (contract A calls contract B), metadata carries the direct caller.
+    if let Some(caller) = metadata.metadata.contract_caller.as_ref() {
+        return Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(caller.clone())).into()));
+    }
 
-    Ok(SysCallResult::Return(value))
+    // For event callbacks, the emitting contract acts as the logical caller.
+    // We must NOT use ContractCaller::get_hash() here because for TX-originated callbacks
+    // that would return the TX hash rather than the contract that emitted the event.
+    let state = state_from_context(context)?;
+    if let ContractCaller::EventCallback(_, emitting_contract) = &state.caller {
+        return Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(emitting_contract.as_ref().clone())).into()));
+    }
+
+    Ok(SysCallResult::Return(ValueCell::default().into()))
 }
 
 fn get_deposit_for_asset(_: FnInstance, params: FnParams, metadata: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
