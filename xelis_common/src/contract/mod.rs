@@ -918,13 +918,13 @@ pub fn build_environment<P: ContractProvider>(version: ContractVersion) -> Envir
             None
         );
         env.register_static_function(
-            "new",
+            "generate",
             ciphertext_type.clone(),
             vec![
                 ("address", address_type.clone()),
                 ("amount", Type::U64)
             ],
-            FunctionHandler::Sync(ciphertext_new),
+            FunctionHandler::Sync(ciphertext_generate),
             1000,
             Some(ciphertext_type.clone())
         );
@@ -2076,6 +2076,21 @@ pub fn build_environment<P: ContractProvider>(version: ContractVersion) -> Envir
             FunctionHandler::Sync(get_xelis_asset),
             1,
             Some(hash_type.clone())
+        );
+
+        // Ciphertext improvements
+
+        // Ciphertext::new(commitment, handle)
+        env.register_static_function(
+            "new",
+            ciphertext_type.clone(),
+            vec![
+                ("commitment", ristretto_type.clone()),
+                ("handle", ristretto_type.clone()),
+            ],
+            FunctionHandler::Sync(ciphertext_new),
+            50,
+            Some(ciphertext_type.clone())
         );
     }
 
