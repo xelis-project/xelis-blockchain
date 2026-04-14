@@ -2092,6 +2092,51 @@ pub fn build_environment<P: ContractProvider>(version: ContractVersion) -> Envir
             50,
             Some(ciphertext_type.clone())
         );
+
+        // Ciphertext::add_ct(other)
+        env.register_static_function(
+            "add_ct",
+            ciphertext_type.clone(),
+            vec![
+                ("other", ciphertext_type.clone()),
+            ],
+            FunctionHandler::Sync(ciphertext_add_ct),
+            9000,
+            None,
+        );
+        // Ciphertext::sub_ct(other)
+        env.register_static_function(
+            "sub_ct",
+            ciphertext_type.clone(),
+            vec![
+                ("other", ciphertext_type.clone()),
+            ],
+            FunctionHandler::Sync(ciphertext_sub_ct),
+            9000,
+            None,
+        );
+        // Ciphertext::add_scalar(scalar)
+        env.register_static_function(
+            "add_scalar",
+            ciphertext_type.clone(),
+            vec![
+                ("scalar", scalar_type.clone()),
+            ],
+            FunctionHandler::Sync(ciphertext_add_scalar),
+            14_000,
+            None,
+        );
+        // Ciphertext::sub_scalar(scalar)
+        env.register_static_function(
+            "sub_scalar",
+            ciphertext_type.clone(),
+            vec![
+                ("scalar", scalar_type.clone()),
+            ],
+            FunctionHandler::Sync(ciphertext_sub_scalar),
+            14_000,
+            None,
+        );
     }
 
     env
