@@ -2137,6 +2137,20 @@ pub fn build_environment<P: ContractProvider>(version: ContractVersion) -> Envir
             14_000,
             None,
         );
+
+        // Scalar improvements
+
+        // Scalar::hash_from_bytes(bytes)
+        env.register_static_function(
+            "hash_from_bytes",
+            scalar_type.clone(),
+            vec![
+                ("bytes", Type::Bytes)
+            ],
+            FunctionHandler::Sync(scalar_hash_from_bytes),
+            10000,
+            Some(scalar_type.clone())
+        );
     }
 
     env
