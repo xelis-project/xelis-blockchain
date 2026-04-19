@@ -289,6 +289,7 @@ pub struct GetAssetsEntry {
 pub struct TransactionResponse<'a> {
     #[serde(flatten)]
     pub inner: DataHash<'a, Transaction>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tx_as_hex: Option<String>
 }
 
