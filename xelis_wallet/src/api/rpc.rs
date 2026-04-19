@@ -403,10 +403,6 @@ async fn build_transaction(context: &Context<'_, '_>, params: BuildTransactionPa
         return Err(WalletError::NotOnlineMode)?
     }
 
-    if !params.broadcast && !params.tx_as_hex {
-        return Err(InternalRpcError::InvalidParams("Invalid params, should either be broadcasted, or returned in hex format"))
-    }
-
     // create the TX
     // The lock is kept until the TX is applied to the storage
     // So even if we have few requests building a TX, they wait for the previous one to be applied
