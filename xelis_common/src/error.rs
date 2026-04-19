@@ -11,7 +11,7 @@ pub struct ErrorWithKind {
 
 impl fmt::Display for ErrorWithKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "ErrorWithKind[kind: {}, error: {:#}]", self.kind, self.error)
+        write!(f, "{}", self.error)
     }
 }
 
