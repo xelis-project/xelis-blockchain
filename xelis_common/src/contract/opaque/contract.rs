@@ -126,7 +126,7 @@ pub async fn contract_call<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a
     }
 
     let mut deposits = IndexMap::new();
-    for (mut k, v) in assets {
+    for (k, v) in assets {
         let asset: Hash = k.into_opaque_type()?;
         let amount = v.as_ref().as_u64()?;
 

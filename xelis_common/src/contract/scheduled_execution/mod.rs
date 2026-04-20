@@ -155,7 +155,7 @@ impl JSONHelper for OpaqueScheduledExecution {}
 async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
     kind: ScheduledExecutionKind,
     _: FnInstance<'a>,
-    params: FnParams,
+    mut params: FnParams,
     metadata: &ModuleMetadata<'_>,
     context: &mut VMContext<'ty, 'r>
 ) -> FnReturnType<ContractMetadata> {
@@ -178,14 +178,16 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
         }
     }
 
-    let chunk_id = params[0].as_u16()?;
+    let use_contract_balance = params.remove(3).as_bool()?;
+    let max_gas = params.remove(2).as_u64()?;
+    let p = params.remove(1)
+        .into_owned()
+        .into_vec()?;
+
+    let chunk_id = params.remove(0).as_u16()?;
     if !metadata.module.is_callable_chunk(chunk_id as _) {
         return Ok(SysCallResult::Return(Primitive::Null.into()));
     }
-
-    let p = params[1].as_ref().as_vec()?;
-    let max_gas = params[2].as_u64()?;
-    let use_contract_balance = params[3].as_bool()?;
 
     if max_gas > MAX_GAS_USAGE_PER_TX {
         return Err(EnvironmentError::Static("max_gas exceeds allowed limit"))
@@ -195,7 +197,7 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
         return Ok(SysCallResult::Return(Primitive::Null.into()));
     }
 
-    let params: Vec<ValueCell> = p.iter()
+    let params: Vec<ValueCell> = p.into_iter()
         .map(|v| v.into_owned().into())
         .collect();
     let params_size = params.size();
