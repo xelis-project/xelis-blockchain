@@ -323,7 +323,7 @@ impl<S: Storage> Blockchain<S> {
             disable_zkp_cache: config.disable_zkp_cache,
             concurrency: config.concurrency,
             mining_cache: RwLock::new(None),
-            contracts_logging: config.contracts_logging,
+            contracts_logging: config.enable_contracts_logging,
         };
 
         // include genesis block
