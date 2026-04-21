@@ -28,7 +28,7 @@ use better_any::Tid;
 use curve25519_dalek::Scalar;
 use indexmap::IndexMap;
 use log::{debug, info};
-use xelis_builder::EnvironmentBuilder;
+use xelis_builder::{EnvironmentBuilder, xstd::*};
 use xelis_vm::{
     VMContext,
     EnvironmentError,
@@ -123,7 +123,19 @@ macro_rules! async_handler {
 pub fn build_environment<P: ContractProvider>(version: ContractVersion) -> EnvironmentBuilder<'static, ContractMetadata> {
     debug!("Building environment for contract");
 
-    let mut env = EnvironmentBuilder::default();
+    let mut env = EnvironmentBuilder::new();
+    array::register(&mut env);
+    bytes::register(&mut env);
+    optional::register(&mut env);
+    string::register(&mut env);
+    integer::register(&mut env);
+    range::register(&mut env);
+    map::register(&mut env);
+    math::register(&mut env);
+
+    if version >= ContractVersion::V1 {
+        iterator::register(&mut env);
+    }
 
     // Register the constructor hook
     env.register_hook("constructor", vec![], Some(Type::U64));
