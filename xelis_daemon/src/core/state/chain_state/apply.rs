@@ -97,6 +97,8 @@ pub struct ApplicableChainState<'s, 'b, S: Storage> {
     total_fees_burned: u64,
     // Transactions links to store: tx hash -> (blocks linked, executed in, contract)
     transactions_links: HashMap<&'b Hash, (IndexSet<&'b Hash>, Option<&'b Hash>, Option<&'b Hash>)>,
+    // used for logs of contracts are executed in block
+    debug_mode: bool
 }
 
 pub struct FinalizedChainState<'b> {
@@ -695,8 +697,7 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
         ].into();
 
         let state = ContractChainState {
-            // TODO: only available on non-mainnet networks & enabled by a config
-            debug_mode: !mainnet,
+            debug_mode: self.debug_mode,
             mainnet,
             entry_contract: contract_hash,
             topoheight: self.inner.topoheight,
@@ -891,6 +892,7 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
         is_side_block: bool,
         tx_base_fee: u64,
         base_height: u64,
+        debug_mode: bool,
     ) -> Self {
         Self {
             inner: ChainState::with(
@@ -909,6 +911,7 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
             block,
             is_side_block,
             transactions_links: HashMap::new(),
+            debug_mode,
         }
     }
 

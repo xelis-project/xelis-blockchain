@@ -232,6 +232,8 @@ pub struct Blockchain<S: Storage> {
     concurrency: usize,
     // Cache for mining block header templates
     mining_cache: RwLock<Option<BlockHeader>>,
+    // Should contracts show logs on execution
+    contracts_logging: bool
 }
 
 tid! { impl<'a, S: 'static> TidAble<'a> for Blockchain<S> where S: Storage }
@@ -321,6 +323,7 @@ impl<S: Storage> Blockchain<S> {
             disable_zkp_cache: config.disable_zkp_cache,
             concurrency: config.concurrency,
             mining_cache: RwLock::new(None),
+            contracts_logging: config.contracts_logging,
         };
 
         // include genesis block
@@ -511,6 +514,12 @@ impl<S: Storage> Blockchain<S> {
     #[inline]
     pub fn skip_pow_verification(&self) -> bool {
         self.skip_pow_verification
+    }
+
+    // Should we log contracts execution logs
+    #[inline]
+    pub fn contracts_logging(&self) -> bool {
+        self.contracts_logging
     }
 
     // get the environment stdlib for contract execution
@@ -2511,7 +2520,8 @@ impl<S: Storage> Blockchain<S> {
                     &block,
                     is_side_block,
                     required_tx_fee,
-                    base_height
+                    base_height,
+                    self.contracts_logging,
                 );
 
                 // Increase the circulating supply with the block reward

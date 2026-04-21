@@ -1360,6 +1360,7 @@ async fn replay_tx<S: Storage>(manager: &CommandManager, mut arguments: Argument
         false, // weither it is side block or not, it is only used as an hint for future storage
         required_base_fee,
         base_height,
+        blockchain.contracts_logging(),
     );
 
     let tx = tx.as_arc();

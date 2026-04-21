@@ -549,6 +549,11 @@ pub struct Config {
     #[clap(long)]
     #[serde(default)]
     pub skip_pow_verification: bool,
+    /// Enable the contracts logging during their execution.
+    /// This will print the logs of the contracts being executed in the block.
+    #[clap(long)]
+    #[serde(default)]
+    pub contracts_logging: bool,
     /// Enable the auto prune mode and prune the chain
     /// at each new block by keeping at least N blocks
     /// before the top.
