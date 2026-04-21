@@ -132,6 +132,7 @@ pub fn build_environment<P: ContractProvider>(version: ContractVersion) -> Envir
     range::register(&mut env);
     map::register(&mut env);
     math::register(&mut env);
+    register_defaults(&mut env);
 
     if version >= ContractVersion::V1 {
         iterator::register(&mut env);
