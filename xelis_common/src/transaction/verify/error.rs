@@ -80,4 +80,6 @@ pub enum VerificationError {
     DepositNotFound,
     #[error("Configured max gas is above the network limit")]
     MaxGasReached,
+    #[error("Transaction size {} bytes is above the maximum allowed {} bytes", _0, _1)]
+    TxTooBig(usize, usize),
 }

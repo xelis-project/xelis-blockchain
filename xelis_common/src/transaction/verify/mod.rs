@@ -25,7 +25,7 @@ use xelis_vm::ModuleValidator;
 use crate::{
     account::Nonce,
     time::Instant,
-    config::{BURN_PER_CONTRACT, MAX_GAS_USAGE_PER_TX, XELIS_ASSET},
+    config::{BURN_PER_CONTRACT, MAX_GAS_USAGE_PER_TX, XELIS_ASSET, MAX_TRANSACTION_SIZE},
     contract::{
         vm::{
             self,
@@ -658,6 +658,11 @@ impl Transaction {
         trace!("Pre-verifying transaction");
         if !self.has_valid_version_format() {
             return Err(VerificationError::InvalidFormat.into());
+        }
+
+        let tx_size = self.size();
+        if tx_size > MAX_TRANSACTION_SIZE {
+            return Err(VerificationError::TxTooBig(tx_size, MAX_TRANSACTION_SIZE).into());
         }
 
         trace!("verify fee");
