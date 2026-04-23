@@ -26,6 +26,8 @@ use crate::{
             DeployContractInvokeBuilder,
             FeeBuilder,
             FeeHelper,
+            GenerationError,
+            GenerationStateError,
             InvokeContractBuilder,
             MultiSigBuilder,
             TransactionBuilder,
@@ -642,6 +644,480 @@ async fn test_multisig() {
 
     let hash = tx.hash();
     tx.verify(&hash, &mut state, &NoZKPCache).await.unwrap();
+}
+
+/// A TX whose nonce doesn't match what the chain state expects must be rejected.
+#[tokio::test]
+async fn test_tx_invalid_nonce() {
+    let mut alice = TrackedAccount::new();
+    let mut bob = TrackedAccount::new();
+
+    alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+    bob.set_balance(XELIS_ASSET, 0);
+
+    // TX is built with nonce 0
+    let tx = create_tx_for(alice.clone(), bob.address(), 50, None);
+
+    let mut state = MockChainState::new();
+
+    // Put nonce 1 in the chain state: the TX carries nonce 0, so it's stale
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in &alice.balances {
+            balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
+        }
+        state.accounts.insert(alice.keypair.get_public_key().compress(), MockAccount {
+            balances,
+            nonce: 1,
+        });
+    }
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in &bob.balances {
+            balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
+        }
+        state.accounts.insert(bob.keypair.get_public_key().compress(), MockAccount {
+            balances,
+            nonce: 0,
+        });
+    }
+
+    let hash = tx.hash();
+    let result = tx.verify(&hash, &mut state, &NoZKPCache).await;
+    assert!(
+        matches!(result, Err(VerificationStateError::VerificationError(VerificationError::InvalidNonce(..)))),
+        "expected InvalidNonce, got: {:?}", result
+    );
+}
+
+/// Replaying an already-applied TX must be rejected because the nonce was
+/// incremented during the first successful verification.
+#[tokio::test]
+async fn test_tx_replay() {
+    let mut alice = TrackedAccount::new();
+    let mut bob = TrackedAccount::new();
+
+    alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+    bob.set_balance(XELIS_ASSET, 0);
+
+    let tx = create_tx_for(alice.clone(), bob.address(), 50, None);
+
+    let mut state = MockChainState::new();
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in &alice.balances {
+            balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
+        }
+        state.accounts.insert(alice.keypair.get_public_key().compress(), MockAccount {
+            balances,
+            nonce: alice.nonce,
+        });
+    }
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in &bob.balances {
+            balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
+        }
+        state.accounts.insert(bob.keypair.get_public_key().compress(), MockAccount {
+            balances,
+            nonce: 0,
+        });
+    }
+
+    let hash = tx.hash();
+
+    // First application succeeds and advances Alice's on-chain nonce to 1
+    tx.verify(&hash, &mut state, &NoZKPCache).await.unwrap();
+
+    // Replaying the same TX now fails: on-chain nonce is 1, TX carries 0
+    let result = tx.verify(&hash, &mut state, &NoZKPCache).await;
+    assert!(
+        matches!(result, Err(VerificationStateError::VerificationError(VerificationError::InvalidNonce(..)))),
+        "expected InvalidNonce on replay, got: {:?}", result
+    );
+}
+
+/// The builder must reject a transfer whose destination equals the sender.
+#[test]
+fn test_sender_is_receiver_rejected_at_build() {
+    let mut alice = TrackedAccount::new();
+    alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+
+    let mut state = AccountStateImpl {
+        balances: alice.balances.clone(),
+        nonce: alice.nonce,
+        reference: Reference { topoheight: 0, hash: Hash::zero() },
+    };
+
+    let data = TransactionTypeBuilder::Transfers(vec![TransferBuilder {
+        amount: 50,
+        destination: alice.address(), // sender == receiver
+        asset: XELIS_ASSET,
+        extra_data: None,
+        encrypt_extra_data: true,
+    }]);
+
+    let builder = TransactionBuilder::new(
+        TxVersion::V0,
+        alice.keypair.get_public_key().compress(),
+        None,
+        data,
+        FeeBuilder::default(),
+    );
+    let result = builder.build(&mut state, &alice.keypair);
+    assert!(
+        matches!(result, Err(GenerationStateError::GenerationError(GenerationError::SenderIsReceiver))),
+        "expected SenderIsReceiver, got: {:?}", result
+    );
+}
+
+/// Invoking a contract that does not exist in the chain state must fail.
+#[tokio::test]
+async fn test_tx_invoke_unknown_contract() {
+    let mut alice = TrackedAccount::new();
+    alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+
+    let tx = {
+        let mut state = AccountStateImpl {
+            balances: alice.balances.clone(),
+            nonce: alice.nonce,
+            reference: Reference { topoheight: 0, hash: Hash::zero() },
+        };
+
+        let data = TransactionTypeBuilder::InvokeContract(InvokeContractBuilder {
+            contract: Hash::zero(),
+            entry_id: 0,
+            max_gas: 1000,
+            parameters: Vec::new(),
+            deposits: Default::default(),
+            permission: Default::default(),
+        });
+        let builder = TransactionBuilder::new(
+            TxVersion::V2,
+            alice.keypair.get_public_key().compress(),
+            None,
+            data,
+            FeeBuilder::default(),
+        );
+        Arc::new(builder.build(&mut state, &alice.keypair).unwrap())
+    };
+
+    // Chain state has no contract registered
+    let mut state = MockChainState::new();
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in &alice.balances {
+            balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
+        }
+        state.accounts.insert(alice.keypair.get_public_key().compress(), MockAccount {
+            balances,
+            nonce: alice.nonce,
+        });
+    }
+
+    let hash = tx.hash();
+    let result = tx.verify(&hash, &mut state, &NoZKPCache).await;
+    assert!(
+        matches!(result, Err(VerificationStateError::VerificationError(VerificationError::ContractNotFound))),
+        "expected ContractNotFound, got: {:?}", result
+    );
+}
+
+/// When the chain state records a multisig requirement for an account, a
+/// plain TX (no multisig block) submitted by that account must be rejected.
+#[tokio::test]
+async fn test_multisig_required_not_provided() {
+    let mut alice = TrackedAccount::new();
+    let mut bob = TrackedAccount::new();
+    let charlie = TrackedAccount::new();
+    let dave = TrackedAccount::new();
+
+    alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+    bob.set_balance(XELIS_ASSET, 0);
+
+    // Plain transfer, no multisig signature block
+    let tx = create_tx_for(alice.clone(), bob.address(), 50, None);
+
+    let mut state = MockChainState::new();
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in &alice.balances {
+            balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
+        }
+        state.accounts.insert(alice.keypair.get_public_key().compress(), MockAccount {
+            balances,
+            nonce: alice.nonce,
+        });
+    }
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in &bob.balances {
+            balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
+        }
+        state.accounts.insert(bob.keypair.get_public_key().compress(), MockAccount {
+            balances,
+            nonce: 0,
+        });
+    }
+
+    // Alice's account requires 2-of-2 multisig approval
+    state.multisig.insert(alice.keypair.get_public_key().compress(), MultiSigPayload {
+        threshold: 2,
+        participants: IndexSet::from_iter(vec![
+            charlie.keypair.get_public_key().compress(),
+            dave.keypair.get_public_key().compress(),
+        ]),
+    });
+
+    let hash = tx.hash();
+    let result = tx.verify(&hash, &mut state, &NoZKPCache).await;
+    assert!(
+        matches!(result, Err(VerificationStateError::VerificationError(VerificationError::MultiSigNotFound))),
+        "expected MultiSigNotFound, got: {:?}", result
+    );
+}
+
+/// Multisig signatures from a key that is not a registered participant must be
+/// rejected even when the signature count matches the threshold.
+#[tokio::test]
+async fn test_multisig_wrong_signer() {
+    let mut alice = TrackedAccount::new();
+    let mut bob = TrackedAccount::new();
+    let charlie = TrackedAccount::new(); // registered at index 0
+    let dave = TrackedAccount::new();    // registered at index 1
+    let eve = TrackedAccount::new();     // NOT registered
+
+    alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+    bob.set_balance(XELIS_ASSET, 0);
+
+    let tx = {
+        let mut state = AccountStateImpl {
+            balances: alice.balances.clone(),
+            nonce: alice.nonce,
+            reference: Reference { topoheight: 0, hash: Hash::zero() },
+        };
+
+        let data = TransactionTypeBuilder::Transfers(vec![TransferBuilder {
+            amount: 1,
+            destination: bob.address(),
+            asset: XELIS_ASSET,
+            extra_data: None,
+            encrypt_extra_data: true,
+        }]);
+
+        let builder = TransactionBuilder::new(
+            TxVersion::V1,
+            alice.keypair.get_public_key().compress(),
+            Some(2),
+            data,
+            FeeBuilder::default(),
+        );
+        let mut tx = builder.build_unsigned(&mut state, &alice.keypair).unwrap();
+
+        // Sign with eve at index 0 (charlie's slot) and charlie at index 1 (dave's slot)
+        // neither signature matches the expected key in the config
+        tx.sign_multisig(&eve.keypair, 0);
+        tx.sign_multisig(&charlie.keypair, 1);
+
+        Arc::new(tx.finalize(&alice.keypair))
+    };
+
+    let mut state = MockChainState::new();
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in &alice.balances {
+            balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
+        }
+        state.accounts.insert(alice.keypair.get_public_key().compress(), MockAccount {
+            balances,
+            nonce: alice.nonce,
+        });
+    }
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in &bob.balances {
+            balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
+        }
+        state.accounts.insert(bob.keypair.get_public_key().compress(), MockAccount {
+            balances,
+            nonce: 0,
+        });
+    }
+
+    // Config: charlie at index 0, dave at index 1
+    state.multisig.insert(alice.keypair.get_public_key().compress(), MultiSigPayload {
+        threshold: 2,
+        participants: IndexSet::from_iter(vec![
+            charlie.keypair.get_public_key().compress(),
+            dave.keypair.get_public_key().compress(),
+        ]),
+    });
+
+    let hash = tx.hash();
+    let result = tx.verify(&hash, &mut state, &NoZKPCache).await;
+    // eve's signature at index 0 is checked against charlie's key -> invalid
+    assert!(
+        matches!(result, Err(VerificationStateError::VerificationError(VerificationError::InvalidSignature))),
+        "expected InvalidSignature, got: {:?}", result
+    );
+}
+
+// ── apply_with_partial_verify: fees paid even on a failed TX ────────────────
+
+/// When a contract invocation TX is applied but the contract does not exist in
+/// the chain state (simulating a failed/removed deployment), the fee_limit MUST
+/// still be permanently deducted from the sender.  Gas is refunded because no
+/// execution happened.  The nonce is consumed so the slot is gone.
+#[tokio::test]
+async fn test_apply_partial_fee_paid_on_missing_contract() {
+    let mut alice = TrackedAccount::new();
+    alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+
+    let max_gas = 1000u64;
+
+    let tx = {
+        let mut state = AccountStateImpl {
+            balances: alice.balances.clone(),
+            nonce: alice.nonce,
+            reference: Reference { topoheight: 0, hash: Hash::zero() },
+        };
+
+        let data = TransactionTypeBuilder::InvokeContract(InvokeContractBuilder {
+            contract: Hash::zero(),
+            entry_id: 0,
+            max_gas,
+            parameters: Vec::new(),
+            deposits: Default::default(), // no deposit to keep the assertion simple
+            permission: Default::default(),
+        });
+        let builder = TransactionBuilder::new(
+            TxVersion::V2,
+            alice.keypair.get_public_key().compress(),
+            None,
+            data,
+            FeeBuilder::default(),
+        );
+        Arc::new(builder.build(&mut state, &alice.keypair).unwrap())
+    };
+
+    // State has Alice's balance but the contract is NOT registered.
+    let mut state = MockChainState::new();
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in &alice.balances {
+            balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
+        }
+        state.accounts.insert(alice.keypair.get_public_key().compress(), MockAccount {
+            balances,
+            nonce: alice.nonce,
+        });
+    }
+
+    let hash = tx.hash();
+    tx.apply_with_partial_verify(&hash, &mut state).await.unwrap();
+
+    // Nonce must be consumed even though the contract was not executed.
+    assert_eq!(
+        state.accounts[&alice.keypair.get_public_key().compress()].nonce,
+        1,
+        "nonce must be incremented to 1"
+    );
+
+    // No gas was actually executed so no gas fee should be tracked.
+    assert_eq!(state.gas_fee, 0, "gas_fee must be 0 since no execution occurred");
+
+    // Alice's balance must be reduced by exactly fee_limit.
+    // The full max_gas is refunded (unused), no deposits to worry about.
+    // The fee_limit is NOT refunded because apply_with_partial_verify does not
+    // apply the fee-limit refund that verify_dynamic_parts would apply.
+    let balance = alice.keypair.decrypt_to_point(
+        &state.accounts[&alice.keypair.get_public_key().compress()].balances[&XELIS_ASSET],
+    );
+    let expected = (100 * COIN_VALUE) - tx.get_fee_limit();
+    assert_eq!(
+        balance,
+        Scalar::from(expected) * (*G),
+        "expected balance {} (paid fee_limit = {}), but got a different decrypted point",
+        expected,
+        tx.get_fee_limit()
+    );
+}
+
+/// Extending the previous test: even when the failed contract invoke also
+/// carried a public deposit, the deposit is refunded while the fee_limit is not.
+#[tokio::test]
+async fn test_apply_partial_deposit_refunded_fee_paid_on_missing_contract() {
+    let mut alice = TrackedAccount::new();
+    alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+
+    let max_gas = 1000u64;
+    let deposit = 50 * COIN_VALUE;
+
+    let tx = {
+        let mut state = AccountStateImpl {
+            balances: alice.balances.clone(),
+            nonce: alice.nonce,
+            reference: Reference { topoheight: 0, hash: Hash::zero() },
+        };
+
+        let data = TransactionTypeBuilder::InvokeContract(InvokeContractBuilder {
+            contract: Hash::zero(),
+            entry_id: 0,
+            max_gas,
+            parameters: Vec::new(),
+            deposits: [(XELIS_ASSET, ContractDepositBuilder {
+                amount: deposit,
+                private: false,
+            })].into_iter().collect(),
+            permission: Default::default(),
+        });
+        let builder = TransactionBuilder::new(
+            TxVersion::V2,
+            alice.keypair.get_public_key().compress(),
+            None,
+            data,
+            FeeBuilder::default(),
+        );
+        Arc::new(builder.build(&mut state, &alice.keypair).unwrap())
+    };
+
+    let mut state = MockChainState::new();
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in &alice.balances {
+            balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
+        }
+        state.accounts.insert(alice.keypair.get_public_key().compress(), MockAccount {
+            balances,
+            nonce: alice.nonce,
+        });
+    }
+
+    let hash = tx.hash();
+    tx.apply_with_partial_verify(&hash, &mut state).await.unwrap();
+
+    // Nonce consumed.
+    assert_eq!(
+        state.accounts[&alice.keypair.get_public_key().compress()].nonce,
+        1,
+    );
+
+    // Gas fee is zero (no execution).
+    assert_eq!(state.gas_fee, 0);
+
+    // Deposit is refunded, max_gas is refunded, but fee_limit is permanently lost.
+    // Net deduction = fee_limit only.
+    let balance = alice.keypair.decrypt_to_point(
+        &state.accounts[&alice.keypair.get_public_key().compress()].balances[&XELIS_ASSET],
+    );
+    let expected = (100 * COIN_VALUE) - tx.get_fee_limit();
+    assert_eq!(
+        balance,
+        Scalar::from(expected) * (*G),
+        "expected balance {} (deposit and gas refunded, fee_limit = {} kept), got a different point",
+        expected,
+        tx.get_fee_limit()
+    );
 }
 
 impl FeeHelper for AccountStateImpl {
