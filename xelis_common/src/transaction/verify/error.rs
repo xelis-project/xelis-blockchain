@@ -82,4 +82,6 @@ pub enum VerificationError {
     MaxGasReached,
     #[error("Transaction size {} bytes is above the maximum allowed {} bytes", _0, _1)]
     TxTooBig(usize, usize),
+    #[error("Contract parameters size {} bytes is above the maximum allowed {} bytes", _0, _1)]
+    ContractParametersSize(usize, usize),
 }

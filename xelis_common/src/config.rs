@@ -87,6 +87,8 @@ pub const FEE_PER_BYTE_OF_EVENT_DATA: u64 = 2;
 // Max gas usage available per transaction
 // Currently, set to 5 XEL
 pub const MAX_GAS_USAGE_PER_TX: u64 = COIN_VALUE * 5;
+// 256 KB is the maximum size of contract parameters
+pub const MAX_CONTRACT_PARAMETERS_SIZE: usize = 256 * BYTES_PER_KB;
 
 // 8 decimals numbers
 pub const COIN_DECIMALS: u8 = 8;
