@@ -2096,11 +2096,6 @@ impl<S: Storage> Blockchain<S> {
             let mut total_txs = 0;
 
             for (tx, hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) {
-                let tx_size = tx.size();
-                if tx_size > MAX_TRANSACTION_SIZE {
-                    return Err(BlockchainError::TxTooBig(tx_size, MAX_TRANSACTION_SIZE))
-                }
-
                 // verification that the real TX Hash is the same as in block header (and also check the correct order)
                 let tx_hash = tx.hash();
                 if tx_hash != *hash {
