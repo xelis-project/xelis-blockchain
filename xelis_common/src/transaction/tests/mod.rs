@@ -962,8 +962,6 @@ async fn test_multisig_wrong_signer() {
     );
 }
 
-// ── apply_with_partial_verify: fees paid even on a failed TX ────────────────
-
 /// When a contract invocation TX is applied but the contract does not exist in
 /// the chain state (simulating a failed/removed deployment), the fee_limit MUST
 /// still be permanently deducted from the sender.  Gas is refunded because no

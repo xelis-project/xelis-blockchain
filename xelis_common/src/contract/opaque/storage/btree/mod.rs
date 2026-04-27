@@ -302,7 +302,15 @@ macro_rules! define_numeric_enum {
 }
 
 define_numeric_enum! {
-    pub enum BTreeSeekBias { Exact = 0, GreaterOrEqual = 1, Greater = 2, LessOrEqual = 3, Less = 4, First = 5, Last = 6 }
+    pub enum BTreeSeekBias {
+        Exact = 0,
+        GreaterOrEqual = 1,
+        Greater = 2,
+        LessOrEqual = 3,
+        Less = 4,
+        First = 5,
+        Last = 6
+    }
 }
 
 #[inline]

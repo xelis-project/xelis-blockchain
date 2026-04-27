@@ -34,7 +34,8 @@ use crate::{
             HOOK_CONSTRUCTOR_ID
         },
         ContractProvider,
-        InterContractPermission
+        InterContractPermission,
+        data_size_in_bytes,
     },
     crypto::{
         elgamal::{
@@ -373,7 +374,7 @@ impl Transaction {
             return Err(VerificationError::MaxGasReached.into())
         }
 
-        let parameters_size = parameters.iter().map(|param| param.size()).sum();
+        let parameters_size = parameters.iter().map(|param| data_size_in_bytes(param)).sum();
         if parameters_size > MAX_CONTRACT_PARAMETERS_SIZE {
             return Err(VerificationError::ContractParametersSize(parameters_size, MAX_CONTRACT_PARAMETERS_SIZE).into());
         }
