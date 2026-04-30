@@ -351,6 +351,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::with_optional_arguments("inspect_contract", "Inspect a smart contract by its hash", vec![Arg::new("contract", ArgType::Hash), Arg::new("show-storage", ArgType::Bool)], CommandHandler::Async(async_handler!(inspect_contract::<S>))))?;
     command_manager.add_command(Command::new("show_mempool", "Show all transactions in mempool", CommandHandler::Async(async_handler!(show_mempool::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("import_block", "Import a block in hexadecimal format", vec![Arg::new("hex", ArgType::String)], CommandHandler::Async(async_handler!(import_block::<S>))))?;
+        command_manager.add_command(Command::with_optional_arguments("import_tx", "Import a TX in hexadecimal format", vec![Arg::new("hex", ArgType::String)], CommandHandler::Async(async_handler!(import_tx::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("show_emitted_supply_at_topoheight", "Show emitted supply at a specific topoheight", vec![Arg::new("topoheight", ArgType::Number)], CommandHandler::Async(async_handler!(show_emitted_supply_at_topoheight::<S>))))?;
     command_manager.add_command(Command::with_required_arguments("replay_tx", "Replay a transaction by its hash", vec![Arg::new("hash", ArgType::Hash)], CommandHandler::Async(async_handler!(replay_tx::<S>))))?;
 
@@ -825,6 +826,30 @@ async fn import_block<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
         .context("Error while importing block")?;
 
     manager.message("Block imported successfully");
+
+    Ok(())
+}
+
+async fn import_tx<S: Storage>(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let prompt = manager.get_prompt();
+
+    let hex = if args.has_argument("hex") {
+        args.get_value("hex")?.to_string_value()?
+    } else {
+        prompt.read_input("TX hex: ", false).await
+            .context("Error while reading TX hex")?
+    };
+
+    let tx = Transaction::from_hex(&hex)
+        .context("Error on TX")?;
+    let hash = tx.hash();
+
+    blockchain.add_tx_to_mempool(tx, true).await
+        .context("Error while importing TX")?;
+
+    manager.message(format!("TX {} imported successfully", hash));
 
     Ok(())
 }
