@@ -81,6 +81,14 @@ pub use state::*;
 pub use error::*;
 pub use zkp_cache::*;
 
+struct PreVerifyCache<'a> {
+    source_decompressed: PublicKey,
+    new_source_commitments_decompressed: Vec<PedersenCommitment>,
+    transfers_decompressed: Vec<DecompressedTransferCt>,
+    deposits_decompressed: HashMap<&'a Hash, DecompressedDepositCt>,
+    transcript: Transcript,
+}
+
 pub struct DecompressedTransferCt {
     pub commitment: PedersenCommitment,
     pub sender_handle: DecryptHandle,
@@ -535,7 +543,7 @@ impl Transaction {
         tx_hash: &'a Hash,
         state: &mut B,
         sigma_batch_collector: &mut BatchCollector,
-    ) -> Result<(Vec<DecompressedTransferCt>, HashMap<&'b Hash, DecompressedDepositCt>, Transcript), VerificationStateError<E>> {
+    ) -> Result<PreVerifyCache<'a>, VerificationStateError<E>> {
         let mut transfers_decompressed = Vec::new();
         let mut deposits_decompressed = HashMap::new();
 
@@ -656,7 +664,13 @@ impl Transaction {
             *balance += Scalar::from(refund);
         }
 
-        Ok((transfers_decompressed, deposits_decompressed, transcript))
+        Ok(PreVerifyCache {
+            source_decompressed,
+            new_source_commitments_decompressed,
+            transfers_decompressed,
+            deposits_decompressed,
+            transcript,
+        })
     }
 
     // Load and check if a contract is available
@@ -792,26 +806,29 @@ impl Transaction {
             }
         };
 
-        let new_source_commitments_decompressed = self
-            .source_commitments
-            .iter()
-            .map(|commitment| commitment.get_commitment().decompress())
-            .collect::<Result<Vec<_>, DecompressionError>>()
-            .map_err(ProofVerificationError::from)?;
+        // 1. Verify CommitmentEqProofs
+        trace!("verifying commitments eq proofs");
 
-        let source_decompressed = self
-            .source
-            .decompress()
-            .map_err(|err| VerificationError::Proof(err.into()))?;
+        let PreVerifyCache {
+            source_decompressed,
+            new_source_commitments_decompressed,
+            transfers_decompressed,
+            deposits_decompressed,
+            mut transcript,
+        } = self.verify_dynamic_parts(
+            tx_hash,
+            state,
+            sigma_batch_collector
+        ).await?;
 
-        // 0.a Verify Signature
+        // 2. Verify Signature
         let bytes = self.to_bytes();
         if !self.signature.verify(&bytes[..bytes.len() - SIGNATURE_SIZE], &source_decompressed) {
             debug!("transaction signature is invalid");
             return Err(VerificationError::InvalidSignature.into());
         }
 
-        // 0.b Verify multisig
+        // 3. Verify multisig
         if let Some(config) = state.get_multisig_state(&self.source).await.map_err(VerificationStateError::State)? {
             let Some(multisig) = self.get_multisig() else {
                 return Err(VerificationError::MultiSigNotFound.into());
@@ -848,16 +865,7 @@ impl Transaction {
             return Err(VerificationError::MultiSigNotConfigured.into());
         }
 
-        // 1. Verify CommitmentEqProofs
-        trace!("verifying commitments eq proofs");
-
-        let (transfers_decompressed, deposits_decompressed, mut transcript) = self.verify_dynamic_parts(
-            tx_hash,
-            state,
-            sigma_batch_collector
-        ).await?;
-
-        // 2. Verify every CtValidityProof
+        // 4. Verify every CtValidityProof
         trace!("verifying transfers ciphertext validity proofs");
 
         // Prepare the new source commitments at same time
