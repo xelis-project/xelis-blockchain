@@ -305,7 +305,7 @@ When the contract has been invoked and executed by the DAG order.
 
 #### Contract Transfers
 
-When a contract has transfered any asset to the receiver address, it is aggregated.
+When a contract has transferred any asset to the receiver address, it is aggregated.
 
 ##### Name `contract_transfers`
 
