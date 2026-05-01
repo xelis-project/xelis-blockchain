@@ -2542,12 +2542,12 @@ impl<S: Storage> Blockchain<S> {
                     }
 
                     // check that the tx was not yet executed in another tip branch
-                    if chain_state.get_storage().is_tx_executed_in_a_block(tx_hash).await? {
+                    if chain_state.storage().is_tx_executed_in_a_block(tx_hash).await? {
                         trace!("Tx {} was already executed in a previous block, skipping...", tx_hash);
                     } else {
                         // tx was not executed, but lets check that it is not a potential double spending
                         // check that the nonce is not already used
-                        if !nonce_checker.use_nonce(chain_state.get_storage(), tx.get_source(), tx.get_nonce(), highest_topo).await? {
+                        if !nonce_checker.use_nonce(chain_state.storage(), tx.get_source(), tx.get_nonce(), highest_topo).await? {
                             warn!("Malicious TX {}, it is a potential double spending with same nonce {}, skipping...", tx_hash, tx.get_nonce());
                             // TX will be orphaned
                             orphaned_transactions.insert(tx_hash.clone());

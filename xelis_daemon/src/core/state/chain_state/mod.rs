@@ -1,4 +1,7 @@
 mod apply;
+pub mod provider;
+
+pub use provider::{ChainStateProvider, MempoolProvider};
 
 use std::{
     borrow::Cow,
@@ -20,7 +23,6 @@ use xelis_common::{
         Hash,
         PublicKey
     },
-    serializer::Serializer,
     transaction::{
         verify::BlockchainVerificationState,
         MultiSigPayload,
@@ -28,6 +30,7 @@ use xelis_common::{
         Transaction
     },
     contract::{ContractMetadata, ContractModule, ContractVersion},
+    serializer::Serializer,
     utils::format_xelis,
     versioned::VersionedState,
 };
@@ -104,10 +107,12 @@ struct Account<'b> {
 // It is read-only but write in memory the changes to the balances and nonces
 // Once the verification is done, the changes are written to the storage
 // 's is the storage lifetime, 'b is the block data lifetime
-pub struct ChainState<'s, 'b, S: Storage> {
-    // Storage to read and write the balances and nonces
-    storage: &'s S,
+pub struct ChainState<'s, 'b, S: Storage, P: ChainStateProvider<Storage = S>> {
     environments: &'s ContractEnvironments,
+    // Provider that controls how initial account state (nonces, balances, multisig) is fetched.
+    // A plain `&S` (blanket impl) reads directly from storage (block application).
+    // `&MempoolProvider<S>` checks the mempool cache first (mempool TX validation).
+    provider: &'s P,
     // Balances of the receiver accounts
     receiver_balances: HashMap<Cow<'b, PublicKey>, HashMap<Cow<'b, Hash>, VersionedBalance>>,
     // Sender accounts
@@ -127,19 +132,19 @@ pub struct ChainState<'s, 'b, S: Storage> {
     base_height: u64,
 }
 
-impl<'s, 'b, S: Storage> ChainState<'s, 'b, S> {
-    fn with(
-        storage: &'s S,
+impl<'s, 'b, S: Storage, P: ChainStateProvider<Storage = S>> ChainState<'s, 'b, S, P> {
+    pub fn new(
+        provider: &'s P,
         environments: &'s ContractEnvironments,
         stable_topoheight: TopoHeight,
         topoheight: TopoHeight,
         block_version: BlockVersion,
         tx_base_fee: u64,
-        base_height: u64
+        base_height: u64,
     ) -> Self {
         Self {
-            storage,
             environments,
+            provider,
             receiver_balances: HashMap::new(),
             accounts: HashMap::new(),
             stable_topoheight,
@@ -152,26 +157,16 @@ impl<'s, 'b, S: Storage> ChainState<'s, 'b, S> {
         }
     }
 
-    pub fn new(storage: &'s S, environments: &'s ContractEnvironments, stable_topoheight: TopoHeight, topoheight: TopoHeight, block_version: BlockVersion, tx_base_fee: u64, base_height: u64) -> Self {
-        Self::with(
-            storage,
-            environments,
-            stable_topoheight,
-            topoheight,
-            block_version,
-            tx_base_fee,
-            base_height
-        )
-    }
-
     // Get all the gas fees
+    #[inline(always)]
     pub fn get_gas_fee(&self) -> u64 {
         self.gas_fee
     }
 
-    // Get the storage used by the chain state
-    pub fn get_storage(&self) -> &S {
-        self.storage
+    // Convenience accessor: returns the underlying storage reference.
+    #[inline(always)]
+    pub fn storage(&self) -> &S {
+        self.provider.storage()
     }
 
     pub fn get_sender_balances<'c>(&'c self, key: &'c PublicKey) -> Option<HashMap<&'c Hash, &'c VersionedBalance>> {
@@ -179,29 +174,15 @@ impl<'s, 'b, S: Storage> ChainState<'s, 'b, S> {
         Some(account.assets.iter().map(|(k, v)| (*k, &v.version)).collect())
     }
 
-    // Create a sender echange
-    async fn create_sender_echange(storage: &S, key: &'b PublicKey, asset: &'b Hash, current_topoheight: TopoHeight, reference: &Reference) -> Result<Echange, BlockchainError> {
-        let (use_output_balance, new_version, version) = super::search_versioned_balance_for_reference(storage, key, asset, current_topoheight, reference, true).await?;
-        Ok(Echange::new(use_output_balance, new_version,  version))
-    }
-
-    // Create a sender account by fetching its nonce and create a empty HashMap for balances,
-    // those will be fetched lazily
-    async fn create_sender_account(key: &PublicKey, storage: &S, topoheight: TopoHeight) -> Result<Account<'b>, BlockchainError> {
-        let (topo, mut version) = storage
-            .get_nonce_at_maximum_topoheight(key, topoheight).await?
-            .ok_or_else(|| BlockchainError::AccountNotFound(key.as_address(storage.is_mainnet())))?;
-        version.set_previous_topoheight(Some(topo));
-
-        let multisig = storage.get_multisig_at_maximum_topoheight_for(key, topoheight).await?
-            .map(|(topo, multisig)| multisig.take().map(|m| (VersionedState::FetchedAt(topo), Some(m.into_owned()))))
-            .flatten();
-
-        Ok(Account {
-            nonce: version,
-            assets: HashMap::new(),
-            multisig
-        })
+    /// Extract the sender's computed balances and multisig after TX verification.
+    /// Only meaningful when operating in mempool mode (`new_for_mempool`).
+    pub fn get_sender_cache(&mut self, key: &PublicKey) -> Option<(HashMap<Hash, Ciphertext>, Option<MultiSigPayload>)> {
+        let account = self.accounts.remove(key)?;
+        let balances = account.assets.into_iter()
+            .filter_map(|(k, echange)| echange.version.take_balance().take_ciphertext().ok().map(|ct| (k.clone(), ct)))
+            .collect();
+        let multisig = account.multisig.and_then(|(_, m)| m);
+        Some((balances, multisig))
     }
 
     // Retrieve the receiver balance of an account
@@ -210,7 +191,7 @@ impl<'s, 'b, S: Storage> ChainState<'s, 'b, S> {
         match self.receiver_balances.entry(key.clone()).or_insert_with(HashMap::new).entry(asset.clone()) {
             Entry::Occupied(o) => Ok(o.into_mut().get_mut_balance().computable()?),
             Entry::Vacant(e) => {
-                let (version, _) = self.storage.get_new_versioned_balance(&key, &asset, self.topoheight).await?;
+                let (version, _) = self.provider.storage().get_new_versioned_balance(&key, &asset, self.topoheight).await?;
                 Ok(e.insert(version).get_mut_balance().computable()?)
             }
         }
@@ -220,26 +201,23 @@ impl<'s, 'b, S: Storage> ChainState<'s, 'b, S> {
     // This is used for TX outputs verification
     // This depends on the transaction and can be final balance or output balance
     async fn internal_get_sender_verification_balance<'c>(&'c mut self, key: &'b PublicKey, asset: &'b Hash, reference: &Reference) -> Result<&'c mut CiphertextCache, BlockchainError> {
-        trace!("getting sender verification balance for {} at topoheight {}, reference: {}", key.as_address(self.storage.is_mainnet()), self.topoheight, reference.topoheight);
+        // Ask the provider for a cached balance (e.g. from the mempool) before we hit storage
+        trace!("getting sender verification balance for {} at topoheight {}, reference: {}", key.as_address(self.storage().is_mainnet()), self.topoheight, reference.topoheight);
         match self.accounts.entry(key) {
             Entry::Occupied(o) => {
                 let account = o.into_mut();
                 match account.assets.entry(asset) {
                     Entry::Occupied(o) => Ok(o.into_mut().get_balance()),
                     Entry::Vacant(e) => {
-                        let echange = Self::create_sender_echange(&self.storage, key, asset, self.topoheight, reference).await?;
-                        Ok(e.insert(echange).get_balance())
+                        let (use_output_balance, new_version, version) = self.provider.get_sender_balance(key, asset, self.topoheight, reference).await?;
+                        Ok(e.insert(Echange::new(use_output_balance, new_version, version)).get_balance())
                     }
                 }
             },
             Entry::Vacant(e) => {
-                // Create a new account for the sender
-                let account = Self::create_sender_account(key, &self.storage, self.topoheight).await?;
-
-                // Create a new echange for the asset
-                let echange = Self::create_sender_echange(&self.storage, key, asset, self.topoheight, reference).await?;
-
-                Ok(e.insert(account).assets.entry(asset).or_insert(echange).get_balance())
+                let (nonce, multisig) = self.provider.get_account_state(key, self.topoheight).await?;
+                let (use_output_balance, new_version, version) = self.provider.get_sender_balance(key, asset, self.topoheight, reference).await?;
+                Ok(e.insert(Account { nonce, assets: HashMap::new(), multisig }).assets.entry(asset).or_insert(Echange::new(use_output_balance, new_version, version)).get_balance())
             }
         }
     }
@@ -250,7 +228,7 @@ impl<'s, 'b, S: Storage> ChainState<'s, 'b, S> {
         trace!("update sender echange: {:?}", new_ct.compress());
         let change = self.accounts.get_mut(key)
             .and_then(|a| a.assets.get_mut(asset))
-            .ok_or_else(|| BlockchainError::NoTxSender(key.as_address(self.storage.is_mainnet())))?;
+            .ok_or_else(|| BlockchainError::NoTxSender(key.as_address(self.provider.storage().is_mainnet())))?;
 
         // Increase the total output
         change.add_output_to_sum(new_ct);
@@ -260,11 +238,13 @@ impl<'s, 'b, S: Storage> ChainState<'s, 'b, S> {
 
     // Get or create account for sender
     async fn get_internal_account(&mut self, key: &'b PublicKey) -> Result<&mut Account<'b>, BlockchainError> {
+        let provider = self.provider;
+        let topoheight = self.topoheight;
         match self.accounts.entry(key) {
             Entry::Occupied(o) => Ok(o.into_mut()),
             Entry::Vacant(e) => {
-                let account = Self::create_sender_account(key, &self.storage, self.topoheight).await?;
-                Ok(e.insert(account))
+                let (nonce, multisig) = provider.get_account_state(key, topoheight).await?;
+                Ok(e.insert(Account { nonce, assets: HashMap::new(), multisig }))
             }
         }
     }
@@ -279,7 +259,7 @@ impl<'s, 'b, S: Storage> ChainState<'s, 'b, S> {
     // Only sender accounts should be used here
     // For each TX, we must update the nonce by one
     async fn internal_update_account_nonce(&mut self, account: &'b PublicKey, new_nonce: Nonce) -> Result<(), BlockchainError> {
-        trace!("Updating nonce for {} to {} at topoheight {}", account.as_address(self.storage.is_mainnet()), new_nonce, self.topoheight);
+        trace!("Updating nonce for {} to {} at topoheight {}", account.as_address(self.storage().is_mainnet()), new_nonce, self.topoheight);
         let account = self.get_internal_account(account).await?;
         account.nonce.set_nonce(new_nonce);
         Ok(())
@@ -292,7 +272,7 @@ impl<'s, 'b, S: Storage> ChainState<'s, 'b, S> {
         Ok(match self.contracts.entry(hash.clone()) {
             Entry::Occupied(o) => o.into_mut(),
             Entry::Vacant(e) => {
-                let contract = self.storage.get_contract_at_maximum_topoheight_for(&hash, self.topoheight).await?
+                let contract = self.provider.storage().get_contract_at_maximum_topoheight_for(&hash, self.topoheight).await?
                     .map(|(topo, contract)| (VersionedState::FetchedAt(topo), contract.take()));
 
                 e.insert(contract)
@@ -313,7 +293,7 @@ impl<'s, 'b, S: Storage> ChainState<'s, 'b, S> {
 
     // Reward a miner for the block mined
     pub async fn reward_miner(&mut self, miner: &'b PublicKey, reward: u64) -> Result<(), BlockchainError> {
-        debug!("Rewarding miner {} with {} XEL at topoheight {}", miner.as_address(self.storage.is_mainnet()), format_xelis(reward), self.topoheight);
+        debug!("Rewarding miner {} with {} XEL at topoheight {}", miner.as_address(self.storage().is_mainnet()), format_xelis(reward), self.topoheight);
         let miner_balance = self.internal_get_receiver_balance(Cow::Borrowed(miner), Cow::Borrowed(&XELIS_ASSET)).await?;
         *miner_balance += reward;
 
@@ -322,10 +302,10 @@ impl<'s, 'b, S: Storage> ChainState<'s, 'b, S> {
 }
 
 #[async_trait]
-impl<'s, 'b, S: Storage> BlockchainVerificationState<'b, BlockchainError> for ChainState<'s, 'b, S> {
+impl<'s, 'b, S: Storage, P: ChainStateProvider<Storage = S>> BlockchainVerificationState<'b, BlockchainError> for ChainState<'s, 'b, S, P> {
     /// Left over fee to pay back
     async fn handle_tx_fee<'c>(&'c mut self, tx: &Transaction, _: &Hash) -> Result<u64, BlockchainError> {
-        let (_, refund) = super::verify_fee(self.storage, tx, tx.size(), self.topoheight, self.tx_base_fee, self.block_version).await?;
+        let (_, refund) = super::verify_fee(self.storage(), tx, tx.size(), self.topoheight, self.tx_base_fee, self.block_version).await?;
         Ok(refund)
     }
 
@@ -334,7 +314,7 @@ impl<'s, 'b, S: Storage> BlockchainVerificationState<'b, BlockchainError> for Ch
         &'c mut self,
         tx: &Transaction,
     ) -> Result<(), BlockchainError> {
-        super::pre_verify_tx(self.storage, tx, self.stable_topoheight, self.base_height, self.topoheight, self.block_version).await
+        super::pre_verify_tx(self.storage(), tx, self.stable_topoheight, self.base_height, self.topoheight, self.block_version).await
     }
 
     /// Get the balance ciphertext for a receiver account

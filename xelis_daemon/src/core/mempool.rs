@@ -1,6 +1,6 @@
 use super::{
     error::BlockchainError,
-    state::MempoolState,
+    state::{ChainState, MempoolProvider},
     storage::Storage,
     TxCache,
     blockchain::{ContractEnvironments, estimate_tx_fee_per_kb},
@@ -163,16 +163,16 @@ impl Mempool {
     ) -> Result<(), BlockchainError> {
         debug!("Adding TX {} to mempool", hash);
 
-        let mut state = MempoolState::new(&self, storage, environments, stable_topoheight, topoheight, block_version, self.mainnet, tx_base_fee, base_height);
+        let provider = MempoolProvider {
+            mempool: self,
+            storage
+        };
+        let mut state = ChainState::new(&provider, environments, stable_topoheight, topoheight, block_version, tx_base_fee, base_height);
         let tx_cache = TxCache::new(storage, self, self.disable_zkp_cache);
         tx.verify(&hash, &mut state, &tx_cache).await?;
 
         let (balances, multisig) = state.get_sender_cache(tx.get_source())
             .ok_or_else(|| BlockchainError::AccountNotFound(tx.get_source().as_address(self.mainnet)))?;
-
-        let balances = balances.into_iter()
-            .map(|(k, v)| (k.clone(), v))
-            .collect();
 
         self.add_tx_internal(storage, stable_topoheight, hash, tx, size, block_version, balances, multisig).await
     }
@@ -193,15 +193,15 @@ impl Mempool {
     ) -> Result<(), BlockchainError> {
         debug!("Adding trusted TX {} to mempool", hash);
 
-        let mut state = MempoolState::new(&self, storage, environments, stable_topoheight, topoheight, block_version, self.mainnet, tx_base_fee, base_height);
+        let provider = MempoolProvider {
+            mempool: self,
+            storage
+        };
+        let mut state = ChainState::new(&provider, environments, stable_topoheight, topoheight, block_version, tx_base_fee, base_height);
         tx.verify(&hash, &mut state, &TrustedZKPCache).await?;
 
         let (balances, multisig) = state.get_sender_cache(tx.get_source())
             .ok_or_else(|| BlockchainError::AccountNotFound(tx.get_source().as_address(self.mainnet)))?;
-
-        let balances = balances.into_iter()
-            .map(|(k, v)| (k.clone(), v))
-            .collect();
 
         self.add_tx_internal(storage, stable_topoheight, hash, tx, size, block_version, balances, multisig).await
     }
@@ -577,7 +577,11 @@ impl Mempool {
 
                     let tx_cache = TxCache::new(storage, &self, self.disable_zkp_cache);
                     if let Some((next_tx, tx_hash)) = first_tx {
-                        let mut state = MempoolState::new(&self, storage, environments, stable_topoheight, topoheight, block_version, self.mainnet, tx_base_fee, base_height);
+                        let provider = MempoolProvider {
+                            mempool: self,
+                            storage
+                        };
+                        let mut state = ChainState::new(&provider, environments, stable_topoheight, topoheight, block_version, tx_base_fee, base_height);
                         if let Err(e) = Transaction::verify(next_tx.get_tx(), &tx_hash, &mut state, &tx_cache).await {
                             warn!("Error while verifying TXs for source {}: {}", key.as_address(self.mainnet), e);
 
