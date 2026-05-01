@@ -583,36 +583,20 @@ async fn test_multisig() {
     alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
     bob.set_balance(XELIS_ASSET, 0);
 
-    let tx = {
-        let mut state = AccountStateImpl {
-            balances: alice.balances.clone(),
-            nonce: alice.nonce,
-            reference: Reference {
-                topoheight: 0,
-                hash: Hash::zero(),
-            },
-        };
-    
-        let data = TransactionTypeBuilder::Transfers(vec![TransferBuilder {
-            amount: 1,
-            destination: bob.address(),
-            asset: XELIS_ASSET,
-            extra_data: None,
-            encrypt_extra_data: true,
-        }]);
-        let builder = TransactionBuilder::new(TxVersion::V1, alice.keypair.get_public_key().compress(), Some(2), data, FeeBuilder::default());
-        let mut tx = builder.build_unsigned(&mut state, &alice.keypair).unwrap();
-
-        tx.sign_multisig(&charlie.keypair, 0);
-        tx.sign_multisig(&dave.keypair, 1);
-
-        Arc::new(tx.finalize(&alice.keypair))
-    };
+    let reference = Reference { topoheight: 0, hash: Hash::zero() };
+    let tx = Arc::new(create_multisig_transfer_tx(
+        &mut alice.clone(),
+        bob.address(),
+        1,
+        &[(0, &charlie), (1, &dave)],
+        TxVersion::V1,
+        reference,
+    ));
 
     // Create the chain state
     let mut state = MockChainState::new();
 
-    // Alice
+    // Alice: use pre-TX balances so the ZKP verifies against the original ciphertext
     {
         let mut balances = HashMap::new();
         for (asset, balance) in alice.balances {
@@ -890,37 +874,17 @@ async fn test_multisig_wrong_signer() {
     alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
     bob.set_balance(XELIS_ASSET, 0);
 
-    let tx = {
-        let mut state = AccountStateImpl {
-            balances: alice.balances.clone(),
-            nonce: alice.nonce,
-            reference: Reference { topoheight: 0, hash: Hash::zero() },
-        };
-
-        let data = TransactionTypeBuilder::Transfers(vec![TransferBuilder {
-            amount: 1,
-            destination: bob.address(),
-            asset: XELIS_ASSET,
-            extra_data: None,
-            encrypt_extra_data: true,
-        }]);
-
-        let builder = TransactionBuilder::new(
-            TxVersion::V1,
-            alice.keypair.get_public_key().compress(),
-            Some(2),
-            data,
-            FeeBuilder::default(),
-        );
-        let mut tx = builder.build_unsigned(&mut state, &alice.keypair).unwrap();
-
-        // Sign with eve at index 0 (charlie's slot) and charlie at index 1 (dave's slot)
-        // neither signature matches the expected key in the config
-        tx.sign_multisig(&eve.keypair, 0);
-        tx.sign_multisig(&charlie.keypair, 1);
-
-        Arc::new(tx.finalize(&alice.keypair))
-    };
+    let reference = Reference { topoheight: 0, hash: Hash::zero() };
+    // Sign with eve at index 0 (charlie's slot) and charlie at index 1 (dave's slot)
+    // neither signature matches the expected key in the config
+    let tx = Arc::new(create_multisig_transfer_tx(
+        &mut alice.clone(),
+        bob.address(),
+        1,
+        &[(0, &eve), (1, &charlie)],
+        TxVersion::V1,
+        reference,
+    ));
 
     let mut state = MockChainState::new();
     {
@@ -940,7 +904,7 @@ async fn test_multisig_wrong_signer() {
         }
         state.accounts.insert(bob.keypair.get_public_key().compress(), MockAccount {
             balances,
-            nonce: 0,
+            nonce: bob.nonce,
         });
     }
 

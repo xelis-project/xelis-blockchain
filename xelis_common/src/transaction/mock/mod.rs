@@ -129,6 +129,46 @@ pub struct TrackedAccountState {
     pub nonce: Nonce,
 }
 
+
+/// Build a transfer TX from a multisig account, adding the required co-signer signatures.
+/// `signers` is a list of `(participant_index, signer_account)` pairs.
+pub fn create_multisig_transfer_tx(
+    account: &mut TrackedAccount,
+    destination: Address,
+    amount: u64,
+    signers: &[(u8, &TrackedAccount)],
+    version: TxVersion,
+    reference: Reference,
+) -> Transaction {
+    let mut state = TrackedAccountState {
+        balances: account.balances.clone(),
+        nonce: account.nonce,
+        reference,
+    };
+    let threshold = signers.len() as u8;
+    let builder = TransactionBuilder::new(
+        version,
+        account.keypair.get_public_key().compress(),
+        Some(threshold),
+        TransactionTypeBuilder::Transfers(vec![TransferBuilder {
+            amount,
+            destination,
+            asset: XELIS_ASSET,
+            extra_data: None,
+            encrypt_extra_data: true,
+        }]),
+        FeeBuilder::default(),
+    );
+    let mut unsigned = builder.build_unsigned(&mut state, &account.keypair).unwrap();
+    for (id, signer) in signers {
+        unsigned.sign_multisig(&signer.keypair, *id);
+    }
+    let tx = unsigned.finalize(&account.keypair);
+    account.balances = state.balances;
+    account.nonce = state.nonce;
+    tx
+}
+
 pub fn create_transfer_tx_for_account(
     account: &mut TrackedAccount,
     destination: Address,
