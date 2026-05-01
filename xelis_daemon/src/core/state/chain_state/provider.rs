@@ -128,6 +128,7 @@ impl<'a, S: Storage> ChainStateProvider for MempoolProvider<'a, S> {
             let version = VersionedBalance::new(CiphertextCache::Decompressed(None, ct), None);
             return Ok((false, false, version));
         }
+
         search_versioned_balance_for_reference(self.storage, key, asset, topoheight, reference, true).await
     }
 }
