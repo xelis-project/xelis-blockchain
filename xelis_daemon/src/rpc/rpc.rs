@@ -1504,7 +1504,17 @@ async fn get_account_history<S: Storage>(context: &Context<'_, '_>, params: GetA
                             block_timestamp: block_header.get_timestamp()
                         });
                     }
-                }
+                },
+                TransactionType::Blob(_) => {
+                    if is_sender && params.outgoing_flow {
+                        history.push(AccountHistoryEntry {
+                            topoheight: topo,
+                            hash: tx_hash.clone(),
+                            history_type: AccountHistoryType::Blob,
+                            block_timestamp: block_header.get_timestamp()
+                        });
+                    }
+                },
             }
         }
 
