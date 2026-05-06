@@ -8,7 +8,8 @@ use crate::{
         Hashable,
         Signature,
     },
-    serializer::*
+    serializer::*,
+    transaction::extra_data::UnknownExtraDataFormat,
 };
 
 use bulletproofs::RangeProof;
@@ -65,6 +66,7 @@ pub enum TransactionType {
     MultiSig(MultiSigPayload),
     InvokeContract(InvokeContractPayload),
     DeployContract(DeployContractPayload),
+    Blob(UnknownExtraDataFormat),
 }
 
 // Transaction to be sent over the network
@@ -268,6 +270,10 @@ impl Serializer for TransactionType {
             TransactionType::DeployContract(module) => {
                 writer.write_u8(4);
                 module.write(writer);
+            },
+            TransactionType::Blob(extra_data) => {
+                writer.write_u8(5);
+                extra_data.write(writer);
             }
         };
     }
@@ -293,6 +299,7 @@ impl Serializer for TransactionType {
             2 => TransactionType::MultiSig(MultiSigPayload::read(reader)?),
             3 => TransactionType::InvokeContract(InvokeContractPayload::read(reader)?),
             4 => TransactionType::DeployContract(DeployContractPayload::read(reader)?),
+            5 => TransactionType::Blob(UnknownExtraDataFormat::read(reader)?),
             _ => {
                 return Err(ReaderError::InvalidValue)
             }
@@ -317,6 +324,7 @@ impl Serializer for TransactionType {
             },
             TransactionType::InvokeContract(payload) => payload.size(),
             TransactionType::DeployContract(payload) => payload.size(),
+            TransactionType::Blob(extra_data) => extra_data.size(),
         }
     }
 }

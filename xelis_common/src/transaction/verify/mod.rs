@@ -132,28 +132,22 @@ impl Transaction {
             return false;
         }
 
-        match self.version {
-            // V0 don't support MultiSig format
-            TxVersion::V0 => {
-                if self.get_multisig().is_some() {
-                    return false;
-                }
+        // MultiSig signature format is not supported in V0
+        if self.version == TxVersion::V0 && self.get_multisig().is_some() {
+            return false;
+        }
 
-                match &self.data {
-                    TransactionType::Transfers(_)
-                    | TransactionType::Burn(_) => true,
-                    _ => false,
-                }
-            },
-            // MultiSig is supported in V1
-            TxVersion::V1 => match &self.data {
-                TransactionType::Transfers(_)
-                | TransactionType::Burn(_)
-                | TransactionType::MultiSig(_) => true,
-                _ => false,
-            }
-            // No restriction
-            TxVersion::V2 => true,
+        match &self.data {
+            // Supported since V0
+            TransactionType::Transfers(_)
+            | TransactionType::Burn(_) => true,
+            // MultiSig is supported since V1
+            TransactionType::MultiSig(_) => self.version >= TxVersion::V1,
+            // Smart Contracts are supported since V2
+            TransactionType::InvokeContract(_)
+            | TransactionType::DeployContract(_) => self.version >= TxVersion::V2,
+            // Blob is supported since V3
+            TransactionType::Blob(_) => self.version >= TxVersion::V3,
         }
     }
 
@@ -185,7 +179,6 @@ impl Transaction {
                     output += Scalar::from(payload.amount)
                 }
             },
-            TransactionType::MultiSig(_) => {},
             TransactionType::InvokeContract(payload) => {
                 if *asset == XELIS_ASSET {
                     output += Scalar::from(payload.max_gas);
@@ -230,7 +223,8 @@ impl Transaction {
                 if *asset == XELIS_ASSET {
                     output += Scalar::from(BURN_PER_CONTRACT);
                 }
-            }
+            },
+            TransactionType::MultiSig(_) | TransactionType::Blob(_) => {},
         }
 
         Ok(output)
@@ -329,12 +323,17 @@ impl Transaction {
                 .iter()
                 .all(|transfer| has_commitment_for_asset(transfer.get_asset())),
             TransactionType::Burn(payload) => has_commitment_for_asset(&payload.asset),
-            TransactionType::MultiSig(_) => true,
             TransactionType::InvokeContract(payload) => payload
                 .deposits
                 .keys()
                 .all(|asset| has_commitment_for_asset(asset)),
-            TransactionType::DeployContract(_) => true,
+            TransactionType::DeployContract(payload) => payload
+                .invoke
+                .as_ref()
+                .map(|invoke| invoke.deposits.keys().all(|asset| has_commitment_for_asset(asset)))
+                .unwrap_or(true), 
+            | TransactionType::MultiSig(_)
+            | TransactionType::Blob(_) => true,
         }
     }
 
@@ -578,7 +577,6 @@ impl Transaction {
                     transfers_decompressed.push(decompressed);
                 }
             },
-            TransactionType::Burn(_) => {},
             TransactionType::MultiSig(payload) => {
                 let is_reset = payload.threshold == 0 && payload.participants.is_empty();
                 // If the multisig is reset, we need to check if it was already configured
@@ -622,7 +620,8 @@ impl Transaction {
 
                 let validator = ModuleValidator::new(&payload.contract.module, environment);
                 validator.verify()?;
-            }
+            },
+            TransactionType::Burn(_) | TransactionType::Blob(_) => {},
         };
 
         let new_source_commitments_decompressed = self
@@ -802,6 +801,11 @@ impl Transaction {
                         invoke.max_gas,
                         false,
                     )?;
+                }
+            },
+            TransactionType::Blob(payload) => {
+                if payload.size() > EXTRA_DATA_LIMIT_SUM_SIZE {
+                    return Err(VerificationError::TransactionExtraDataSize.into());
                 }
             }
         };
@@ -983,6 +987,9 @@ impl Transaction {
 
                 state.set_contract_module(tx_hash, &payload.contract).await
                     .map_err(VerificationStateError::State)?;
+            },
+            TransactionType::Blob(_) => {
+                transcript.blob_proof_domain_separator();
             }
         }
 
@@ -1243,6 +1250,9 @@ impl Transaction {
                 // Track the burned contract
                 state.add_burned_fee(BURN_PER_CONTRACT).await
                     .map_err(VerificationStateError::State)?;
+            },
+            TransactionType::Blob(_) => {
+                // nothing to do
             }
         }
 
