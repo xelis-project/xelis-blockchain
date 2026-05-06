@@ -170,6 +170,12 @@ pub struct RPCConfig {
     #[clap(name = "rpc-allow-private-methods", long)]
     #[serde(default)]
     pub allow_private_methods: bool,
+    /// Allow the contract VM executions in the RPC methods.
+    /// This is useful for nodes that want to enable the contract VM executions in the RPC methods.
+    /// Currently used for the `simulate_contract_invoke` method to execute the contract using current chain state.
+    #[clap(name = "rpc-allow-contract-vm-executions", long)]
+    #[serde(default)]
+    pub allow_contract_vm_executions: bool,
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum, Serialize, Deserialize, strum::Display)]

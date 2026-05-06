@@ -29,8 +29,6 @@ use crate::{
     p2p::Peer,
 };
 use super::{InternalRpcError, ApiError};
-use futures::{stream, StreamExt, TryStreamExt};
-use itertools::Itertools;
 use xelis_common::{
     account::{VersionedBalance, VersionedNonce},
     api::{
@@ -46,13 +44,9 @@ use xelis_common::{
         MinerWork,
         TopoHeight
     },
-    config::{
-        MAX_TRANSACTION_SIZE,
-        MAXIMUM_SUPPLY,
-        VERSION,
-        XELIS_ASSET
-    },
+    config::*,
     contract::{
+        vm::{self, ContractCaller, InvokeContract, ContractStateError},
         ContractLog,
         ScheduledExecution,
         ScheduledExecutionKindLog,
@@ -67,20 +61,25 @@ use xelis_common::{
         CumulativeDifficulty,
         Difficulty
     },
-    rpc::{RPCHandler, Context},
+    rpc::{Context, RPCHandler},
     serializer::Serializer,
     time::TimestampSeconds,
     transaction::{
+        ContractDeposit,
         Transaction,
-        TransactionType
+        TransactionType,
+        MAX_DEPOSITS_PER_INVOKE_CALL,
+        verify::DecompressedDepositCt,
     },
     utils::format_hashrate,
     versioned::Versioned
 };
+use xelis_vm::ValueCell;
+use futures::{stream, StreamExt, TryStreamExt};
+use itertools::Itertools;
 use anyhow::Context as AnyContext;
 use human_bytes::human_bytes;
 use serde_json::{json, Value};
-use xelis_vm::ValueCell;
 use std::{borrow::Cow, collections::HashMap, sync::Arc};
 use log::{debug, info, trace, warn};
 
@@ -328,7 +327,7 @@ pub async fn get_peer_entry<'a>(peer: &'a Peer) -> PeerEntry<'a> {
 }
 
 // This function is used to register all the RPC methods
-pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>, allow_mining_methods: bool, allow_private_methods: bool) {
+pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>, allow_mining_methods: bool, allow_private_methods: bool, allow_contract_vm_executions: bool) {
     info!("Registering RPC methods...");
 
     handler.register_method_no_params("get_version", async_handler!(version::<S>, single));
@@ -440,6 +439,10 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     handler.register_method_with_params("get_contracts", async_handler!(get_contracts::<S>));
     handler.register_method_with_params("get_contract_data_entries", async_handler!(get_contract_data_entries::<S>));
     handler.register_method_with_params("get_contract_transactions", async_handler!(get_contract_transactions::<S>));
+
+    if allow_contract_vm_executions {
+        handler.register_method_with_params("simulate_contract_invoke", async_handler!(simulate_contract_invoke::<S>));
+    }
 
     if allow_mining_methods {
         handler.register_method_with_params("get_block_template", async_handler!(get_block_template::<S>));
@@ -2271,6 +2274,92 @@ async fn get_contract_balance_at_topoheight<S: Storage>(context: &Context<'_, '_
         .context("Error while retrieving contract balance")?;
 
     Ok(version)
+}
+
+/// Estimate contract execution fee
+async fn simulate_contract_invoke<'a, S: Storage>(context: &Context<'_, '_>, params: SimulateContractInvokeParams<'_>) -> Result<SimulateContractInvokeResult<'a>, InternalRpcError> {
+    let blockchain = chain_from_context::<S>(context)?;
+
+    // Validate network match
+    if params.source.is_mainnet() != blockchain.get_network().is_mainnet() {
+        return Err(BlockchainError::InvalidNetwork.into());
+    }
+
+    if params.deposits.len() > MAX_DEPOSITS_PER_INVOKE_CALL {
+        return Err(InternalRpcError::InvalidJSONRequest)
+            .context(format!("Number of deposits cannot be greater than {}", MAX_DEPOSITS_PER_INVOKE_CALL))?
+    }
+
+    let storage = blockchain.get_storage().read().await;
+
+    let chain_cache = storage.chain_cache().await;
+    let topoheight = chain_cache.topoheight;
+    let stable_topoheight = chain_cache.stable_topoheight;
+    let height = chain_cache.height;
+    let stable_height = chain_cache.stable_height;
+
+    let block_version = get_version_at_height(blockchain.get_network(), height);
+    let (base_fee, _) = blockchain.get_required_base_fee(&*storage, chain_cache.tips.iter()).await
+        .context("Error while computing base fee")?;
+
+    // Fetch the current top block to use as simulation context
+    let top_hash = blockchain.get_top_block_hash_for_storage(&storage).await
+        .context("Error while retrieving top block hash")?;
+    let top_block = storage.get_block_by_hash(&top_hash).await
+        .context("Error while retrieving top block")?;
+
+    // Create a simulation chain state; dropped without calling apply_changes so no writes occur
+    let mut chain_state = state::ApplicableChainState::new(
+        &*storage,
+        blockchain.get_contract_environments(),
+        stable_topoheight,
+        topoheight,
+        block_version,
+        &top_hash,
+        &top_block,
+        false,
+        base_fee,
+        stable_height,
+        false,
+    );
+
+    let mut decompressed_deposits = HashMap::new();
+    for (asset, deposit) in &params.deposits.0 {
+        if let ContractDeposit::Private { commitment, sender_handle, receiver_handle, .. } = deposit {
+            let decompressed = DecompressedDepositCt {
+                commitment: commitment.decompress().map_err(BlockchainError::from)?,
+                sender_handle: sender_handle.decompress().map_err(BlockchainError::from)?,
+                receiver_handle: receiver_handle.decompress().map_err(BlockchainError::from)?,
+            };
+            decompressed_deposits.insert(asset, decompressed);
+        }
+    }
+
+    // Run the VM simulation to measure gas consumption
+    let result = vm::invoke_contract(
+        ContractCaller::Impersonate(Cow::Borrowed(params.source.get_public_key())),
+        &mut chain_state,
+        params.contract,
+        Some((&params.deposits.0, &decompressed_deposits)),
+        params.parameters.into_owned().into_iter(),
+        Default::default(),
+        MAX_GAS_USAGE_PER_TX,
+        InvokeContract::Entry(params.entry_id),
+        params.permission,
+        false,
+    )
+    .await
+    .map_err(|e| match e {
+        ContractStateError::State(err) => InternalRpcError::from(err),
+        ContractStateError::Contract(err) => InternalRpcError::from(BlockchainError::ContractError(err)),
+    })?;
+
+    Ok(SimulateContractInvokeResult {
+        result,
+        base_fee,
+        block_hash: Cow::Owned(top_hash),
+        topoheight,
+    })
 }
 
 async fn get_p2p_block_propagation<S: Storage>(context: &Context<'_, '_>, params: GetP2pBlockPropagationParams<'_>) -> Result<P2pBlockPropagationResult, InternalRpcError> {
