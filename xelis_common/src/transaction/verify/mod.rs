@@ -64,7 +64,7 @@ use crate::{
         TxVersion,
         EXTRA_DATA_LIMIT_SIZE,
         EXTRA_DATA_LIMIT_SUM_SIZE,
-        MAX_DEPOSIT_PER_INVOKE_CALL,
+        MAX_DEPOSITS_PER_INVOKE_CALL,
         MAX_MULTISIG_PARTICIPANTS,
         MAX_TRANSFER_COUNT
     }
@@ -374,7 +374,7 @@ impl Transaction {
     ) -> Result<(), VerificationStateError<E>> {
         trace!("verify invoke contract format");
 
-        if deposits.len() > MAX_DEPOSIT_PER_INVOKE_CALL {
+        if deposits.len() > MAX_DEPOSITS_PER_INVOKE_CALL {
             return Err(VerificationError::DepositCount.into());
         }
 

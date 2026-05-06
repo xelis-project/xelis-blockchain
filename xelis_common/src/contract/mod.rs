@@ -2881,8 +2881,8 @@ fn get_caller(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut 
         .context("ChainState not present in Context")?;
 
     let mainnet = state.mainnet;
-    if let ContractCaller::Transaction(_, tx) = &state.caller {
-        let address = tx.get_source().as_address(mainnet);
+    if let Some(source) = state.caller.get_source() {
+        let address = source.as_address(mainnet);
         return Ok(SysCallResult::Return(Primitive::Opaque(address.into()).into()));
     }
 

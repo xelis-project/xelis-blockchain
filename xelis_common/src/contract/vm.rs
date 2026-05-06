@@ -4,6 +4,7 @@ use std::{
     sync::Arc
 };
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::IntoStaticStr;
 use thiserror::Error;
@@ -60,15 +61,27 @@ pub enum ContractCaller<'a> {
     EventCallback(Cow<'a, Hash>, Cow<'a, Hash>),
     // Invoked by the system (no specific caller)
     System,
+    // Used for testing purposes, to impersonate a contract or an account without having a real transaction or scheduled execution behind it
+    Impersonate(Cow<'a, CompressedPublicKey>),
 }
 
 impl<'a> ContractCaller<'a> {
+    // Get the hash of the caller if available (transaction, scheduled execution or event callback)
     pub fn get_hash(&self) -> Cow<'a, Hash> {
         match self {
             Self::Transaction(hash, _) => Cow::Borrowed(hash),
             Self::Scheduled(hash, _) => hash.clone(),
             Self::EventCallback(hash, _) => hash.clone(),
-            Self::System => Cow::Owned(Hash::zero()),
+            Self::System | Self::Impersonate(_)  => Cow::Owned(Hash::zero()),
+        }
+    }
+
+    // Get the source public key of the caller if available (transaction or impersonation)
+    pub fn get_source(&self) -> Option<&CompressedPublicKey> {
+        match self {
+            Self::Transaction(_, tx) => Some(tx.get_source()),
+            Self::Impersonate(source) => Some(source),
+            _ => None,
         }
     }
 }
@@ -102,7 +115,7 @@ impl<E, T: Into<ContractError>> From<T> for ContractStateError<E> {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", content = "value")]
 pub enum ExitValue {
     Error(ExitError),
@@ -121,7 +134,7 @@ impl ExitValue {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ExecutionResult {
     // total gas used by the contract execution
     pub used_gas: u64,

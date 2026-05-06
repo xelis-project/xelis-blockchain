@@ -42,7 +42,7 @@ pub const EXTRA_DATA_LIMIT_SUM_SIZE: usize = EXTRA_DATA_LIMIT_SIZE * 32;
 // Maximum number of transfers per transaction
 pub const MAX_TRANSFER_COUNT: usize = 255;
 // Maximum number of deposits per Invoke Call
-pub const MAX_DEPOSIT_PER_INVOKE_CALL: usize = 255;
+pub const MAX_DEPOSITS_PER_INVOKE_CALL: usize = 255;
 // Maximum number of participants in a multi signature account
 pub const MAX_MULTISIG_PARTICIPANTS: usize = 255;
 

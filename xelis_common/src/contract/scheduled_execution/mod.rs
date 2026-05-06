@@ -39,7 +39,6 @@ use crate::{
         ContractMetadata,
         ModuleMetadata,
         Source,
-        ContractCaller,
         MAX_VALUE_SIZE
     },
     crypto::{
@@ -220,14 +219,10 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
 
         Source::Contract(metadata.metadata.contract_executor.clone())
     } else {
-        let source = match state.caller {
-            ContractCaller::Transaction(_, tx) => {
-                Source::Account(tx.get_source().clone())
-            },
-            _ => {
-                return Err(EnvironmentError::Static("cannot pay from non transaction call")).into();
-            }
-        };
+        let source = state.caller.get_source()
+            .cloned()
+            .map(Source::Account)
+            .ok_or(EnvironmentError::Static("cannot pay from non transaction call"))?;
 
         // only allocate the max gas
         // the extra cost must be paid
@@ -434,14 +429,10 @@ pub async fn scheduled_execution_increase_max_gas<'a, 'ty, 'r, P: ContractProvid
 
         Source::Contract(metadata.metadata.contract_executor.clone())
     } else {
-        let source = match state.caller {
-            ContractCaller::Transaction(_, tx) => {
-                Source::Account(tx.get_source().clone())
-            },
-            _ => {
-                return Err(EnvironmentError::Static("cannot pay from non transaction caller")).into();
-            }
-        };
+        let source = state.caller.get_source()
+            .cloned()
+            .map(Source::Account)
+            .ok_or(EnvironmentError::Static("cannot pay from non transaction call"))?;
 
         // Pay from the gas allowance
         record_gas_allowance(context, amount)?;
