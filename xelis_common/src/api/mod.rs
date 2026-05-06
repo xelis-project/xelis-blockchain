@@ -87,7 +87,8 @@ pub enum RPCTransactionType<'a> {
     Burn(Cow<'a, BurnPayload>),
     MultiSig(Cow<'a, MultiSigPayload>),
     InvokeContract(Cow<'a, InvokeContractPayload>),
-    DeployContract(Cow<'a, DeployContractPayload>)
+    DeployContract(Cow<'a, DeployContractPayload>),
+    Blob(Cow<'a, UnknownExtraDataFormat>)
 }
 
 impl<'a> RPCTransactionType<'a> {
@@ -111,7 +112,8 @@ impl<'a> RPCTransactionType<'a> {
             TransactionType::Burn(burn) => Self::Burn(Cow::Borrowed(burn)),
             TransactionType::MultiSig(payload) => Self::MultiSig(Cow::Borrowed(payload)),
             TransactionType::InvokeContract(payload) => Self::InvokeContract(Cow::Borrowed(payload)),
-            TransactionType::DeployContract(payload) => Self::DeployContract(Cow::Borrowed(payload))
+            TransactionType::DeployContract(payload) => Self::DeployContract(Cow::Borrowed(payload)),
+            TransactionType::Blob(blob) => Self::Blob(Cow::Borrowed(blob)),
         }
     }
 }
@@ -125,7 +127,8 @@ impl From<RPCTransactionType<'_>> for TransactionType {
             RPCTransactionType::Burn(burn) => TransactionType::Burn(burn.into_owned()),
             RPCTransactionType::MultiSig(payload) => TransactionType::MultiSig(payload.into_owned()),
             RPCTransactionType::InvokeContract(payload) => TransactionType::InvokeContract(payload.into_owned()),
-            RPCTransactionType::DeployContract(payload) => TransactionType::DeployContract(payload.into_owned())
+            RPCTransactionType::DeployContract(payload) => TransactionType::DeployContract(payload.into_owned()),
+            RPCTransactionType::Blob(blob) => TransactionType::Blob(blob.into_owned()),
         }
     }
 }
