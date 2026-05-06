@@ -1295,6 +1295,9 @@ impl Wallet {
                     }
 
                     writeln!(w, "{},{},{},{},{},-,-,-,-", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "IncomingContract", assets.join("|")).context("Error while writing csv line")?;
+                },
+                EntryData::Blob { .. } => {
+                    writeln!(w, "{},{},{},{},-,-,-,-,-", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "Blob").context("Error while writing csv line")?;
                 }
             }
         }
