@@ -10,7 +10,7 @@ use crate::{
         PrivateKey
     },
     serializer::*,
-    transaction::{Role, TxVersion}
+    transaction::{Role, TxVersion, extra_data::typed::ExtraDataKind}
 };
 use super::{
     derive_shared_key_from_handle,
@@ -37,6 +37,11 @@ impl UnknownExtraDataFormat {
         let plaintext = e.decrypt_with_shared_key(shared_key)?;
         let data = DataElement::from_bytes(&plaintext.0)?;
         Ok(data)
+    }
+
+    // Try to determine the kind of the extra data format by looking at the first byte
+    pub fn try_kind(&self) -> Option<ExtraDataKind> {
+        ExtraDataKind::try_from(self.0.first().copied()?).ok()
     }
 
     // Decrypt from the versioned extra data format

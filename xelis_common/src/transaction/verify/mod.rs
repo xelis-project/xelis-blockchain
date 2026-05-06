@@ -61,6 +61,7 @@ use crate::{
     serializer::Serializer,
     tokio::spawn_blocking_safe,
     transaction::{
+        extra_data::ExtraDataKind,
         TxVersion,
         EXTRA_DATA_LIMIT_SIZE,
         EXTRA_DATA_LIMIT_SUM_SIZE,
@@ -805,6 +806,11 @@ impl Transaction {
             },
             TransactionType::Blob(payload) => {
                 if payload.destinations.len() > MAX_TRANSFER_COUNT || payload.destinations.contains(self.get_source()) {
+                    return Err(VerificationError::InvalidFormat.into());
+                }
+
+                // If it's a private blob, we only allow one destination to prevent sending invalid encrypted data to multiple receivers
+                if payload.destinations.len() != 1 && matches!(payload.data.try_kind(), Some(ExtraDataKind::Private)) {
                     return Err(VerificationError::InvalidFormat.into());
                 }
 

@@ -42,7 +42,7 @@ pub use plaintext::{PlaintextExtraData, PlaintextFlag};
 pub use shared_key::SharedKey;
 pub use unknown::UnknownExtraDataFormat;
 pub use extra_data::ExtraData;
-pub use typed::ExtraDataType;
+pub use typed::{ExtraDataType, ExtraDataKind};
 
 // Key Derivation Function used to derive the shared key
 type KDF = sha3::Sha3_256;
@@ -199,6 +199,7 @@ impl Serializer for Cipher {
 #[cfg(test)]
 mod tests {
     use crate::{
+        api::DataElement,
         crypto::KeyPair,
         transaction::Role
     };
@@ -243,5 +244,40 @@ mod tests {
         let size = ExtraData::estimate_size(&data);
         let encrypted = ExtraData::new(PlaintextData(data.to_bytes()), alice.get_public_key(), bob.get_public_key()).to_bytes();
         assert_eq!(size, encrypted.size());
+    }
+
+    #[test]
+    fn test_unknown_extra_data_kind_private() {
+        let alice = KeyPair::new();
+        let bob = KeyPair::new();
+
+        let data = PlaintextData(vec![1, 2, 3]);
+        let typed = ExtraDataType::Private(ExtraData::new(data, alice.get_public_key(), bob.get_public_key()));
+        let unknown: UnknownExtraDataFormat = typed.into();
+
+        assert!(matches!(unknown.try_kind(), Some(ExtraDataKind::Private)));
+    }
+
+    #[test]
+    fn test_unknown_extra_data_kind_public() {
+        let data = DataElement::Value(42u64.into());
+        let typed = ExtraDataType::Public(PlaintextData(data.to_bytes()));
+        let unknown: UnknownExtraDataFormat = typed.into();
+
+        assert!(matches!(unknown.try_kind(), Some(ExtraDataKind::Public)));
+    }
+
+    #[test]
+    fn test_unknown_extra_data_kind_proprietary() {
+        let typed = ExtraDataType::Proprietary(vec![0xDE, 0xAD, 0xBE, 0xEF]);
+        let unknown: UnknownExtraDataFormat = typed.into();
+
+        assert!(matches!(unknown.try_kind(), Some(ExtraDataKind::Proprietary)));
+    }
+
+    #[test]
+    fn test_unknown_extra_data_kind_empty() {
+        let unknown = UnknownExtraDataFormat(vec![]);
+        assert!(unknown.try_kind().is_none());
     }
 }
