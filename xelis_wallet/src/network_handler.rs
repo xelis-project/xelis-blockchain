@@ -536,9 +536,17 @@ impl NetworkHandler {
                         }
                     },
                     RPCTransactionType::Blob(payload) => {
-                        if is_owner {
-                            let payload = payload.into_owned();
-                            let decrypted = match self.wallet.decrypt_extra_data(payload,  None, Role::Sender, tx.version) {
+                        let role = if is_owner {
+                            Some(Role::Sender)
+                        } else if payload.destinations.contains(address) {
+                            Some(Role::Receiver)
+                        } else {
+                            None
+                        };
+
+                        if let Some(role) = role {
+                            let data = payload.data.into_owned();
+                            let decrypted = match self.wallet.decrypt_extra_data(data,  None, role, tx.version) {
                                 Ok(e) => e,
                                 Err(e) => {
                                     warn!("Error while decrypting extra data of TX {}: {}", tx.hash, e);
