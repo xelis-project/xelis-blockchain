@@ -582,7 +582,8 @@ pub enum AccountHistoryType {
         asset: Hash,
         // Amount received from the contract
         amount: u64,
-    }
+    },
+    Blob
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
