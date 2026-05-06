@@ -804,7 +804,11 @@ impl Transaction {
                 }
             },
             TransactionType::Blob(payload) => {
-                if payload.size() > EXTRA_DATA_LIMIT_SUM_SIZE {
+                if payload.destinations.len() > MAX_TRANSFER_COUNT || payload.destinations.contains(self.get_source()) {
+                    return Err(VerificationError::InvalidFormat.into());
+                }
+
+                if payload.data.size() > EXTRA_DATA_LIMIT_SUM_SIZE {
                     return Err(VerificationError::TransactionExtraDataSize.into());
                 }
             }
@@ -988,8 +992,12 @@ impl Transaction {
                 state.set_contract_module(tx_hash, &payload.contract).await
                     .map_err(VerificationStateError::State)?;
             },
-            TransactionType::Blob(_) => {
+            TransactionType::Blob(payload) => {
                 transcript.blob_proof_domain_separator();
+
+                for destination in &payload.destinations {
+                    transcript.append_public_key(b"dest_pubkey", destination);
+                }
             }
         }
 

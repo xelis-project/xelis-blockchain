@@ -4,6 +4,7 @@ pub mod daemon;
 pub mod query;
 
 use std::borrow::Cow;
+use indexmap::IndexSet;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -32,6 +33,7 @@ use crate::{
         TransactionType,
         TransferPayload,
         TxVersion,
+        BlobPayload,
     }
 };
 pub use data::*;
@@ -80,6 +82,21 @@ impl<'a> From<RPCTransferPayload<'a>> for TransferPayload {
     }
 }
 
+#[derive(Serialize, Deserialize, JsonSchema, Clone)]
+pub struct RPCBlobPayload<'a> {
+    pub data: Cow<'a, UnknownExtraDataFormat>,
+    pub destinations: Cow<'a, IndexSet<Address>>
+}
+
+impl<'a> From<RPCBlobPayload<'a>> for BlobPayload {
+    fn from(blob: RPCBlobPayload<'a>) -> Self {
+        BlobPayload {
+            data: blob.data.into_owned(),
+            destinations: blob.destinations.into_owned().into_iter().map(|address| address.to_public_key()).collect()
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RPCTransactionType<'a> {
@@ -88,7 +105,7 @@ pub enum RPCTransactionType<'a> {
     MultiSig(Cow<'a, MultiSigPayload>),
     InvokeContract(Cow<'a, InvokeContractPayload>),
     DeployContract(Cow<'a, DeployContractPayload>),
-    Blob(Cow<'a, UnknownExtraDataFormat>)
+    Blob(RPCBlobPayload<'a>),
 }
 
 impl<'a> RPCTransactionType<'a> {
@@ -113,7 +130,10 @@ impl<'a> RPCTransactionType<'a> {
             TransactionType::MultiSig(payload) => Self::MultiSig(Cow::Borrowed(payload)),
             TransactionType::InvokeContract(payload) => Self::InvokeContract(Cow::Borrowed(payload)),
             TransactionType::DeployContract(payload) => Self::DeployContract(Cow::Borrowed(payload)),
-            TransactionType::Blob(blob) => Self::Blob(Cow::Borrowed(blob)),
+            TransactionType::Blob(blob) => Self::Blob(RPCBlobPayload {
+                data: Cow::Borrowed(blob.get_data()),
+                destinations: Cow::Owned(blob.get_destinations().iter().map(|pk| pk.as_address(mainnet)).collect())
+            })
         }
     }
 }
@@ -128,7 +148,7 @@ impl From<RPCTransactionType<'_>> for TransactionType {
             RPCTransactionType::MultiSig(payload) => TransactionType::MultiSig(payload.into_owned()),
             RPCTransactionType::InvokeContract(payload) => TransactionType::InvokeContract(payload.into_owned()),
             RPCTransactionType::DeployContract(payload) => TransactionType::DeployContract(payload.into_owned()),
-            RPCTransactionType::Blob(blob) => TransactionType::Blob(blob.into_owned()),
+            RPCTransactionType::Blob(blob) => TransactionType::Blob(blob.into()),
         }
     }
 }

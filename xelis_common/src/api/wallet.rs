@@ -560,6 +560,9 @@ pub enum EntryType {
     IncomingContract {
         // Transfers received from the contract
         transfers: IndexMap<Hash, u64>,
+    },
+    Blob {
+        data: PlaintextExtraData
     }
 }
 
