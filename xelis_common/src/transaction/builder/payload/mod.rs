@@ -67,6 +67,16 @@ pub struct DeployContractInvokeBuilder {
     pub deposits: IndexMap<Hash, ContractDepositBuilder>,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
+pub struct BlobPayloadBuilder {
+    pub data: DataElement,
+    // Encrypt the data by default
+    // Set to false if you want to keep it public
+    #[serde(default = "default_bool_true")]
+    pub encrypt: bool,
+    pub destinations: Vec<Address>,
+}
+
 #[cfg(test)]
 mod tests {
     use indexmap::indexmap;

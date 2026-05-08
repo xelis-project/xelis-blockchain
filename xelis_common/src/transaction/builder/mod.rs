@@ -74,6 +74,7 @@ use super::{
     Transaction,
     TransactionType,
     TransferPayload,
+    BlobPayload,
     TxVersion,
     EXTRA_DATA_LIMIT_SIZE,
     EXTRA_DATA_LIMIT_SUM_SIZE,
@@ -86,6 +87,10 @@ pub use payload::*;
 #[derive(Error, Debug, Clone, IntoStaticStr)]
 #[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum GenerationError {
+    #[error("Missing blob destination key")]
+    BlobMissingDestination,
+    #[error("Expected exactly one destination for blob, got {0}")]
+    ExpectedOneDestinationForBlob(usize),
     #[error("Invalid constructor invoke on deploy")]
     InvalidConstructorInvoke,
     #[error("No contract key provided for private deposits")]
@@ -156,6 +161,7 @@ pub enum TransactionTypeBuilder {
     MultiSig(MultiSigBuilder),
     InvokeContract(InvokeContractBuilder),
     DeployContract(DeployContractBuilder),
+    Blob(BlobPayloadBuilder),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -243,6 +249,9 @@ impl TransactionTypeBuilder {
                 for transfer in transfers {
                     used_keys.insert(transfer.destination.get_public_key());
                 }
+            },
+            TransactionTypeBuilder::Blob(payload) => {
+                used_keys.extend(payload.destinations.iter().map(|addr| addr.get_public_key()));
             }
             _ => {},
         }
@@ -370,6 +379,9 @@ impl TransactionBuilder {
                     commitments_count += commitments;
                     size += deposits_size + invoke.max_gas.size();
                 }
+            },
+            TransactionTypeBuilder::Blob(payload) => {
+                size += 1 + ExtraDataType::estimate_size(&payload.data, payload.encrypt) + (payload.destinations.len() * RISTRETTO_COMPRESSED_SIZE);
             }
         };
 
@@ -530,7 +542,8 @@ impl TransactionBuilder {
                 if *asset == XELIS_ASSET {
                     ct -= Scalar::from(BURN_PER_CONTRACT);
                 }
-            }
+            },
+            TransactionTypeBuilder::Blob(_) => {}
         }
 
         ct
@@ -583,7 +596,8 @@ impl TransactionBuilder {
                         cost += invoke.max_gas;
                     }
                 }
-            }
+            },
+            TransactionTypeBuilder::Blob(_) => {}
         }
 
         cost
@@ -805,6 +819,11 @@ impl TransactionBuilder {
                         source_keypair.get_public_key(),
                         &None
                     )?;
+                }
+            },
+            TransactionTypeBuilder::Blob(payload) => {
+                if payload.encrypt && payload.destinations.len() != 1 {
+                    return Err(GenerationError::ExpectedOneDestinationForBlob(payload.destinations.len()).into());
                 }
             },
             _ => {}
@@ -1102,6 +1121,28 @@ impl TransactionBuilder {
                             deposits
                         }
                     }),
+                })
+            },
+            TransactionTypeBuilder::Blob(payload) => {
+                transcript.blob_proof_domain_separator();
+                for destination in payload.destinations.iter() {
+                    transcript.append_public_key(b"blob_pubkey", &destination.get_public_key());
+                }
+
+                let bytes = payload.data.to_bytes();
+                let data = if payload.encrypt {
+                    let receiver = payload.destinations.first()
+                        .and_then(|d| d.get_public_key().decompress().ok())
+                        .ok_or(GenerationError::BlobMissingDestination)?;
+
+                    ExtraDataType::Private(ExtraData::new(PlaintextData(bytes), source_keypair.get_public_key(), &receiver))
+                } else {
+                    ExtraDataType::Public(PlaintextData(bytes))
+                }.into();
+
+                TransactionType::Blob(BlobPayload {
+                    data,
+                    destinations: payload.destinations.into_iter().map(|d| d.to_public_key()).collect(),
                 })
             }
         };

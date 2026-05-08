@@ -1002,7 +1002,7 @@ impl Transaction {
                 transcript.blob_proof_domain_separator();
 
                 for destination in &payload.destinations {
-                    transcript.append_public_key(b"dest_pubkey", destination);
+                    transcript.append_public_key(b"blob_pubkey", destination);
                 }
             }
         }
