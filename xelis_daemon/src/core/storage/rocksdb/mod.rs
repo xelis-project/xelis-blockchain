@@ -32,7 +32,6 @@ use xelis_common::{
     network::Network,
     serializer::{Count, Serializer},
     tokio,
-    transaction::Transaction,
 };
 use crate::core::{
     config::RocksDBConfig,
@@ -480,7 +479,7 @@ impl RocksStorage {
 #[async_trait]
 impl Storage for RocksStorage {
     // delete block at topoheight, and all its data related
-    async fn delete_block_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(Hash, Immutable<BlockHeader>, Vec<(Hash, Immutable<Transaction>)>), BlockchainError> {
+    async fn delete_block_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(Hash, Immutable<BlockHeader>), BlockchainError> {
         trace!("Delete block at topoheight {topoheight}");
 
         // delete topoheight<->hash pointers
@@ -501,7 +500,6 @@ impl Storage for RocksStorage {
         self.remove_from_disk(Column::TopoHeightMetadata, &topoheight.to_be_bytes())?;
         trace!("topoheight metadata deleted");
 
-        let mut txs = Vec::with_capacity(block.get_txs_count());
         for tx_hash in block.get_transactions() {
             if self.is_tx_executed_in_block(tx_hash, &hash).await? {
                 trace!("Tx {} was executed in block {}, deleting", topoheight, tx_hash);
@@ -513,13 +511,11 @@ impl Storage for RocksStorage {
             // which allow multiple time the same txs in differents blocks
             if !self.is_tx_linked_to_blocks(tx_hash).await? {
                 trace!("Deleting TX {} in block {}", tx_hash, hash);
-                let tx = self.delete_transaction(tx_hash).await?;
-
-                txs.push((tx_hash.clone(), tx));
+                self.delete_transaction(tx_hash).await?;
             }
         }
 
-        Ok((hash, block, txs))
+        Ok((hash, block))
     }
 
     // Get the size of the chain on disk in bytes

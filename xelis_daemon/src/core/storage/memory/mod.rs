@@ -21,7 +21,6 @@ use xelis_common::{
 };
 use xelis_vm::ValueCell;
 
-use crate::core::storage::{VersionedContractModule, VersionedMultiSig};
 use crate::core::{
     error::BlockchainError,
     storage::{
@@ -30,9 +29,12 @@ use crate::core::{
         ClientProtocolProvider,
         DagOrderProvider,
         DifficultyProvider,
+        ContractLogsProvider,
+        VersionedContractModule,
+        VersionedMultiSig,
+        TransactionProvider,
         MergeSet,
         Storage,
-        TransactionProvider,
         VersionedContractBalance,
         VersionedContractData,
         VersionedEventCallbackRegistration,
@@ -148,7 +150,7 @@ impl MemoryStorage {
 
 #[async_trait]
 impl Storage for MemoryStorage {
-    async fn delete_block_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(Hash, Immutable<BlockHeader>, Vec<(Hash, Immutable<Transaction>)>), BlockchainError> {
+    async fn delete_block_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(Hash, Immutable<BlockHeader>), BlockchainError> {
         let hash = self.get_hash_at_topo_height(topoheight).await?;
         let shared_hash = PooledArc::from_ref(&hash);
 
@@ -157,16 +159,21 @@ impl Storage for MemoryStorage {
         self.topoheight_metadata.remove(&topoheight);
 
         let block = self.get_block_header_by_hash(&hash).await?;
-        let mut txs = Vec::new();
 
         for tx_hash in block.get_txs_hashes() {
-            if let Ok(tx) = self.get_transaction(tx_hash).await {
+            self.unlink_transaction_from_block(tx_hash, &hash).await?;
+
+            if self.is_tx_executed_in_block(tx_hash, &hash).await? {
                 self.unmark_tx_from_executed(tx_hash).await?;
-                txs.push((tx_hash.clone(), tx));
+                self.delete_contract_logs_for_caller(tx_hash).await?;
+            }
+
+            if !self.is_tx_linked_to_blocks(&hash).await? {
+                self.delete_transaction(tx_hash).await?;
             }
         }
 
-        Ok((hash, block, txs))
+        Ok((hash, block))
     }
 
     async fn get_size_on_disk(&self) -> Result<u64, BlockchainError> {

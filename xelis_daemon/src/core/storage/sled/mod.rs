@@ -752,7 +752,7 @@ impl SledStorage {
 #[async_trait]
 impl Storage for SledStorage {
     // Delete the whole block using its topoheight
-    async fn delete_block_at_topoheight(&mut self, topoheight: u64) -> Result<(Hash, Immutable<BlockHeader>, Vec<(Hash, Immutable<Transaction>)>), BlockchainError> {
+    async fn delete_block_at_topoheight(&mut self, topoheight: u64) -> Result<(Hash, Immutable<BlockHeader>), BlockchainError> {
         trace!("Delete block at topoheight {topoheight}");
 
         // delete topoheight<->hash pointers
@@ -772,7 +772,6 @@ impl Storage for SledStorage {
         trace!("Deleting topoheight metadata");
         let _: () = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.topoheight_metadata, None, &topoheight).await?;
 
-        let mut txs = Vec::new();
         for tx_hash in block.get_transactions() {
             if self.is_tx_executed_in_block(tx_hash, &hash).await? {
                 trace!("Tx {} was executed, deleting", tx_hash);
@@ -783,12 +782,11 @@ impl Storage for SledStorage {
             // Because the TX is not linked to any other block, we can safely delete that block
             if !self.is_tx_linked_to_blocks(&tx_hash).await? {
                 trace!("Deleting TX {} in block {}", tx_hash, hash);
-                let tx: Immutable<Transaction> = Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.transactions, self.cache.objects.as_mut().map(|o| &mut o.transactions_cache), tx_hash).await?;
-                txs.push((tx_hash.clone(), tx));
+                let _: Immutable<Transaction> = Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.transactions, self.cache.objects.as_mut().map(|o| &mut o.transactions_cache), tx_hash).await?;
             }
         }
 
-        Ok((hash, block, txs))
+        Ok((hash, block))
     }
 
     // Returns the current size on disk in bytes

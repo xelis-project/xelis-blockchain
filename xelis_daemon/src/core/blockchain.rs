@@ -3222,7 +3222,7 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // Rewind the chain by removing N blocks from the top
-    pub async fn rewind_chain(&self, count: u64, until_stable_height: bool) -> Result<(TopoHeight, Vec<(Hash, Immutable<Transaction>)>), BlockchainError> {
+    pub async fn rewind_chain(&self, count: u64, until_stable_height: bool) -> Result<(TopoHeight, Vec<(Arc<Hash>, Arc<Transaction>)>), BlockchainError> {
         debug!("rewind chain of {} blocks (stable height: {})", count, until_stable_height);
         let _permit = self.storage_semaphore.acquire().await?;
         debug!("storage semaphore acquired for rewinding chain");
@@ -3232,7 +3232,8 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // Rewind the chain by removing N blocks from the top
-    pub async fn rewind_chain_for_storage(&self, storage: &mut S, count: u64, stop_at_stable_height: bool) -> Result<(TopoHeight, Vec<(Hash, Immutable<Transaction>)>), BlockchainError> {
+    // Returns the new topoheight and the list of transactions that got removed from mempool because of the chain reorganization
+    pub async fn rewind_chain_for_storage(&self, storage: &mut S, count: u64, stop_at_stable_height: bool) -> Result<(TopoHeight, Vec<(Arc<Hash>, Arc<Transaction>)>), BlockchainError> {
         trace!("rewind chain with count = {}", count);
 
         counter!("xelis_rewind_chain").increment(1);
@@ -3265,50 +3266,27 @@ impl<S: Storage> Blockchain<S> {
         }
 
         let start = Instant::now();
-        let (new_height, new_topoheight, mut txs) = storage.pop_blocks(current_height, current_topoheight, count, until_topo_height).await?;
+        let (new_height, new_topoheight) = storage.pop_blocks(current_height, current_topoheight, count, until_topo_height).await?;
         debug!("New topoheight: {} (diff: {})", new_topoheight, current_topoheight - new_topoheight);
 
         histogram!("xelis_rewind_chain_ms").record(start.elapsed().as_millis() as f64);
-
-        // Clean mempool from old txs if the DAG has been updated
-        {
-            debug!("lock mempool in write mode for cleaning old TXs");
-            let mut mempool = self.mempool.write().await;
-            debug!("mempool lock acquired for cleaning old TXs");
-            txs.extend(
-                mempool.drain()
-                    .into_iter()
-                    .map(|(hash, tx)| (hash, Immutable::Arc(tx)))
-                );
-        }
-
-        // Try to add all txs back to mempool if possible
-        // We try to prevent lost/to be orphaned
-        // We try to add back all txs already in mempool just in case
-        let mut orphaned_txs = Vec::new();
-        {
-            for (hash, mut tx) in txs {
-                debug!("Trying to add TX {} to mempool again", hash);
-                if let Err(e) = self.add_tx_to_mempool_with_storage_and_hash(storage, tx.make_arc(), Immutable::Owned(hash.clone()), false).await {
-                    debug!("TX {} rewinded is not compatible anymore: {}", hash, e);
-                    orphaned_txs.push((hash, tx));
-                }
-            }
-        }
 
         let chain_cache = storage.chain_cache_mut().await?;
         chain_cache.height = new_height;
         chain_cache.topoheight = new_topoheight;
 
-        self.initialize_caches(storage).await?;
-
         let version = get_version_at_height(self.get_network(), new_height);
+        self.initialize_caches(storage).await?;
 
         // update stable height if it's allowed
         if !stop_at_stable_height {
             let tips = storage.get_tips().await?;
             let (stable_hash, stable_height) = blockdag::find_common_base::<S, _>(&storage, &tips, version).await?;
             let stable_topoheight = storage.get_topo_height_for_hash(&stable_hash).await?;
+
+            let chain_cache = storage.chain_cache_mut().await?;
+            chain_cache.stable_height = stable_height;
+            chain_cache.stable_topoheight = stable_topoheight;
 
             // if we have a RPC server, propagate the StableHeightChanged if necessary
             if let Some(rpc) = self.rpc.read().await.as_ref() {
@@ -3346,7 +3324,25 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
-        Ok((new_topoheight, orphaned_txs))
+        // Clean mempool from old txs if the DAG has been updated
+        let mut txs = Vec::new();
+        {
+            let chain_cache = storage.chain_cache().await;
+            let tx_base_fee = if version >= BlockVersion::V3 {
+                self.get_required_base_fee(storage, chain_cache.tips.iter()).await?.0
+            } else {
+                FEE_PER_KB
+            };
+
+            debug!("lock mempool in write mode for cleaning old TXs");
+            let mut mempool = self.mempool.write().await;
+            debug!("mempool lock acquired for cleaning old TXs");
+
+            let tmp = mempool.clean_up(storage, &self.environments, chain_cache.stable_topoheight, new_topoheight, version, tx_base_fee, chain_cache.stable_height, true).await?;
+            txs.extend(tmp.into_iter().map(|(tx_hash, sorted_tx)| (tx_hash, sorted_tx.consume())));
+        }
+
+        Ok((new_topoheight, txs))
     }
 
     // Calculate the average block time on the last 50 blocks

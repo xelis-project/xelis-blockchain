@@ -502,7 +502,7 @@ impl<S: Storage> P2pServer<S> {
 
     // Handle the chain validator by rewinding our current chain first
     // This should only be called with a commit point enabled
-    async fn handle_chain_validator_with_rewind(&self, peer: &Arc<Peer>, pop_count: u64, chain_validator: ChainValidator<'_, S>, snapshot: &SnapshotWrapper<'_, S>) -> Result<(Vec<(Hash, Immutable<Transaction>)>, Result<(), BlockchainError>), BlockchainError> {
+    async fn handle_chain_validator_with_rewind(&self, peer: &Arc<Peer>, pop_count: u64, chain_validator: ChainValidator<'_, S>, snapshot: &SnapshotWrapper<'_, S>) -> Result<(Vec<(Arc<Hash>, Arc<Transaction>)>, Result<(), BlockchainError>), BlockchainError> {
         // peer chain looks correct, lets rewind our chain
         warn!("Rewinding chain because of {} (pop count: {})", peer, pop_count);
         let (topoheight, txs) = {
@@ -692,7 +692,7 @@ impl<S: Storage> P2pServer<S> {
                                 debug!("Trying to apply orphaned TX {}", hash);
                                 if !self.blockchain.is_tx_included(&hash).await? {
                                     debug!("TX {} is not in chain, adding it to mempool", hash);
-                                    if let Err(e) = self.blockchain.add_tx_to_mempool_with_hash(tx.into_arc(), Immutable::Owned(hash), false).await {
+                                    if let Err(e) = self.blockchain.add_tx_to_mempool_with_hash(tx, Immutable::Arc(hash), false).await {
                                         debug!("Couldn't add back to mempool after commit point rollbacked: {}", e);
                                     }
                                 } else {

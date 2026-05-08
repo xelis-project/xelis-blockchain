@@ -2430,7 +2430,7 @@ async fn rewind_chain<S: Storage>(context: &Context<'_, '_>, params: RewindChain
 
     Ok(RewindChainResult {
         topoheight,
-        txs: txs.into_iter().map(|(tx_hash, _)| tx_hash).collect(),
+        txs: txs.into_iter().map(|(tx_hash, _)| tx_hash.into()).collect(),
     })
 }
 

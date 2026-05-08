@@ -36,7 +36,6 @@ use xelis_common::{
     },
     crypto::Hash,
     immutable::Immutable,
-    transaction::Transaction
 };
 use crate::{config::PRUNE_SAFETY_LIMIT, core::error::BlockchainError};
 
@@ -52,10 +51,16 @@ pub trait Storage:
     + CacheProvider + StateProvider + ConcurrencyProvider
     + MergeSetProvider + Sync + Send + 'static {
     // delete block at topoheight, and all pointers (hash_at_topo, topo_by_hash, reward, supply, diff, cumulative diff...)
-    async fn delete_block_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(Hash, Immutable<BlockHeader>, Vec<(Hash, Immutable<Transaction>)>), BlockchainError>;
+    async fn delete_block_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(Hash, Immutable<BlockHeader>), BlockchainError>;
 
     // Count is the number of blocks (topoheight) to rewind
-    async fn pop_blocks(&mut self, mut height: u64, mut topoheight: TopoHeight, count: u64, until_topo_height: TopoHeight) -> Result<(u64, TopoHeight, Vec<(Hash, Immutable<Transaction>)>), BlockchainError> {
+    async fn pop_blocks(
+        &mut self,
+        mut height: u64,
+        mut topoheight: TopoHeight,
+        count: u64,
+        until_topo_height: TopoHeight,
+    ) -> Result<(u64, TopoHeight), BlockchainError> {
         trace!("pop blocks from height: {}, topoheight: {}, count: {}", height, topoheight, count);
         if topoheight < count as u64 { // also prevent removing genesis block
             return Err(BlockchainError::NotEnoughBlocks);
@@ -89,7 +94,6 @@ pub trait Storage:
         }
 
         // all txs to be rewinded
-        let mut txs = Vec::new();
         let mut done = 0;
         'main: loop {
             // stop rewinding if its genesis block or if we reached the lowest topo
@@ -99,13 +103,12 @@ pub trait Storage:
             }
 
             // Delete the hash at topoheight
-            let (hash, block, block_txs) = self.delete_block_at_topoheight(topoheight).await?;
+            let (hash, block) = self.delete_block_at_topoheight(topoheight).await?;
             // Instead of deleting one by one, we delete them all at once
             // at the end of the loop
             // self.delete_versioned_data_at_topoheight(topoheight).await?;
 
             debug!("Block {} at topoheight {} deleted", hash, topoheight);
-            txs.extend(block_txs);
 
             // generate new tips
             trace!("Removing {} from {} tips", hash, tips.len());
@@ -180,7 +183,7 @@ pub trait Storage:
         // Reduce the count of blocks stored
         self.decrease_blocks_count(done).await?;
 
-        Ok((height, topoheight, txs))
+        Ok((height, topoheight))
     }
 
     // Get the size of the chain on disk in bytes
