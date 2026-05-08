@@ -28,6 +28,7 @@ use crate::{
         extra_data::{SharedKey, UnknownExtraDataFormat},
         Deposits,
     },
+    immutable::Immutable,
 };
 use super::{default_true_value, DataElement, RPCContractLog, RPCTransaction};
 
@@ -643,7 +644,7 @@ pub struct RewindChainResult {
     /// New topoheight after rewind
     pub topoheight: TopoHeight,
     /// All transactions that were removed from the chain
-    pub txs: Vec<Hash>,
+    pub txs: Vec<Immutable<Hash>>,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
