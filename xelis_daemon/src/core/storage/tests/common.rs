@@ -3,15 +3,17 @@ use std::sync::Arc;
 use std::borrow::Cow;
 use indexmap::IndexSet;
 use xelis_common::{
-    account::VersionedNonce,
+    account::{VersionedBalance, VersionedNonce},
+    asset::{AssetData, AssetOwner, MaxSupplyMode, VersionedAssetData},
     block::{BlockHeader, BlockVersion, EXTRA_NONCE_SIZE},
-    contract::{ScheduledExecution, ScheduledExecutionKind, EventCallbackRegistration, ContractModule},
-    crypto::{Hash, KeyPair},
+    config::XELIS_ASSET,
+    contract::{ContractModule, EventCallbackRegistration, ScheduledExecution, ScheduledExecutionKind},
+    crypto::{Hash, KeyPair, PublicKey},
     difficulty::Difficulty,
     immutable::Immutable,
     network::Network,
     varuint::VarUint,
-    versioned::Versioned,
+    versioned::Versioned
 };
 use xelis_vm::Module;
 use crate::core::storage::Storage;
@@ -1311,5 +1313,222 @@ pub async fn test_delete_versioned_data_above_topoheight_mixed<S: Storage>(mut s
     // Verify storage is still usable
     let _ = storage.get_last_nonce(&public_key).await?;
     
+    Ok(())
+}
+
+/// Helper: register an account and asset so that RocksDB's ID-mapping layer is
+/// satisfied before calling any balance APIs.
+async fn setup_balance_storage<S: Storage>(
+    storage: &mut S,
+    key: &PublicKey,
+    asset: &Hash,
+) -> Result<()> {
+    // Register the account (no-op for MemoryStorage, required for RocksDB).
+    storage.set_account_registration_topoheight(key, 0).await
+        .context("Failed to register account")?;
+
+    // Register the asset (no-op for MemoryStorage, required for RocksDB).
+    storage.add_asset(
+        asset,
+        0,
+        VersionedAssetData::new(
+            AssetData::new(8, "Test".to_owned(), "TST".to_owned(), MaxSupplyMode::Fixed(u64::MAX), AssetOwner::None),
+            None,
+        ),
+    ).await.context("Failed to add asset")?;
+
+    Ok(())
+}
+
+// Single account, single asset: store balances at topoheights 0..=9, delete
+// above 5, then verify the pointer and the version chain.
+pub async fn test_delete_versioned_balances_above_topoheight<S: Storage>(
+    mut storage: S,
+    data: &TestData,
+) -> Result<()> {
+    let key = data.public_key_pair.get_public_key().compress();
+    setup_balance_storage(&mut storage, &key, &XELIS_ASSET).await?;
+
+    // Write a linked-list chain of balances at topoheights 0..=9.
+    let mut balance = VersionedBalance::zero();
+    storage.set_last_balance_to(&key, &XELIS_ASSET, 0, &balance).await
+        .context("Failed to set balance at topo 0")?;
+
+    for topo in 1u64..=9 {
+        balance.set_previous_topoheight(Some(topo - 1));
+        storage.set_last_balance_to(&key, &XELIS_ASSET, topo, &balance).await
+            .context(format!("Failed to set balance at topo {}", topo))?;
+    }
+
+    // Sanity: pointer should be at topo 9.
+    let (last_topo, _) = storage.get_last_balance(&key, &XELIS_ASSET).await
+        .context("Failed to get last balance")?;
+    assert_eq!(last_topo, 9, "Balance pointer should be at topo 9 before delete");
+
+    // Delete above topoheight 5.
+    storage.delete_versioned_data_above_topoheight(5).await
+        .context("Failed to delete versioned data above topoheight 5")?;
+
+    // After deletion the pointer must be at topo 5.
+    let (last_topo, mut remaining) = storage.get_last_balance(&key, &XELIS_ASSET).await
+        .context("Failed to get last balance after delete")?;
+    assert_eq!(last_topo, 5, "Balance pointer should be at topo 5 after delete, got {}", last_topo);
+
+    // Walk the previous_topoheight chain -- should find exactly 5 more entries
+    // (at topoheights 4, 3, 2, 1, 0).
+    let mut chain_len = 0usize;
+    while let Some(prev) = remaining.get_previous_topoheight() {
+        remaining = storage.get_balance_at_exact_topoheight(&key, &XELIS_ASSET, prev).await
+            .with_context(|| format!("Failed to get balance at topoheight {}", prev))?;
+        chain_len += 1;
+    }
+    assert_eq!(chain_len, 5, "Should have 5 previous versions (topoheights 4..0), got {}", chain_len);
+
+    // Entries above the cut-off must no longer exist.
+    for topo in 6u64..=9 {
+        let exists = storage.has_balance_at_exact_topoheight(&key, &XELIS_ASSET, topo).await
+            .with_context(|| format!("Failed to check balance at topo {}", topo))?;
+        assert!(!exists, "Balance at topoheight {} should have been deleted", topo);
+    }
+
+    Ok(())
+}
+
+// Multiple accounts, single asset: each account has a balance version at every
+// topoheight from 0 to 19. After deleting above topoheight 9, every account's
+// pointer must be exactly 9.
+//
+// This tests the multi-account cross-prefix scenario: the iterator in
+// delete_versioned_above_topoheight must traverse entries for all accounts
+// across all topoheight prefix groups above the cutoff.
+pub async fn test_delete_versioned_balances_above_topoheight_multi_account<S: Storage>(mut storage: S) -> Result<()> {
+    // Use several distinct key-pairs so that there are many account IDs and the
+    // versioned-balance keys span many different prefixes in the column family.
+    let pairs: Vec<PublicKey> = (0..5).map(|_| KeyPair::new().get_public_key().compress()).collect();
+
+    // Register asset once; register each account before writing balances.
+    storage.add_asset(
+        &XELIS_ASSET,
+        0,
+        VersionedAssetData::new(
+            AssetData::new(8, "Test".to_owned(), "TST".to_owned(), MaxSupplyMode::Fixed(u64::MAX), AssetOwner::None),
+            None,
+        ),
+    ).await.context("Failed to add asset")?;
+
+    for (idx, key) in pairs.iter().enumerate() {
+        storage.set_account_registration_topoheight(key, 0).await
+            .with_context(|| format!("Failed to register account {}", idx))?;
+
+        let mut balance = VersionedBalance::zero();
+        storage.set_last_balance_to(&key, &XELIS_ASSET, 0, &balance).await
+            .with_context(|| format!("Failed to set balance[{}] at topo 0", idx))?;
+
+        for topo in 1u64..=19 {
+            balance.set_previous_topoheight(Some(topo - 1));
+            storage.set_last_balance_to(&key, &XELIS_ASSET, topo, &balance).await
+                .with_context(|| format!("Failed to set balance[{}] at topo {}", idx, topo))?;
+        }
+    }
+
+    // Verify all pointers are at 19 before the delete.
+    for (idx, key) in pairs.iter().enumerate() {
+        let (topo, _) = storage.get_last_balance(key, &XELIS_ASSET).await
+            .with_context(|| format!("Failed to get last balance for account {}", idx))?;
+        assert_eq!(topo, 19, "Account {} pointer should be 19 before delete", idx);
+    }
+
+    // Delete all versions above topoheight 9.
+    let cutoff = 9u64;
+    storage.delete_versioned_data_above_topoheight(cutoff).await
+        .context("Failed to delete versioned data above topoheight 9")?;
+
+    // After deletion every pointer must be <= cutoff.
+    for (idx, key) in pairs.iter().enumerate() {
+        let (topo, _) = storage.get_last_balance(key, &XELIS_ASSET).await
+            .with_context(|| format!("Failed to get last balance for account {} after delete", idx))?;
+        assert!(
+            topo <= cutoff,
+            "Account {} balance pointer is {} after delete, expected at most {}",
+            idx, topo, cutoff
+        );
+        assert_eq!(topo, cutoff, "Account {} pointer should be exactly {}, got {}", idx, cutoff, topo);
+    }
+
+    // Additionally verify entries above cutoff are gone for the first account.
+    let first_key = &pairs[0];
+    for topo in (cutoff + 1)..=19 {
+        let exists = storage.has_balance_at_exact_topoheight(first_key, &XELIS_ASSET, topo).await
+            .with_context(|| format!("Failed to check balance at topo {}", topo))?;
+        assert!(!exists, "Balance at topo {} should be gone after delete_above({})", topo, cutoff);
+    }
+
+    // Verify that entries at and below cutoff are still accessible for all accounts.
+    for (idx, key) in pairs.iter().enumerate() {
+        let exists = storage.has_balance_at_exact_topoheight(key, &XELIS_ASSET, cutoff).await
+            .with_context(|| format!("Failed to check balance at cutoff for account {}", idx))?;
+        assert!(exists, "Account {} balance at cutoff {} should still exist", idx, cutoff);
+    }
+
+    Ok(())
+}
+
+// Simulates the pop_blocks scenario: two accounts with balance changes at
+// different topoheights are correctly rewound to topoheight 7. One account
+// has dense history (every topoheight), the other sparse (only 0, 7, 14).
+// Both pointers must land at exactly 7 after the rewind.
+pub async fn test_delete_versioned_balances_pop_blocks_scenario<S: Storage>(
+    mut storage: S,
+    data: &TestData,
+) -> Result<()> {
+    let key1 = data.public_key_pair.get_public_key().compress();
+    let key2 = KeyPair::new().get_public_key().compress();
+
+    // Setup
+    setup_balance_storage(&mut storage, &key1, &XELIS_ASSET).await?;
+    storage.set_account_registration_topoheight(&key2, 0).await
+        .context("Failed to register second account")?;
+
+    // Store balance histories for both accounts.
+    // key1: has a balance update at every topoheight 0..=14
+    // key2: has a balance update only at topoheights 0, 7, 14
+    //       (simulating an infrequently-used account)
+    let mut bal = VersionedBalance::zero();
+    storage.set_last_balance_to(&key1, &XELIS_ASSET, 0, &bal).await?;
+    storage.set_last_balance_to(&key2, &XELIS_ASSET, 0, &bal).await?;
+
+    for topo in 1u64..=14 {
+        bal.set_previous_topoheight(Some(topo - 1));
+        storage.set_last_balance_to(&key1, &XELIS_ASSET, topo, &bal).await
+            .with_context(|| format!("key1 balance at {}", topo))?;
+    }
+
+    let mut bal2 = VersionedBalance::zero();
+    bal2.set_previous_topoheight(Some(0));
+    storage.set_last_balance_to(&key2, &XELIS_ASSET, 7, &bal2).await?;
+    bal2.set_previous_topoheight(Some(7));
+    storage.set_last_balance_to(&key2, &XELIS_ASSET, 14, &bal2).await?;
+
+    // Simulate pop_blocks rewinding to topoheight 7.
+    let rewind_to = 7u64;
+    storage.delete_versioned_data_above_topoheight(rewind_to).await
+        .context("Failed to delete versioned data above topoheight 7")?;
+
+    // key1 pointer must be at topoheight 7.
+    let (topo1, _) = storage.get_last_balance(&key1, &XELIS_ASSET).await?;
+    assert_eq!(topo1, rewind_to, "key1 pointer should be at rewind_to={} after pop, got {}", rewind_to, topo1);
+
+    // key2 pointer must be at topoheight 7 (its balance at 14 was deleted).
+    let (topo2, _) = storage.get_last_balance(&key2, &XELIS_ASSET).await?;
+    assert_eq!(topo2, rewind_to, "key2 pointer should be at rewind_to={} after pop, got {}", rewind_to, topo2);
+
+    // Entries above rewind_to must be gone for both accounts.
+    for topo in (rewind_to + 1)..=14 {
+        let e1 = storage.has_balance_at_exact_topoheight(&key1, &XELIS_ASSET, topo).await?;
+        assert!(!e1, "key1 balance at {} should be gone", topo);
+    }
+    let e2 = storage.has_balance_at_exact_topoheight(&key2, &XELIS_ASSET, 14).await?;
+    assert!(!e2, "key2 balance at 14 should be gone");
+
     Ok(())
 }

@@ -128,14 +128,31 @@ impl<'a> IteratorMode<'a> {
     pub fn convert(self) -> (InternalIteratorMode<'a>, ReadOptions) {
         let mut opts = ReadOptions::default();
         let mode = match self {
-            Self::Start => InternalIteratorMode::Start,
-            Self::End => InternalIteratorMode::End,
-            Self::From(prefix, direction) => InternalIteratorMode::From(prefix, direction.into()),
+            Self::Start => {
+                // Iterate all keys across every prefix
+                opts.set_total_order_seek(true);
+                InternalIteratorMode::Start
+            },
+            Self::End => {
+                opts.set_total_order_seek(true);
+                InternalIteratorMode::End
+            },
+            Self::From(prefix, direction) => {
+                // Seeks to a specific position and then scans forward/backward across
+                // multiple prefix groups. Without total_order_seek, RocksDB is allowed
+                // to use per-prefix bloom filters and silently skip SST files that belong
+                // to a different prefix, producing incomplete/incorrect results once the
+                // chain is large enough that data has been compacted into deeper LSM levels.
+                opts.set_total_order_seek(true);
+                InternalIteratorMode::From(prefix, direction.into())
+            },
             Self::WithPrefix(prefix, direction) => {
+                // Intentionally stays within a single prefix group
                 opts.set_prefix_same_as_start(true);
                 InternalIteratorMode::From(prefix, direction.into())
             },
             Self::Range { lower_bound, upper_bound, direction } => {
+                opts.set_total_order_seek(true);
                 opts.set_iterate_upper_bound(upper_bound);
                 opts.set_iterate_lower_bound(lower_bound);
 
@@ -474,6 +491,33 @@ impl RocksStorage {
     {
         Self::iter_keys_internal(&self.db, self.snapshot.as_ref(), mode, column)
     }
+
+    pub async fn flush_and_compact(&mut self) -> Result<(), BlockchainError> {
+        let db = Arc::clone(&self.db);
+        // To prevent starving the current async worker,
+        // We execute the following on a blocking thread
+        // and simply await its result 
+        tokio::task::spawn_blocking(move || {
+            info!("flushing DB");
+            db.flush()
+                .context("Error while flushing DB")?;
+
+            info!("compacting DB");
+            db.compact_range::<&[u8], &[u8]>(None, None);
+            for column in Column::iter() {
+                info!("compacting {:?}", column);
+                let cf = cf_handle!(db, column);
+                db.compact_range_cf::<&[u8], &[u8]>(&cf, None, None);
+            }
+
+            info!("wait for compact");
+            let options = WaitForCompactOptions::default();
+            db.wait_for_compact(&options)
+                .context("Error while waiting on compact")
+        }).await
+            .context("Flushing DB")?
+            .map_err(BlockchainError::from)
+    }
 }
 
 #[async_trait]
@@ -550,25 +594,9 @@ impl Storage for RocksStorage {
     }
 
     // Stop the storage and wait for it to finish
+    #[inline(always)]
     async fn stop(&mut self) -> Result<(), BlockchainError> {
-        let db = Arc::clone(&self.db);
-        // To prevent starving the current async worker,
-        // We execute the following on a blocking thread
-        // and simply await its result 
-        tokio::task::spawn_blocking(move || {
-            info!("compacting DB");            
-            db.compact_range::<&[u8], &[u8]>(None, None);
-            info!("wait for compact");
-            let options = WaitForCompactOptions::default();
-            db.wait_for_compact(&options)
-                .context("Error while waiting on compact")?;
-
-            info!("flushing DB");
-            db.flush()
-                .context("Error while flushing DB")
-        }).await
-            .context("Flushing DB")?
-            .map_err(BlockchainError::from)
+        self.flush_and_compact().await
     }
 
     // Flush the inner DB after a block being written
