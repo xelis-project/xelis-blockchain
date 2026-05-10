@@ -261,3 +261,9 @@ async fn test_memory_scheduled_execution_range_query() -> Result<()> {
     let storage = MemoryStorage::new(Network::Devnet, 1);
     test_scheduled_execution_range_query(storage).await
 }
+
+#[tokio::test]
+async fn test_memory_account_registration_topoheight() -> Result<()> {
+    let storage = MemoryStorage::new(Network::Devnet, 1);
+    test_account_registration_topoheight(storage).await
+}

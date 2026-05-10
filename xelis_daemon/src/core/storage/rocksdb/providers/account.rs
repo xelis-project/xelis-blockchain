@@ -44,6 +44,7 @@ impl AccountProvider for RocksStorage {
         let mut account = self.get_or_create_account_type(key)?;
         account.registered_at = Some(topoheight);
 
+        self.insert_into_disk(Column::PrefixedRegistrations, Self::get_prefixed_account_registration_key(topoheight, account.id), &account)?;
         self.insert_into_disk(Column::Account, key.as_bytes(), &account)
     }
 
@@ -182,6 +183,14 @@ impl RocksStorage {
         let mut bytes = [0; 16];
         bytes[0..8].copy_from_slice(&topoheight.to_be_bytes());
         bytes[8..16].copy_from_slice(&key.to_be_bytes());
+
+        bytes
+    }
+
+    pub(super) fn get_prefixed_account_registration_key(topoheight: TopoHeight, account_id: AccountId) -> [u8; 16] {
+        let mut bytes = [0; 16];
+        bytes[0..8].copy_from_slice(&topoheight.to_be_bytes());
+        bytes[8..16].copy_from_slice(&account_id.to_be_bytes());
 
         bytes
     }

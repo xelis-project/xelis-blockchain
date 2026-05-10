@@ -57,7 +57,7 @@ pub enum Column {
     // Column used as a "versioned" as its 
     // prefixed with a topoheight to have
     // easier search per topoheight
-    // {topoheight}{account_key} => {}
+    // {topoheight}{account_id} => {}
     PrefixedRegistrations,
     // This column is used as a reverse index
     // {account_id} => {account_key}

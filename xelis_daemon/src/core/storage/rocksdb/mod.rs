@@ -153,8 +153,13 @@ impl<'a> IteratorMode<'a> {
             },
             Self::Range { lower_bound, upper_bound, direction } => {
                 opts.set_total_order_seek(true);
-                opts.set_iterate_upper_bound(upper_bound);
-                opts.set_iterate_lower_bound(lower_bound);
+                if let Some(lower_bound) = lower_bound {
+                    opts.set_iterate_lower_bound(lower_bound);
+                }
+
+                if let Some(upper_bound) = upper_bound {
+                    opts.set_iterate_upper_bound(upper_bound);
+                }
 
                 match direction {
                     Direction::Forward => InternalIteratorMode::Start,
@@ -164,6 +169,15 @@ impl<'a> IteratorMode<'a> {
         };
 
         (mode, opts)
+    }
+}
+
+impl From<Direction> for rocksdb::Direction {
+    fn from(direction: Direction) -> Self {
+        match direction {
+            Direction::Forward => rocksdb::Direction::Forward,
+            Direction::Reverse => rocksdb::Direction::Reverse,
+        }
     }
 }
 

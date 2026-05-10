@@ -2077,3 +2077,39 @@ pub async fn test_scheduled_execution_range_query<S: Storage>(mut storage: S) ->
 
     Ok(())
 }
+
+pub async fn test_account_registration_topoheight<S: Storage>(mut storage: S) -> Result<()> {
+    let key = KeyPair::new().get_public_key().compress();
+
+    // Initially, no registration topoheight should be found
+    assert!(!storage.is_account_registered(&key).await?,
+        "registration topoheight should be None for unregistered account");
+
+    // Set registration topoheight to 5
+    storage.set_account_registration_topoheight(&key, 5).await?;
+
+    // Now it should return 5
+    let reg_topo = storage.get_account_registration_topoheight(&key).await?;
+    assert_eq!(reg_topo, 5, "registration topoheight should be 5, got {}", reg_topo);
+
+    // Update registration topoheight to 10
+    storage.set_account_registration_topoheight(&key, 10).await?;
+
+    // Now it should return 10
+    // it is not versioned, so it OVERWRITE it, not create a new version
+    let reg_topo2 = storage.get_account_registration_topoheight(&key).await?;
+    assert_eq!(reg_topo2, 10, "registration topoheight should be updated to 10, got {}", reg_topo2);
+
+    // not registered at 5
+    assert!(!storage.is_account_registered_for_topoheight(&key, 5).await?,
+        "account should not be registered after setting registration topoheight");
+
+    // Now clean the registrations
+    storage.delete_versioned_registrations_above_topoheight(9).await?;
+
+    // After deletion, it should not exists anymore
+    assert!(!storage.is_account_registered_for_topoheight(&key, 10).await?,
+        "account should not be registered after deletion above topoheight 9");
+
+    Ok(())
+}
