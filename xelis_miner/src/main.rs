@@ -483,7 +483,7 @@ async fn communication_task(daemon_address: String, job_sender: broadcast::Sende
             Ok((client, response)) => {
                 let status = response.status();
                 if status.is_server_error() || status.is_client_error() {
-                    error!("Error while connecting to {}, got an unexpected response: {}", daemon_address, status.as_str());
+                    error!("Error while connecting to {}, got an unexpected response: {} ({})", daemon_address, status.as_str(), status.canonical_reason().unwrap_or("No reason"));
                     warn!("Trying to connect to WebSocket again in 10 seconds...");
                     tokio::time::sleep(Duration::from_secs(10)).await;
                     continue 'main;
@@ -492,7 +492,10 @@ async fn communication_task(daemon_address: String, job_sender: broadcast::Sende
             },
             Err(e) => {
                 if let TungsteniteError::Http(e) = e {
-                    error!("Error while connecting to {}, got an unexpected response: {}", daemon_address, e.status());
+                    let body = e.body()
+                        .as_ref()
+                        .map(|b| String::from_utf8_lossy(&b)).unwrap_or_else(|| "No body".into());
+                    error!("Error while connecting to {}, got an unexpected response: {} ({})", daemon_address, e.status(), body);
                 } else {
                     error!("Error while connecting to {}: {}", daemon_address, e);
                 }
