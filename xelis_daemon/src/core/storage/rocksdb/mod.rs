@@ -184,6 +184,11 @@ impl RocksStorage {
                 let mut opts = Options::default();
                 if let Some(len) = prefix {
                     opts.set_prefix_extractor(SliceTransform::create_fixed_prefix(len));
+                    if let Some(bits) = config.bloom_filter_bits_per_key {
+                        let mut bbo = BlockBasedOptions::default();
+                        bbo.set_bloom_filter(bits, false);
+                        opts.set_block_based_table_factory(&bbo);
+                    }
                 }
 
                 ColumnFamilyDescriptor::new(name, opts)
@@ -222,6 +227,9 @@ impl RocksStorage {
         };
 
         opts.set_block_based_table_factory(&block_opts);
+        if let Some(file_size) = config.target_file_size_base {
+            opts.set_target_file_size_base(file_size);
+        }
         if config.write_buffer_shared {
             opts.set_db_write_buffer_size(config.write_buffer_size as _);
         } else {

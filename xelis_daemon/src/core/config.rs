@@ -505,6 +505,16 @@ pub struct RocksDBConfig {
     #[clap(name = "rocksdb-write-buffer-shared", long)]
     #[serde(default)]
     pub write_buffer_shared: bool,
+    /// Bloom filter bits per key for column families that use a prefix extractor.
+    /// Higher values reduce false positives but increase memory usage.
+    #[clap(name = "rocksdb-bloom-filter-bits-per-key", long)]
+    #[serde(default)]
+    pub bloom_filter_bits_per_key: Option<f64>,
+    /// Override for target SST file size in bytes.
+    /// None (default) uses the RocksDB default of 64 MiB.
+    #[clap(name = "rocksdb-target-file-size-base", long)]
+    #[serde(default)]
+    pub target_file_size_base: Option<u64>,
 }
 
 #[cfg(feature = "rocksdb")]
@@ -522,6 +532,8 @@ impl Default for RocksDBConfig {
             cache_size: default_db_cache_size(),
             write_buffer_size: default_db_cache_size(),
             write_buffer_shared: false,
+            bloom_filter_bits_per_key: None,
+            target_file_size_base: None,
         }
     }
 }
