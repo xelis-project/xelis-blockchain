@@ -51,7 +51,7 @@ impl VersionedBalanceProvider for SledStorage {
                         prev_version = Self::remove_from_disk(self.snapshot.as_mut(), &self.versioned_balances, &key)?;
                     } else {
                         // Load it so we can continue to loop over all next versions
-                        let (tmp, ty) = self.load_from_disk::<(Option<u64>, BalanceType)>(&self.versioned_balances, &key, DiskContext::BalanceAtTopoHeight(prev_topo))?;
+                        let (tmp, ty) = self.load_from_disk::<(Option<u64>, BalanceType), _>(&self.versioned_balances, &key, DiskContext::BalanceAtTopoHeight(prev_topo))?;
                         prev_version = tmp;
 
                         // We can only patch if we are below the threshold and contains an output

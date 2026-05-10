@@ -86,7 +86,7 @@ impl ContractProvider for SledStorage {
         let mut previous_topo = Some(pointer);
         while let Some(topoheight) = previous_topo {
             if topoheight <= maximum_topoheight {
-                let exists = self.load_from_disk::<(Option<TopoHeight>, bool)>(
+                let exists = self.load_from_disk::<(Option<TopoHeight>, bool), _>(
                     &self.versioned_contracts,
                     &self.get_versioned_contract_key(hash, topoheight),
                     DiskContext::ContractTopoHeight

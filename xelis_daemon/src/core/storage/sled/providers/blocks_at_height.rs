@@ -21,7 +21,7 @@ impl BlocksAtHeightProvider for SledStorage {
 
     async fn get_blocks_at_height(&self, height: u64) -> Result<IndexSet<Hash>, BlockchainError> {
         trace!("get blocks at height {}", height);
-        let hashes = self.load_optional_from_disk::<OrderedHashes>(&self.blocks_at_height, &height.to_be_bytes())?
+        let hashes = self.load_optional_from_disk::<OrderedHashes, _>(&self.blocks_at_height, &height.to_be_bytes())?
             .unwrap_or_default();
         Ok(hashes.0.into_owned())
     }

@@ -306,7 +306,7 @@ impl SledStorage {
         // Verify that we are opening a DB on same network
         // This prevent any corruption made by user
         if storage.has_network()? {
-            let storage_network = storage.load_from_disk::<Network>(&storage.extra, NETWORK, DiskContext::Network)?;
+            let storage_network = storage.load_from_disk::<Network, _>(&storage.extra, NETWORK, DiskContext::Network)?;
             if storage_network != network {
                 return Err(BlockchainError::InvalidNetwork);
             }
@@ -340,49 +340,49 @@ impl SledStorage {
     // Load all the needed cache and counters in memory from disk 
     pub fn load_cache_from_disk(&mut self) -> Result<(), BlockchainError> {
         // Load tips from disk if available
-        if let Some(tips) = self.load_optional_from_disk::<Tips>(&self.extra, TIPS)? {
+        if let Some(tips) = self.load_optional_from_disk::<Tips, _>(&self.extra, TIPS)? {
             debug!("Found tips: {}", tips.len());
             self.cache.chain.tips = tips;
         }
 
         // Load the pruned topoheight from disk if available
-        if let Some(pruned_topoheight) = self.load_optional_from_disk::<u64>(&self.extra, PRUNED_TOPOHEIGHT)? {
+        if let Some(pruned_topoheight) = self.load_optional_from_disk::<u64, _>(&self.extra, PRUNED_TOPOHEIGHT)? {
             debug!("Found pruned topoheight: {}", pruned_topoheight);
             self.cache.chain.pruned_topoheight = Some(pruned_topoheight);
         }
 
         // Load the assets count from disk if available
-        if let Some(assets_count) = self.load_optional_from_disk::<u64>(&self.extra, ASSETS_COUNT)? {
+        if let Some(assets_count) = self.load_optional_from_disk::<u64, _>(&self.extra, ASSETS_COUNT)? {
             debug!("Found assets count: {}", assets_count);
             self.cache.assets_count = assets_count;
         }
 
         // Load the txs count from disk if available
-        if let Some(txs_count) = self.load_optional_from_disk::<u64>(&self.extra, TXS_COUNT)? {
+        if let Some(txs_count) = self.load_optional_from_disk::<u64, _>(&self.extra, TXS_COUNT)? {
             debug!("Found txs count: {}", txs_count);
             self.cache.transactions_count = txs_count;
         }
 
         // Load the blocks count from disk if available
-        if let Some(blocks_count) = self.load_optional_from_disk::<u64>(&self.extra, BLOCKS_COUNT)? {
+        if let Some(blocks_count) = self.load_optional_from_disk::<u64, _>(&self.extra, BLOCKS_COUNT)? {
             debug!("Found blocks count: {}", blocks_count);
             self.cache.blocks_count = blocks_count;
         }
 
         // Load the accounts count from disk if available
-        if let Some(accounts_count) = self.load_optional_from_disk::<u64>(&self.extra, ACCOUNTS_COUNT)? {
+        if let Some(accounts_count) = self.load_optional_from_disk::<u64, _>(&self.extra, ACCOUNTS_COUNT)? {
             debug!("Found accounts count: {}", accounts_count);
             self.cache.accounts_count = accounts_count;
         }
 
         // Load the blocks execution count from disk if available
-        if let Some(blocks_execution_count) = self.load_optional_from_disk::<u64>(&self.extra, BLOCKS_EXECUTION_ORDER_COUNT)? {
+        if let Some(blocks_execution_count) = self.load_optional_from_disk::<u64, _>(&self.extra, BLOCKS_EXECUTION_ORDER_COUNT)? {
             debug!("Found blocks execution count: {}", blocks_execution_count);
             self.cache.blocks_execution_count = blocks_execution_count;
         }
 
         // Load the contracts count from disk if available
-        if let Some(contracts_count) = self.load_optional_from_disk::<u64>(&self.extra, CONTRACTS_COUNT)? {
+        if let Some(contracts_count) = self.load_optional_from_disk::<u64, _>(&self.extra, CONTRACTS_COUNT)? {
             debug!("Found contracts count: {}", contracts_count);
             self.cache.contracts_count = contracts_count;
         }
@@ -390,10 +390,11 @@ impl SledStorage {
         Ok(())
     }
 
-    pub fn load_optional_from_disk_internal<T: Serializer>(snapshot: Option<&Snapshot>, tree: &Tree, key: &[u8]) -> Result<Option<T>, BlockchainError> {
+    pub fn load_optional_from_disk_internal<T: Serializer, K: AsRef<[u8]>>(snapshot: Option<&Snapshot>, tree: &Tree, key: K) -> Result<Option<T>, BlockchainError> {
         trace!("load optional from disk internal");
-        if let Some(v) = snapshot.map(|s| s.get(tree.into(), key)) {
-            trace!("loaded from snapshot key {:?} from db", key);
+        let key_ref = key.as_ref();
+        if let Some(v) = snapshot.map(|s| s.get(tree.into(), key_ref)) {
+            trace!("loaded from snapshot key {:?} from db", key_ref);
             match v {
                 EntryState::Stored(v) => return Ok(Some(T::from_bytes(&v)?)),
                 EntryState::Deleted => return Ok(None),
@@ -401,26 +402,26 @@ impl SledStorage {
             }
         }
 
-        match tree.get(key)? {
+        match tree.get(key_ref)? {
             Some(bytes) => Ok(Some(T::from_bytes(&bytes)?)),
             None => Ok(None)
         }
     }
 
-    pub fn load_from_disk_internal<T: Serializer>(snapshot: Option<&Snapshot>, tree: &Tree, key: &[u8], context: DiskContext) -> Result<T, BlockchainError> {
+    pub fn load_from_disk_internal<T: Serializer, K: AsRef<[u8]>>(snapshot: Option<&Snapshot>, tree: &Tree, key: K, context: DiskContext) -> Result<T, BlockchainError> {
         trace!("load from disk internal");
         Self::load_optional_from_disk_internal(snapshot, tree, key)?
             .ok_or(BlockchainError::NotFoundOnDisk(context))
     }
 
     // Load an optional value from the DB
-    pub(super) fn load_optional_from_disk<T: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<Option<T>, BlockchainError> {
+    pub(super) fn load_optional_from_disk<T: Serializer, K: AsRef<[u8]>>(&self, tree: &Tree, key: K) -> Result<Option<T>, BlockchainError> {
         trace!("load optional from disk");
         Self::load_optional_from_disk_internal(self.snapshot.as_ref(), tree, key)
     }
 
     // Load a value from the DB
-    pub(super) fn load_from_disk<T: Serializer>(&self, tree: &Tree, key: &[u8], context: DiskContext) -> Result<T, BlockchainError> {
+    pub(super) fn load_from_disk<T: Serializer, K: AsRef<[u8]>>(&self, tree: &Tree, key: K, context: DiskContext) -> Result<T, BlockchainError> {
         trace!("load from disk");
         self.load_optional_from_disk(tree, key)?
             .ok_or(BlockchainError::NotFoundOnDisk(context))
@@ -489,21 +490,22 @@ impl SledStorage {
         })
     }
 
-    pub(super) fn remove_from_disk_internal<T: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, key: &[u8]) -> Result<Option<T>, BlockchainError> {
+    pub(super) fn remove_from_disk_internal<T: Serializer, K: AsRef<[u8]>>(snapshot: Option<&mut Snapshot>, tree: &Tree, key: K) -> Result<Option<T>, BlockchainError> {
         trace!("remove from disk internal");
+        let key_ref = key.as_ref();
         let prev = if let Some(snapshot) = snapshot {
-            match snapshot.delete(tree.into(), key.to_vec()) {
+            match snapshot.delete(tree.into(), key_ref.to_vec()) {
                 EntryState::Stored(prev) => Some(T::from_bytes(&prev)?),
                 EntryState::Deleted => None,
                 EntryState::Absent => {
                     // Fallback to the disk for the previous value
-                    tree.get(key)?
+                    tree.get(key_ref)?
                         .map(|bytes| T::from_bytes(&bytes))
                         .transpose()?
                 }
             }
         } else {
-            tree.remove(key)?
+            tree.remove(key_ref)?
                 .map(|bytes| T::from_bytes(&bytes))
                 .transpose()?
         };
@@ -531,7 +533,7 @@ impl SledStorage {
     }
 
     // Delete a key from the DB
-    pub(super) fn remove_from_disk<T: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, key: &[u8]) -> Result<Option<T>, BlockchainError> {
+    pub(super) fn remove_from_disk<T: Serializer, K: AsRef<[u8]>>(snapshot: Option<&mut Snapshot>, tree: &Tree, key: K) -> Result<Option<T>, BlockchainError> {
         trace!("remove from disk");
         Self::remove_from_disk_internal(snapshot, tree, key)
     }
@@ -675,7 +677,7 @@ impl SledStorage {
             }
         }
 
-        let value = Self::load_optional_from_disk_internal::<V>(snapshot.as_deref(), tree, &k)?
+        let value = Self::load_optional_from_disk_internal::<V, _>(snapshot.as_deref(), tree, &k)?
             .ok_or(BlockchainError::NotFoundOnDisk(DiskContext::DeleteData))?;
 
         Self::remove_from_disk_without_reading(snapshot, tree, &k)?;
@@ -687,7 +689,7 @@ impl SledStorage {
     // Delete a cacheable data from disk and cache behind a Arc
     pub(super) async fn delete_arc_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, cache: Option<&mut Mutex<LruCache<K, Arc<V>>>>, key: &K) -> Result<Immutable<V>, BlockchainError> {
         trace!("delete arc cacheable data");
-        let value = match Self::remove_from_disk::<V>(snapshot, tree, &key.to_bytes())? {
+        let value = match Self::remove_from_disk::<V, _>(snapshot, tree, &key.to_bytes())? {
             Some(data) => data,
             None => return Err(BlockchainError::NotFoundOnDisk(DiskContext::DeleteData))
         };
@@ -726,11 +728,11 @@ impl SledStorage {
     }
 
     // Check if our DB contains a data on disk
-    pub(super) fn contains_data<K: Serializer>(&self, tree: &Tree, key: &K) -> Result<bool, BlockchainError> {
+    pub(super) fn contains_data<K: AsRef<[u8]>>(&self, tree: &Tree, key: K) -> Result<bool, BlockchainError> {
         trace!("contains data");
-        let key_bytes = key.to_bytes();
+        let key_bytes = key.as_ref();
         if let Some(snapshot) = self.snapshot.as_ref() {
-            if let Some(v) = snapshot.contains(tree.into(), &key_bytes) {
+            if let Some(v) = snapshot.contains(tree.into(), key_bytes) {
                 trace!("snapshot contains data");
                 return Ok(v);
             }

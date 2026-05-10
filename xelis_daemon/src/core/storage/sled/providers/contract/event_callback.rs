@@ -45,7 +45,7 @@ impl ContractEventCallbackProvider for SledStorage {
         trace!("get event callback for contract {} event {} listener {} at maximum topoheight {}", contract, event_id, listener_contract, max_topoheight);
 
         let key = Self::get_event_callback_key(contract, event_id, listener_contract);
-        let mut topo = self.load_optional_from_disk::<TopoHeight>(&self.contracts_event_callbacks, &key)?;
+        let mut topo = self.load_optional_from_disk::<TopoHeight, _>(&self.contracts_event_callbacks, &key)?;
         while let Some(current_topoheight) = topo {
             let versioned_key = Self::get_versioned_event_callback_key(current_topoheight, contract, event_id, listener_contract);
             let version: VersionedEventCallbackRegistration = self.load_from_disk(
