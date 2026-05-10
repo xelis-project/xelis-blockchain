@@ -61,11 +61,6 @@ impl ContractDataProvider for MemoryStorage {
         )
     }
 
-    async fn has_contract_data_at_maximum_topoheight(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
-        self.get_contract_data_topoheight_at_maximum_topoheight_for(contract, key, topoheight).await
-            .map(|opt| opt.is_some())
-    }
-
     async fn has_contract_data_at_exact_topoheight(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
         Ok(self.contracts.get(contract)
             .and_then(|entry| entry.data.get(key))

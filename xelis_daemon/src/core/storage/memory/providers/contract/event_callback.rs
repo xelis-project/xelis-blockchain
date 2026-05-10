@@ -83,9 +83,9 @@ impl ContractEventCallbackProvider for MemoryStorage {
             .flat_map(move |data| data.events_callbacks.get(&event_id).into_iter()
                 .flat_map(move |listeners| listeners.iter()
                     .filter_map(move |(listener, versions)| {
-                        versions.range(..=max_topoheight).filter_map(|(_, version)| {
+                        versions.range(..=max_topoheight).next_back().and_then(|(_, version)| {
                             version.get().as_ref().map(|reg| Ok((listener.as_ref().clone(), reg.clone())))
-                        }).next_back()
+                        })
                     })
                 )
             )

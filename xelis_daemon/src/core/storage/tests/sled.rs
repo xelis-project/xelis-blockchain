@@ -166,6 +166,27 @@ async fn test_sled_versioned_contract_event_callback_stream() -> Result<()> {
 }
 
 #[tokio::test]
+async fn test_sled_event_callbacks_available_at_maximum_topoheight() -> Result<()> {
+    let temp_dir = TempDir::new("storage_test")?;
+    let storage = new_sled_storage(Network::Devnet, temp_dir.path().to_str().unwrap())?;
+    test_event_callbacks_available_at_maximum_topoheight(storage).await
+}
+
+#[tokio::test]
+async fn test_sled_event_callbacks_available_after_rewind() -> Result<()> {
+    let temp_dir = TempDir::new("storage_test")?;
+    let storage = new_sled_storage(Network::Devnet, temp_dir.path().to_str().unwrap())?;
+    test_event_callbacks_available_after_rewind(storage).await
+}
+
+#[tokio::test]
+async fn test_sled_listeners_for_contract_events() -> Result<()> {
+    let temp_dir = TempDir::new("storage_test")?;
+    let storage = new_sled_storage(Network::Devnet, temp_dir.path().to_str().unwrap())?;
+    test_listeners_for_contract_events(storage).await
+}
+
+#[tokio::test]
 async fn test_sled_versioned_scheduled_execution_in_range() -> Result<()> {
     let temp_dir = TempDir::new("storage_test")?;
     let storage = new_sled_storage(Network::Devnet, temp_dir.path().to_str().unwrap())?;
@@ -247,4 +268,53 @@ async fn test_sled_delete_versioned_data_above_topoheight_mixed() -> Result<()> 
     let temp_dir = TempDir::new("storage_test")?;
     let storage = new_sled_storage(data.network, temp_dir.path().to_str().unwrap())?;
     test_delete_versioned_data_above_topoheight_mixed(storage, &data).await
+}
+
+#[tokio::test]
+async fn test_sled_event_callback_consumed_versioning() -> Result<()> {
+    let temp_dir = TempDir::new("storage_test")?;
+    let storage = new_sled_storage(Network::Devnet, temp_dir.path().to_str().unwrap())?;
+    test_event_callback_consumed_versioning(storage).await
+}
+
+#[tokio::test]
+async fn test_sled_contract_data_lifecycle() -> Result<()> {
+    let temp_dir = TempDir::new("storage_test")?;
+    let storage = new_sled_storage(Network::Devnet, temp_dir.path().to_str().unwrap())?;
+    test_contract_data_lifecycle(storage).await
+}
+
+#[tokio::test]
+async fn test_sled_contract_data_rewind() -> Result<()> {
+    let temp_dir = TempDir::new("storage_test")?;
+    let storage = new_sled_storage(Network::Devnet, temp_dir.path().to_str().unwrap())?;
+    test_contract_data_rewind(storage).await
+}
+
+#[tokio::test]
+async fn test_sled_contract_module_lifecycle() -> Result<()> {
+    let temp_dir = TempDir::new("storage_test")?;
+    let storage = new_sled_storage(Network::Devnet, temp_dir.path().to_str().unwrap())?;
+    test_contract_module_lifecycle(storage).await
+}
+
+#[tokio::test]
+async fn test_sled_contract_module_rewind() -> Result<()> {
+    let temp_dir = TempDir::new("storage_test")?;
+    let storage = new_sled_storage(Network::Devnet, temp_dir.path().to_str().unwrap())?;
+    test_contract_module_rewind(storage).await
+}
+
+#[tokio::test]
+async fn test_sled_scheduled_execution_lifecycle() -> Result<()> {
+    let temp_dir = TempDir::new("storage_test")?;
+    let storage = new_sled_storage(Network::Devnet, temp_dir.path().to_str().unwrap())?;
+    test_scheduled_execution_lifecycle(storage).await
+}
+
+#[tokio::test]
+async fn test_sled_scheduled_execution_range_query() -> Result<()> {
+    let temp_dir = TempDir::new("storage_test")?;
+    let storage = new_sled_storage(Network::Devnet, temp_dir.path().to_str().unwrap())?;
+    test_scheduled_execution_range_query(storage).await
 }

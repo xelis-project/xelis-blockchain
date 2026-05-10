@@ -89,38 +89,18 @@ impl ContractDataProvider for RocksStorage {
         self.get_contract_data_topoheight_at_maximum_topoheight_for_internal(contract_id, contract_data_id, maximum_topoheight).await
     }
 
-    // Check if a contract data exists at a given topoheight
-    // If the version is None, it returns false
-    async fn has_contract_data_at_maximum_topoheight(&self, contract: &Hash, key: &ValueCell, maximum_topoheight: TopoHeight) -> Result<bool, BlockchainError> {
-        trace!("has contract {} data {} at maximum topoheight {}", contract, key, maximum_topoheight);
-        let Some(contract_id) = self.get_optional_contract_id(contract)? else {
-            return Ok(false)
-        };
-
-        let Some(contract_data_id) = self.get_optional_contract_data_id(key)? else {
-            return Ok(false)
-        };
-
-        match self.get_contract_data_topoheight_at_maximum_topoheight_for_internal(contract_id, contract_data_id, maximum_topoheight).await? {
-            Some(topoheight) => {
-                let versioned_key = Self::get_versioned_contract_data_key(contract_id, contract_data_id, topoheight);
-                let version = self.load_from_disk::<_, (Option<TopoHeight>, bool)>(Column::VersionedContractsData, &versioned_key)?;
-
-                // Option encoded to 1 byte: None = 0, Some(_) = 1
-                Ok(version.1)
-            }
-            None => Ok(false),
-        }
-    }
-
     // Check if we have a contract data version at a given topoheight
     // It only checks if the topoheight exists
     async fn has_contract_data_at_exact_topoheight(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
         trace!("has contract {} data {} at exact topoheight {}", contract, key, topoheight);
-        let contract_id = self.get_contract_id(contract)?;
-        let contract_data_id = self.get_contract_data_id(key)?;
+        let Some(contract_id) = self.get_optional_contract_id(contract)? else {
+            return Ok(false)
+        };
+        let Some(contract_data_id) = self.get_optional_contract_data_id(key)? else {
+            return Ok(false)
+        };
         let key = Self::get_versioned_contract_data_key(contract_id, contract_data_id, topoheight);
-        self.load_from_disk(Column::VersionedContractsData, &key)
+        self.contains_data(Column::VersionedContractsData, &key)
     }
 
     async fn get_contract_data_entries_at_maximum_topoheight<'a>(&'a self, contract: &'a Hash, topoheight: TopoHeight) -> Result<impl Stream<Item = Result<(ValueCell, ValueCell), BlockchainError>> + Send + 'a, BlockchainError> {

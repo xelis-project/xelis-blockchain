@@ -130,6 +130,24 @@ async fn test_memory_versioned_contract_event_callback_stream() -> Result<()> {
 }
 
 #[tokio::test]
+async fn test_memory_event_callbacks_available_at_maximum_topoheight() -> Result<()> {
+    let storage = MemoryStorage::new(Network::Devnet, 1);
+    test_event_callbacks_available_at_maximum_topoheight(storage).await
+}
+
+#[tokio::test]
+async fn test_memory_event_callbacks_available_after_rewind() -> Result<()> {
+    let storage = MemoryStorage::new(Network::Devnet, 1);
+    test_event_callbacks_available_after_rewind(storage).await
+}
+
+#[tokio::test]
+async fn test_memory_listeners_for_contract_events() -> Result<()> {
+    let storage = MemoryStorage::new(Network::Devnet, 1);
+    test_listeners_for_contract_events(storage).await
+}
+
+#[tokio::test]
 async fn test_memory_versioned_scheduled_execution_in_range() -> Result<()> {
     let storage = MemoryStorage::new(Network::Devnet, 1);
     test_versioned_scheduled_execution_in_range(storage).await
@@ -200,4 +218,46 @@ async fn test_memory_delete_versioned_data_above_topoheight_mixed() -> Result<()
     let data = TestData::new()?;
     let storage = MemoryStorage::new(data.network, 1);
     test_delete_versioned_data_above_topoheight_mixed(storage, &data).await
+}
+
+#[tokio::test]
+async fn test_memory_event_callback_consumed_versioning() -> Result<()> {
+    let storage = MemoryStorage::new(Network::Devnet, 1);
+    test_event_callback_consumed_versioning(storage).await
+}
+
+#[tokio::test]
+async fn test_memory_contract_data_lifecycle() -> Result<()> {
+    let storage = MemoryStorage::new(Network::Devnet, 1);
+    test_contract_data_lifecycle(storage).await
+}
+
+#[tokio::test]
+async fn test_memory_contract_data_rewind() -> Result<()> {
+    let storage = MemoryStorage::new(Network::Devnet, 1);
+    test_contract_data_rewind(storage).await
+}
+
+#[tokio::test]
+async fn test_memory_contract_module_lifecycle() -> Result<()> {
+    let storage = MemoryStorage::new(Network::Devnet, 1);
+    test_contract_module_lifecycle(storage).await
+}
+
+#[tokio::test]
+async fn test_memory_contract_module_rewind() -> Result<()> {
+    let storage = MemoryStorage::new(Network::Devnet, 1);
+    test_contract_module_rewind(storage).await
+}
+
+#[tokio::test]
+async fn test_memory_scheduled_execution_lifecycle() -> Result<()> {
+    let storage = MemoryStorage::new(Network::Devnet, 1);
+    test_scheduled_execution_lifecycle(storage).await
+}
+
+#[tokio::test]
+async fn test_memory_scheduled_execution_range_query() -> Result<()> {
+    let storage = MemoryStorage::new(Network::Devnet, 1);
+    test_scheduled_execution_range_query(storage).await
 }

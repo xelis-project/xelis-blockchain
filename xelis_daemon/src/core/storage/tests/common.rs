@@ -1,4 +1,5 @@
 use anyhow::{Result, Context};
+use futures::StreamExt;
 use std::sync::Arc;
 use std::borrow::Cow;
 use indexmap::IndexSet;
@@ -15,7 +16,7 @@ use xelis_common::{
     varuint::VarUint,
     versioned::Versioned
 };
-use xelis_vm::Module;
+use xelis_vm::{Module, Primitive, ValueCell};
 use crate::core::storage::Storage;
 
 pub struct TestData {
@@ -283,7 +284,7 @@ pub async fn test_contract_event_callback_retrieval<S: Storage>(mut storage: S) 
     // Collect results
     let mut found_count = 0;
     futures::pin_mut!(callbacks);
-    while let Some(result) = futures::stream::StreamExt::next(&mut callbacks).await {
+    while let Some(result) = callbacks.next().await {
         let (_listener_hash, _topo, _versioned) = result.context("Failed to read callback from stream")?;
         found_count += 1;
     }
@@ -884,7 +885,7 @@ pub async fn test_versioned_contract_event_callback_stream<S: Storage>(mut stora
     
     let mut count = 0;
     futures::pin_mut!(callbacks_stream);
-    while let Some(result) = futures::stream::StreamExt::next(&mut callbacks_stream).await {
+    while let Some(result) = callbacks_stream.next().await {
         result.context("Failed to read from callback stream")?;
         count += 1;
     }
@@ -935,7 +936,7 @@ pub async fn test_versioned_scheduled_execution_in_range<S: Storage>(mut storage
     
     let mut count = 0;
     futures::pin_mut!(executions);
-    while let Some(result) = futures::stream::StreamExt::next(&mut executions).await {
+    while let Some(result) = executions.next().await {
         let (exec_topo, reg_topo, _execution) = result.context("Failed to read from range stream")?;
         assert!(reg_topo <= 5u64, "Registration topoheight should be <= 5, got {}", reg_topo);
         assert!(exec_topo >= 100u64, "Execution topoheight should be >= 100, got {}", exec_topo);
@@ -1529,6 +1530,550 @@ pub async fn test_delete_versioned_balances_pop_blocks_scenario<S: Storage>(
     }
     let e2 = storage.has_balance_at_exact_topoheight(&key2, &XELIS_ASSET, 14).await?;
     assert!(!e2, "key2 balance at 14 should be gone");
+
+    Ok(())
+}
+
+// Helper: register a contract in storage
+async fn register_contract<S: Storage>(storage: &mut S, hash: &Hash, topoheight: u64) -> Result<()> {
+    let module = Arc::new(Module::new());
+    let contract_module = ContractModule {
+        version: Default::default(),
+        module,
+    };
+    let versioned = Versioned::new(Some(Cow::Owned(contract_module)), None);
+    storage.set_last_contract_to(hash, topoheight, &versioned).await.context("Failed to register contract")
+}
+
+pub async fn test_event_callbacks_available_at_maximum_topoheight<S: Storage>(mut storage: S) -> Result<()> {
+    let contract_hash = Hash::new([200u8; 32]);
+    let event_id = 77u64;
+
+    register_contract(&mut storage, &contract_hash, 0).await?;
+
+    // Register 3 distinct listeners for the same event, each with unique chunk_id / max_gas
+    let listeners = [
+        (Hash::new([201u8; 32]), 0u16, 1000u64, 0u64),
+        (Hash::new([202u8; 32]), 1u16, 2000u64, 1u64),
+        (Hash::new([203u8; 32]), 2u16, 3000u64, 2u64),
+    ];
+
+    for (listener_hash, chunk_id, max_gas, topo) in &listeners {
+        register_contract(&mut storage, listener_hash, *topo).await?;
+        let callback = EventCallbackRegistration { chunk_id: *chunk_id, max_gas: *max_gas };
+        storage.set_last_contract_event_callback(
+            &contract_hash,
+            event_id,
+            listener_hash,
+            Versioned::new(Some(callback), None),
+            *topo,
+        ).await.context("Failed to set callback")?;
+    }
+
+    // get_event_callbacks_available_at_maximum_topoheight should return all 3 active callbacks
+    let stream = storage.get_event_callbacks_available_at_maximum_topoheight(
+        &contract_hash,
+        event_id,
+        10u64,
+    ).await.context("Failed to get available callbacks stream")?;
+
+    futures::pin_mut!(stream);
+    let mut found = std::collections::HashMap::new();
+    while let Some(result) = stream.next().await {
+        let (listener, cb) = result.context("Failed to read from available callbacks stream")?;
+        found.insert(cb.chunk_id, (listener, cb.max_gas));
+    }
+
+    assert_eq!(found.len(), 3, "Should have 3 active callbacks, got {}", found.len());
+    for (listener_hash, chunk_id, max_gas, _) in &listeners {
+        let entry = found.get(chunk_id)
+            .with_context(|| format!("chunk_id {} not found in results", chunk_id))?;
+        assert_eq!(entry.0, *listener_hash,
+            "chunk_id {}: expected listener {:?}, got {:?}", chunk_id, listener_hash, entry.0);
+        assert_eq!(entry.1, *max_gas,
+            "chunk_id {}: expected max_gas {}, got {}", chunk_id, max_gas, entry.1);
+    }
+
+    Ok(())
+}
+
+pub async fn test_event_callbacks_available_after_rewind<S: Storage>(mut storage: S) -> Result<()> {
+    let contract_hash = Hash::new([210u8; 32]);
+    let event_id = 88u64;
+
+    register_contract(&mut storage, &contract_hash, 0).await?;
+
+    let listener_a = Hash::new([211u8; 32]);
+    let listener_b = Hash::new([212u8; 32]);
+
+    register_contract(&mut storage, &listener_a, 0).await?;
+    register_contract(&mut storage, &listener_b, 0).await?;
+
+    // listener_a registered at topo 2, listener_b registered at topo 8
+    storage.set_last_contract_event_callback(
+        &contract_hash, event_id, &listener_a,
+        Versioned::new(Some(EventCallbackRegistration { chunk_id: 0, max_gas: 500 }), None),
+        2,
+    ).await?;
+    storage.set_last_contract_event_callback(
+        &contract_hash, event_id, &listener_b,
+        Versioned::new(Some(EventCallbackRegistration { chunk_id: 1, max_gas: 600 }), None),
+        8,
+    ).await?;
+
+    // Before rewind: both visible at topo 10
+    {
+        let stream = storage.get_event_callbacks_available_at_maximum_topoheight(
+            &contract_hash, event_id, 10,
+        ).await?;
+        futures::pin_mut!(stream);
+        let mut count = 0;
+        while let Some(r) = stream.next().await {
+            r.context("stream error before rewind")?;
+            count += 1;
+        }
+        assert_eq!(count, 2, "Before rewind: expected 2 callbacks, got {}", count);
+    }
+
+    // At topo 5: only listener_a should be visible (listener_b registered at 8)
+    {
+        let stream = storage.get_event_callbacks_available_at_maximum_topoheight(
+            &contract_hash, event_id, 5,
+        ).await?;
+        futures::pin_mut!(stream);
+        let mut count = 0;
+        while let Some(r) = stream.next().await {
+            let (listener, _) = r.context("stream error at topo 5")?;
+            assert_eq!(listener, listener_a, "At topo 5 only listener_a should be visible");
+            count += 1;
+        }
+        assert_eq!(count, 1, "At topo 5: expected 1 callback, got {}", count);
+    }
+
+    // Simulate pop_blocks: rewind to topo 5
+    storage.delete_versioned_data_above_topoheight(5).await
+        .context("Failed to delete versioned data above topo 5")?;
+
+    // After rewind to topo 5: listener_b (registered at topo 8) must no longer appear
+    {
+        let stream = storage.get_event_callbacks_available_at_maximum_topoheight(
+            &contract_hash, event_id, 5,
+        ).await?;
+        futures::pin_mut!(stream);
+        let mut count = 0;
+        while let Some(r) = stream.next().await {
+            let (listener, _) = r.context("stream error after rewind")?;
+            assert_eq!(listener, listener_a, "After rewind only listener_a should remain");
+            count += 1;
+        }
+        assert_eq!(count, 1, "After rewind to topo 5: expected 1 callback, got {}", count);
+    }
+
+    Ok(())
+}
+
+pub async fn test_listeners_for_contract_events<S: Storage>(mut storage: S) -> Result<()> {
+    let contract_hash = Hash::new([220u8; 32]);
+
+    register_contract(&mut storage, &contract_hash, 0).await?;
+
+    // Two different events, two different listeners
+    let event_a = 1u64;
+    let event_b = 2u64;
+    let listener_1 = Hash::new([221u8; 32]);
+    let listener_2 = Hash::new([222u8; 32]);
+
+    register_contract(&mut storage, &listener_1, 0).await?;
+    register_contract(&mut storage, &listener_2, 0).await?;
+
+    // listener_1 listens to event_a at topo 1
+    storage.set_last_contract_event_callback(
+        &contract_hash, event_a, &listener_1,
+        Versioned::new(Some(EventCallbackRegistration { chunk_id: 10, max_gas: 100 }), None),
+        1,
+    ).await?;
+    // listener_2 listens to event_b at topo 2
+    storage.set_last_contract_event_callback(
+        &contract_hash, event_b, &listener_2,
+        Versioned::new(Some(EventCallbackRegistration { chunk_id: 20, max_gas: 200 }), None),
+        2,
+    ).await?;
+
+    let stream = storage.get_listeners_for_contract_events(
+        &contract_hash,
+        0,  // min_topoheight
+        10, // max_topoheight
+    ).await.context("Failed to get listeners")?;
+
+    futures::pin_mut!(stream);
+    let mut results: Vec<(u64, Hash, Option<EventCallbackRegistration>)> = Vec::new();
+    while let Some(r) = stream.next().await {
+        results.push(r.context("stream error in get_listeners_for_contract_events")?);
+    }
+
+    assert_eq!(results.len(), 2, "Expected 2 listener entries, got {}", results.len());
+
+    // Verify each (event_id, listener) pair is correct
+    let find = |eid: u64| results.iter().find(|(e, _, _)| *e == eid);
+
+    let entry_a = find(event_a).with_context(|| format!("event_a ({}) not found", event_a))?;
+    assert_eq!(entry_a.1, listener_1, "event_a listener should be listener_1");
+    assert!(entry_a.2.is_some(), "event_a callback should be Some");
+    assert_eq!(entry_a.2.as_ref().unwrap().chunk_id, 10);
+
+    let entry_b = find(event_b).with_context(|| format!("event_b ({}) not found", event_b))?;
+    assert_eq!(entry_b.1, listener_2, "event_b listener should be listener_2");
+    assert!(entry_b.2.is_some(), "event_b callback should be Some");
+    assert_eq!(entry_b.2.as_ref().unwrap().chunk_id, 20);
+
+    Ok(())
+}
+
+// Verifies that once a listener is "consumed" (a new version with None is stored), the consumed
+// version is visible at the consuming topoheight and not visible at an earlier one.
+// Also verifies that re-registering after consumption creates a fresh version again.
+pub async fn test_event_callback_consumed_versioning<S: Storage>(mut storage: S) -> Result<()> {
+    let contract   = Hash::new([230u8; 32]);
+    let listener   = Hash::new([231u8; 32]);
+    let event_id   = 5u64;
+
+    register_contract(&mut storage, &contract, 0).await?;
+    register_contract(&mut storage, &listener, 0).await?;
+
+    // topo 2: register callback
+    storage.set_last_contract_event_callback(
+        &contract, event_id, &listener,
+        Versioned::new(Some(EventCallbackRegistration { chunk_id: 0, max_gas: 100 }), None),
+        2,
+    ).await?;
+
+    // topo 5: consume (set to None)
+    storage.set_last_contract_event_callback(
+        &contract, event_id, &listener,
+        Versioned::new(None, Some(2)),
+        5,
+    ).await?;
+
+    // At topo 3 the callback is still active
+    let v_before = storage.get_event_callback_for_contract_at_maximum_topoheight(
+        &contract, event_id, &listener, 3,
+    ).await?.context("should exist before consumption")?;
+    assert!(v_before.1.get().is_some(), "callback should be Some before consumption");
+
+    // At topo 5 the consumed (None) version is returned
+    let v_consumed = storage.get_event_callback_for_contract_at_maximum_topoheight(
+        &contract, event_id, &listener, 5,
+    ).await?.context("consumed version should be found")?;
+    assert!(v_consumed.1.get().is_none(), "callback should be None after consumption");
+
+    // get_event_callbacks_available_at_maximum_topoheight must NOT return consumed listeners
+    {
+        let stream = storage.get_event_callbacks_available_at_maximum_topoheight(
+            &contract, event_id, 10,
+        ).await?;
+        futures::pin_mut!(stream);
+        let mut count = 0;
+        while let Some(r) = stream.next().await {
+            r?;
+            count += 1;
+        }
+        assert_eq!(count, 0, "consumed listener must not appear in available callbacks");
+    }
+
+    // topo 8: re-register after consumption
+    storage.set_last_contract_event_callback(
+        &contract, event_id, &listener,
+        Versioned::new(Some(EventCallbackRegistration { chunk_id: 1, max_gas: 200 }), Some(5)),
+        8,
+    ).await?;
+
+    let v_rereg = storage.get_event_callback_for_contract_at_maximum_topoheight(
+        &contract, event_id, &listener, 10,
+    ).await?.context("re-registered callback should exist")?;
+    assert_eq!(v_rereg.1.get().as_ref().unwrap().chunk_id, 1, "re-registered chunk_id should be 1");
+
+    // Available stream should now return 1 entry (the re-registered one)
+    let stream2 = storage.get_event_callbacks_available_at_maximum_topoheight(
+        &contract, event_id, 10,
+    ).await?;
+    futures::pin_mut!(stream2);
+    let mut count2 = 0;
+    while let Some(r) = stream2.next().await {
+        r?;
+        count2 += 1;
+    }
+    assert_eq!(count2, 1, "re-registered listener should appear once in available callbacks");
+
+    Ok(())
+}
+
+// Tests create / update / soft-delete (None value) of contract data entries,
+// verifying that get_contract_data_at_maximum_topoheight_for returns the correct
+// version at every relevant topoheight.
+pub async fn test_contract_data_lifecycle<S: Storage>(mut storage: S) -> Result<()> {
+    let contract = Hash::new([240u8; 32]);
+    register_contract(&mut storage, &contract, 0).await?;
+
+    let key = ValueCell::Primitive(Primitive::U64(42));
+    let val_v1 = ValueCell::Primitive(Primitive::U64(100));
+    let val_v2 = ValueCell::Primitive(Primitive::U64(200));
+
+    // topo 1: key does not exist yet
+    let missing = storage.get_contract_data_at_maximum_topoheight_for(&contract, &key, 1).await?;
+    assert!(missing.is_none(), "key should not exist before creation");
+
+    // topo 2: create
+    storage.set_last_contract_data_to(
+        &contract, &key, 2,
+        &Versioned::new(Some(val_v1.clone()), None),
+    ).await?;
+
+    // topo 3: update
+    storage.set_last_contract_data_to(
+        &contract, &key, 3,
+        &Versioned::new(Some(val_v2.clone()), Some(2)),
+    ).await?;
+
+    // topo 6: soft-delete (None value)
+    storage.set_last_contract_data_to(
+        &contract, &key, 6,
+        &Versioned::new(None, Some(3)),
+    ).await?;
+
+    // At topo 1: not found
+    assert!(storage.get_contract_data_at_maximum_topoheight_for(&contract, &key, 1).await?.is_none(),
+        "key must not exist at topo 1");
+
+    // At topo 2: v1
+    let at2 = storage.get_contract_data_at_maximum_topoheight_for(&contract, &key, 2)
+        .await?.context("should find v1 at topo 2")?;
+    assert_eq!(at2.0, 2);
+    assert_eq!(at2.1.get().as_ref().unwrap(), &val_v1);
+
+    // At topo 4: v2 (latest update, delete not yet applied)
+    let at4 = storage.get_contract_data_at_maximum_topoheight_for(&contract, &key, 4)
+        .await?.context("should find v2 at topo 4")?;
+    assert_eq!(at4.1.get().as_ref().unwrap(), &val_v2);
+
+    // At topo 6: None (deleted)
+    let at6 = storage.get_contract_data_at_maximum_topoheight_for(&contract, &key, 6)
+        .await?.context("deleted version should still be returned as Some(versioned)")?;
+    assert!(at6.1.get().is_none(), "value should be None after deletion");
+
+    // Exact topoheight checks
+    assert!(storage.has_contract_data_at_exact_topoheight(&contract, &key, 2).await?, "exact topo 2 must exist");
+    assert!(storage.has_contract_data_at_exact_topoheight(&contract, &key, 3).await?, "exact topo 3 must exist");
+    assert!(storage.has_contract_data_at_exact_topoheight(&contract, &key, 6).await?, "exact topo 6 (delete) must exist");
+    assert!(!storage.has_contract_data_at_exact_topoheight(&contract, &key, 4).await?, "exact topo 4 must not exist (no write)");
+
+    Ok(())
+}
+
+// Tests that after delete_versioned_data_above_topoheight, contract data pointers are
+// correctly rewound so re-querying returns the pre-rewind version.
+pub async fn test_contract_data_rewind<S: Storage>(mut storage: S) -> Result<()> {
+    let contract = Hash::new([241u8; 32]);
+    register_contract(&mut storage, &contract, 0).await?;
+
+    let key   = ValueCell::Primitive(Primitive::U64(99));
+    let val_a = ValueCell::Primitive(Primitive::U64(10));
+    let val_b = ValueCell::Primitive(Primitive::U64(20));
+
+    // topo 3: create val_a
+    storage.set_last_contract_data_to(
+        &contract, &key, 3,
+        &Versioned::new(Some(val_a.clone()), None),
+    ).await?;
+
+    // topo 7: update to val_b
+    storage.set_last_contract_data_to(
+        &contract, &key, 7,
+        &Versioned::new(Some(val_b.clone()), Some(3)),
+    ).await?;
+
+    // Rewind to topo 5 (removes topo-7 entry)
+    storage.delete_versioned_data_above_topoheight(5).await?;
+
+    // After rewind, the pointer must point back to the topo-3 version
+    let after = storage.get_contract_data_at_maximum_topoheight_for(&contract, &key, 10)
+        .await?.context("val_a should be visible after rewind")?;
+    assert_eq!(after.0, 3, "pointer should be at topo 3 after rewind");
+    assert_eq!(after.1.get().as_ref().unwrap(), &val_a);
+
+    // The topo-7 entry must be gone
+    assert!(!storage.has_contract_data_at_exact_topoheight(&contract, &key, 7).await?,
+        "topo-7 entry must be deleted after rewind");
+
+    Ok(())
+}
+
+// Tests deploy / re-deploy (update module) / soft-delete of a contract module,
+// verifying get_contract_at_maximum_topoheight_for and has_contract_module_at_topoheight.
+pub async fn test_contract_module_lifecycle<S: Storage>(mut storage: S) -> Result<()> {
+    let hash = Hash::new([250u8; 32]);
+    let module = Arc::new(Module::new());
+
+    // topo 1: does not exist
+    assert!(storage.get_last_topoheight_for_contract(&hash).await?.is_none(),
+        "contract must not exist before deploy");
+
+    // topo 2: deploy
+    let cm_v1 = ContractModule { version: Default::default(), module: module.clone() };
+    storage.set_last_contract_to(&hash, 2, &Versioned::new(Some(Cow::Owned(cm_v1)), None)).await?;
+
+    // topo 4: update (re-deploy)
+    let cm_v2 = ContractModule { version: Default::default(), module: module.clone() };
+    storage.set_last_contract_to(&hash, 4, &Versioned::new(Some(Cow::Owned(cm_v2)), Some(2))).await?;
+
+    // topo 7: soft-delete (module = None)
+    storage.set_last_contract_to(&hash, 7, &Versioned::new(None, Some(4))).await?;
+
+    // At topo 1: not deployed yet
+    assert!(storage.get_contract_at_maximum_topoheight_for(&hash, 1).await?.is_none(),
+        "contract should not exist at topo 1");
+
+    // At topo 3: v1 deployed
+    let at3 = storage.get_contract_at_maximum_topoheight_for(&hash, 3)
+        .await?.context("v1 should exist at topo 3")?;
+    assert_eq!(at3.0, 2, "should be at deploy topoheight 2");
+    assert!(at3.1.get().is_some(), "module should be Some at topo 3");
+
+    // At topo 5: v2 (updated)
+    let at5 = storage.get_contract_at_maximum_topoheight_for(&hash, 5)
+        .await?.context("v2 should exist at topo 5")?;
+    assert_eq!(at5.0, 4, "should be at update topoheight 4");
+
+    // At topo 7: module deleted (None)
+    let at7 = storage.get_contract_at_maximum_topoheight_for(&hash, 7)
+        .await?.context("deletion record should exist")?;
+    assert!(at7.1.get().is_none(), "module should be None after deletion");
+
+    // has_contract_module_at_topoheight: false when None, true when Some
+    assert!(!storage.has_contract_module_at_topoheight(&hash, 7).await?,
+        "has_contract_module must be false when deleted");
+    assert!(storage.has_contract_module_at_topoheight(&hash, 4).await?,
+        "has_contract_module must be true when module exists");
+
+    // has_contract_at_maximum_topoheight: reflects latest version up to the given topo
+    assert!(storage.has_contract_at_maximum_topoheight(&hash, 5).await?,
+        "should have contract at topo 5");
+    assert!(!storage.has_contract_at_maximum_topoheight(&hash, 10).await?,
+        "should NOT have contract at topo 10 (deleted at 7)");
+
+    Ok(())
+}
+
+// Tests that after delete_versioned_data_above_topoheight, the contract module pointer
+// is rewound so re-querying returns the pre-rewind version.
+pub async fn test_contract_module_rewind<S: Storage>(mut storage: S) -> Result<()> {
+    let hash   = Hash::new([251u8; 32]);
+    let module = Arc::new(Module::new());
+
+    let cm_v1 = ContractModule { version: Default::default(), module: module.clone() };
+    storage.set_last_contract_to(&hash, 5, &Versioned::new(Some(Cow::Owned(cm_v1)), None)).await?;
+
+    let cm_v2 = ContractModule { version: Default::default(), module: module.clone() };
+    storage.set_last_contract_to(&hash, 10, &Versioned::new(Some(Cow::Owned(cm_v2)), Some(5))).await?;
+
+    // Rewind to topo 7 (removes topo-10 entry)
+    storage.delete_versioned_data_above_topoheight(7).await?;
+
+    // After rewind, contract must point back to topo 5
+    let after = storage.get_contract_at_maximum_topoheight_for(&hash, 20)
+        .await?.context("v1 should be visible after rewind")?;
+    assert_eq!(after.0, 5, "pointer should be rewound to topo 5");
+    assert!(after.1.get().is_some(), "module should be Some after rewind to topo 7");
+
+    // The topo-10 entry must be gone
+    assert!(!storage.has_contract_at_exact_topoheight(&hash, 10).await?,
+        "topo-10 entry must be deleted after rewind");
+
+    Ok(())
+}
+
+// Tests that a scheduled execution can be stored, retrieved, and that the versioned
+// cleanup (delete_scheduled_executions_above_topoheight) removes registrations above
+// the cutoff while keeping registrations at or below it.
+pub async fn test_scheduled_execution_lifecycle<S: Storage>(mut storage: S) -> Result<()> {
+    let contract = Hash::new([252u8; 32]);
+    register_contract(&mut storage, &contract, 0).await?;
+
+    // Register executions at different registration topoheights, each targeting different execution topoheights
+    for (reg_topo, exec_topo) in [(1u64, 10u64), (3, 20), (5, 30), (8, 40)] {
+        let execution = ScheduledExecution {
+            hash: Arc::new(Hash::new([253u8 + reg_topo as u8; 32])),
+            contract: contract.clone(),
+            kind: ScheduledExecutionKind::TopoHeight(exec_topo),
+            params: vec![],
+            chunk_id: 0,
+            max_gas: 1000,
+            gas_sources: Default::default(),
+        };
+        storage.set_contract_scheduled_execution_at_topoheight(
+            &contract, reg_topo, &execution, exec_topo,
+        ).await?;
+    }
+
+    // All 4 should be retrievable by their execution topoheight
+    for exec_topo in [10u64, 20, 30, 40] {
+        assert!(storage.has_contract_scheduled_execution_at_topoheight(&contract, exec_topo).await?,
+            "execution at exec_topo {} should exist", exec_topo);
+        let exec = storage.get_contract_scheduled_execution_at_topoheight(&contract, exec_topo).await?;
+        assert_eq!(exec.contract, contract, "contract mismatch for exec_topo {}", exec_topo);
+    }
+
+    // Registrations at or below reg_topo 4 should survive deletion above reg_topo 4
+    storage.delete_scheduled_executions_above_topoheight(4).await?;
+
+    // reg_topo 1 and 3 (exec_topo 10 and 20) must still exist
+    for exec_topo in [10u64, 20] {
+        assert!(storage.has_contract_scheduled_execution_at_topoheight(&contract, exec_topo).await?,
+            "exec_topo {} should still exist after rewind", exec_topo);
+    }
+
+    // reg_topo 5 and 8 (exec_topo 30 and 40) must be gone
+    for exec_topo in [30u64, 40] {
+        assert!(!storage.has_contract_scheduled_execution_at_topoheight(&contract, exec_topo).await?,
+            "exec_topo {} should be deleted after rewind", exec_topo);
+    }
+
+    Ok(())
+}
+
+// Tests the full range query for registered scheduled executions and verifies that
+// only executions within the registration topoheight window are returned.
+pub async fn test_scheduled_execution_range_query<S: Storage>(mut storage: S) -> Result<()> {
+    let contract = Hash::new([253u8; 32]);
+    register_contract(&mut storage, &contract, 0).await?;
+
+    // Register 6 executions spanning topoheights 1..=6
+    for reg_topo in 1u64..=6 {
+        let exec_topo = 100 + reg_topo;
+        let execution = ScheduledExecution {
+            hash: Arc::new(Hash::new([254u8; 32])),
+            contract: contract.clone(),
+            kind: ScheduledExecutionKind::TopoHeight(exec_topo),
+            params: vec![],
+            chunk_id: 0,
+            max_gas: 500,
+            gas_sources: Default::default(),
+        };
+        storage.set_contract_scheduled_execution_at_topoheight(
+            &contract, reg_topo, &execution, exec_topo,
+        ).await?;
+    }
+
+    // Query range [2, 5]: should return exactly the 4 executions registered at topos 2..=5
+    let stream = storage.get_registered_contract_scheduled_executions_in_range(2, 5, None).await?;
+    futures::pin_mut!(stream);
+    let mut count = 0u64;
+    while let Some(r) = stream.next().await {
+        let (_, reg_topo, _) = r.context("stream error")?;
+        assert!(reg_topo >= 2 && reg_topo <= 5,
+            "reg_topo {} outside expected range [2, 5]", reg_topo);
+        count += 1;
+    }
+    assert_eq!(count, 4, "expected 4 executions in range [2, 5], got {}", count);
 
     Ok(())
 }

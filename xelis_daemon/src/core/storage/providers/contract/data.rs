@@ -29,10 +29,6 @@ pub trait ContractDataProvider {
     // Retrieve the topoheight of a contract data at maximum topoheight
     async fn get_contract_data_topoheight_at_maximum_topoheight_for<'a>(&self, contract: &Hash, key: &ValueCell, maximum_topoheight: TopoHeight) -> Result<Option<TopoHeight>, BlockchainError>;
 
-    // Check if a contract data exists at a given topoheight
-    // If the version is None, it returns false
-    async fn has_contract_data_at_maximum_topoheight(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<bool, BlockchainError>;
-
     // Check if we have a contract data version at a given topoheight
     // It only checks if the topoheight exists
     async fn has_contract_data_at_exact_topoheight(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<bool, BlockchainError>;
