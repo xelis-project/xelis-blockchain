@@ -616,3 +616,17 @@ impl<'a> Serializer for &'a [u8] {
         self.len()
     }
 }
+
+impl<'a, T: Serializer> Serializer for &'a T {
+    fn write(&self, writer: &mut Writer) {
+        (*self).write(writer);
+    }
+
+    fn read(_: &mut Reader) -> Result<Self, ReaderError> {
+        Err(ReaderError::ErrorTryInto)
+    }
+
+    fn size(&self) -> usize {
+        (*self).size()
+    }
+}
