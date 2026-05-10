@@ -312,6 +312,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::with_optional_arguments("list_peers", "List all peers connected", vec![Arg::new("page", ArgType::Number)], CommandHandler::Async(async_handler!(list_peers::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("list_assets", "List all assets registered on chain", vec![Arg::new("page", ArgType::Number)], CommandHandler::Async(async_handler!(list_assets::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("show_peerlist", "Show the stored peerlist", vec![Arg::new("page", ArgType::Number)], CommandHandler::Async(async_handler!(show_stored_peerlist::<S>))))?;
+    command_manager.add_command(Command::new("show_account", "Show account of an address", CommandHandler::Async(async_handler!(show_account::<S>))))?;
     command_manager.add_command(Command::with_arguments("show_balance", "Show balance of an address", vec![], vec![Arg::new("history", ArgType::Number)], CommandHandler::Async(async_handler!(show_balance::<S>))))?;
     command_manager.add_command(Command::with_arguments("show_multisig", "Show multisig history of an address", vec![], vec![], CommandHandler::Async(async_handler!(show_multisig::<S>))))?;
     command_manager.add_command(Command::with_required_arguments("print_block", "Print block in json format", vec![Arg::new("hash", ArgType::Hash)], CommandHandler::Async(async_handler!(print_block::<S>))))?;
@@ -351,7 +352,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::with_optional_arguments("inspect_contract", "Inspect a smart contract by its hash", vec![Arg::new("contract", ArgType::Hash), Arg::new("show-storage", ArgType::Bool)], CommandHandler::Async(async_handler!(inspect_contract::<S>))))?;
     command_manager.add_command(Command::new("show_mempool", "Show all transactions in mempool", CommandHandler::Async(async_handler!(show_mempool::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("import_block", "Import a block in hexadecimal format", vec![Arg::new("hex", ArgType::String)], CommandHandler::Async(async_handler!(import_block::<S>))))?;
-        command_manager.add_command(Command::with_optional_arguments("import_tx", "Import a TX in hexadecimal format", vec![Arg::new("hex", ArgType::String)], CommandHandler::Async(async_handler!(import_tx::<S>))))?;
+    command_manager.add_command(Command::with_optional_arguments("import_tx", "Import a TX in hexadecimal format", vec![Arg::new("hex", ArgType::String)], CommandHandler::Async(async_handler!(import_tx::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("show_emitted_supply_at_topoheight", "Show emitted supply at a specific topoheight", vec![Arg::new("topoheight", ArgType::Number)], CommandHandler::Async(async_handler!(show_emitted_supply_at_topoheight::<S>))))?;
     command_manager.add_command(Command::with_required_arguments("replay_tx", "Replay a transaction by its hash", vec![Arg::new("hash", ArgType::Hash)], CommandHandler::Async(async_handler!(replay_tx::<S>))))?;
 
@@ -1103,6 +1104,46 @@ async fn show_stored_peerlist<S: Storage>(manager: &CommandManager, mut argument
             manager.message("No P2p server running!");
         }
     };
+
+    Ok(())
+}
+
+async fn show_account<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let prompt = manager.get_prompt();
+    // read address
+    let str_address = prompt.read_input(
+        prompt.colorize_string(Color::Green, "Address: "),
+        false
+    ).await.context("Error while reading address")?;
+    let address = Address::from_string(&str_address).context("Invalid address")?;
+
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+
+    let chain_cache = storage.chain_cache().await;
+
+    if !storage.account_exists(address.get_public_key(), chain_cache.topoheight).await.context("Error while checking account existence")? {
+        manager.message(format!("Account {} does not exist", address));
+    }
+    
+    manager.message(format!("Account {}:", address));
+    let registration_topoheight = storage.get_account_registration_topoheight(address.get_public_key()).await
+        .context("Error while retrieving account registration topoheight")?;
+    manager.message(format!("- Registration topoheight: {}", registration_topoheight));
+
+    let (_, nonce) = storage.get_last_nonce(address.get_public_key()).await
+        .context("Error while retrieving last nonce")?;
+    manager.message(format!("- Last nonce: {}", nonce.get_nonce()));
+
+    // Show all assets with balance for the account
+    let assets = storage.get_assets_for(address.get_public_key()).await
+        .context("Error while retrieving account assets")?;
+    manager.message("- Assets:");
+    for asset in assets {
+        let asset = asset.context("Error on account asset")?;
+        manager.message(format!("  - {}", asset));
+    }
 
     Ok(())
 }
