@@ -10,13 +10,13 @@ use crate::core::{
 impl TipsProvider for SledStorage {
     async fn get_tips(&self) -> Result<Tips, BlockchainError> {
         trace!("get tips");
-        Ok(self.cache().chain.tips.clone())
+        self.load_optional_from_disk(&self.extra, TIPS)
+            .map(|v| v.unwrap_or_default())
     }
 
     async fn store_tips(&mut self, tips: &Tips) -> Result<(), BlockchainError> {
         trace!("Saving {} Tips", tips.len());
         Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, TIPS, tips.to_bytes())?;
-        self.cache_mut().chain.tips = tips.clone();
 
         Ok(())
     }

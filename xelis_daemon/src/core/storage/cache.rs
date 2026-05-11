@@ -16,7 +16,7 @@ use xelis_common::{
 
 use crate::config::{DEFAULT_CACHE_SIZE, GENESIS_BLOCK_DIFFICULTY};
 
-use super::Tips;
+use super::SortedTips;
 
 #[macro_export]
 macro_rules! init_cache {
@@ -70,7 +70,7 @@ pub struct ChainCache {
     // It is used mostly for chain rewind limit
     pub stable_topoheight: TopoHeight,
     // current tips of the chain
-    pub tips: Tips,
+    pub tips: SortedTips,
     // Pruned topoheight cache
     pub pruned_topoheight: Option<TopoHeight>,
 }
@@ -109,7 +109,7 @@ impl Default for ChainCache {
             stable_height: 0,
             stable_topoheight: 0,
             difficulty: GENESIS_BLOCK_DIFFICULTY,
-            tips: Tips::default(),
+            tips: SortedTips::default(),
             pruned_topoheight: None,
         }
     }

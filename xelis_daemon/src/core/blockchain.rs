@@ -93,7 +93,7 @@ use crate::{
         MILLIS_PER_SECOND, SIDE_BLOCK_REWARD_MAX_BLOCKS, PRUNE_SAFETY_LIMIT,
         SIDE_BLOCK_REWARD_PERCENT, SIDE_BLOCK_REWARD_MIN_PERCENT,
         TIMESTAMP_IN_FUTURE_LIMIT, CHAIN_AVERAGE_BLOCK_TIME_N,
-        MAX_TIP_HEIGHT_DIFFERENCE, DAA_WINDOW
+        MAX_TIP_HEIGHT_DIFFERENCE, DAA_WINDOW, MAX_TIPS_IN_CACHE
     },
     core::{
         hard_fork,
@@ -641,6 +641,12 @@ impl<S: Storage> Blockchain<S> {
         let stable_topoheight = storage.get_topo_height_for_hash(&stable_hash).await?;
 
         let topoheight = storage.get_top_topoheight().await?;
+        let mut sorted_tips = SortedTips::default();
+        for hash in tips {
+            let cd = storage.get_cumulative_difficulty_for_block_hash(&hash).await?;
+            sorted_tips.insert(hash, cd);
+        }
+        sorted_tips.truncate(MAX_TIPS_IN_CACHE);
 
         let chain_cache = storage.chain_cache_mut().await?;
 
@@ -648,7 +654,7 @@ impl<S: Storage> Blockchain<S> {
         chain_cache.height = height;
         chain_cache.stable_height = stable_height;
         chain_cache.stable_topoheight = stable_topoheight;
-        chain_cache.tips = tips;
+        chain_cache.tips = sorted_tips;
         chain_cache.difficulty = difficulty;
 
         if self.mining_cache.write().await.take().is_some() {
@@ -1409,23 +1415,19 @@ impl<S: Storage> Blockchain<S> {
         }
 
         let chain_cache = storage.chain_cache().await;
-        let tips_set = chain_cache.tips.clone();
+        let tips_set = &chain_cache.tips;
         let current_height = chain_cache.height;
 
-        let mut sorted_tips: IndexSet<_> = if tips_set.len() > 1 {
-            let tips = blockdag::sort_tips(storage, tips_set.into_iter()).await?
-                .collect::<Vec<_>>();
-
+        let mut sorted_tips: IndexSet<_> = if let Some(best_tip) = tips_set.best().cloned().filter(|_| tips_set.len() > 1) {
             // Best tip is always the first one of the sorted tips, as they are sorted by cumulative difficulty
-            let best_tip = tips[0].clone();
-            let block_height_by_tips = blockdag::calculate_height_at_tips(storage, tips.iter()).await?;
+            let block_height_by_tips = blockdag::calculate_height_at_tips(storage, tips_set.iter().take(MAX_TIPS_IN_CACHE)).await?;
 
             debug!("Best tip selected for this block template is {}", best_tip);
-            let mut selected_tips = IndexSet::with_capacity(tips.len());
+            let mut selected_tips = IndexSet::with_capacity(tips_set.len().min(TIPS_LIMIT));
             let version_at_height = get_version_at_height(self.get_network(), current_height);
 
-            for hash in tips {
-                if best_tip != hash {
+            for hash in tips_set.iter().take(MAX_TIPS_IN_CACHE) {
+                if best_tip != *hash {
                     if !blockdag::validate_tips(storage, &best_tip, &hash).await? {
                         debug!("Tip {} is invalid, not selecting it because difficulty can't be less than 91% of {}", hash, best_tip);
                         continue;
@@ -1437,7 +1439,7 @@ impl<S: Storage> Blockchain<S> {
                     }
 
                     if !selected_tips.is_empty() {
-                        let iter = selected_tips.iter().chain(iter::once(&hash));
+                        let iter = selected_tips.iter().chain(iter::once(hash));
                         if blockdag::find_common_base_at_or_above_stable_height(storage, iter, block_height_by_tips, version_at_height).await?.is_none() {
                             warn!("Tip {} is not selected for mining: no common base before stable height", hash);
                             continue;
@@ -1452,7 +1454,7 @@ impl<S: Storage> Blockchain<S> {
                         continue;
                     }
                 }
-                selected_tips.insert(hash);
+                selected_tips.insert(hash.clone());
             }
 
             if selected_tips.is_empty() {
@@ -1462,7 +1464,7 @@ impl<S: Storage> Blockchain<S> {
 
             selected_tips
         } else {
-            tips_set.into_iter().collect()
+            tips_set.iter().cloned().collect()
         };
 
         if sorted_tips.len() > TIPS_LIMIT {
@@ -2806,7 +2808,7 @@ impl<S: Storage> Blockchain<S> {
             new_tips.push(hash);
         }
 
-        tips = HashSet::new();
+        tips = Tips::default();
         debug!("find best tip by cumulative difficulty");
         let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(&*storage, new_tips.iter()).await?.clone();
         let expected_next_height = blockdag::calculate_height_at_tips(&*storage, iter::once(&best_tip)).await?;
@@ -2900,11 +2902,18 @@ impl<S: Storage> Blockchain<S> {
             let (difficulty, _) = self.get_difficulty_at_tips(&*storage, tips.iter()).await?;
 
             // Update caches
+            let mut sorted_tips = SortedTips::default();
+            for hash in tips {
+                let cd = storage.get_cumulative_difficulty_for_block_hash(&hash).await?;
+                sorted_tips.insert(hash, cd);
+            }
+            sorted_tips.truncate(MAX_TIPS_IN_CACHE);
+
             let chain_cache = storage.chain_cache_mut().await?;
             chain_cache.stable_height = base_height;
             chain_cache.stable_topoheight = base_topo_height;
             chain_cache.difficulty = difficulty;
-            chain_cache.tips = tips;
+            chain_cache.tips = sorted_tips;
 
             if chain_height_extended {
                 chain_cache.height = current_height;

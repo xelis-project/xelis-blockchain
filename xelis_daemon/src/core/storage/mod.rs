@@ -26,7 +26,9 @@ pub use rocksdb::RocksStorage;
 #[cfg(feature = "sled")]
 pub use sled::SledStorage;
 
-use std::collections::HashSet;
+// re-export tips types
+pub use types::{Tips, SortedTips};
+
 use async_trait::async_trait;
 use log::{debug, trace, warn};
 use xelis_common::{
@@ -38,9 +40,6 @@ use xelis_common::{
     immutable::Immutable,
 };
 use crate::{config::PRUNE_SAFETY_LIMIT, core::error::BlockchainError};
-
-// Represents the tips of the chain or of a block
-pub type Tips = HashSet<Hash>;
 
 #[async_trait]
 pub trait Storage:

@@ -66,6 +66,8 @@ pub const MAX_TIP_HEIGHT_DIFFERENCE: u64 = 8;
 // DAA window size
 // Number of blocks to consider for difficulty adjustment algorithm
 pub const DAA_WINDOW: u64 = 50;
+// Maximum number of tips to keep in cache
+pub const MAX_TIPS_IN_CACHE: usize = u8::MAX as usize;
 
 pub const fn get_stable_limit(version: BlockVersion) -> u64 {
     match version {

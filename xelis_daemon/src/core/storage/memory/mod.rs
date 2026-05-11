@@ -25,7 +25,7 @@ use crate::core::{
     error::BlockchainError,
     storage::{
         cache::ChainCache,
-        types::TopoHeightMetadata,
+        types::{TopoHeightMetadata, Tips},
         ClientProtocolProvider,
         DagOrderProvider,
         DifficultyProvider,
@@ -96,6 +96,7 @@ pub struct MemoryStorage {
     network: Network,
     cache: ChainCache,
     concurrency: usize,
+    tips: Tips,
 
     accounts: HashMap<PooledArc<PublicKey>, AccountEntry>,
 
@@ -132,6 +133,7 @@ impl MemoryStorage {
         Self {
             concurrency,
             network,
+            tips: Tips::default(),
             cache: ChainCache::default(),
             blocks: IndexMap::new(),
             blocks_at_height: BTreeMap::new(),

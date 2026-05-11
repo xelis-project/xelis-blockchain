@@ -61,7 +61,7 @@ pub fn calculate_difficulty(solve_time: TimestampMillis, previous_difficulty: Di
     let block_time_target = get_block_time_target_for_version(version);
     match version {
         BlockVersion::V0 => v1::calculate_difficulty(solve_time, previous_difficulty, p, minimum_difficulty, block_time_target),
-        _ => v2::calculate_difficulty(solve_time, previous_difficulty, p, minimum_difficulty, block_time_target),
+        _ => v2::calculate_difficulty(solve_time, previous_difficulty, p, minimum_difficulty, block_time_target, version >= BlockVersion::V6),
     }
 }
 

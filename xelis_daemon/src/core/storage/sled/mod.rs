@@ -38,7 +38,6 @@ use super::{
         Direction,
         IteratorMode
     },
-    Tips
 };
 
 #[derive(Clone)]
@@ -339,12 +338,6 @@ impl SledStorage {
 
     // Load all the needed cache and counters in memory from disk 
     pub fn load_cache_from_disk(&mut self) -> Result<(), BlockchainError> {
-        // Load tips from disk if available
-        if let Some(tips) = self.load_optional_from_disk::<Tips, _>(&self.extra, TIPS)? {
-            debug!("Found tips: {}", tips.len());
-            self.cache.chain.tips = tips;
-        }
-
         // Load the pruned topoheight from disk if available
         if let Some(pruned_topoheight) = self.load_optional_from_disk::<u64, _>(&self.extra, PRUNED_TOPOHEIGHT)? {
             debug!("Found pruned topoheight: {}", pruned_topoheight);
