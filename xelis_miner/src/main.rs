@@ -450,19 +450,19 @@ fn benchmark(threads: usize, iterations: usize, algorithm: Algorithm) {
         for _ in 0..bench {
             let job = MinerWork::new(Hash::zero(), get_current_time_in_millis());
             let mut worker = Worker::new();
-            worker.set_work(job, algorithm).unwrap();
+            worker.set_work(job, algorithm).expect("Error while setting work to worker");
 
             let handle = thread::spawn(move || {
                 for _ in 0..iterations {
-                    let _ = worker.get_pow_hash().unwrap();
-                    worker.increase_nonce().unwrap();
+                    let _ = worker.get_pow_hash().expect("Error while getting PoW hash");
+                    worker.increase_nonce().expect("Error while increasing nonce");
                 }
             });
             handles.push(handle);
         }
 
         for handle in handles { // wait on all threads
-            handle.join().unwrap();
+            handle.join().expect("Error while joining mining thread");
         }
         let duration = start.elapsed().as_millis();
         let hashrate = format_hashrate(1000f64 / (duration as f64 / (bench*iterations) as f64));
@@ -554,9 +554,15 @@ async fn handle_websocket_message(message: Result<Message, TungsteniteError>, jo
             match serde_json::from_slice::<SocketMessage>(text.as_bytes())? {
                 SocketMessage::NewJob(job) => {
                     info!("New job received: difficulty {} at height {}", format_difficulty(job.difficulty), job.height);
-                    let block = MinerWork::from_hex(&job.miner_work).context("Error while decoding new job received from daemon")?;
-                    CURRENT_TOPO_HEIGHT.store(job.topoheight, Ordering::SeqCst);
-                    JOB_ELAPSED.write().unwrap().replace(Instant::now());
+                    let block = MinerWork::from_hex(&job.miner_work).context("Error while decoding new job received from daemon")?;                    
+                    {
+                        CURRENT_TOPO_HEIGHT.store(job.topoheight, Ordering::SeqCst);
+
+                        let mut write = JOB_ELAPSED.write()
+                            .expect("Error while acquiring write lock on job elapsed time");
+    
+                        write.replace(Instant::now());
+                    }
 
                     if let Err(e) = job_sender.send(ThreadNotification::NewJob(job.algorithm, block, job.difficulty, job.height)) {
                         error!("Error while sending new job to threads: {}", e);
@@ -631,7 +637,7 @@ fn start_thread(id: u16, mut job_receiver: broadcast::Receiver<ThreadNotificatio
                     // u16 support up to 65535 threads
                     new_job.set_thread_id_u16(id);
                     let initial_timestamp = new_job.get_timestamp();
-                    worker.set_work(new_job, algorithm).unwrap();
+                    worker.set_work(new_job, algorithm).context("Error while setting new job to worker")?;
 
                     let difficulty_target = match compute_difficulty_target(&expected_difficulty) {
                         Ok(value) => value,
@@ -642,10 +648,10 @@ fn start_thread(id: u16, mut job_receiver: broadcast::Receiver<ThreadNotificatio
                     };
 
                     // Solve block
-                    hash = worker.get_pow_hash().unwrap();
+                    hash = worker.get_pow_hash().context("Error while getting PoW hash")?;
                     let mut tries = 0;
                     while !check_difficulty_against_target(&hash, &difficulty_target) {
-                        worker.increase_nonce().unwrap();
+                        worker.increase_nonce().context("Error while increasing nonce")?;
                         // check if we have a new job pending
                         // Only update every N iterations to avoid too much CPU usage
                         if tries % UPDATE_EVERY_NONCE == 0 {
@@ -654,21 +660,21 @@ fn start_thread(id: u16, mut job_receiver: broadcast::Receiver<ThreadNotificatio
                             }
                             if let Ok(instant) = JOB_ELAPSED.read() {
                                 if let Some(instant) = instant.as_ref() {
-                                    worker.set_timestamp(initial_timestamp + instant.elapsed().as_millis() as u64).unwrap();
+                                    worker.set_timestamp(initial_timestamp + instant.elapsed().as_millis() as u64).context("Error while setting timestamp")?;
                                 }
                             }
                             HASHRATE_COUNTER.fetch_add(UPDATE_EVERY_NONCE as usize, Ordering::SeqCst);
                         }
 
-                        hash = worker.get_pow_hash()?;
+                        hash = worker.get_pow_hash().context("Error while getting PoW hash")?;
                         tries += 1;
                     }
 
                     // compute the reference hash for easier finding of the block
-                    let block_hash = worker.get_block_hash().unwrap();
+                    let block_hash = worker.get_block_hash().context("Error while getting block hash")?;
                     info!("Thread #{}: block {} found at height {} with difficulty {}", id, block_hash, height, format_difficulty(difficulty_from_hash(&hash)));
 
-                    let job = worker.take_work().unwrap();
+                    let job = worker.take_work().context("Error while taking work from worker")?;
                     if let Err(_) = block_sender.blocking_send(job) {
                         error!("Mining Thread #{}: error while sending block found with hash {}", id, block_hash);
                         continue 'main;
