@@ -402,6 +402,11 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
         let version = get_version_at_height(blockchain.get_network(), blockchain.get_height().await);
         let block_time_target = get_block_time_target_for_version(version);
         let network_hashrate: f64 = (blockchain.get_difficulty().await / (block_time_target / MILLIS_PER_SECOND)).into();
+        let block_time = {
+            let storage = blockchain.get_storage().read().await;
+            blockchain.get_average_block_time(&*storage).await
+                .context("Error while calculating average block time")?
+        };
 
         trace!("Building prompt message");
         Ok( 
@@ -415,7 +420,8 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
                 miners,
                 mempool,
                 network,
-                syncing_rate
+                syncing_rate,
+                block_time
             )
         )
     };
@@ -433,7 +439,8 @@ fn build_prompt_message(
     miners_count: usize,
     mempool: usize,
     network: Network,
-    syncing_rate: Option<u64>
+    syncing_rate: Option<u64>,
+    block_time: u64
 ) -> String {
     let topoheight_str = format!(
         "{}: {}/{}",
@@ -451,6 +458,12 @@ fn build_prompt_message(
         prompt.colorize_string(Color::Yellow, "Mempool"),
         prompt.colorize_string(Color::Green, &format!("{}", mempool))
     );
+    let blocktime_str = format!(
+        "{}: {}",
+        prompt.colorize_string(Color::Yellow, "Block Time"),
+        prompt.colorize_string(Color::Green, &format!("{:.2}s", block_time as f64 / MILLIS_PER_SECOND as f64))
+    );
+
     let peers_str = format!(
         "{}: {} ",
         prompt.colorize_string(Color::Yellow, "Peers"),
@@ -488,11 +501,12 @@ fn build_prompt_message(
     } else { "".to_owned() };
 
     format!(
-        "{} | {} | {} | {} | {}{}{}{}{}{} ",
+        "{} | {} | {} | {} | {} | {}{}{}{}{}{} ",
         prompt.colorize_string(Color::Blue, "XELIS"),
         topoheight_str,
         network_hashrate_str,
         mempool_str,
+        blocktime_str,
         peers_str,
         rpc_str,
         miners_str,
