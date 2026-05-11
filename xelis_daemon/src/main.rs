@@ -355,6 +355,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::with_optional_arguments("import_tx", "Import a TX in hexadecimal format", vec![Arg::new("hex", ArgType::String)], CommandHandler::Async(async_handler!(import_tx::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("show_emitted_supply_at_topoheight", "Show emitted supply at a specific topoheight", vec![Arg::new("topoheight", ArgType::Number)], CommandHandler::Async(async_handler!(show_emitted_supply_at_topoheight::<S>))))?;
     command_manager.add_command(Command::with_required_arguments("replay_tx", "Replay a transaction by its hash", vec![Arg::new("hash", ArgType::Hash)], CommandHandler::Async(async_handler!(replay_tx::<S>))))?;
+    command_manager.add_command(Command::with_arguments("block_time", "Show the block time for the requested blocks count", vec![], vec![Arg::new("n", ArgType::Number)], CommandHandler::Async(async_handler!(block_time::<S>))))?;
 
     // Don't keep the lock for ever
     let p2p = {
@@ -401,7 +402,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
         trace!("Retrieving network hashrate");
         let version = get_version_at_height(blockchain.get_network(), blockchain.get_height().await);
         let block_time_target = get_block_time_target_for_version(version);
-        let network_hashrate: f64 = (blockchain.get_difficulty().await / (block_time_target / MILLIS_PER_SECOND)).into();
+        let network_hashrate: f64 = (blockchain.get_difficulty().await * MILLIS_PER_SECOND / block_time_target).into();
         let block_time = {
             let storage = blockchain.get_storage().read().await;
             blockchain.get_average_block_time(&*storage).await
@@ -1627,6 +1628,8 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
         .context("Error while retrieving top block hash")?;
     let avg_block_time = blockchain.get_average_block_time::<S>(&storage).await
         .context("Error while retrieving average block time")?;
+    let total_block_time = blockchain.get_average_block_time_n::<S>(&storage, topoheight).await
+        .context("Error while retrieving total block time")?;
     let avg_block_size = blockchain.get_average_block_size::<S>(&storage).await
         .context("Error while retrieving average block size")?;
     let (required_base_fee, ema_block_size) = blockchain.get_required_base_fee::<S>(&storage, tips.iter()).await
@@ -1663,11 +1666,12 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     manager.message(format!("Stable Topo Height: {}", stable_topoheight));
     manager.message(format!("Topo Height: {}", topoheight));
     manager.message(format!("Difficulty: {}", format_difficulty(difficulty)));
-    manager.message(format!("Network Hashrate: {}", format_hashrate((difficulty / (block_time_target / MILLIS_PER_SECOND)).into())));
+    manager.message(format!("Network Hashrate: {}", format_hashrate((difficulty * MILLIS_PER_SECOND / block_time_target).into())));
     manager.message(format!("Top block hash: {}", top_block_hash));
     manager.message(format!("Block Size EMA: {}", human_bytes(ema_block_size as f64)));
     manager.message(format!("Average Block Size: {}", human_bytes(avg_block_size as f64)));
     manager.message(format!("Average Block Time: {:.2}s", avg_block_time as f64 / MILLIS_PER_SECOND as f64));
+    manager.message(format!("Total Block Time: {:.2}s", total_block_time as f64 / MILLIS_PER_SECOND as f64));
     manager.message(format!("Target Block Time: {:.2}s", block_time_target as f64 / MILLIS_PER_SECOND as f64));
     manager.message(format!("Required base fee: {} XELIS / min: {} XELIS", format_xelis(required_base_fee), format_xelis(FEE_PER_KB)));
     manager.message(format!("Emitted Supply: {} XELIS", format_xelis(emitted_supply)));
@@ -1965,6 +1969,26 @@ async fn add_peer<S: Storage>(manager: &CommandManager, mut args: ArgumentManage
             manager.error("P2P is not enabled");
         }
     };
+
+    Ok(())
+}
+
+async fn block_time<S: Storage>(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let count = if arguments.has_argument("count") {
+        arguments.get_value("count")?.to_number()?
+    } else {
+        manager.get_prompt()
+            .read("Number of blocks to calculate average time: ").await?
+    };
+
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+
+    let block_time = blockchain.get_average_block_time_n(&*storage, count).await
+        .context("Error while calculating average block time")?;
+
+    manager.message(format!("Average block time for last {} blocks: {:.2}s", count, block_time as f64 / MILLIS_PER_SECOND as f64));
 
     Ok(())
 }

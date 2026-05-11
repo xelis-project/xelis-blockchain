@@ -3354,6 +3354,14 @@ impl<S: Storage> Blockchain<S> {
     where
         P: DifficultyProvider + PrunedTopoheightProvider + DagOrderProvider + CacheProvider
     {
+        self.get_average_block_time_n(provider, CHAIN_AVERAGE_BLOCK_TIME_N).await
+    }
+
+    // Same as `get_average_block_time` but with a custom count of blocks, it will return the average block time on the last N blocks
+    pub async fn get_average_block_time_n<P>(&self, provider: &P, count: u64) -> Result<TimestampMillis, BlockchainError>
+    where
+        P: DifficultyProvider + PrunedTopoheightProvider + DagOrderProvider + CacheProvider
+    {
         let chain_cache = provider.chain_cache().await;
         // current topoheight
         let topoheight = chain_cache.topoheight;
@@ -3362,8 +3370,8 @@ impl<S: Storage> Blockchain<S> {
         // we need to get the block hash at topoheight - 50 to compare
         // if topoheight is 0, returns the target as we don't have any block
         // otherwise returns topoheight
-        let mut count = if topoheight > CHAIN_AVERAGE_BLOCK_TIME_N {
-            CHAIN_AVERAGE_BLOCK_TIME_N
+        let mut count = if topoheight > count {
+            count
         } else if topoheight <= 1 {
             let version = get_version_at_height(self.get_network(), height);
             return Ok(get_block_time_target_for_version(version));
