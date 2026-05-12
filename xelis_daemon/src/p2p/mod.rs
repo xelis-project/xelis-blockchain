@@ -444,15 +444,22 @@ impl<S: Storage> P2pServer<S> {
         let (mut stream, addr) = res?;
 
         // Verify if we can accept new connections
-        let reject = !self.is_compatible_with_exclusive_nodes(&addr)
-            // check that this incoming peer isn't blacklisted
-            || !self.accept_new_connections().await
-            || !self.peer_list.is_allowed(&addr.ip()).await?
-            || self.is_connected_to_addr(&addr).await;
+        let mut reject = true;
+
+        if !self.is_compatible_with_exclusive_nodes(&addr) {
+            debug!("Not in exclusive node list: {}, rejecting", addr);
+        } else if !self.accept_new_connections().await {
+            debug!("Max peers reached, rejecting connection from {}", addr);
+        } else if !self.peer_list.is_allowed(&addr.ip()).await? {
+            debug!("{} is not allowed, rejecting connection", addr);
+        } else if self.is_connected_to_addr(&addr).await {
+            debug!("Already connected to peer: {}, rejecting", addr);
+        } else {
+            reject = false;
+        }
 
         // Reject connection
         if reject {
-            debug!("Rejecting connection from {}", addr);
             stream.shutdown().await?;
             return Ok(())
         }
