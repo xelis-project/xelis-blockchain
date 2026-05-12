@@ -295,7 +295,7 @@ const OTHERS_NETWORK_HARD_FORKS: [HardFork; 7] = [
         height: 30,
         version: BlockVersion::V6,
         changelog: "BlockDAG improvements",
-        version_requirement: Some(">=1.23.0")
+        version_requirement: Some(">=1.22.0")
     }
 ];
 
