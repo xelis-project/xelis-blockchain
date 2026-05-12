@@ -632,6 +632,11 @@ fn start_thread(id: u16, mut job_receiver: broadcast::Receiver<ThreadNotificatio
                     break 'main;
                 },
                 ThreadNotification::NewJob(algorithm, mut new_job, expected_difficulty, height) => {
+                    if !job_receiver.is_empty() {
+                        debug!("Mining Thread #{} received a new job but there is already a new job pending, skipping this one", id);
+                        continue 'main;
+                    }
+
                     debug!("Mining Thread #{} received a new job", id);
                     // set thread id in extra nonce for more work spread between threads
                     // u16 support up to 65535 threads
