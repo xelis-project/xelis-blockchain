@@ -622,10 +622,8 @@ fn start_thread(id: u16, mut job_receiver: broadcast::Receiver<ThreadNotificatio
 
             match message {
                 ThreadNotification::WebSocketClosed => {
-                    // wait until we receive a new job, check every 100ms
-                    while job_receiver.is_empty() {
-                        thread::sleep(Duration::from_millis(100));
-                    }
+                    debug!("Mining Thread #{}: WebSocket connection closed, waiting for new job...", id);
+                    continue 'main;
                 }
                 ThreadNotification::Exit => {
                     info!("Exiting Mining Thread #{}...", id);
