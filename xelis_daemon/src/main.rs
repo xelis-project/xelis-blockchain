@@ -355,7 +355,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::with_optional_arguments("import_tx", "Import a TX in hexadecimal format", vec![Arg::new("hex", ArgType::String)], CommandHandler::Async(async_handler!(import_tx::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("show_emitted_supply_at_topoheight", "Show emitted supply at a specific topoheight", vec![Arg::new("topoheight", ArgType::Number)], CommandHandler::Async(async_handler!(show_emitted_supply_at_topoheight::<S>))))?;
     command_manager.add_command(Command::with_required_arguments("replay_tx", "Replay a transaction by its hash", vec![Arg::new("hash", ArgType::Hash)], CommandHandler::Async(async_handler!(replay_tx::<S>))))?;
-    command_manager.add_command(Command::with_arguments("block_time", "Show the block time for the requested blocks count", vec![], vec![Arg::new("n", ArgType::Number)], CommandHandler::Async(async_handler!(block_time::<S>))))?;
+    command_manager.add_command(Command::with_arguments("block_time", "Show the block time for the requested blocks count", vec![], vec![Arg::new("count", ArgType::Number)], CommandHandler::Async(async_handler!(block_time::<S>))))?;
 
     // Don't keep the lock for ever
     let p2p = {
