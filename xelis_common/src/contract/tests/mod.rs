@@ -26,10 +26,11 @@ mod events;
 mod storage;
 mod btree;
 mod permission;
+mod inter_calls;
 
 /// Compiles the given contract code into a Module
 #[track_caller]
-pub fn compile_contract(environment: &EnvironmentBuilder<ContractMetadata>, code: &str) -> anyhow::Result<Module> {
+pub fn compile_contract(environment: &EnvironmentBuilder<ContractMetadata>, enforce_public_params: bool, code: &str) -> anyhow::Result<Module> {
     let tokens = Lexer::new(code)
         .into_iter()
         .collect::<Result<Vec<_>, _>>()?;
@@ -38,7 +39,8 @@ pub fn compile_contract(environment: &EnvironmentBuilder<ContractMetadata>, code
     let (program, _) = parser.parse()
         .expect("contract code");
 
-    let compiler = Compiler::new(&program, environment.environment());
+    let compiler = Compiler::new(&program, environment.environment())
+        .with_enforce_public_parameters(enforce_public_params);
     let module = compiler.compile()?;
 
     Ok(module)
@@ -46,7 +48,7 @@ pub fn compile_contract(environment: &EnvironmentBuilder<ContractMetadata>, code
 
 /// Creates a contract in the given chain state without invoking its constructor
 pub fn create_contract(state: &mut MockChainState, code: &str, version: ContractVersion) -> anyhow::Result<Hash> {
-    let module = compile_contract(&state.env_builders[&version], code)?;
+    let module = compile_contract(&state.env_builders[&version], version >= ContractVersion::V1, code)?;
 
     let hash = Hash::new(rand::random());
     state.internal_set_contract_module(
