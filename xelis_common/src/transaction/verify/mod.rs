@@ -607,6 +607,8 @@ impl Transaction {
                 for constant in payload.parameters.iter() {
                     validator.verify_constant(&constant)?;
                 }
+
+                validator.verify_invoke_chunk(payload.entry_id as usize, payload.parameters.iter())?;
             },
             TransactionType::DeployContract(payload) => {
                 if let Some(invoke) = payload.invoke.as_ref() {

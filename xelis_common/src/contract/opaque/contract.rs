@@ -8,6 +8,7 @@ use xelis_vm::{
     FnInstance,
     FnParams,
     FnReturnType,
+    ModuleValidator,
     Primitive,
     Reference,
     SysCallResult,
@@ -125,6 +126,28 @@ pub async fn contract_call<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a
         return Err(EnvironmentError::Static("Permission denied to call this contract"));
     }
 
+    // For backward compatibility, we need to switch the environment
+    let environment = if metadata.metadata.contract_version != opaque.contract_module.version {
+        debug!("Contract version is different between caller ({}) and callee ({}).", metadata.metadata.contract_version, opaque.contract_module.version);
+        Some(
+            chain_state
+                .environments
+                .get(&opaque.contract_module.version)
+                .cloned()
+                .ok_or(EnvironmentError::Static("Contract environment not found"))?
+        )
+    } else {
+        None
+    };
+
+    // Verify the chunk and parameters before executing the contract
+    let validator = ModuleValidator::new(&opaque.contract_module.module, environment.as_ref().map_or(&metadata.environment, |e| &e));
+    validator.verify_invoke_chunk(chunk_id as usize, p.iter().map(|v| v.as_ref()))
+        .map_err(|e| {
+            debug!("Contract call {} chunk {} validation failed from {}: {}", opaque.hash, chunk_id, metadata.metadata.contract_executor, e);
+            EnvironmentError::Static("Invalid parameters for contract call")
+        })?;
+
     let mut deposits = IndexMap::new();
     for (k, v) in assets {
         let asset: Hash = k.into_opaque_type()?;
@@ -150,20 +173,6 @@ pub async fn contract_call<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a
         .rev()
         .map(|v| v.as_ref().clone().into())
         .collect::<VecDeque<_>>();
-
-    // For backward compatibility, we need to switch the environment
-    let environment = if metadata.metadata.contract_version != opaque.contract_module.version {
-        debug!("Contract version is different between caller ({}) and callee ({}).", metadata.metadata.contract_version, opaque.contract_module.version);
-        Some(
-            chain_state
-                .environments
-                .get(&opaque.contract_module.version)
-                .cloned()
-                .ok_or(EnvironmentError::Static("Contract environment not found"))?
-        )
-    } else {
-        None
-    };
 
     Ok(SysCallResult::ModuleCall {
         module: opaque.contract_module.module.clone(),
