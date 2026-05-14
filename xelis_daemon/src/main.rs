@@ -52,7 +52,7 @@ use xelis_common::{
     }
 };
 use xelis_vm::Access;
-use crate::config::{MILLIS_PER_SECOND, get_stable_limit};
+use crate::config::{DEV_PUBLIC_KEY, MILLIS_PER_SECOND, get_stable_limit};
 use core::{
     state::{ChainState, ApplicableChainState},
     blockchain::{
@@ -1916,16 +1916,21 @@ async fn mine_block<S: Storage>(manager: &CommandManager, mut arguments: Argumen
         .read("Address: ").await
         .context("Error while reading address")?
     };
-    let address = Address::from_string(&address).context("Invalid address")?;
+
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+
+    let address = if address.is_empty() {
+        Address::new(blockchain.get_network().is_mainnet(), Default::default(), DEV_PUBLIC_KEY.clone())
+    } else {
+        Address::from_string(&address).context("Invalid address")?
+    };
 
     let count = if arguments.has_argument("count") {
         arguments.get_value("count")?.to_number()?
     } else {
         1
     };
-
-    let context = manager.get_context().lock()?;
-    let blockchain: &Arc<Blockchain<S>> = context.get()?;
 
     // Prevent trying to mine a block on mainnet through this as it will keep busy the node for nothing
     if *blockchain.get_network() == Network::Mainnet {
