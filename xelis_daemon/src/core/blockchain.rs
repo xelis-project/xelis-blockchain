@@ -2109,7 +2109,7 @@ impl<S: Storage> Blockchain<S> {
                                 .into_arc();
                             
                             let source = tx.get_source();
-                            info!("Adding parent TX {} from source {} to grouped parents for block {}", hash, source.as_address(self.network.is_mainnet()), block_hash);
+                            debug!("Adding parent TX {} from source {} to grouped parents for block {}", hash, source.as_address(self.network.is_mainnet()), block_hash);
     
                             txs_grouped.entry(Cow::Owned(source.clone()))
                                 .or_insert_with(IndexMap::new)

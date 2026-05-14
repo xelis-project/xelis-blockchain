@@ -348,6 +348,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::new("show_json_config", "Show the current config in JSON", CommandHandler::Async(async_handler!(show_json_config::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("export_json_config", "Export the current config in JSON", vec![Arg::new("filename", ArgType::String)], CommandHandler::Async(async_handler!(export_json_config::<S>))))?;
     command_manager.add_command(Command::new("broadcast_txs", "Broadcast all TXs in mempool if not done", CommandHandler::Async(async_handler!(broadcast_txs::<S>))))?;
+    command_manager.add_command(Command::new("request_peers_inventory", "Request peers inventory", CommandHandler::Async(async_handler!(request_peers_inventory::<S>))))?;
     command_manager.add_command(Command::new("snapshot_mode", "Force to be in snapshot mode (memory only)", CommandHandler::Async(async_handler!(snapshot_mode::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("inspect_contract", "Inspect a smart contract by its hash", vec![Arg::new("contract", ArgType::Hash), Arg::new("show-storage", ArgType::Bool)], CommandHandler::Async(async_handler!(inspect_contract::<S>))))?;
     command_manager.add_command(Command::new("show_mempool", "Show all transactions in mempool", CommandHandler::Async(async_handler!(show_mempool::<S>))))?;
@@ -896,6 +897,24 @@ async fn broadcast_txs<S: Storage>(manager: &CommandManager, _: ArgumentManager)
         info!("Broadcasting TX {}", hash);
         p2p.broadcast_tx_hash(hash.clone()).await;
     }
+
+    Ok(())
+}
+
+async fn request_peers_inventory<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let p2p = blockchain.get_p2p().read().await;
+    let p2p = match p2p.as_ref() {
+        Some(p2p) => p2p,
+        None => {
+            manager.error("P2P is not enabled");
+            return Ok(());
+        }
+    };
+
+    p2p.request_peers_inventory().await;
+    manager.message("Peers inventory requested");
 
     Ok(())
 }

@@ -572,6 +572,20 @@ impl<S: Storage> P2pServer<S> {
         Ok(())
     }
 
+    // Request the inventory of all connected peers
+    pub async fn request_peers_inventory(&self) {
+        let peers = self.peer_list.get_cloned_peers().await;
+        stream::iter(peers)
+            .for_each_concurrent(self.stream_concurrency, |peer| async move {
+                debug!("Requesting inventory from peer {}", peer);
+                peer.set_requested_inventory(false);
+                if let Err(e) = self.request_inventory_of(&peer).await {
+                    debug!("Error while requesting inventory from peer {}: {}", peer, e);
+                }
+            })
+            .await;
+    }
+
     // Build a handshake packet
     // We feed the packet with all chain data
     async fn build_handshake(&self) -> Result<Vec<u8>, P2pError> {
