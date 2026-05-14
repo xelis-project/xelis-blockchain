@@ -1547,12 +1547,6 @@ impl<S: Storage> Blockchain<S> {
         let mut block_size = block.size();
         let mut total_txs_size = 0;
 
-        // data used to verify txs
-        let chain_cache = storage.chain_cache().await;
-        let stable_topoheight = chain_cache.stable_topoheight;
-        let stable_height = chain_cache.stable_height;
-        let topoheight = chain_cache.topoheight;
-
         trace!("build chain state for block template");
 
         // V3 is used to group with orphaned TXs from our tips and calculate
@@ -1565,9 +1559,11 @@ impl<S: Storage> Blockchain<S> {
         };
 
         // Find the base height for this block
-        let base_height = blockdag::find_common_base_height(&*storage, block.get_tips(), block.get_version()).await?;
+        let (base, base_height) = blockdag::find_common_base(&*storage, block.get_tips(), block.get_version()).await?;
+        let base_topoheight = storage.get_topo_height_for_hash(&base).await?;
+        let nearest_base_topoheight = blockdag::find_nearest_base_topoheight(&*storage, block.get_tips().iter().cloned(), base_topoheight, &base).await?;
 
-        let mut chain_state = ChainState::new(storage, &self.environments, stable_topoheight, topoheight, block.get_version(), base_fee, base_height);
+        let mut chain_state = ChainState::new(storage, &self.environments, base_topoheight, nearest_base_topoheight, block.get_version(), base_fee, base_height);
 
         if !tx_selector.is_empty() {
             let tx_cache = TxCache::new(storage, &mempool, self.disable_zkp_cache);
@@ -1575,7 +1571,7 @@ impl<S: Storage> Blockchain<S> {
             // Search all txs that were processed in tips
             // This help us to determine if a TX was already included or not based on our DAG
             // Hopefully, this should never be triggered because the mempool is cleaned based on our state
-            let processed_txs = self.get_all_txs_until_height(storage, stable_height, block.get_tips().iter().cloned(), false, true).await?;
+            let processed_txs = self.get_all_txs_until_height(storage, base_height, block.get_tips().iter().cloned(), false, true).await?;
 
             // Grouped per source each TXs that were contained in blocks (orphaned) tips
             let mut grouped_orphaned_txs = HashMap::new();
@@ -1667,7 +1663,7 @@ impl<S: Storage> Blockchain<S> {
                     }
                 }
 
-                trace!("Selected {} (nonce: {}, fees: {}) for mining", hash, tx.get_nonce(), format_xelis(tx.get_fee()));
+                trace!("Selected {} (nonce: {}, fees: {}, reference: {}) for mining", hash, tx.get_nonce(), format_xelis(tx.get_fee()), tx.get_reference().topoheight);
                 // TODO no clone
                 block.txs_hashes.insert(hash.as_ref().clone());
                 block_size += HASH_SIZE; // add the hash size
@@ -1831,7 +1827,7 @@ impl<S: Storage> Blockchain<S> {
         debug!("storage semaphore acquired, locking storage for block verification");
         let storage = holder.read().await?;
 
-        debug!("Add new block {}", block_hash);
+        debug!("Add new block {} with {} txs", block_hash, block.get_txs_hashes().len());
         if storage.has_block_with_hash(&block_hash).await? {
             debug!("Block {} is already in chain!", block_hash);
             return Err(BlockchainError::AlreadyInChain)
@@ -2085,36 +2081,34 @@ impl<S: Storage> Blockchain<S> {
             };
 
             debug!("Grouping all TXs from parents by source for block {}", block_hash);
-            if is_v6_enabled {
-                if tips_count > 0 {
-                    // Starting V6, we retrieve the partial DAG order
-                    // This is required to group the TXs from the nearest base block to the tips,
-                    // and skip the TXs from blocks that are below the nearest base block because they are already executed and finalized in DAG
-                    // ChainState::new will be initialized with the nearest base block, so we group TXs between nearest base block & this block
-                    // to make sure its verification will stay deterministic.
-                    let nearest_hash = storage.get_hash_at_topo_height(nearest_base_topoheight).await?;
-                    let part_order = blockdag::generate_full_order::<_, _, LinkedHashSet<Hash>>(&*storage, block.get_tips().iter().cloned(), &nearest_hash, nearest_base_topoheight).await?;
-                    debug_assert_eq!(part_order.front(), Some(&nearest_hash), "The first block in the partial order should be the nearest base block");
-                    // We skip the first block because it's the nearest base block, and we only want to group the TXs from the blocks between the nearest base block and the tips
-                    // and also because the nearest base block is already included in the block state for verification, so we don't need to group its TXs again
-                    for block_hash in part_order.iter().skip(1) {
-                        let header = storage.get_block_header_by_hash(block_hash).await?;
-                        for hash in header.get_txs_hashes() {
-                            if blockdag::is_tx_executed_for_topoheight(&*storage, hash, nearest_base_topoheight).await? {
-                                debug!("TX {} from parent is executed in DAG, skipping it", hash);
-                                continue;
-                            }
-    
-                            let tx = storage.get_transaction(hash).await?
-                                .into_arc();
-                            
-                            let source = tx.get_source();
-                            debug!("Adding parent TX {} from source {} to grouped parents for block {}", hash, source.as_address(self.network.is_mainnet()), block_hash);
-    
-                            txs_grouped.entry(Cow::Owned(source.clone()))
-                                .or_insert_with(IndexMap::new)
-                                .insert(Cow::Owned(hash.clone()), tx);
+            if is_v6_enabled && tips_count > 0 {
+                // Starting V6, we retrieve the partial DAG order
+                // This is required to group the TXs from the nearest base block to the tips,
+                // and skip the TXs from blocks that are below the nearest base block because they are already executed and finalized in DAG
+                // ChainState::new will be initialized with the nearest base block, so we group TXs between nearest base block & this block
+                // to make sure its verification will stay deterministic.
+                let nearest_hash = storage.get_hash_at_topo_height(nearest_base_topoheight).await?;
+                let part_order = blockdag::generate_full_order::<_, _, LinkedHashSet<Hash>>(&*storage, block.get_tips().iter().cloned(), &nearest_hash, nearest_base_topoheight).await?;
+                debug_assert_eq!(part_order.front(), Some(&nearest_hash), "The first block in the partial order should be the nearest base block");
+                // We skip the first block because it's the nearest base block, and we only want to group the TXs from the blocks between the nearest base block and the tips
+                // and also because the nearest base block is already included in the block state for verification, so we don't need to group its TXs again
+                for block_hash in part_order.iter().skip(1) {
+                    let header = storage.get_block_header_by_hash(block_hash).await?;
+                    for hash in header.get_txs_hashes() {
+                        if blockdag::is_tx_executed_for_topoheight(&*storage, hash, nearest_base_topoheight).await? {
+                            debug!("TX {} from parent is executed in DAG, skipping it", hash);
+                            continue;
                         }
+
+                        let tx = storage.get_transaction(hash).await?
+                            .into_arc();
+                        
+                        let source = tx.get_source();
+                        debug!("Adding parent TX {} from source {} to grouped parents for block {}", hash, source.as_address(self.network.is_mainnet()), block_hash);
+
+                        txs_grouped.entry(Cow::Owned(source.clone()))
+                            .or_insert_with(IndexMap::new)
+                            .insert(Cow::Owned(hash.clone()), tx);
                     }
                 }
             } else if is_v3_enabled {
@@ -2221,11 +2215,9 @@ impl<S: Storage> Blockchain<S> {
                     debug!("using multi-threading mode to verify the transactions in {} batches", batches_count);
                     let mut batches = vec![Vec::new(); batches_count];
 
-                    let mut i = 0;
                     // TODO: load balance more!
-                    for group in txs_grouped.into_values() {
+                    for (i, group) in txs_grouped.into_values().enumerate() {
                         batches[i % batches_count].extend(group);
-                        i += 1;
                     }
 
                     let storage = &*storage;

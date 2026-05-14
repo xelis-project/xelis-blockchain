@@ -48,6 +48,7 @@ pub use apply::*;
 // This contains its expected next balance for next outgoing transactions
 // But also contains the ciphertext changes happening (so a sum of each spendings for transactions)
 // This is necessary to easily build the final user balance
+#[derive(Clone)]
 struct Echange {
     // If we are allowed to use the output balance for verification
     allow_output_balance: bool,
@@ -90,6 +91,7 @@ impl Echange {
     }
 }
 
+#[derive(Clone)]
 struct Account<'b> {
     // Account nonce used to verify valid transaction
     nonce: VersionedNonce,
@@ -130,6 +132,25 @@ pub struct ChainState<'s, 'b, S: Storage, P: ChainStateProvider<Storage = S>> {
     // All gas fees tracked
     gas_fee: u64,
     base_height: u64,
+}
+
+impl<'s, 'b, S: Storage, P: ChainStateProvider<Storage = S>> Clone for ChainState<'s, 'b, S, P> {
+    // Manual clone implementation to avoid the S: Clone and P: Clone bounds
+    fn clone(&self) -> Self {
+        Self {
+            environments: self.environments,
+            provider: self.provider,
+            receiver_balances: self.receiver_balances.clone(),
+            accounts: self.accounts.clone(),
+            stable_topoheight: self.stable_topoheight,
+            topoheight: self.topoheight,
+            tx_base_fee: self.tx_base_fee,
+            contracts: self.contracts.clone(),
+            block_version: self.block_version,
+            gas_fee: self.gas_fee,
+            base_height: self.base_height,
+        }
+    }
 }
 
 impl<'s, 'b, S: Storage, P: ChainStateProvider<Storage = S>> ChainState<'s, 'b, S, P> {
@@ -314,7 +335,14 @@ impl<'s, 'b, S: Storage, P: ChainStateProvider<Storage = S>> BlockchainVerificat
         &'c mut self,
         tx: &Transaction,
     ) -> Result<(), BlockchainError> {
-        super::pre_verify_tx(self.storage(), tx, self.stable_topoheight, self.base_height, self.topoheight, self.block_version).await
+        super::pre_verify_tx(tx, self.topoheight, self.block_version).await
+    }
+
+    async fn pre_verify_tx_dynamic<'c>(
+        &'c mut self,
+        tx: &Transaction,
+    ) -> Result<(), BlockchainError> {
+        super::pre_verify_tx_dynamic(self.storage(), tx, self.base_height, self.topoheight, self.block_version).await
     }
 
     /// Get the balance ciphertext for a receiver account

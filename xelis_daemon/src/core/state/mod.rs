@@ -116,8 +116,8 @@ async fn is_referencing_previous_output<S: Storage>(storage: &S, tx: &Transactio
 
 // Verify a transaction before adding it to mempool/chain state
 // We only verify the reference and the required fees
-pub(super) async fn pre_verify_tx<S: Storage>(storage: &S, tx: &Transaction, stable_topoheight: TopoHeight, base_height: u64, topoheight: TopoHeight, block_version: BlockVersion) -> Result<(), BlockchainError> {
-    debug!("Pre-verify TX at topoheight {} and stable topoheight {}", topoheight, stable_topoheight);
+pub(super) async fn pre_verify_tx(tx: &Transaction, topoheight: TopoHeight, block_version: BlockVersion) -> Result<(), BlockchainError> {
+    debug!("Pre-verify TX at topoheight {}", topoheight);
     if !hard_fork::is_tx_version_allowed_in_block_version(tx.get_version(), block_version) {
         debug!("Invalid version {} in block {}", tx.get_version(), block_version);
         return Err(BlockchainError::InvalidTxVersion);
@@ -137,7 +137,14 @@ pub(super) async fn pre_verify_tx<S: Storage>(storage: &S, tx: &Transaction, sta
         return Err(BlockchainError::InvalidReferenceTopoheight(reference.topoheight, topoheight));
     }
 
+    Ok(())
+}
+
+// Verify a transaction before adding it to mempool/chain state
+// This is the dynamic part that may vary based on the DAG order
+pub(super) async fn pre_verify_tx_dynamic<S: Storage>(storage: &S, tx: &Transaction, base_height: u64, topoheight: TopoHeight, block_version: BlockVersion) -> Result<(), BlockchainError> {
     if block_version >= BlockVersion::V4 {
+        let reference = tx.get_reference();
         if storage.has_block_with_hash(&reference.hash).await? {
             let block_height = storage.get_height_for_block_hash(&reference.hash).await?;
             if base_height < block_height
