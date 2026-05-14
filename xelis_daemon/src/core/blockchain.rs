@@ -1753,6 +1753,49 @@ impl<S: Storage> Blockchain<S> {
         }
     }
 
+    // clean the tips based on the new block, and find the best tips to build the next block on top of
+    async fn clean_tips(&self, storage: &S, tips: &mut Tips, current_height: u64) -> Result<(), BlockchainError> {
+        let mut new_tips = Vec::new();
+        // Find the version at the highest height between current chain and new block, to be able to apply the correct tip selection rules
+        let version_at_height = hard_fork::get_version_at_height(self.get_network(), current_height);
+        for hash in tips.drain() {
+            if !blockdag::is_near_enough_from_main_chain(&*storage, &hash, current_height, version_at_height).await? {
+                debug!("Tip {} is too far from main chain at height {}, skipping...", hash, current_height);
+                continue;
+            }
+
+            trace!("Adding {} as new tips", hash);
+            new_tips.push(hash);
+        }
+
+        debug!("find best tip by cumulative difficulty");
+        let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(&*storage, new_tips.iter()).await?.clone();
+        let expected_next_height = blockdag::calculate_height_at_tips(&*storage, iter::once(&best_tip)).await?;
+        debug!("Best tip is {}, expected next height is {}", best_tip, expected_next_height);
+
+        for hash in new_tips {
+            if best_tip != hash {
+                if !blockdag::validate_tips(&*storage, &best_tip, &hash).await? {
+                    debug!("Tip {} is not compatible with best tip {}, declaring it stale", hash, best_tip);
+                    continue;
+                }
+
+                let height = storage.get_height_for_block_hash(&hash).await?;
+                let height_diff = expected_next_height.saturating_sub(height);
+                if height_diff > MAX_TIP_HEIGHT_DIFFERENCE {
+                    debug!("Tip {} has a height difference too big ({} > {}), declaring it stale", hash, height_diff, MAX_TIP_HEIGHT_DIFFERENCE);
+                    continue;
+                }
+
+                debug!("Tip {} is valid, adding to final Tips list", hash);
+                tips.insert(hash);
+            }
+        }
+        tips.insert(best_tip);
+
+        Ok(())
+    }
+
     // Add a new block in chain
     // Note that this will lock Storage and Mempool
     // Verification is done using read guards,
@@ -2317,24 +2360,6 @@ impl<S: Storage> Blockchain<S> {
 
         debug!("New tips: {}", tips.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(","));
 
-        let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(&*storage, tips.iter()).await?;
-        debug!("Best tip selected: {}", best_tip);
-
-        // Find a common base across all our TIPS in the chain
-        let (base_hash, base_height) = blockdag::find_common_base(&*storage, &tips, version).await?;
-        let base_topo_height = storage.get_topo_height_for_hash(&base_hash).await?;
-        debug!("New base hash: {}, height: {}, topo height: {}", base_hash, base_height, base_topo_height);
-
-        // generate a full order until base_topo_height based on the best tip across all chain tips available
-        let mut full_order = blockdag::generate_full_order::<_, _, LinkedHashSet<Hash>>(&*storage, iter::once(best_tip.clone()), &base_hash, base_topo_height).await?;
-        debug_assert_eq!(full_order.front(), Some(&base_hash));
-
-        debug!("Generated full order size: {}, with base ({}) topo height: {}", full_order.len(), base_hash, base_topo_height);
-        trace!("Full order: {}", full_order.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", "));
-
-        // trace!("Dropping storage read lock for block {}", block_hash);
-        // drop(storage);
-
         // rpc server lock
         let rpc_server = self.rpc.read().await;
         let should_track_events = if let Some(rpc) = rpc_server.as_ref() {
@@ -2342,694 +2367,689 @@ impl<S: Storage> Blockchain<S> {
         } else {
             HashSet::new()
         };
-
         // track all events to notify websocket
         let mut events: HashMap<NotifyEvent, Vec<Value>> = HashMap::new();
-        // Track all orphaned transactions
-        // We keep in order all orphaned txs to try to re-add them in the mempool
-        let mut orphaned_transactions = LinkedHashSet::new();
+        let mut block_is_ordered = false;
 
-        // order the DAG (up to TOP_HEIGHT - STABLE_LIMIT)
-        let mut highest_topo = 0;
-        // Tells if the new block added is ordered in DAG or not
-        let block_is_ordered = full_order.contains(block_hash.as_ref());
-        // Track if the DAG has been reorganized
-        let mut dag_is_overwritten = base_topo_height == 0;
-        {
-            let start = Instant::now();
-            let mut skipped = 0;
-            // detect which part of DAG reorg stay, for other part, undo all executed txs
-            debug!("Detecting stable point of DAG and cleaning txs above it");
+        let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(&*storage, tips.iter()).await?;
+
+        // New block has a bigger cumulative difficulty than our current best tip, we should try to reorganize the chain
+        if best_tip == block_hash.as_ref() {
+            debug!("Best tip selected: {}", best_tip);
+            // Find a common base across all our TIPS in the chain
+            let (base_hash, base_height) = blockdag::find_common_base(&*storage, &tips, version).await?;
+            let base_topo_height = storage.get_topo_height_for_hash(&base_hash).await?;
+            debug!("New base hash: {}, height: {}, topo height: {}", base_hash, base_height, base_topo_height);
+
+            // generate a full order until base_topo_height based on the best tip across all chain tips available
+            let mut full_order = blockdag::generate_full_order::<_, _, LinkedHashSet<Hash>>(&*storage, iter::once(best_tip.clone()), &base_hash, base_topo_height).await?;
+            debug_assert_eq!(full_order.front(), Some(&base_hash));
+
+            debug!("Generated full order size: {}, with base ({}) topo height: {}", full_order.len(), base_hash, base_topo_height);
+            trace!("Full order: {}", full_order.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", "));
+
+            // trace!("Dropping storage read lock for block {}", block_hash);
+            // drop(storage);
+
+            // Track all orphaned transactions
+            // We keep in order all orphaned txs to try to re-add them in the mempool
+            let mut orphaned_transactions = LinkedHashSet::new();
+
+            // order the DAG (up to TOP_HEIGHT - STABLE_LIMIT)
+            let mut highest_topo = 0;
+            // Tells if the new block added is ordered in DAG or not
+            block_is_ordered = full_order.contains(block_hash.as_ref());
+            // Track if the DAG has been reorganized
+            let mut dag_is_overwritten = base_topo_height == 0;
             {
-                // trace!("Acquiring storage write lock to clean transactions above stable point");
-                // let mut storage = holder.write().await?;
-                // trace!("Storage write lock acquired for cleaning transactions above stable point");
-
-                let mut topoheight = base_topo_height;
-                while topoheight <= current_topoheight {
-                    let hash_at_topo = storage.get_hash_at_topo_height(topoheight).await?;
-                    trace!("Cleaning txs at topoheight {} ({})", topoheight, hash_at_topo);
-                    if !dag_is_overwritten {
-                        if let Some(order) = full_order.front() {
-                            // Verify that the block is still at the same topoheight
-                            if storage.is_block_topological_ordered(order).await? && *order == hash_at_topo {
-                                trace!("Hash {} at topo {} stay the same, skipping cleaning", hash_at_topo, topoheight);
-                                // remove the hash from the order because we don't need to recompute it
-                                full_order.pop_front();
-                                topoheight += 1;
-                                skipped += 1;
-                                continue;
-                            }
-                        }
-                        // if we are here, it means that the block was re-ordered
-                        dag_is_overwritten = true;
-                    }
-
-                    debug!("Cleaning transactions executions at topo height {} (block {})", topoheight, hash_at_topo);
-
-                    let block = storage.get_block_header_by_hash(&hash_at_topo).await?;
-
-                    // Block may be orphaned if its not in the new full order set
-                    let is_orphaned = !full_order.contains(&hash_at_topo);
-                    // Notify if necessary that we have a block orphaned
-                    if is_orphaned && should_track_events.contains(&NotifyEvent::BlockOrphaned) {
-                        let value = json!(BlockOrphanedEvent {
-                            block_hash: Cow::Borrowed(&hash_at_topo),
-                            old_topoheight: topoheight,
-                        });
-                        events.entry(NotifyEvent::BlockOrphaned).or_insert_with(Vec::new).push(value);
-                    }
-
-                    // mark txs as unexecuted if it was executed in this block
-                    for tx_hash in block.get_txs_hashes() {
-                        if storage.is_tx_executed_in_block(tx_hash, &hash_at_topo).await? {
-                            debug!("Removing execution of {}", tx_hash);
-                            storage.unmark_tx_from_executed(tx_hash).await?;
-                            storage.delete_contract_logs_for_caller(tx_hash).await?;
-
-                            if is_orphaned {
-                                debug!("Tx {} is now marked as orphaned", tx_hash);
-                                orphaned_transactions.insert(tx_hash.clone());
-                            }
-                        }
-                    }
-
-                    // Delete changes made by this block
-                    storage.delete_versioned_data_at_topoheight(topoheight, is_v4_enabled).await?;
-
-                    topoheight += 1;
-                }
-
-                // Only clear the versioned data caches if we delete any data
-                if dag_is_overwritten {
-                    storage.clear_versioned_data_caches().await?;
-                }
-            }
-
-            // This is used to verify that each nonce is used only one time
-            let mut nonce_checker = NonceChecker::new();
-            // Side blocks counter per height
-            let mut side_blocks: HashMap<u64, u64> = HashMap::new();
-            let mut total_txs_executed = 0;
-            let mut total_txs_execution_time = 0;
-
-            // time to order the DAG that is moving
-            debug!("Ordering blocks based on generated DAG order ({} blocks)", full_order.len());
-            for (i, hash) in full_order.into_iter().enumerate() {
-                highest_topo = base_topo_height + skipped + i as u64;
-
-                // trace!("Processing block {} at topoheight {}", hash, highest_topo);
-                // let storage = holder.read().await?;
-                // trace!("Storage read lock acquired for ordering block {}", hash);
-
-                // if block is not re-ordered and it's not genesis block
-                // because we don't need to recompute everything as it's still good in chain
-                if !dag_is_overwritten && tips_count != 0 && storage.is_block_topological_ordered(&hash).await? && storage.get_topo_height_for_hash(&hash).await? == highest_topo {
-                    trace!("Block ordered {} stay at topoheight {}. Skipping...", hash, highest_topo);
-                    continue;
-                }
-                dag_is_overwritten = true;
-
-                trace!("Ordering block {} at topoheight {}", hash, highest_topo);
-
-                let past_emitted_supply = if highest_topo == 0 {
-                    0
-                } else {
-                    storage.get_emitted_supply_at_topo_height(highest_topo - 1).await?
-                };
-
-                // Block for this hash
-                let block = storage.get_block_by_hash(&hash).await?;
-                let version = block.get_version();
-
-                // Reward the miner of this block
-                // We have a decreasing block reward if there is too much side block
-                let is_side_block = blockdag::is_side_block_internal(&*storage, &hash, Some(highest_topo), highest_topo, version).await?;
-                let height = block.get_height();
-
-                // Side blocks detected before this one at same height
-                let mut side_blocks_count = 0;
-                if version >= BlockVersion::V4 {
-                    if is_side_block {
-                        side_blocks_count = self.count_side_blocks(&*storage, &hash, highest_topo, height).await?;
-                        debug!("Block {} is a side block at height {} with {} side blocks before it", hash, height, side_blocks_count);
-                    }
-                } else {
-                    let tmp = match side_blocks.entry(height) {
-                        Entry::Occupied(entry) => entry.into_mut(),
-                        Entry::Vacant(entry) => {
-                            let mut count = 0;
-                            let blocks_at_height = storage.get_blocks_at_height(height).await?;
-                            for block in blocks_at_height {
-                                if block != hash && blockdag::is_side_block_internal(&*storage, &block, None, highest_topo, version).await? {
-                                    count += 1;
-                                    debug!("Found side block {} at height {} for {} (is side block {})", block, height, hash, is_side_block);
+                let start = Instant::now();
+                let mut skipped = 0;
+                // detect which part of DAG reorg stay, for other part, undo all executed txs
+                debug!("Detecting stable point of DAG and cleaning txs above it");
+                {
+                    // trace!("Acquiring storage write lock to clean transactions above stable point");
+                    // let mut storage = holder.write().await?;
+                    // trace!("Storage write lock acquired for cleaning transactions above stable point");
+    
+                    let mut topoheight = base_topo_height;
+                    while topoheight <= current_topoheight {
+                        let hash_at_topo = storage.get_hash_at_topo_height(topoheight).await?;
+                        trace!("Cleaning txs at topoheight {} ({})", topoheight, hash_at_topo);
+                        if !dag_is_overwritten {
+                            if let Some(order) = full_order.front() {
+                                // Verify that the block is still at the same topoheight
+                                if storage.is_block_topological_ordered(order).await? && *order == hash_at_topo {
+                                    trace!("Hash {} at topo {} stay the same, skipping cleaning", hash_at_topo, topoheight);
+                                    // remove the hash from the order because we don't need to recompute it
+                                    full_order.pop_front();
+                                    topoheight += 1;
+                                    skipped += 1;
+                                    continue;
                                 }
                             }
-
-                            entry.insert(count)
-                        },
-                    };
-                    side_blocks_count = *tmp;
-                    if is_side_block {
-                        debug!("Incrementing side blocks at height {} for {}", height, hash);
-                        *tmp += 1;
+                            // if we are here, it means that the block was re-ordered
+                            dag_is_overwritten = true;
+                        }
+    
+                        debug!("Cleaning transactions executions at topo height {} (block {})", topoheight, hash_at_topo);
+    
+                        let block = storage.get_block_header_by_hash(&hash_at_topo).await?;
+    
+                        // Block may be orphaned if its not in the new full order set
+                        let is_orphaned = !full_order.contains(&hash_at_topo);
+                        // Notify if necessary that we have a block orphaned
+                        if is_orphaned && should_track_events.contains(&NotifyEvent::BlockOrphaned) {
+                            let value = json!(BlockOrphanedEvent {
+                                block_hash: Cow::Borrowed(&hash_at_topo),
+                                old_topoheight: topoheight,
+                            });
+                            events.entry(NotifyEvent::BlockOrphaned).or_insert_with(Vec::new).push(value);
+                        }
+    
+                        // mark txs as unexecuted if it was executed in this block
+                        for tx_hash in block.get_txs_hashes() {
+                            if storage.is_tx_executed_in_block(tx_hash, &hash_at_topo).await? {
+                                debug!("Removing execution of {}", tx_hash);
+                                storage.unmark_tx_from_executed(tx_hash).await?;
+                                storage.delete_contract_logs_for_caller(tx_hash).await?;
+    
+                                if is_orphaned {
+                                    debug!("Tx {} is now marked as orphaned", tx_hash);
+                                    orphaned_transactions.insert(tx_hash.clone());
+                                }
+                            }
+                        }
+    
+                        // Delete changes made by this block
+                        storage.delete_versioned_data_at_topoheight(topoheight, is_v4_enabled).await?;
+    
+                        topoheight += 1;
+                    }
+    
+                    // Only clear the versioned data caches if we delete any data
+                    if dag_is_overwritten {
+                        storage.clear_versioned_data_caches().await?;
                     }
                 }
-
-                let block_reward = self.internal_get_block_reward(past_emitted_supply, is_side_block, side_blocks_count, version).await?;
-                trace!("Block reward for block {} at height {} is {}", hash, height, block_reward);
-                let required_tx_fee = if version >= BlockVersion::V5 {
-                    self.get_required_base_fee(&*storage, block.get_tips().iter()).await?.0
-                } else {
-                    base_fee
-                };
-
-                // Chain State used for the verification
-                trace!("building chain state to execute TXs in block {} with required base fee {}", block_hash, required_tx_fee);
-                let mut chain_state = ApplicableChainState::new(
-                    &*storage,
-                    &self.environments,
-                    base_topo_height,
-                    highest_topo,
-                    version,
-                    &hash,
-                    &block,
-                    is_side_block,
-                    required_tx_fee,
-                    base_height,
-                    self.contracts_logging,
-                );
-
-                // Increase the circulating supply with the block reward
-                let changes = chain_state.get_asset_changes_for(&XELIS_ASSET, true).await?;
-                changes.circulating_supply.1 += block_reward;
-                changes.circulating_supply.0.mark_updated();
-
-                total_txs_executed += block.get_txs_count();
-
-                // Execute all the scheduled executions registered
-                // at the current topoheight
-                chain_state.process_scheduled_executions().await?;
-
-                // compute rewards & execute txs
-                for (tx, tx_hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) { // execute all txs
-                    
-                    // Link the transaction hash to this block
-                    // If the TX was already executed in chain state, we can skip it
-                    // If its a contract invocation, we pass the contract so we can link it for easier lookup
-                    if chain_state.link_tx_to_block(&tx_hash, &hash, tx.invoked_contract()) {
-                        debug!("Tx {} is already executed according to cache, skipping...", tx_hash);
+    
+                // This is used to verify that each nonce is used only one time
+                let mut nonce_checker = NonceChecker::new();
+                // Side blocks counter per height
+                let mut side_blocks: HashMap<u64, u64> = HashMap::new();
+                let mut total_txs_executed = 0;
+                let mut total_txs_execution_time = 0;
+    
+                // time to order the DAG that is moving
+                debug!("Ordering blocks based on generated DAG order ({} blocks)", full_order.len());
+                for (i, hash) in full_order.into_iter().enumerate() {
+                    highest_topo = base_topo_height + skipped + i as u64;
+    
+                    // trace!("Processing block {} at topoheight {}", hash, highest_topo);
+                    // let storage = holder.read().await?;
+                    // trace!("Storage read lock acquired for ordering block {}", hash);
+    
+                    // if block is not re-ordered and it's not genesis block
+                    // because we don't need to recompute everything as it's still good in chain
+                    if !dag_is_overwritten && tips_count != 0 && storage.is_block_topological_ordered(&hash).await? && storage.get_topo_height_for_hash(&hash).await? == highest_topo {
+                        trace!("Block ordered {} stay at topoheight {}. Skipping...", hash, highest_topo);
                         continue;
                     }
-
-                    // check that the tx was not yet executed in another tip branch
-                    if chain_state.storage().is_tx_executed_in_a_block(tx_hash).await? {
-                        trace!("Tx {} was already executed in a previous block, skipping...", tx_hash);
+                    dag_is_overwritten = true;
+    
+                    trace!("Ordering block {} at topoheight {}", hash, highest_topo);
+    
+                    let past_emitted_supply = if highest_topo == 0 {
+                        0
                     } else {
-                        // tx was not executed, but lets check that it is not a potential double spending
-                        // check that the nonce is not already used
-                        if !nonce_checker.use_nonce(chain_state.storage(), tx.get_source(), tx.get_nonce(), highest_topo).await? {
-                            warn!("Malicious TX {}, it is a potential double spending with same nonce {}, skipping...", tx_hash, tx.get_nonce());
-                            // TX will be orphaned
-                            orphaned_transactions.insert(tx_hash.clone());
+                        storage.get_emitted_supply_at_topo_height(highest_topo - 1).await?
+                    };
+    
+                    // Block for this hash
+                    let block = storage.get_block_by_hash(&hash).await?;
+                    let version = block.get_version();
+    
+                    // Reward the miner of this block
+                    // We have a decreasing block reward if there is too much side block
+                    let is_side_block = blockdag::is_side_block_internal(&*storage, &hash, Some(highest_topo), highest_topo, version).await?;
+                    let height = block.get_height();
+    
+                    // Side blocks detected before this one at same height
+                    let mut side_blocks_count = 0;
+                    if version >= BlockVersion::V4 {
+                        if is_side_block {
+                            side_blocks_count = self.count_side_blocks(&*storage, &hash, highest_topo, height).await?;
+                            debug!("Block {} is a side block at height {} with {} side blocks before it", hash, height, side_blocks_count);
+                        }
+                    } else {
+                        let tmp = match side_blocks.entry(height) {
+                            Entry::Occupied(entry) => entry.into_mut(),
+                            Entry::Vacant(entry) => {
+                                let mut count = 0;
+                                let blocks_at_height = storage.get_blocks_at_height(height).await?;
+                                for block in blocks_at_height {
+                                    if block != hash && blockdag::is_side_block_internal(&*storage, &block, None, highest_topo, version).await? {
+                                        count += 1;
+                                        debug!("Found side block {} at height {} for {} (is side block {})", block, height, hash, is_side_block);
+                                    }
+                                }
+    
+                                entry.insert(count)
+                            },
+                        };
+                        side_blocks_count = *tmp;
+                        if is_side_block {
+                            debug!("Incrementing side blocks at height {} for {}", height, hash);
+                            *tmp += 1;
+                        }
+                    }
+    
+                    let block_reward = self.internal_get_block_reward(past_emitted_supply, is_side_block, side_blocks_count, version).await?;
+                    trace!("Block reward for block {} at height {} is {}", hash, height, block_reward);
+                    let required_tx_fee = if version >= BlockVersion::V5 {
+                        self.get_required_base_fee(&*storage, block.get_tips().iter()).await?.0
+                    } else {
+                        base_fee
+                    };
+    
+                    // Chain State used for the verification
+                    trace!("building chain state to execute TXs in block {} with required base fee {}", block_hash, required_tx_fee);
+                    let mut chain_state = ApplicableChainState::new(
+                        &*storage,
+                        &self.environments,
+                        base_topo_height,
+                        highest_topo,
+                        version,
+                        &hash,
+                        &block,
+                        is_side_block,
+                        required_tx_fee,
+                        base_height,
+                        self.contracts_logging,
+                    );
+    
+                    // Increase the circulating supply with the block reward
+                    let changes = chain_state.get_asset_changes_for(&XELIS_ASSET, true).await?;
+                    changes.circulating_supply.1 += block_reward;
+                    changes.circulating_supply.0.mark_updated();
+    
+                    total_txs_executed += block.get_txs_count();
+    
+                    // Execute all the scheduled executions registered
+                    // at the current topoheight
+                    chain_state.process_scheduled_executions().await?;
+    
+                    // compute rewards & execute txs
+                    for (tx, tx_hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) { // execute all txs
+                        
+                        // Link the transaction hash to this block
+                        // If the TX was already executed in chain state, we can skip it
+                        // If its a contract invocation, we pass the contract so we can link it for easier lookup
+                        if chain_state.link_tx_to_block(&tx_hash, &hash, tx.invoked_contract()) {
+                            debug!("Tx {} is already executed according to cache, skipping...", tx_hash);
                             continue;
                         }
-
-                        let start = Instant::now();
-                        // Execute the transaction by applying changes in storage
-                        debug!("Executing tx {} in block {} with nonce {}", tx_hash, hash, tx.get_nonce());
-                        if let Err(e) = tx.apply_with_partial_verify(tx_hash, &mut chain_state).await {
-                            error!("Error while executing TX {} with current DAG org: {}", tx_hash, e);
-                            // TX may be orphaned if not added again in good order in next blocks
-                            orphaned_transactions.insert(tx_hash.clone());
-                            continue;
-                        }
-                        total_txs_execution_time += start.elapsed().as_micros();
-
-                        // Calculate the new nonce
-                        // This has to be done in case of side blocks where TX B would be before TX A
-                        let expected_next_nonce = nonce_checker.get_new_nonce(tx.get_source(), self.network.is_mainnet())?;
-                        let next_nonce = tx.get_nonce() + 1;
-                        if expected_next_nonce != next_nonce {
-                            warn!("TX {} has a nonce {}, but the next nonce is {}, forcing it...", tx_hash, next_nonce, expected_next_nonce);
-                            chain_state.as_mut().update_account_nonce(tx.get_source(), expected_next_nonce).await?;
-                        }
-
-                        // mark tx as executed
-                        chain_state.mark_tx_as_executed_in_block(tx_hash, &hash)?;
-
-                        // Delete the transaction from  the list if it was marked as orphaned
-                        if orphaned_transactions.remove(tx_hash) {
-                            trace!("Transaction {} was marked as orphaned, but got executed again", tx_hash);
-                        }
-
-                        // if the rpc_server is enable, track events
-                        if should_track_events.contains(&NotifyEvent::TransactionExecuted) {
-                            let value = json!(TransactionExecutedEvent {
-                                tx_hash: Cow::Borrowed(&tx_hash),
-                                block_hash: Cow::Borrowed(&hash),
-                                topoheight: highest_topo,
-                            });
-                            events.entry(NotifyEvent::TransactionExecuted).or_insert_with(Vec::new).push(value);
-                        }
-
-                        // Check TX type for RPC events
-                        match tx.get_data() {
-                            TransactionType::InvokeContract(payload) => {
-                                let event = NotifyEvent::ContractInvoke {
-                                    contract: payload.contract.clone(),
-                                };
-
-                                if should_track_events.contains(&event) {
-                                    let is_mainnet = self.network.is_mainnet();
-
-                                    if let Some(contract_logs) = chain_state.get_contract_logs_for_tx(&tx_hash) {
-                                        let contract_logs = contract_logs.into_iter()
-                                        .map(|log| RPCContractLog::from_log(log, is_mainnet))
-                                        .collect::<Vec<_>>();
-
-                                        let value = json!(InvokeContractEvent {
-                                            tx_hash: Cow::Borrowed(&tx_hash),
+    
+                        // check that the tx was not yet executed in another tip branch
+                        if chain_state.storage().is_tx_executed_in_a_block(tx_hash).await? {
+                            trace!("Tx {} was already executed in a previous block, skipping...", tx_hash);
+                        } else {
+                            // tx was not executed, but lets check that it is not a potential double spending
+                            // check that the nonce is not already used
+                            if !nonce_checker.use_nonce(chain_state.storage(), tx.get_source(), tx.get_nonce(), highest_topo).await? {
+                                warn!("Malicious TX {}, it is a potential double spending with same nonce {}, skipping...", tx_hash, tx.get_nonce());
+                                // TX will be orphaned
+                                orphaned_transactions.insert(tx_hash.clone());
+                                continue;
+                            }
+    
+                            let start = Instant::now();
+                            // Execute the transaction by applying changes in storage
+                            debug!("Executing tx {} in block {} with nonce {}", tx_hash, hash, tx.get_nonce());
+                            if let Err(e) = tx.apply_with_partial_verify(tx_hash, &mut chain_state).await {
+                                error!("Error while executing TX {} with current DAG org: {}", tx_hash, e);
+                                // TX may be orphaned if not added again in good order in next blocks
+                                orphaned_transactions.insert(tx_hash.clone());
+                                continue;
+                            }
+                            total_txs_execution_time += start.elapsed().as_micros();
+    
+                            // Calculate the new nonce
+                            // This has to be done in case of side blocks where TX B would be before TX A
+                            let expected_next_nonce = nonce_checker.get_new_nonce(tx.get_source(), self.network.is_mainnet())?;
+                            let next_nonce = tx.get_nonce() + 1;
+                            if expected_next_nonce != next_nonce {
+                                warn!("TX {} has a nonce {}, but the next nonce is {}, forcing it...", tx_hash, next_nonce, expected_next_nonce);
+                                chain_state.as_mut().update_account_nonce(tx.get_source(), expected_next_nonce).await?;
+                            }
+    
+                            // mark tx as executed
+                            chain_state.mark_tx_as_executed_in_block(tx_hash, &hash)?;
+    
+                            // Delete the transaction from  the list if it was marked as orphaned
+                            if orphaned_transactions.remove(tx_hash) {
+                                trace!("Transaction {} was marked as orphaned, but got executed again", tx_hash);
+                            }
+    
+                            // if the rpc_server is enable, track events
+                            if should_track_events.contains(&NotifyEvent::TransactionExecuted) {
+                                let value = json!(TransactionExecutedEvent {
+                                    tx_hash: Cow::Borrowed(&tx_hash),
+                                    block_hash: Cow::Borrowed(&hash),
+                                    topoheight: highest_topo,
+                                });
+                                events.entry(NotifyEvent::TransactionExecuted).or_insert_with(Vec::new).push(value);
+                            }
+    
+                            // Check TX type for RPC events
+                            match tx.get_data() {
+                                TransactionType::InvokeContract(payload) => {
+                                    let event = NotifyEvent::ContractInvoke {
+                                        contract: payload.contract.clone(),
+                                    };
+    
+                                    if should_track_events.contains(&event) {
+                                        let is_mainnet = self.network.is_mainnet();
+    
+                                        if let Some(contract_logs) = chain_state.get_contract_logs_for_tx(&tx_hash) {
+                                            let contract_logs = contract_logs.into_iter()
+                                            .map(|log| RPCContractLog::from_log(log, is_mainnet))
+                                            .collect::<Vec<_>>();
+    
+                                            let value = json!(InvokeContractEvent {
+                                                tx_hash: Cow::Borrowed(&tx_hash),
+                                                block_hash: Cow::Borrowed(&hash),
+                                                topoheight: highest_topo,
+                                                contract_logs,
+                                            });
+    
+                                            events.entry(event)
+                                                .or_insert_with(Vec::new)
+                                                .push(value);
+                                        }
+                                    }
+                                },
+                                TransactionType::DeployContract(_) => {
+                                    if should_track_events.contains(&NotifyEvent::ContractDeploy) {
+                                        let value = json!(ContractDeployEvent {
+                                            contract: Cow::Borrowed(&tx_hash),
                                             block_hash: Cow::Borrowed(&hash),
                                             topoheight: highest_topo,
-                                            contract_logs,
                                         });
-
-                                        events.entry(event)
+                                        events.entry(NotifyEvent::ContractDeploy)
                                             .or_insert_with(Vec::new)
                                             .push(value);
                                     }
                                 }
-                            },
-                            TransactionType::DeployContract(_) => {
-                                if should_track_events.contains(&NotifyEvent::ContractDeploy) {
-                                    let value = json!(ContractDeployEvent {
-                                        contract: Cow::Borrowed(&tx_hash),
-                                        block_hash: Cow::Borrowed(&hash),
-                                        topoheight: highest_topo,
-                                    });
-                                    events.entry(NotifyEvent::ContractDeploy)
-                                        .or_insert_with(Vec::new)
-                                        .push(value);
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-
-                // Execute all the scheduled executions for the block end
-                chain_state.process_executions_at_block_end().await?;
-
-                let dev_fee_percentage = get_block_dev_fee(block.get_height());
-                // Dev fee are only applied on block reward
-                // Transaction fees are not affected by dev fee
-                let mut miner_reward = block_reward;
-                if dev_fee_percentage != 0 {
-                    let dev_fee_part = block_reward * dev_fee_percentage / 100;
-                    chain_state.reward_miner(&DEV_PUBLIC_KEY, dev_fee_part).await?;
-                    miner_reward -= dev_fee_part;    
-                }
-
-                // reward the miner
-                // Miner gets the block reward + total fees + gas fee
-                let gas_fee = chain_state.get_gas_fee();
-                let total_fees = chain_state.get_total_fees();
-                chain_state.reward_miner(block.get_miner(), miner_reward + total_fees + gas_fee).await?;
-
-                // Fire all the contract events
-                {
-                    let start = Instant::now();
-                    let contract_tracker = chain_state.get_contract_tracker();
-                    let is_mainnet = self.network.is_mainnet();
-
-                    // We want to only fire one event per key/hash pair
-                    if should_track_events.contains(&NotifyEvent::NewAsset) {
-                        let entry = events.entry(NotifyEvent::NewAsset)
-                            .or_insert_with(Vec::new);
-
-                        for asset in contract_tracker.assets_created.iter() {
-                            let value = json!(NewAssetEvent {
-                                asset: Cow::Borrowed(asset),
-                                block_hash: Cow::Borrowed(&hash),
-                                topoheight: highest_topo,
-                            });
-
-                            entry.push(value);
-                        }
-                    }
-
-                    let mut aggregated_events = HashMap::new();
-                    for ((caller, contract), transfers) in contract_tracker.contracts_transfers.iter() {
-                        for (key, assets) in transfers.iter() {
-                            let event = NotifyEvent::ContractTransfers {
-                                address: key.as_address(is_mainnet),
-                            };
-
-                            if should_track_events.contains(&event) {
-                                let aggregated_transfers = &mut aggregated_events.entry(event)
-                                    .or_insert_with(|| ContractTransfersEvent {
-                                        executions: HashMap::new(),
-                                        block_timestamp: block.get_timestamp(),
-                                        block_hash: Cow::Borrowed(&hash),
-                                        topoheight: highest_topo,
-                                    })
-                                    .executions
-                                    .entry(ContractTransfersEntryKey { contract: Cow::Borrowed(contract), caller: Cow::Borrowed(caller) })
-                                    .or_insert_with(ContractTransfersEntry::default)
-                                    .transfers;
-
-                                for (asset, amount) in assets.iter() {
-                                    *aggregated_transfers.entry(Cow::Borrowed(asset))
-                                        .or_insert(0) += *amount;
-                                }
+                                _ => {}
                             }
                         }
                     }
-
-                    for (key, aggregated_event) in aggregated_events.into_iter() {
-                        let entry = events.entry(key)
-                            .or_insert_with(Vec::new);
-                        entry.push(json!(aggregated_event));
+    
+                    // Execute all the scheduled executions for the block end
+                    chain_state.process_executions_at_block_end().await?;
+    
+                    let dev_fee_percentage = get_block_dev_fee(block.get_height());
+                    // Dev fee are only applied on block reward
+                    // Transaction fees are not affected by dev fee
+                    let mut miner_reward = block_reward;
+                    if dev_fee_percentage != 0 {
+                        let dev_fee_part = block_reward * dev_fee_percentage / 100;
+                        chain_state.reward_miner(&DEV_PUBLIC_KEY, dev_fee_part).await?;
+                        miner_reward -= dev_fee_part;    
                     }
-
-                    let caches = chain_state.get_contracts_cache();
-                    for (contract, cache) in caches {
-                        for (id, elements) in cache.events.iter() {
-                            let any_event = NotifyEvent::ContractEvent {
-                                contract: (*contract).clone(),
-                                id: None,
-                            };
-
-                            let event_id = NotifyEvent::ContractEvent {
-                                contract: (*contract).clone(),
-                                id: Some(*id),
-                            };
-
-                            let event_id_tracked = should_track_events.contains(&event_id);
-                            let event_tracked = should_track_events.contains(&any_event);
-
-                            if  event_id_tracked || event_tracked {
-                                let elements = elements.into_iter()
-                                    .map(|el| json!(ContractEvent {
-                                        topoheight: highest_topo,
-                                        block_hash: Cow::Borrowed(&hash),
-                                        event_id: *id,
-                                        data: Cow::Borrowed(el)
-                                    }))
-                                    .collect::<Vec<_>>();
-
-                                if event_id_tracked {
-                                    let entry = events.entry(event_id)
-                                        .or_insert_with(Vec::new);
-                                    entry.extend(elements.iter().cloned());
-                                }
-
-                                if event_tracked {
-                                    let entry = events.entry(any_event)
-                                        .or_insert_with(Vec::new);
-
-                                    entry.extend(elements.into_iter());
+    
+                    // reward the miner
+                    // Miner gets the block reward + total fees + gas fee
+                    let gas_fee = chain_state.get_gas_fee();
+                    let total_fees = chain_state.get_total_fees();
+                    chain_state.reward_miner(block.get_miner(), miner_reward + total_fees + gas_fee).await?;
+    
+                    // Fire all the contract events
+                    {
+                        let start = Instant::now();
+                        let contract_tracker = chain_state.get_contract_tracker();
+                        let is_mainnet = self.network.is_mainnet();
+    
+                        // We want to only fire one event per key/hash pair
+                        if should_track_events.contains(&NotifyEvent::NewAsset) {
+                            let entry = events.entry(NotifyEvent::NewAsset)
+                                .or_insert_with(Vec::new);
+    
+                            for asset in contract_tracker.assets_created.iter() {
+                                let value = json!(NewAssetEvent {
+                                    asset: Cow::Borrowed(asset),
+                                    block_hash: Cow::Borrowed(&hash),
+                                    topoheight: highest_topo,
+                                });
+    
+                                entry.push(value);
+                            }
+                        }
+    
+                        let mut aggregated_events = HashMap::new();
+                        for ((caller, contract), transfers) in contract_tracker.contracts_transfers.iter() {
+                            for (key, assets) in transfers.iter() {
+                                let event = NotifyEvent::ContractTransfers {
+                                    address: key.as_address(is_mainnet),
+                                };
+    
+                                if should_track_events.contains(&event) {
+                                    let aggregated_transfers = &mut aggregated_events.entry(event)
+                                        .or_insert_with(|| ContractTransfersEvent {
+                                            executions: HashMap::new(),
+                                            block_timestamp: block.get_timestamp(),
+                                            block_hash: Cow::Borrowed(&hash),
+                                            topoheight: highest_topo,
+                                        })
+                                        .executions
+                                        .entry(ContractTransfersEntryKey { contract: Cow::Borrowed(contract), caller: Cow::Borrowed(caller) })
+                                        .or_insert_with(ContractTransfersEntry::default)
+                                        .transfers;
+    
+                                    for (asset, amount) in assets.iter() {
+                                        *aggregated_transfers.entry(Cow::Borrowed(asset))
+                                            .or_insert(0) += *amount;
+                                    }
                                 }
                             }
                         }
+    
+                        for (key, aggregated_event) in aggregated_events.into_iter() {
+                            let entry = events.entry(key)
+                                .or_insert_with(Vec::new);
+                            entry.push(json!(aggregated_event));
+                        }
+    
+                        let caches = chain_state.get_contracts_cache();
+                        for (contract, cache) in caches {
+                            for (id, elements) in cache.events.iter() {
+                                let any_event = NotifyEvent::ContractEvent {
+                                    contract: (*contract).clone(),
+                                    id: None,
+                                };
+    
+                                let event_id = NotifyEvent::ContractEvent {
+                                    contract: (*contract).clone(),
+                                    id: Some(*id),
+                                };
+    
+                                let event_id_tracked = should_track_events.contains(&event_id);
+                                let event_tracked = should_track_events.contains(&any_event);
+    
+                                if  event_id_tracked || event_tracked {
+                                    let elements = elements.into_iter()
+                                        .map(|el| json!(ContractEvent {
+                                            topoheight: highest_topo,
+                                            block_hash: Cow::Borrowed(&hash),
+                                            event_id: *id,
+                                            data: Cow::Borrowed(el)
+                                        }))
+                                        .collect::<Vec<_>>();
+    
+                                    if event_id_tracked {
+                                        let entry = events.entry(event_id)
+                                            .or_insert_with(Vec::new);
+                                        entry.extend(elements.iter().cloned());
+                                    }
+    
+                                    if event_tracked {
+                                        let entry = events.entry(any_event)
+                                            .or_insert_with(Vec::new);
+    
+                                        entry.extend(elements.into_iter());
+                                    }
+                                }
+                            }
+                        }
+    
+                        debug!("Processed contracts events in {}ms", start.elapsed().as_millis());
                     }
+    
+                    // apply changes from Chain State
+                    let finalizer = chain_state.finalize().await?;
+    
+                    // drop(storage);
+                    // trace!("Re acquiring storage write lock to apply changes for block {}", hash);
+                    // let mut storage = holder.write().await?;
+                    // trace!("Storage write lock acquired to apply changes for block {}", hash);
+    
+                    finalizer.apply_changes(&mut *storage, past_emitted_supply, block_reward).await?;
+    
+                    if should_track_events.contains(&NotifyEvent::BlockOrdered) {
+                        let value = json!(BlockOrderedEvent {
+                            block_hash: Cow::Borrowed(&hash),
+                            block_type: get_block_type_for_block(self, &*storage, &hash, block.get_version()).await.unwrap_or(BlockType::Normal),
+                            topoheight: highest_topo,
+                        });
+    
+                        events.entry(NotifyEvent::BlockOrdered)
+                            .or_insert_with(Vec::new)
+                            .push(value);
+                    }
+                }
+    
+                let elapsed = Duration::from_micros(total_txs_execution_time as _);
+                debug!("Executed {} TXs in {:?}", total_txs_executed, elapsed);
+    
+                // Record metrics
+                counter!("xelis_txs_executed").increment(total_txs_executed as u64);
+                histogram!("xelis_txs_execution_ms").record(elapsed.as_millis() as f64);
+                histogram!("xelis_dag_ordering_ms").record(start.elapsed().as_millis() as f64);
+            }
 
-                    debug!("Processed contracts events in {}ms", start.elapsed().as_millis());
+            // save highest topo height
+            debug!("Highest topo height found: {}", highest_topo);
+            // if the DAG has been reorganized, we update the topoheight
+            let chain_topoheight_extended = current_height == 0 || highest_topo > current_topoheight || dag_is_overwritten;
+            let chain_height_extended = current_height == 0 || block.get_height() > current_height;
+
+            // trace!("acquiring final storage write lock to update stats for {}", block_hash);
+            // let mut storage = holder.write().await?;
+            // trace!("final storage write lock acquired for {}", block_hash);
+            {
+                if chain_topoheight_extended {
+                    debug!("Blockchain height extended, current topoheight is now {} (previous was {})", highest_topo, current_topoheight);
+                    storage.set_top_topoheight(highest_topo).await?;
+                    current_topoheight = highest_topo;
+
+                    if should_track_events.contains(&NotifyEvent::NewTopoHeight) {
+                        let value = json!(NewTopoHeightEvent {
+                            new_topoheight: highest_topo,
+                        });
+
+                        events.entry(NotifyEvent::NewTopoHeight)
+                            .or_insert_with(Vec::new)
+                            .push(value);
+                    }
                 }
 
-                // apply changes from Chain State
-                let finalizer = chain_state.finalize().await?;
+                // If block is directly orphaned
+                // Mark all TXs ourself as linked to it
+                if !block_is_ordered {
+                    debug!("Block {} is orphaned, marking all TXs as linked to it", block_hash);
+                    for tx_hash in block.get_txs_hashes() {
+                        storage.add_block_linked_to_tx_if_not_present(&tx_hash, &block_hash).await?;
+                    }
+                }
 
-                // drop(storage);
-                // trace!("Re acquiring storage write lock to apply changes for block {}", hash);
-                // let mut storage = holder.write().await?;
-                // trace!("Storage write lock acquired to apply changes for block {}", hash);
+                // auto prune mode
+                if let Some(keep_only) = self.auto_prune_keep_n_blocks.filter(|_| chain_topoheight_extended) {
+                    // check that the topoheight is greater than the safety limit
+                    // and that we can prune the chain using the config while respecting the safety limit
+                    if current_topoheight > keep_only && current_topoheight % keep_only == 0 && current_topoheight - keep_only > 0 {
+                        info!("Auto pruning chain until topoheight {} (keep only {} blocks)", current_topoheight - keep_only, keep_only);
+                        let start = Instant::now();
+                        if let Err(e) = self.prune_until_topoheight_for_storage(current_topoheight - keep_only, &mut *storage).await {
+                            error!("Error while trying to auto prune chain: {}", e);
+                        }
+        
+                        info!("Auto pruning done in {}ms", start.elapsed().as_millis());
+                    }
+                }
 
-                finalizer.apply_changes(&mut *storage, past_emitted_supply, block_reward).await?;
+                // Clean up the tips
+                self.clean_tips(&*storage, &mut tips, current_height).await?;
 
-                if should_track_events.contains(&NotifyEvent::BlockOrdered) {
-                    let value = json!(BlockOrderedEvent {
-                        block_hash: Cow::Borrowed(&hash),
-                        block_type: get_block_type_for_block(self, &*storage, &hash, block.get_version()).await.unwrap_or(BlockType::Normal),
-                        topoheight: highest_topo,
-                    });
+                debug!("Storing new tips in storage");
+                // Store the new tips available
+                storage.store_tips(&tips).await?;
 
-                    events.entry(NotifyEvent::BlockOrdered)
-                        .or_insert_with(Vec::new)
-                        .push(value);
+                if chain_height_extended {
+                    debug!("storing new top height {}", block.get_height());
+                    storage.set_top_height(block.get_height()).await?;
+                    current_height = block.get_height();
+                }
+        
+                // update stable height and difficulty in cache
+                debug!("update difficulty in cache for new tips");
+                let (difficulty, _) = self.get_difficulty_at_tips(&*storage, tips.iter()).await?;
+
+                // Update caches
+                let mut sorted_tips = SortedTips::default();
+                for hash in tips {
+                    let cd = storage.get_cumulative_difficulty_for_block_hash(&hash).await?;
+                    sorted_tips.insert(hash, cd);
+                }
+                sorted_tips.truncate(MAX_TIPS_IN_CACHE);
+
+                let chain_cache = storage.chain_cache_mut().await?;
+                chain_cache.stable_height = base_height;
+                chain_cache.stable_topoheight = base_topo_height;
+                chain_cache.difficulty = difficulty;
+                chain_cache.tips = sorted_tips;
+
+                if chain_height_extended {
+                    chain_cache.height = current_height;
+                    gauge!("xelis_block_height").set(current_height as f64);
+                }
+
+                if chain_topoheight_extended {
+                    chain_cache.topoheight = current_topoheight;
+                    gauge!("xelis_block_topoheight").set(current_topoheight as f64);
+                }
+
+                gauge!("xelis_block_difficulty").set(difficulty.as_u64().unwrap_or(0) as f64);
+
+                let mut lock = self.mining_cache.write().await;
+                if lock.take().is_some() {
+                    debug!("Clearing mining cache due to chain change");
+                }
+    
+                // Flush to the disk
+                if self.flush_db_every_n_blocks.is_some_and(|n| current_topoheight % n == 0) {
+                    debug!("force flushing storage");
+                    storage.flush().await?;
                 }
             }
 
-            let elapsed = Duration::from_micros(total_txs_execution_time as _);
-            debug!("Executed {} TXs in {:?}", total_txs_executed, elapsed);
+            if should_track_events.contains(&NotifyEvent::StableHeightChanged) {
+                // detect the change in stable height
+                if base_height != stable_height {
+                    let value = json!(StableHeightChangedEvent {
+                        previous_stable_height: stable_height,
+                        new_stable_height: base_height
+                    });
+                    events.entry(NotifyEvent::StableHeightChanged).or_insert_with(Vec::new).push(value);
+                }
+            }
 
-            // Record metrics
-            counter!("xelis_txs_executed").increment(total_txs_executed as u64);
-            histogram!("xelis_txs_execution_ms").record(elapsed.as_millis() as f64);
-            histogram!("xelis_dag_ordering_ms").record(start.elapsed().as_millis() as f64);
+            if should_track_events.contains(&NotifyEvent::StableTopoHeightChanged) {
+                // detect the change in stable topoheight
+                if base_topo_height != stable_topoheight {
+                    let value = json!(StableTopoHeightChangedEvent {
+                        previous_stable_topoheight: stable_topoheight,
+                        new_stable_topoheight: base_topo_height
+                    });
+                    events.entry(NotifyEvent::StableTopoHeightChanged).or_insert_with(Vec::new).push(value);
+                }
+            }
+
+            // Check if the event is tracked
+            let orphan_event_tracked = should_track_events.contains(&NotifyEvent::TransactionOrphaned);
+
+            // Now we can try to add back all transactions that got orphaned during the chain reorg
+            {
+                counter!("xelis_orphaned_txs").increment(orphaned_transactions.len() as u64);
+
+                let mut mempool = self.mempool.write().await;
+
+                let start = Instant::now();
+                let orphaned = mempool.try_add_back_txs(&*storage, orphaned_transactions.into_iter(), &self.environments, base_topo_height, highest_topo, version, FEE_PER_KB, base_height).await?;
+                if !orphan_event_tracked {
+                    for (tx_hash, tx) in orphaned {
+                        // We couldn't add it back to mempool, let's notify this event
+                        let data = RPCTransaction::from_tx(&tx, Cow::Borrowed(&tx_hash), tx.size(), None, storage.is_mainnet());
+                        let data = GetTransactionResult {
+                            blocks: None,
+                            executed_in_block: None,
+                            in_mempool: false,
+                            first_seen: None,
+                            data,
+                        };
+                        events.entry(NotifyEvent::TransactionOrphaned).or_insert_with(Vec::new).push(json!(data));
+                    }
+                }
+                histogram!("xelis_orphaned_txs_add_back_ms").record(start.elapsed().as_millis() as f64);
+            }
+
+            // Clean mempool from old txs if the DAG has been updated
+            let mempool_deleted_txs = if chain_topoheight_extended {
+                debug!("Locking mempool write mode");
+                let mut mempool = self.mempool.write().await;
+                debug!("mempool write mode ok");
+                let version = get_version_at_height(self.get_network(), current_height);
+
+                let start = Instant::now();
+                // NOTE: we don't remove any under-paid TX, they stay in mempool until fixed
+                let res = mempool.clean_up(&*storage, &self.environments, base_topo_height, highest_topo, version, FEE_PER_KB, base_height, dag_is_overwritten).await?;
+                debug!("Took {:?} to clean mempool!", start.elapsed());
+                histogram!("xelis_mempool_clean_up_ms").record(start.elapsed().as_millis() as f64);
+
+                res
+            } else {
+                Vec::new()
+            };
+
+            if orphan_event_tracked {
+                for (tx_hash, sorted_tx) in mempool_deleted_txs {
+                    // Verify that the TX was not executed in a block
+                    if storage.is_tx_executed_in_a_block(&tx_hash).await? {
+                        trace!("Transaction {} was executed in a block, skipping orphaned event", tx_hash);
+                        continue;
+                    }
+
+                    let data = RPCTransaction::from_tx(&sorted_tx.get_tx(), Cow::Borrowed(&tx_hash), sorted_tx.get_size(), None, storage.is_mainnet());
+                    let data = GetTransactionResult {
+                        blocks: None,
+                        executed_in_block: None,
+                        in_mempool: false,
+                        first_seen: Some(sorted_tx.get_first_seen()),
+                        data,
+                    };
+                    events.entry(NotifyEvent::TransactionOrphaned).or_insert_with(Vec::new).push(json!(data));
+                }
+            }
+        } else {
+            info!("Block {} is not a better candidate, skipping DAG ordering and execution...", block_hash);
+
+            // Clean tips & store it
+            self.clean_tips(&*storage, &mut tips, current_height).await?;
+
+            debug!("Storing new tips in storage");
+            // Store the new tips available
+            storage.store_tips(&tips).await?;
         }
 
         // trace!("Re acquiring storage read lock after ordering for block {}", block_hash);
         // let storage = holder.read().await?;
         // trace!("Storage read lock acquired after ordering for block {}", block_hash);
 
-        let mut new_tips = Vec::new();
-        // Find the version at the highest height between current chain and new block, to be able to apply the correct tip selection rules
-        let version_at_height = hard_fork::get_version_at_height(self.get_network(), current_height.max(block.get_height()));
-        for hash in tips {
-            if !blockdag::is_near_enough_from_main_chain(&*storage, &hash, current_height, version_at_height).await? {
-                debug!("Tip {} is too far from main chain at height {}, skipping...", hash, current_height);
-                continue;
-            }
-
-            trace!("Adding {} as new tips", hash);
-            new_tips.push(hash);
-        }
-
-        tips = Tips::default();
-        debug!("find best tip by cumulative difficulty");
-        let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(&*storage, new_tips.iter()).await?.clone();
-        let expected_next_height = blockdag::calculate_height_at_tips(&*storage, iter::once(&best_tip)).await?;
-        debug!("Best tip is {}, expected next height is {}", best_tip, expected_next_height);
-
-        for hash in new_tips {
-            if best_tip != hash {
-                if !blockdag::validate_tips(&*storage, &best_tip, &hash).await? {
-                    debug!("Tip {} is not compatible with best tip {}, declaring it stale", hash, best_tip);
-                    continue;
-                }
-
-                let height = storage.get_height_for_block_hash(&hash).await?;
-                let height_diff = expected_next_height.saturating_sub(height);
-                if height_diff > MAX_TIP_HEIGHT_DIFFERENCE {
-                    debug!("Tip {} has a height difference too big ({} > {}), declaring it stale", hash, height_diff, MAX_TIP_HEIGHT_DIFFERENCE);
-                    continue;
-                }
-
-                debug!("Tip {} is valid, adding to final Tips list", hash);
-                tips.insert(hash);
-            }
-        }
-        tips.insert(best_tip);
-
-        // // Drop the storage again to re-acquire in write mode
+        // Drop the storage again to re-acquire in write mode
         // drop(storage);
-
-        // save highest topo height
-        debug!("Highest topo height found: {}", highest_topo);
-        // if the DAG has been reorganized, we update the topoheight
-        let chain_topoheight_extended = current_height == 0 || highest_topo > current_topoheight || dag_is_overwritten;
-        let chain_height_extended = current_height == 0 || block.get_height() > current_height;
-
-        // trace!("acquiring final storage write lock to update stats for {}", block_hash);
-        // let mut storage = holder.write().await?;
-        // trace!("final storage write lock acquired for {}", block_hash);
-        {
-            if chain_topoheight_extended {
-                debug!("Blockchain height extended, current topoheight is now {} (previous was {})", highest_topo, current_topoheight);
-                storage.set_top_topoheight(highest_topo).await?;
-                current_topoheight = highest_topo;
-
-                if should_track_events.contains(&NotifyEvent::NewTopoHeight) {
-                    let value = json!(NewTopoHeightEvent {
-                        new_topoheight: highest_topo,
-                    });
-
-                    events.entry(NotifyEvent::NewTopoHeight)
-                        .or_insert_with(Vec::new)
-                        .push(value);
-                }
-            }
-
-            // If block is directly orphaned
-            // Mark all TXs ourself as linked to it
-            if !block_is_ordered {
-                debug!("Block {} is orphaned, marking all TXs as linked to it", block_hash);
-                for tx_hash in block.get_txs_hashes() {
-                    storage.add_block_linked_to_tx_if_not_present(&tx_hash, &block_hash).await?;
-                }
-            }
-
-            // auto prune mode
-            if let Some(keep_only) = self.auto_prune_keep_n_blocks.filter(|_| chain_topoheight_extended) {
-                // check that the topoheight is greater than the safety limit
-                // and that we can prune the chain using the config while respecting the safety limit
-                if current_topoheight > keep_only && current_topoheight % keep_only == 0 && current_topoheight - keep_only > 0 {
-                    info!("Auto pruning chain until topoheight {} (keep only {} blocks)", current_topoheight - keep_only, keep_only);
-                    let start = Instant::now();
-                    if let Err(e) = self.prune_until_topoheight_for_storage(current_topoheight - keep_only, &mut *storage).await {
-                        error!("Error while trying to auto prune chain: {}", e);
-                    }
-    
-                    info!("Auto pruning done in {}ms", start.elapsed().as_millis());
-                }
-            }
-    
-            debug!("Storing new tips in storage");
-            // Store the new tips available
-            storage.store_tips(&tips).await?;
-
-            if chain_height_extended {
-                debug!("storing new top height {}", block.get_height());
-                storage.set_top_height(block.get_height()).await?;
-                current_height = block.get_height();
-            }
-    
-            // update stable height and difficulty in cache
-            debug!("update difficulty in cache for new tips");
-            let (difficulty, _) = self.get_difficulty_at_tips(&*storage, tips.iter()).await?;
-
-            // Update caches
-            let mut sorted_tips = SortedTips::default();
-            for hash in tips {
-                let cd = storage.get_cumulative_difficulty_for_block_hash(&hash).await?;
-                sorted_tips.insert(hash, cd);
-            }
-            sorted_tips.truncate(MAX_TIPS_IN_CACHE);
-
-            let chain_cache = storage.chain_cache_mut().await?;
-            chain_cache.stable_height = base_height;
-            chain_cache.stable_topoheight = base_topo_height;
-            chain_cache.difficulty = difficulty;
-            chain_cache.tips = sorted_tips;
-
-            if chain_height_extended {
-                chain_cache.height = current_height;
-                gauge!("xelis_block_height").set(current_height as f64);
-            }
-
-            if chain_topoheight_extended {
-                chain_cache.topoheight = current_topoheight;
-                gauge!("xelis_block_topoheight").set(current_topoheight as f64);
-            }
-
-            gauge!("xelis_block_difficulty").set(difficulty.as_u64().unwrap_or(0) as f64);
-
-            let mut lock = self.mining_cache.write().await;
-            if lock.take().is_some() {
-                debug!("Clearing mining cache due to chain change");
-            }
- 
-            // Flush to the disk
-            if self.flush_db_every_n_blocks.is_some_and(|n| current_topoheight % n == 0) {
-                debug!("force flushing storage");
-                storage.flush().await?;
-            }
-        }
 
         trace!("Re acquiring storage read lock to finalize block {}", block_hash);
         let storage = storage.downgrade();
         trace!("Storage read lock acquired to finalize block {}", block_hash);
-
-        if should_track_events.contains(&NotifyEvent::StableHeightChanged) {
-            // detect the change in stable height
-            if base_height != stable_height {
-                let value = json!(StableHeightChangedEvent {
-                    previous_stable_height: stable_height,
-                    new_stable_height: base_height
-                });
-                events.entry(NotifyEvent::StableHeightChanged).or_insert_with(Vec::new).push(value);
-            }
-        }
-
-        if should_track_events.contains(&NotifyEvent::StableTopoHeightChanged) {
-            // detect the change in stable topoheight
-            if base_topo_height != stable_topoheight {
-                let value = json!(StableTopoHeightChangedEvent {
-                    previous_stable_topoheight: stable_topoheight,
-                    new_stable_topoheight: base_topo_height
-                });
-                events.entry(NotifyEvent::StableTopoHeightChanged).or_insert_with(Vec::new).push(value);
-            }
-        }
-
-        // Check if the event is tracked
-        let orphan_event_tracked = should_track_events.contains(&NotifyEvent::TransactionOrphaned);
-
-        // Now we can try to add back all transactions that got orphaned during the chain reorg
-        {
-            counter!("xelis_orphaned_txs").increment(orphaned_transactions.len() as u64);
-
-            let mut mempool = self.mempool.write().await;
-
-            let start = Instant::now();
-            let orphaned = mempool.try_add_back_txs(&*storage, orphaned_transactions.into_iter(), &self.environments, base_topo_height, highest_topo, version, FEE_PER_KB, base_height).await?;
-            if !orphan_event_tracked {
-                for (tx_hash, tx) in orphaned {
-                    // We couldn't add it back to mempool, let's notify this event
-                    let data = RPCTransaction::from_tx(&tx, Cow::Borrowed(&tx_hash), tx.size(), None, storage.is_mainnet());
-                    let data = GetTransactionResult {
-                        blocks: None,
-                        executed_in_block: None,
-                        in_mempool: false,
-                        first_seen: None,
-                        data,
-                    };
-                    events.entry(NotifyEvent::TransactionOrphaned).or_insert_with(Vec::new).push(json!(data));
-                }
-            }
-            histogram!("xelis_orphaned_txs_add_back_ms").record(start.elapsed().as_millis() as f64);
-        }
-
-        // Clean mempool from old txs if the DAG has been updated
-        let mempool_deleted_txs = if chain_topoheight_extended {
-            debug!("Locking mempool write mode");
-            let mut mempool = self.mempool.write().await;
-            debug!("mempool write mode ok");
-            let version = get_version_at_height(self.get_network(), current_height);
-
-            let start = Instant::now();
-            // NOTE: we don't remove any under-paid TX, they stay in mempool until fixed
-            let res = mempool.clean_up(&*storage, &self.environments, base_topo_height, highest_topo, version, FEE_PER_KB, base_height, dag_is_overwritten).await?;
-            debug!("Took {:?} to clean mempool!", start.elapsed());
-            histogram!("xelis_mempool_clean_up_ms").record(start.elapsed().as_millis() as f64);
-
-            res
-        } else {
-            Vec::new()
-        };
-
-        if orphan_event_tracked {
-            for (tx_hash, sorted_tx) in mempool_deleted_txs {
-                // Verify that the TX was not executed in a block
-                if storage.is_tx_executed_in_a_block(&tx_hash).await? {
-                    trace!("Transaction {} was executed in a block, skipping orphaned event", tx_hash);
-                    continue;
-                }
-
-                let data = RPCTransaction::from_tx(&sorted_tx.get_tx(), Cow::Borrowed(&tx_hash), sorted_tx.get_size(), None, storage.is_mainnet());
-                let data = GetTransactionResult {
-                    blocks: None,
-                    executed_in_block: None,
-                    in_mempool: false,
-                    first_seen: Some(sorted_tx.get_first_seen()),
-                    data,
-                };
-                events.entry(NotifyEvent::TransactionOrphaned).or_insert_with(Vec::new).push(json!(data));
-            }
-        }
 
         let elapsed = start.elapsed().as_millis();
         info!("Processed block {} at height {} in {}ms with {} txs (DAG: {})", block_hash, block.get_height(), elapsed, block.get_txs_count(), block_is_ordered);
