@@ -547,8 +547,8 @@ impl Transaction {
         let mut transfers_decompressed = Vec::new();
         let mut deposits_decompressed = HashMap::new();
 
-        trace!("Pre-verifying transaction on state");
-        state.pre_verify_tx(&self).await
+        trace!("Pre-verifying dynamic parts of the transaction on state");
+        state.pre_verify_tx_dynamic(&self).await
             .map_err(VerificationStateError::State)?;
 
         trace!("verify fee to pay");
@@ -706,6 +706,8 @@ impl Transaction {
         }
 
         trace!("Pre-verifying transaction on state");
+        state.pre_verify_tx(self).await
+            .map_err(VerificationStateError::State)?;
 
         if !self.verify_commitment_assets() {
             debug!("Invalid commitment assets");
@@ -1275,7 +1277,8 @@ impl Transaction {
         Ok(())
     }
 
-    /// Assume the tx is valid, apply it to `state`. May panic if a ciphertext is ill-formed.
+    /// Assume the tx is valid, apply it to `state`.
+    /// The TX is NEVER verified, and is applied as is.
     pub async fn apply_without_verify<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
         self: &'a Arc<Self>,
         tx_hash: &'a Hash,

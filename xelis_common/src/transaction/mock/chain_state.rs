@@ -261,6 +261,10 @@ impl<'a> BlockchainVerificationState<'a, anyhow::Error> for MockChainState {
         Ok(())
     }
 
+    async fn pre_verify_tx_dynamic<'b>(&'b mut self, _: &Transaction) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
+
     async fn get_receiver_balance<'b>(
         &'b mut self,
         account: Cow<'a, PublicKey>,
