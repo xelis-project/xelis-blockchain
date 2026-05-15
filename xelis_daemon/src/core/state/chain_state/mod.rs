@@ -49,7 +49,7 @@ pub use apply::*;
 // But also contains the ciphertext changes happening (so a sum of each spendings for transactions)
 // This is necessary to easily build the final user balance
 #[derive(Clone)]
-struct Echange {
+pub struct Echange {
     // If we are allowed to use the output balance for verification
     allow_output_balance: bool,
     // if the versioned balance below is new for the current topoheight
@@ -92,7 +92,7 @@ impl Echange {
 }
 
 #[derive(Clone)]
-struct Account<'b> {
+pub struct Account<'b> {
     // Account nonce used to verify valid transaction
     nonce: VersionedNonce,
     // Assets ready as source for any transfer/transaction
