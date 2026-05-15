@@ -1,7 +1,7 @@
 mod apply;
 pub mod provider;
 
-pub use provider::{ChainStateProvider, MempoolProvider};
+pub use provider::{ChainStateProvider, MempoolProvider, TxVerificationProvider, ReferenceProvider};
 
 use std::{
     borrow::Cow,
@@ -39,7 +39,6 @@ use xelis_vm::Module;
 use crate::core::{
     error::BlockchainError,
     blockchain::ContractEnvironments,
-    storage::Storage
 };
 
 pub use apply::*;
@@ -109,7 +108,7 @@ pub struct Account<'b> {
 // It is read-only but write in memory the changes to the balances and nonces
 // Once the verification is done, the changes are written to the storage
 // 's is the storage lifetime, 'b is the block data lifetime
-pub struct ChainState<'s, 'b, S: Storage, P: ChainStateProvider<Storage = S>> {
+pub struct ChainState<'s, 'b, P: ChainStateProvider> {
     environments: &'s ContractEnvironments,
     // Provider that controls how initial account state (nonces, balances, multisig) is fetched.
     // A plain `&S` (blanket impl) reads directly from storage (block application).
@@ -134,7 +133,7 @@ pub struct ChainState<'s, 'b, S: Storage, P: ChainStateProvider<Storage = S>> {
     base_height: u64,
 }
 
-impl<'s, 'b, S: Storage, P: ChainStateProvider<Storage = S>> Clone for ChainState<'s, 'b, S, P> {
+impl<'s, 'b, P: ChainStateProvider> Clone for ChainState<'s, 'b, P> {
     // Manual clone implementation to avoid the S: Clone and P: Clone bounds
     fn clone(&self) -> Self {
         Self {
@@ -153,7 +152,7 @@ impl<'s, 'b, S: Storage, P: ChainStateProvider<Storage = S>> Clone for ChainStat
     }
 }
 
-impl<'s, 'b, S: Storage, P: ChainStateProvider<Storage = S>> ChainState<'s, 'b, S, P> {
+impl<'s, 'b, P: ChainStateProvider> ChainState<'s, 'b, P> {
     pub fn new(
         provider: &'s P,
         environments: &'s ContractEnvironments,
@@ -184,12 +183,6 @@ impl<'s, 'b, S: Storage, P: ChainStateProvider<Storage = S>> ChainState<'s, 'b, 
         self.gas_fee
     }
 
-    // Convenience accessor: returns the underlying storage reference.
-    #[inline(always)]
-    pub fn storage(&self) -> &S {
-        self.provider.storage()
-    }
-
     pub fn get_sender_balances<'c>(&'c self, key: &'c PublicKey) -> Option<HashMap<&'c Hash, &'c VersionedBalance>> {
         let account = self.accounts.get(key)?;
         Some(account.assets.iter().map(|(k, v)| (*k, &v.version)).collect())
@@ -212,7 +205,7 @@ impl<'s, 'b, S: Storage, P: ChainStateProvider<Storage = S>> ChainState<'s, 'b, 
         match self.receiver_balances.entry(key.clone()).or_insert_with(HashMap::new).entry(asset.clone()) {
             Entry::Occupied(o) => Ok(o.into_mut().get_mut_balance().computable()?),
             Entry::Vacant(e) => {
-                let (version, _) = self.provider.storage().get_new_versioned_balance(&key, &asset, self.topoheight).await?;
+                let version = self.provider.get_new_versioned_balance_for_key(&key, &asset, self.topoheight).await?;
                 Ok(e.insert(version).get_mut_balance().computable()?)
             }
         }
@@ -223,7 +216,7 @@ impl<'s, 'b, S: Storage, P: ChainStateProvider<Storage = S>> ChainState<'s, 'b, 
     // This depends on the transaction and can be final balance or output balance
     async fn internal_get_sender_verification_balance<'c>(&'c mut self, key: &'b PublicKey, asset: &'b Hash, reference: &Reference) -> Result<&'c mut CiphertextCache, BlockchainError> {
         // Ask the provider for a cached balance (e.g. from the mempool) before we hit storage
-        trace!("getting sender verification balance for {} at topoheight {}, reference: {}", key.as_address(self.storage().is_mainnet()), self.topoheight, reference.topoheight);
+        trace!("getting sender verification balance for {} at topoheight {}, reference: {}", key.as_address(self.provider.is_mainnet()), self.topoheight, reference.topoheight);
         match self.accounts.entry(key) {
             Entry::Occupied(o) => {
                 let account = o.into_mut();
@@ -249,7 +242,7 @@ impl<'s, 'b, S: Storage, P: ChainStateProvider<Storage = S>> ChainState<'s, 'b, 
         trace!("update sender echange: {:?}", new_ct.compress());
         let change = self.accounts.get_mut(key)
             .and_then(|a| a.assets.get_mut(asset))
-            .ok_or_else(|| BlockchainError::NoTxSender(key.as_address(self.provider.storage().is_mainnet())))?;
+            .ok_or_else(|| BlockchainError::NoTxSender(key.as_address(self.provider.is_mainnet())))?;
 
         // Increase the total output
         change.add_output_to_sum(new_ct);
@@ -280,7 +273,7 @@ impl<'s, 'b, S: Storage, P: ChainStateProvider<Storage = S>> ChainState<'s, 'b, 
     // Only sender accounts should be used here
     // For each TX, we must update the nonce by one
     async fn internal_update_account_nonce(&mut self, account: &'b PublicKey, new_nonce: Nonce) -> Result<(), BlockchainError> {
-        trace!("Updating nonce for {} to {} at topoheight {}", account.as_address(self.storage().is_mainnet()), new_nonce, self.topoheight);
+        trace!("Updating nonce for {} to {} at topoheight {}", account.as_address(self.provider.is_mainnet()), new_nonce, self.topoheight);
         let account = self.get_internal_account(account).await?;
         account.nonce.set_nonce(new_nonce);
         Ok(())
@@ -293,7 +286,7 @@ impl<'s, 'b, S: Storage, P: ChainStateProvider<Storage = S>> ChainState<'s, 'b, 
         Ok(match self.contracts.entry(hash.clone()) {
             Entry::Occupied(o) => o.into_mut(),
             Entry::Vacant(e) => {
-                let contract = self.provider.storage().get_contract_at_maximum_topoheight_for(&hash, self.topoheight).await?
+                let contract = self.provider.get_contract_module(&hash, self.topoheight).await?
                     .map(|(topo, contract)| (VersionedState::FetchedAt(topo), contract.take()));
 
                 e.insert(contract)
@@ -314,7 +307,7 @@ impl<'s, 'b, S: Storage, P: ChainStateProvider<Storage = S>> ChainState<'s, 'b, 
 
     // Reward a miner for the block mined
     pub async fn reward_miner(&mut self, miner: &'b PublicKey, reward: u64) -> Result<(), BlockchainError> {
-        debug!("Rewarding miner {} with {} XEL at topoheight {}", miner.as_address(self.storage().is_mainnet()), format_xelis(reward), self.topoheight);
+        debug!("Rewarding miner {} with {} XEL at topoheight {}", miner.as_address(self.provider.is_mainnet()), format_xelis(reward), self.topoheight);
         let miner_balance = self.internal_get_receiver_balance(Cow::Borrowed(miner), Cow::Borrowed(&XELIS_ASSET)).await?;
         *miner_balance += reward;
 
@@ -323,10 +316,10 @@ impl<'s, 'b, S: Storage, P: ChainStateProvider<Storage = S>> ChainState<'s, 'b, 
 }
 
 #[async_trait]
-impl<'s, 'b, S: Storage, P: ChainStateProvider<Storage = S>> BlockchainVerificationState<'b, BlockchainError> for ChainState<'s, 'b, S, P> {
+impl<'s, 'b, P: ChainStateProvider> BlockchainVerificationState<'b, BlockchainError> for ChainState<'s, 'b, P> {
     /// Left over fee to pay back
     async fn handle_tx_fee<'c>(&'c mut self, tx: &Transaction, _: &Hash) -> Result<u64, BlockchainError> {
-        let (_, refund) = super::verify_fee(self.storage(), tx, tx.size(), self.topoheight, self.tx_base_fee, self.block_version).await?;
+        let (_, refund) = super::verify_fee(self.provider, tx, tx.size(), self.topoheight, self.tx_base_fee, self.block_version).await?;
         Ok(refund)
     }
 
@@ -342,7 +335,7 @@ impl<'s, 'b, S: Storage, P: ChainStateProvider<Storage = S>> BlockchainVerificat
         &'c mut self,
         tx: &Transaction,
     ) -> Result<(), BlockchainError> {
-        super::pre_verify_tx_dynamic(self.storage(), tx, self.base_height, self.topoheight, self.block_version).await
+        super::pre_verify_tx_dynamic(self.provider, tx, self.base_height, self.topoheight, self.block_version).await
     }
 
     /// Get the balance ciphertext for a receiver account

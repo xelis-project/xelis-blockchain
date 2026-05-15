@@ -5,6 +5,8 @@ pub use chain_state::{
     ChainState,
     ApplicableChainState,
     MempoolProvider,
+    TxVerificationProvider,
+    ReferenceProvider,
 };
 
 use log::{trace, debug};
@@ -21,7 +23,7 @@ use super::{
     hard_fork,
     blockchain,
     error::BlockchainError,
-    storage::{Storage, BalanceProvider, DagOrderProvider, PrunedTopoheightProvider}
+    storage::BalanceProvider,
 };
 
 pub use fee::FeeProvider;
@@ -64,7 +66,7 @@ pub async fn verify_fee<P: FeeProvider>(
 }
 
 // Check if a miner is in the unstable height of a reference block
-async fn is_miner_until_base_height<S: Storage>(storage: &S, miner: &PublicKey, stable_height: u64, reference: &Hash) -> Result<bool, BlockchainError> {
+async fn is_miner_until_base_height<S: TxVerificationProvider>(storage: &S, miner: &PublicKey, stable_height: u64, reference: &Hash) -> Result<bool, BlockchainError> {
     let mut stack = Vec::new();
     stack.push(reference.clone());
 
@@ -91,7 +93,7 @@ async fn is_miner_until_base_height<S: Storage>(storage: &S, miner: &PublicKey, 
     Ok(false)
 }
 
-async fn is_referencing_previous_output<S: Storage>(storage: &S, tx: &Transaction, reference: &Reference, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
+async fn is_referencing_previous_output<S: TxVerificationProvider>(storage: &S, tx: &Transaction, reference: &Reference, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
     let reference_block_topo = select_best_topoheight_for_reference(storage, reference, topoheight).await?;
     let min_topo = reference.topoheight
         .min(reference_block_topo)
@@ -143,7 +145,7 @@ pub(super) async fn pre_verify_tx(tx: &Transaction, topoheight: TopoHeight, bloc
 
 // Verify a transaction before adding it to mempool/chain state
 // This is the dynamic part that may vary based on the DAG order
-pub(super) async fn pre_verify_tx_dynamic<S: Storage>(storage: &S, tx: &Transaction, base_height: u64, topoheight: TopoHeight, block_version: BlockVersion) -> Result<(), BlockchainError> {
+pub(super) async fn pre_verify_tx_dynamic<S: TxVerificationProvider>(storage: &S, tx: &Transaction, base_height: u64, topoheight: TopoHeight, block_version: BlockVersion) -> Result<(), BlockchainError> {
     if block_version >= BlockVersion::V4 {
         let reference = tx.get_reference();
         if storage.has_block_with_hash(&reference.hash).await? {
@@ -166,7 +168,7 @@ pub(super) async fn pre_verify_tx_dynamic<S: Storage>(storage: &S, tx: &Transact
     Ok(())
 }
 
-async fn select_best_topoheight_for_reference<S: DagOrderProvider + PrunedTopoheightProvider>(storage: &S, reference: &Reference, current_topoheight: TopoHeight) -> Result<TopoHeight, BlockchainError> {
+async fn select_best_topoheight_for_reference<P: ReferenceProvider>(storage: &P, reference: &Reference, current_topoheight: TopoHeight) -> Result<TopoHeight, BlockchainError> {
     let pruned_topoheight = storage.get_pruned_topoheight().await?;
 
     let reference_block_topo = if storage.is_block_topological_ordered(&reference.hash).await? {
@@ -201,7 +203,7 @@ async fn select_best_topoheight_for_reference<S: DagOrderProvider + PrunedTopohe
 // - If we should use the output balance for verification
 // - is it a new version created
 // - Versioned Balance to use for verification
-pub (super) async fn search_versioned_balance_for_reference<S: DagOrderProvider + BalanceProvider + PrunedTopoheightProvider>(storage: &S, key: &PublicKey, asset: &Hash, current_topoheight: TopoHeight, reference: &Reference, no_new: bool) -> Result<(bool, bool, VersionedBalance), BlockchainError> {
+pub (super) async fn search_versioned_balance_for_reference<S: ReferenceProvider + BalanceProvider>(storage: &S, key: &PublicKey, asset: &Hash, current_topoheight: TopoHeight, reference: &Reference, no_new: bool) -> Result<(bool, bool, VersionedBalance), BlockchainError> {
     trace!("search versioned balance for {} at topoheight {}, reference: {}", key.as_address(storage.is_mainnet()), current_topoheight, reference.topoheight);
     // Scenario A
     // TX A has reference topo 1000

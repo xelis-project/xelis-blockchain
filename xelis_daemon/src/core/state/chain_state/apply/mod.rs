@@ -1,5 +1,6 @@
 mod finalized;
 mod contract;
+mod provider;
 
 use std::{
     borrow::Cow,
@@ -8,7 +9,6 @@ use std::{
 };
 use anyhow::Context;
 use async_trait::async_trait;
-use futures::TryStreamExt;
 use log::{debug, trace, warn};
 use indexmap::{IndexMap, IndexSet};
 use xelis_common::{
@@ -53,20 +53,18 @@ use crate::core::{
     blockchain::{ContractEnvironments, tx_kb_size_rounded},
     state::verify_fee,
     error::BlockchainError,
-    storage::{
-        Storage,
-    }
 };
 
 use super::ChainState;
 
 pub use finalized::*;
 pub use contract::ContractManager;
+pub use provider::ApplicableChainStateProvider;
 
 // Chain State that can be applied to the mutable storage
 // 's is the storage lifetime, 'b is the block data lifetime
-pub struct ApplicableChainState<'s, 'b, S: Storage> {
-    inner: ChainState<'s, 'b, S, S>,
+pub struct ApplicableChainState<'s, 'b, P: ApplicableChainStateProvider> {
+    inner: ChainState<'s, 'b, P>,
     block_hash: &'b Hash,
     block: &'b Block,
     is_side_block: bool,
@@ -80,12 +78,12 @@ pub struct ApplicableChainState<'s, 'b, S: Storage> {
 }
 
 #[async_trait]
-impl<'s, 'b, S: Storage> BlockchainVerificationState<'b, BlockchainError> for ApplicableChainState<'s, 'b, S> {
+impl<'s, 'b, P: ApplicableChainStateProvider> BlockchainVerificationState<'b, BlockchainError> for ApplicableChainState<'s, 'b, P> {
     /// Verify the TX fee and returns, if required, how much we should refund from
     /// `fee_limit` (left over of fees)
     async fn handle_tx_fee<'c>(&'c mut self, tx: &Transaction, tx_hash: &Hash) -> Result<u64, BlockchainError> {
         let tx_size = tx.size();
-        let (mut fees_paid, refund) = verify_fee(self.storage(), tx, tx_size, self.topoheight, self.tx_base_fee, self.block_version).await?;
+        let (mut fees_paid, refund) = verify_fee(self.provider, tx, tx_size, self.topoheight, self.tx_base_fee, self.block_version).await?;
         // Starting V3: burn a % of the extra base fee
         if self.block_version >= BlockVersion::V3 {
             // The extra base fee is (TX FEE PER KB - MIN. FEE PER KB)
@@ -224,7 +222,7 @@ impl<'s, 'b, S: Storage> BlockchainVerificationState<'b, BlockchainError> for Ap
 }
 
 #[async_trait]
-impl<'s, 'b, S: Storage> BlockchainApplyState<'b, S, BlockchainError> for ApplicableChainState<'s, 'b, S> {
+impl<'s, 'b, P: ApplicableChainStateProvider> BlockchainApplyState<'b, P, BlockchainError> for ApplicableChainState<'s, 'b, P> {
     /// Track burned supply
     async fn add_burned_coins(&mut self, asset: &Hash, amount: u64) -> Result<(), BlockchainError> {
         let changes = self.get_asset_changes_for(asset, false).await?;
@@ -252,12 +250,12 @@ impl<'s, 'b, S: Storage> BlockchainApplyState<'b, S, BlockchainError> for Applic
     }
 
     fn is_mainnet(&self) -> bool {
-        self.inner.storage().is_mainnet()
+        self.inner.provider.is_mainnet()
     }
 }
 
 #[async_trait]
-impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for ApplicableChainState<'s, 'b, S> {
+impl<'s, 'b, P: ApplicableChainStateProvider> BlockchainContractState<'b, P, BlockchainError> for ApplicableChainState<'s, 'b, P> {
     async fn set_contract_logs(
         &mut self,
         caller: ContractCaller<'b>,
@@ -281,7 +279,7 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
         deposits: Option<&'c IndexMap<Hash, ContractDeposit>>,
         caller: ContractCaller<'c>,
         permission: Cow<'c, InterContractPermission>,
-    ) -> Result<(ContractEnvironment<'c, S>, ContractChainState<'c>), BlockchainError> {
+    ) -> Result<(ContractEnvironment<'c, P>, ContractChainState<'c>), BlockchainError> {
         debug!("get contract environments for contract {} from caller {}", contract_hash, caller.get_hash());
 
         // Find the contract module in our cache
@@ -313,7 +311,7 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
                         },
                         Entry::Vacant(e) => {
                             debug!("loading balance {} for contract {} at maximum topoheight {}", asset, contract_hash, self.topoheight);
-                            let (mut state, balance) = self.storage().get_contract_balance_at_maximum_topoheight(&contract_hash, asset, self.topoheight).await?
+                            let (mut state, balance) = self.inner.provider.get_contract_balance_at_maximum_topoheight(&contract_hash, asset, self.inner.topoheight).await?
                                 .map(|(topo, balance)| (VersionedState::FetchedAt(topo), balance.take()))
                                 .unwrap_or((VersionedState::New, 0));
     
@@ -328,7 +326,7 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
             }
         }
 
-        let mainnet = self.inner.storage().is_mainnet();
+        let mainnet = self.inner.provider.is_mainnet();
 
         // We initialize the cache map with only the current contract
         // because we've applied the deposits for it
@@ -380,7 +378,7 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
             environment,
             module: &contract.module,
             version: contract.version,
-            provider: self.inner.storage(),
+            provider: self.inner.provider,
         };
 
         Ok((contract_environment, state))
@@ -404,7 +402,7 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
                 .ok_or_else(|| BlockchainError::NoContractBalance)?,
             Entry::Vacant(e) => {
                 debug!("loading gas balance for contract {} at maximum topoheight {}", contract, self.inner.topoheight);
-                let (mut state, balance) = self.inner.storage().get_contract_balance_at_maximum_topoheight(contract, &XELIS_ASSET, self.inner.topoheight).await?
+                let (mut state, balance) = self.inner.provider.get_contract_balance_at_maximum_topoheight(contract, &XELIS_ASSET, self.inner.topoheight).await?
                     .map(|(topo, balance)| (VersionedState::FetchedAt(topo), balance.take()))
                     .unwrap_or((VersionedState::New, 0));
 
@@ -494,35 +492,35 @@ impl<'s, 'b, S: Storage> BlockchainContractState<'b, S, BlockchainError> for App
     }
 }
 
-impl<'s, 'b, S: Storage> Deref for ApplicableChainState<'s, 'b, S> {
-    type Target = ChainState<'s, 'b, S, S>;
+impl<'s, 'b, P: ApplicableChainStateProvider> Deref for ApplicableChainState<'s, 'b, P> {
+    type Target = ChainState<'s, 'b, P>;
 
-    fn deref(&self) -> &ChainState<'s, 'b, S, S> {
+    fn deref(&self) -> &ChainState<'s, 'b, P> {
         &self.inner
     }
 }
 
-impl<'s, 'b, S: Storage> DerefMut for ApplicableChainState<'s, 'b, S> {
-    fn deref_mut(&mut self) -> &mut ChainState<'s, 'b, S, S> {
+impl<'s, 'b, P: ApplicableChainStateProvider> DerefMut for ApplicableChainState<'s, 'b, P> {
+    fn deref_mut(&mut self) -> &mut ChainState<'s, 'b, P> {
         &mut self.inner
     }
 }
 
-impl<'s, 'b, S: Storage> AsRef<ChainState<'s, 'b, S, S>> for ApplicableChainState<'s, 'b, S> {
-    fn as_ref(&self) -> &ChainState<'s, 'b, S, S> {
+impl<'s, 'b, P: ApplicableChainStateProvider> AsRef<ChainState<'s, 'b, P>> for ApplicableChainState<'s, 'b, P> {
+    fn as_ref(&self) -> &ChainState<'s, 'b, P> {
         &self.inner
     }
 }
 
-impl<'s, 'b, S: Storage> AsMut<ChainState<'s, 'b, S, S>> for ApplicableChainState<'s, 'b, S> {
-    fn as_mut(&mut self) -> &mut ChainState<'s, 'b, S, S> {
+impl<'s, 'b, P: ApplicableChainStateProvider> AsMut<ChainState<'s, 'b, P>> for ApplicableChainState<'s, 'b, P> {
+    fn as_mut(&mut self) -> &mut ChainState<'s, 'b, P> {
         &mut self.inner
     }
 }
 
-impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
+impl<'s, 'b, P: ApplicableChainStateProvider> ApplicableChainState<'s, 'b, P> {
     pub fn new(
-        storage: &'s S,
+        storage: &'s P,
         environments: &'s ContractEnvironments,
         stable_topoheight: TopoHeight,
         topoheight: TopoHeight,
@@ -598,9 +596,9 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => {
                 let topoheight = self.inner.topoheight;
-                let changes = match self.inner.storage().get_asset_at_maximum_topoheight(asset, topoheight).await? {
+                let changes = match self.inner.provider.get_asset_at_maximum_topoheight(asset, topoheight).await? {
                     Some((topo, data)) => {
-                        let (supply_state, supply) = match self.inner.storage().get_circulating_supply_for_asset_at_maximum_topoheight(asset, topoheight).await? {
+                        let (supply_state, supply) = match self.inner.provider.get_circulating_supply_for_asset_at_maximum_topoheight(asset, topoheight).await? {
                             Some((topo, supply)) => (VersionedState::FetchedAt(topo), supply.take()),
                             None => {
                                 // if default is not enabled,
@@ -676,8 +674,7 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
                 Entry::Vacant(entry) => {
                     debug!("event {} for contract {} not yet processed, loading from storage", event.event_id, event.contract);
                     let topoheight = self.inner.topoheight;
-                    let mut callbacks = self.inner.storage().get_event_callbacks_available_at_maximum_topoheight(&event.contract, event.event_id, topoheight).await?
-                        .try_collect::<Vec<_>>().await?;
+                    let mut callbacks = self.inner.provider.get_event_callbacks_available_at_maximum_topoheight(&event.contract, event.event_id, topoheight).await?;
 
                     // Sort by contract hash to have a deterministic order
                     callbacks.sort_by(|a, b| a.0.cmp(&b.0));
@@ -796,13 +793,12 @@ impl<'s, 'b, S: Storage> ApplicableChainState<'s, 'b, S> {
 
         let topoheight = self.inner.topoheight;
 
-        let mut executions = self.storage().get_contract_scheduled_executions_for_execution_topoheight(topoheight).await?
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut executions = self.inner.provider.get_contract_scheduled_executions_for_execution_topoheight(topoheight).await?;
 
         executions.sort();
 
         for hash in executions.iter() {
-            let execution = self.storage().get_contract_scheduled_execution_at_topoheight(hash, topoheight).await?;
+            let execution = self.inner.provider.get_contract_scheduled_execution_at_topoheight(hash, topoheight).await?;
 
             self.process_execution(
                 Cow::Owned(execution.contract.clone()),
