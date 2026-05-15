@@ -106,7 +106,7 @@ use crate::{
         simulator::Simulator,
         storage::*,
         tx_selector::{TxSelector, TxSelectorEntry},
-        state::{ChainState, ApplicableChainState},
+        state::{ChainState, ApplicableChainState, FeeProvider},
         hard_fork::*,
         TxCache,
         BlockSizeEma,
@@ -138,7 +138,6 @@ use log::{info, error, debug, warn, trace};
 use rand::Rng;
 
 use super::storage::{
-    AccountProvider,
     BlocksAtHeightProvider,
     ClientProtocolProvider,
     PrunedTopoheightProvider,
@@ -2093,22 +2092,19 @@ impl<S: Storage> Blockchain<S> {
                 // We skip the first block because it's the nearest base block, and we only want to group the TXs from the blocks between the nearest base block and the tips
                 // and also because the nearest base block is already included in the block state for verification, so we don't need to group its TXs again
                 for block_hash in part_order.iter().skip(1) {
-                    let header = storage.get_block_header_by_hash(block_hash).await?;
-                    for hash in header.get_txs_hashes() {
+                    let block = storage.get_block_by_hash(block_hash).await?;
+                    for (hash, tx) in block.get_txs_hashes().iter().zip(block.get_transactions()) {
                         if blockdag::is_tx_executed_for_topoheight(&*storage, hash, nearest_base_topoheight).await? {
                             debug!("TX {} from parent is executed in DAG, skipping it", hash);
                             continue;
                         }
 
-                        let tx = storage.get_transaction(hash).await?
-                            .into_arc();
-                        
                         let source = tx.get_source();
                         debug!("Adding parent TX {} from source {} to grouped parents for block {}", hash, source.as_address(self.network.is_mainnet()), block_hash);
 
                         txs_grouped.entry(Cow::Owned(source.clone()))
                             .or_insert_with(IndexMap::new)
-                            .insert(Cow::Owned(hash.clone()), tx);
+                            .insert(Cow::Owned(hash.clone()), tx.clone());
                     }
                 }
             } else if is_v3_enabled {
@@ -2582,12 +2578,12 @@ impl<S: Storage> Blockchain<S> {
                         }
     
                         // check that the tx was not yet executed in another tip branch
-                        if chain_state.storage().is_tx_executed_in_a_block(tx_hash).await? {
+                        if storage.is_tx_executed_in_a_block(tx_hash).await? {
                             trace!("Tx {} was already executed in a previous block, skipping...", tx_hash);
                         } else {
                             // tx was not executed, but lets check that it is not a potential double spending
                             // check that the nonce is not already used
-                            if !nonce_checker.use_nonce(chain_state.storage(), tx.get_source(), tx.get_nonce(), highest_topo).await? {
+                            if !nonce_checker.use_nonce(&*storage, tx.get_source(), tx.get_nonce(), highest_topo).await? {
                                 warn!("Malicious TX {}, it is a potential double spending with same nonce {}, skipping...", tx_hash, tx.get_nonce());
                                 // TX will be orphaned
                                 orphaned_transactions.insert(tx_hash.clone());
@@ -3599,12 +3595,12 @@ pub fn calculate_required_base_fee(ema: usize) -> u64 {
 // Esimate the required TX fee extra part
 // which is based on the TX outputs, newly generated addresses
 // and multsig signatures count
-pub async fn estimate_required_tx_fee_extra<P: AccountProvider>(provider: &P, current_topoheight: TopoHeight, tx: &Transaction, block_version: BlockVersion) -> Result<u64, BlockchainError> {
+pub async fn estimate_required_tx_fee_extra<P: FeeProvider>(provider: &P, current_topoheight: TopoHeight, tx: &Transaction, block_version: BlockVersion) -> Result<u64, BlockchainError> {
     let mut processed_keys = HashSet::new();
     let mut transfers_len = 0;
     if let TransactionType::Transfers(transfers) = tx.get_data() {
         for transfer in transfers {
-            if !processed_keys.contains(transfer.get_destination()) && !provider.is_account_registered_for_topoheight(transfer.get_destination(), current_topoheight).await? {
+            if !processed_keys.contains(transfer.get_destination()) && !provider.is_account_registered(transfer.get_destination(), current_topoheight).await? {
                 debug!("Account {} is not registered for topoheight {}", transfer.get_destination().as_address(provider.is_mainnet()), current_topoheight);
                 processed_keys.insert(transfer.get_destination());
             }
@@ -3624,7 +3620,7 @@ pub async fn estimate_required_tx_fee_extra<P: AccountProvider>(provider: &P, cu
 
 // Estimate the TX fee per kB by calculating and sub the fee extra part
 // NOTE: tx size is in bytes, not kB
-pub async fn estimate_tx_fee_per_kb<P: AccountProvider>(provider: &P, current_topoheight: TopoHeight, tx: &Transaction, tx_size: usize, block_version: BlockVersion) -> Result<(u64, u64), BlockchainError> {
+pub async fn estimate_tx_fee_per_kb<P: FeeProvider>(provider: &P, current_topoheight: TopoHeight, tx: &Transaction, tx_size: usize, block_version: BlockVersion) -> Result<(u64, u64), BlockchainError> {
     let fee_extra = estimate_required_tx_fee_extra(provider, current_topoheight, tx, block_version).await?;
     let fee = tx.get_fee()
         .checked_sub(fee_extra)
@@ -3655,7 +3651,7 @@ pub const fn tx_kb_size_rounded(bytes: usize) -> usize {
 // based on the newly generated addresses
 // Multisig signatures also increase the extra fee due to more computation being required
 // This returns one final (total) fee required for a TX
-pub async fn estimate_required_tx_fees<P: AccountProvider>(provider: &P, current_topoheight: TopoHeight, tx: &Transaction, tx_size: usize, base_fee: u64, block_version: BlockVersion) -> Result<u64, BlockchainError> {
+pub async fn estimate_required_tx_fees<P: FeeProvider>(provider: &P, current_topoheight: TopoHeight, tx: &Transaction, tx_size: usize, base_fee: u64, block_version: BlockVersion) -> Result<u64, BlockchainError> {
     let fee_extra = estimate_required_tx_fee_extra(provider, current_topoheight, tx, block_version).await?;
     Ok(calculate_tx_fee_per_kb(base_fee, tx_size) + fee_extra)
 }

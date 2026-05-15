@@ -1,4 +1,5 @@
 mod chain_state;
+mod fee;
 
 pub use chain_state::{
     ChainState,
@@ -16,17 +17,17 @@ use xelis_common::{
     utils::format_xelis
 };
 
-use crate::core::storage::Storage;
-
 use super::{
     hard_fork,
     blockchain,
     error::BlockchainError,
-    storage::{AccountProvider, BalanceProvider, DagOrderProvider, PrunedTopoheightProvider}
+    storage::{Storage, BalanceProvider, DagOrderProvider, PrunedTopoheightProvider}
 };
 
+pub use fee::FeeProvider;
+
 // Verify the transaction fee and returns the leftover from fee max
-pub async fn verify_fee<P: AccountProvider>(
+pub async fn verify_fee<P: FeeProvider>(
     provider: &P,
     tx: &Transaction,
     tx_size: usize,
