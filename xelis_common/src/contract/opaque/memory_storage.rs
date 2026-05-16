@@ -49,7 +49,7 @@ pub fn is_shared(instance: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &
     Ok(SysCallResult::Return(Primitive::Boolean(storage.shared).into()))
 }
 
-pub fn memory_storage_load<P: ContractProvider>(instance: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn memory_storage_load<'ty, P: ContractProvider<'ty>>(instance: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let instance = instance?;
     let storage: &OpaqueMemoryStorage = instance.as_opaque_type()?;
 
@@ -74,7 +74,7 @@ pub fn memory_storage_load<P: ContractProvider>(instance: FnInstance, mut params
     Ok(SysCallResult::Return(value.into()))
 }
 
-pub fn memory_storage_has<P: ContractProvider>(instance: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn memory_storage_has<'ty, P: ContractProvider<'ty>>(instance: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let instance = instance?;
     let storage: &OpaqueMemoryStorage = instance.as_opaque_type()?;
 
@@ -94,7 +94,7 @@ pub fn memory_storage_has<P: ContractProvider>(instance: FnInstance, mut params:
     Ok(SysCallResult::Return(Primitive::Boolean(contains).into()))
 }
 
-pub fn memory_storage_store<P: ContractProvider>(instance: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn memory_storage_store<'ty, P: ContractProvider<'ty>>(instance: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let instance = instance?;
     let storage: &OpaqueMemoryStorage = instance.as_opaque_type()?;
 
@@ -128,7 +128,7 @@ pub fn memory_storage_store<P: ContractProvider>(instance: FnInstance, mut param
     Ok(SysCallResult::Return(value.into()))
 }
 
-pub fn memory_storage_delete<P: ContractProvider>(instance: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn memory_storage_delete<'ty, P: ContractProvider<'ty>>(instance: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let instance = instance?;
     let storage: &OpaqueMemoryStorage = instance.as_opaque_type()?;
 

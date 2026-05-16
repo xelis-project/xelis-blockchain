@@ -56,7 +56,7 @@ impl Serializable for OpaqueContract {}
 
 impl JSONHelper for OpaqueContract {}
 
-pub async fn contract_new<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+pub async fn contract_new<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
     let contract: Hash = params.remove(0)
@@ -95,7 +95,7 @@ pub async fn contract_new<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
     Ok(SysCallResult::Return(opaque.into()))
 }
 
-pub async fn contract_call<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+pub async fn contract_call<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let opaque: &OpaqueContract = zelf.as_opaque_type()?;
 

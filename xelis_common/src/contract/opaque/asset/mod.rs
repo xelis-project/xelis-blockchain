@@ -57,7 +57,7 @@ impl Serializable for OpaqueAsset {}
 impl JSONHelper for OpaqueAsset {}
 
 // Maximum supply set for this asset
-pub fn asset_get_max_supply<P: ContractProvider>(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn asset_get_max_supply(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let asset: &OpaqueAsset = zelf.as_opaque_type()?;
     let state: &ChainState = context.get()
@@ -73,7 +73,7 @@ pub fn asset_get_max_supply<P: ContractProvider>(zelf: FnInstance, _: FnParams, 
 }
 
 // Contract hash that created this asset
-pub fn asset_get_contract_hash<P: ContractProvider>(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn asset_get_contract_hash(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let asset: &OpaqueAsset = zelf.as_opaque_type()?;
     let state: &ChainState = context.get()
@@ -88,7 +88,7 @@ pub fn asset_get_contract_hash<P: ContractProvider>(zelf: FnInstance, _: FnParam
 }
 
 // Contract hash that created this asset
-pub fn asset_get_contract_id<P: ContractProvider>(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn asset_get_contract_id(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let asset: &OpaqueAsset = zelf.as_opaque_type()?;
     let state: &ChainState = context.get()
@@ -103,7 +103,7 @@ pub fn asset_get_contract_id<P: ContractProvider>(zelf: FnInstance, _: FnParams,
 }
 
 // Circulating supply for this asset
-pub async fn asset_get_supply<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, _: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+pub async fn asset_get_supply<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance<'a>, _: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let asset: &OpaqueAsset = zelf.as_opaque_type()?;
     let (_, state) = from_context::<P>(context)?;
@@ -217,7 +217,7 @@ pub fn asset_is_mintable(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, 
     Ok(SysCallResult::Return(Primitive::Boolean(changes.data.1.get_max_supply().is_mintable()).into()))
 }
 
-pub async fn asset_transfer_ownership<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+pub async fn asset_transfer_ownership<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let param: Hash = params.remove(0)
         .into_owned()
         .into_opaque_type()?;
@@ -241,7 +241,7 @@ pub async fn asset_transfer_ownership<'a, 'ty, 'r, P: ContractProvider>(zelf: Fn
     Ok(SysCallResult::Return(Primitive::Boolean(owner.transfer(&metadata.metadata.contract_executor, param)).into()))
 }
 
-pub async fn asset_mint<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+pub async fn asset_mint<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance<'a>, params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let mut zelf = zelf?;
     let asset: &mut OpaqueAsset = zelf.as_opaque_type_mut()?;
     let (provider, state) = from_context::<P>(context)?;

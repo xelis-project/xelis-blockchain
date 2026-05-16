@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use async_trait::async_trait;
-use xelis_vm::ValueCell;
+use xelis_vm::{ValueCell, tid};
 
 use crate::{
     account::CiphertextCache,
@@ -19,6 +19,8 @@ use crate::{
 pub struct MockStorageProvider {
     pub data: HashMap<(Hash, ValueCell), (TopoHeight, Option<ValueCell>)>,
 }
+
+tid!(MockStorageProvider);
 
 #[async_trait]
 impl ContractStorage for MockStorageProvider {
@@ -49,7 +51,7 @@ impl ContractStorage for MockStorageProvider {
 }
 
 #[async_trait]
-impl ContractProvider for MockStorageProvider {
+impl<'ty> ContractProvider<'ty> for MockStorageProvider {
     async fn get_contract_balance_for_asset(
         &self,
         _: &Hash,

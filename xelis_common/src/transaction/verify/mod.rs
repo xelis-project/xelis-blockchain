@@ -1173,7 +1173,7 @@ impl Transaction {
 
     // Apply the transaction to the state
     // Arc is required around Self to be shared easily into the VM if needed
-    async fn apply<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
+    async fn apply<'a, 'ty, P: for<'x> ContractProvider<'x>, E, B: BlockchainApplyState<'a, 'ty, P, E>>(
         self: &'a Arc<Self>,
         tx_hash: &'a Hash,
         state: &mut B,
@@ -1279,7 +1279,7 @@ impl Transaction {
 
     /// Assume the tx is valid, apply it to `state`.
     /// The TX is NEVER verified, and is applied as is.
-    pub async fn apply_without_verify<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
+    pub async fn apply_without_verify<'a, 'ty, P: for<'x> ContractProvider<'x>, E, B: BlockchainApplyState<'a, 'ty, P, E>>(
         self: &'a Arc<Self>,
         tx_hash: &'a Hash,
         state: &mut B,
@@ -1346,7 +1346,7 @@ impl Transaction {
     /// Verify only that the final sender balance is the expected one for each commitment
     /// Then apply ciphertexts to the state
     /// Checks done are: commitment eq proofs only
-    pub async fn apply_with_partial_verify<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
+    pub async fn apply_with_partial_verify<'a, 'ty, P: for<'x> ContractProvider<'x>, E, B: BlockchainApplyState<'a, 'ty, P, E>>(
         self: &'a Arc<Self>,
         tx_hash: &'a Hash,
         state: &mut B

@@ -1,7 +1,8 @@
 use std::{
     borrow::Cow,
-    collections::{hash_map::Entry, HashMap, VecDeque},
-    sync::Arc,
+    collections::{HashMap, VecDeque, hash_map::Entry},
+    marker::PhantomData,
+    sync::Arc
 };
 
 use anyhow::Context;
@@ -379,7 +380,7 @@ impl<'a> BlockchainVerificationState<'a, anyhow::Error> for MockChainState {
 }
 
 #[async_trait]
-impl<'a> BlockchainContractState<'a, MockStorageProvider, anyhow::Error> for MockChainState {
+impl<'a, 'ty> BlockchainContractState<'a, 'ty, MockStorageProvider, anyhow::Error> for MockChainState {
     async fn set_contract_logs(
         &mut self,
         caller: ContractCaller<'a>,
@@ -403,7 +404,7 @@ impl<'a> BlockchainContractState<'a, MockStorageProvider, anyhow::Error> for Moc
         deposits: Option<&'b IndexMap<Hash, ContractDeposit>>,
         caller: ContractCaller<'b>,
         permission: Cow<'b, InterContractPermission>,
-    ) -> Result<(ContractEnvironment<'b, MockStorageProvider>, crate::contract::ChainState<'b>), anyhow::Error> {
+    ) -> Result<(ContractEnvironment<'b, 'ty, MockStorageProvider>, crate::contract::ChainState<'b>), anyhow::Error> {
         let contract_module = self.internal_load_contract_module(&contract)?;
 
         let mut cache = self
@@ -439,6 +440,7 @@ impl<'a> BlockchainContractState<'a, MockStorageProvider, anyhow::Error> for Moc
             module: &contract_module.module,
             version: contract_module.version,
             provider: &self.provider,
+            _phantom: PhantomData,
         };
 
         let chain_state = ContractChainState {
@@ -564,7 +566,7 @@ impl<'a> BlockchainContractState<'a, MockStorageProvider, anyhow::Error> for Moc
 }
 
 #[async_trait]
-impl<'a> BlockchainApplyState<'a, MockStorageProvider, anyhow::Error> for MockChainState {
+impl<'a, 'ty> BlockchainApplyState<'a, 'ty, MockStorageProvider, anyhow::Error> for MockChainState {
     async fn add_burned_coins(&mut self, asset: &Hash, amount: u64) -> Result<(), anyhow::Error> {
         *self.burned_coins.entry(asset.clone()).or_insert(0) += amount;
         Ok(())

@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashMap};
+use std::{borrow::Cow, collections::HashMap, marker::PhantomData};
 
 use async_trait::async_trait;
 use indexmap::IndexMap;
@@ -142,7 +142,7 @@ pub trait BlockchainVerificationState<'a, E> {
     ) -> Result<(&Module, &Environment<ContractMetadata>), E>;
 }
 
-pub struct ContractEnvironment<'a, P: ContractProvider> {
+pub struct ContractEnvironment<'a, 'ty: 'a, P: ContractProvider<'ty>> {
     // Environment with the embed stdlib
     pub environment: &'a Environment<ContractMetadata>,
     // Module to execute
@@ -151,10 +151,11 @@ pub struct ContractEnvironment<'a, P: ContractProvider> {
     pub version: ContractVersion,
     // Provider for the contract
     pub provider: &'a P,
+    pub _phantom: PhantomData<&'ty ()>,
 }
 
 #[async_trait]
-pub trait BlockchainContractState<'a, P: ContractProvider, E> {
+pub trait BlockchainContractState<'a, 'ty, P: ContractProvider<'ty>, E> {
     /// Track the contract logs
     async fn set_contract_logs(
         &mut self,
@@ -171,7 +172,7 @@ pub trait BlockchainContractState<'a, P: ContractProvider, E> {
         deposits: Option<&'b IndexMap<Hash, ContractDeposit>>,
         tx_hash: ContractCaller<'b>,
         permission: Cow<'b, InterContractPermission>,
-    ) -> Result<(ContractEnvironment<'b, P>, ChainState<'b>), E>;
+    ) -> Result<(ContractEnvironment<'b, 'ty, P>, ChainState<'b>), E>;
 
     /// Set the updated contract caches
     /// This is used to update the caches after the contract execution
@@ -211,7 +212,7 @@ pub trait BlockchainContractState<'a, P: ContractProvider, E> {
 }
 
 #[async_trait]
-pub trait BlockchainApplyState<'a, P: ContractProvider, E>: BlockchainVerificationState<'a, E> + BlockchainContractState<'a, P, E> {
+pub trait BlockchainApplyState<'a, 'ty, P: ContractProvider<'ty>, E>: BlockchainVerificationState<'a, E> + BlockchainContractState<'a, 'ty, P, E> {
     /// Add burned XELIS
     async fn add_burned_coins(&mut self, asset: &Hash, amount: u64) -> Result<(), E>;
 

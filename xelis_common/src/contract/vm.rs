@@ -21,7 +21,6 @@ use crate::{
         ContractLog,
         ContractMetadata,
         ContractProvider,
-        ContractProviderWrapper,
         ContractVersion,
         InterContractPermission,
         Source,
@@ -156,8 +155,8 @@ impl ExecutionResult {
 }
 
 // Create the VM and run the required contrac twith all needed functions
-pub(crate) async fn run_virtual_machine<'a, P: ContractProvider>(
-    contract_environment: ContractEnvironment<'a, P>,
+pub(crate) async fn run_virtual_machine<'a, 'ty, P: for<'x> ContractProvider<'x>>( 
+    contract_environment: ContractEnvironment<'a, 'ty, P>,
     chain_state: &mut ChainState<'a>,
     caller: &ContractCaller<'a>,
     invoke: InvokeContract,
@@ -215,7 +214,8 @@ pub(crate) async fn run_virtual_machine<'a, P: ContractProvider>(
     context.insert_mut(chain_state);
     // insert the storage through our wrapper
     // so it can be easily mocked
-    context.insert(ContractProviderWrapper(contract_environment.provider));
+    // insert the storage through our wrapper so it can be easily mocked
+    context.insert_ref(contract_environment.provider);
 
     // We need to handle the result of the VM
     let res = vm.run().await;
@@ -288,7 +288,7 @@ pub(crate) async fn run_virtual_machine<'a, P: ContractProvider>(
 // Invoke a contract from a transaction
 // Note that the contract must be already loaded by calling
 // `is_contract_available`
-pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
+pub async fn invoke_contract<'a, 'ty, P: for<'x> ContractProvider<'x>, E, B: BlockchainApplyState<'a, 'ty, P, E>>(
     caller: ContractCaller<'a>,
     state: &mut B,
     contract: Cow<'a, Hash>,
@@ -472,7 +472,7 @@ pub async fn invoke_contract<'a, P: ContractProvider, E, B: BlockchainApplyState
 // We need to refund the extra (unused) gas
 // this is the tx max gas - used gas
 // We want to refund proportionally to the injections made
-pub async fn refund_gas_sources<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
+pub async fn refund_gas_sources<'a, 'ty, P: for<'x> ContractProvider<'x>, E, B: BlockchainApplyState<'a, 'ty, P, E>>(
     state: &mut B,
     gas_sources: IndexMap<Source, u64>,
     used_gas: u64,
@@ -533,7 +533,7 @@ pub async fn refund_gas_sources<'a, P: ContractProvider, E, B: BlockchainApplySt
 
 // Refund extra gas injections when the max gas was increased
 // in the contract caches
-pub async fn refund_extra_gas_injections<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
+pub async fn refund_extra_gas_injections<'a, 'ty, P: for<'x> ContractProvider<'x>, E, B: BlockchainApplyState<'a, 'ty, P, E>>(
     state: &mut B,
     gas_injections: IndexMap<Source, u64>,
     max_gas: u64,
@@ -602,7 +602,7 @@ pub async fn refund_extra_gas_injections<'a, P: ContractProvider, E, B: Blockcha
 
 // Directly apply to the state the gas injections consumed
 // This is called when the contract failed and has still used the injected gas
-pub async fn charge_gas_injections<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
+pub async fn charge_gas_injections<'a, 'ty, P: for<'x> ContractProvider<'x>, E, B: BlockchainApplyState<'a, 'ty, P, E>>(
     state: &mut B,
     gas_injections: IndexMap<Source, u64>,
     mut extra_used_gas: u64,
@@ -655,7 +655,7 @@ pub async fn charge_gas_injections<'a, P: ContractProvider, E, B: BlockchainAppl
     Ok(())
 }
 
-pub async fn handle_gas<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
+pub async fn handle_gas<'a, 'ty, P: for<'x> ContractProvider<'x>, E, B: BlockchainApplyState<'a, 'ty, P, E>>(
     caller: &ContractCaller<'a>,
     state: &mut B,
     used_gas: u64,
@@ -689,7 +689,7 @@ pub async fn handle_gas<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, 
 }
 
 // Refund the deposits made by the user to the contract
-pub async fn refund_deposits<'a, P: ContractProvider, E, B: BlockchainApplyState<'a, P, E>>(
+pub async fn refund_deposits<'a, 'ty, P: for<'x> ContractProvider<'x>, E, B: BlockchainApplyState<'a, 'ty, P, E>>(
     source: &'a CompressedPublicKey,
     state: &mut B,
     deposits: &'a IndexMap<Hash, ContractDeposit>,

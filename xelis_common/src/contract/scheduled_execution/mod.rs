@@ -151,7 +151,7 @@ impl Serializable for OpaqueScheduledExecution {}
 
 impl JSONHelper for OpaqueScheduledExecution {}
 
-async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
+async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider<'ty>>(
     kind: ScheduledExecutionKind,
     _: FnInstance<'a>,
     mut params: FnParams,
@@ -292,7 +292,7 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
     }.into()))
 }
 
-pub async fn scheduled_execution_new_at_topoheight<'a, 'ty, 'r, P: ContractProvider>(
+pub async fn scheduled_execution_new_at_topoheight<'a, 'ty, 'r, P: ContractProvider<'ty>>(
     instance: FnInstance<'a>,
     params: FnParams,
     metadata: &ModuleMetadata<'_>,
@@ -302,7 +302,7 @@ pub async fn scheduled_execution_new_at_topoheight<'a, 'ty, 'r, P: ContractProvi
     schedule_execution::<P>(ScheduledExecutionKind::TopoHeight(topoheight), instance, params, metadata, context).await
 }
 
-pub async fn scheduled_execution_new_at_block_end<'a, 'ty, 'r, P: ContractProvider>(
+pub async fn scheduled_execution_new_at_block_end<'a, 'ty, 'r, P: ContractProvider<'ty>>(
     instance: FnInstance<'a>,
     params: FnParams,
     metadata: &ModuleMetadata<'_>,
@@ -380,7 +380,7 @@ pub fn scheduled_execution_get_pending<'a, 'ty, 'r>(
     }
 }
 
-pub async fn scheduled_execution_increase_max_gas<'a, 'ty, 'r, P: ContractProvider>(
+pub async fn scheduled_execution_increase_max_gas<'a, 'ty, 'r, P: ContractProvider<'ty>>(
     instance: FnInstance<'a>,
     params: FnParams,
     metadata: &ModuleMetadata<'_>,

@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use xelis_vm::tid;
+use runtime_context::ShareableTid;
 
 use crate::{
     account::CiphertextCache,
@@ -12,7 +12,7 @@ use crate::{
 use super::ContractStorage;
 
 #[async_trait]
-pub trait ContractProvider: ContractStorage + Send + Sync + 'static {
+pub trait ContractProvider<'ty>: ContractStorage + ShareableTid<'ty> {
     // Returns the balance of the contract
     async fn get_contract_balance_for_asset(&self, contract: &Hash, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, u64)>, anyhow::Error>;
 
@@ -41,8 +41,3 @@ pub trait ContractProvider: ContractStorage + Send + Sync + 'static {
     // Check if a contract has already a callback registered for an event at maximum topoheight
     async fn has_contract_callback_for_event(&self, contract: &Hash, event_id: u64, listener: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error>;
 }
-
-// This is a wrapper around the storage to allow for the storage to be passed in the Context
-pub struct ContractProviderWrapper<'a, S: ContractProvider>(pub &'a S);
-
-tid! { impl<'a, S: 'static> TidAble<'a> for ContractProviderWrapper<'a, S> where S: ContractProvider }
