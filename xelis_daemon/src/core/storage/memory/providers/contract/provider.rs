@@ -124,8 +124,6 @@ impl ContractProvider for MemoryStorage {
     }
 }
 
-// ---- ContractStorage (xelis_common) ----
-
 #[async_trait]
 impl ContractStorage for MemoryStorage {
     async fn load_data(&self, contract: &Hash, key: &xelis_vm::ValueCell, topoheight: TopoHeight) -> Result<Option<(TopoHeight, Option<xelis_vm::ValueCell>)>, anyhow::Error> {
@@ -151,10 +149,8 @@ impl ContractStorage for MemoryStorage {
     }
 }
 
-// ---- ContractInfoProvider (xelis_common ContractProvider) ----
-
 #[async_trait]
-impl ContractInfoProvider for MemoryStorage {
+impl<'ty> ContractInfoProvider<'ty> for MemoryStorage {
     async fn get_contract_balance_for_asset(&self, contract: &Hash, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, u64)>, anyhow::Error> {
         let res = self.get_contract_balance_at_maximum_topoheight(contract, asset, topoheight).await?;
         Ok(res.map(|(topoheight, balance)| (topoheight, balance.take())))

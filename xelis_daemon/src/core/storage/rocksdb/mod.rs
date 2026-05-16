@@ -51,6 +51,7 @@ use crate::core::{
         TransactionProvider
     }
 };
+use xelis_vm::tid;
 
 pub use column::*;
 pub use types::*;
@@ -188,6 +189,8 @@ pub struct RocksStorage {
     cache: StorageCache,
     concurrency: usize,
 }
+
+tid!(RocksStorage);
 
 impl RocksStorage {
     pub fn new(dir: &str, network: Network, config: &RocksDBConfig, concurrency: usize) -> Result<Self, BlockchainError> {

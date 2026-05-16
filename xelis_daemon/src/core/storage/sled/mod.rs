@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 use lru::LruCache;
 use sled::{IVec, Tree};
 use log::{debug, trace, info, error};
+use xelis_vm::tid;
 
 use super::{
     cache::StorageCache,
@@ -236,6 +237,8 @@ impl Into<sled::Mode> for StorageMode {
         }
     }
 }
+
+tid!(SledStorage);
 
 impl SledStorage {
     pub fn new(dir_path: String, cache_size: Option<usize>, network: Network, internal_cache_size: u64, mode: StorageMode, concurrency: usize) -> Result<Self, BlockchainError> {

@@ -19,7 +19,7 @@ use xelis_common::{
     transaction::Transaction,
     varuint::VarUint,
 };
-use xelis_vm::ValueCell;
+use xelis_vm::{ValueCell, tid};
 
 use crate::core::{
     error::BlockchainError,
@@ -127,6 +127,8 @@ pub struct MemoryStorage {
     // This is used to quickly retrieve all scheduled executions to execute at a given topoheight
     scheduled_executions_per_topoheight: BTreeMap<TopoHeight, HashMap<PooledArc<Hash>, TopoHeight>>,
 }
+
+tid!(MemoryStorage);
 
 impl MemoryStorage {
     pub fn new(network: Network, concurrency: usize) -> Self {

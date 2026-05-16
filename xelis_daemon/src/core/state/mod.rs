@@ -4,6 +4,7 @@ mod fee;
 pub use chain_state::{
     ChainState,
     ApplicableChainState,
+    FinalizedChainState,
     MempoolProvider,
     TxVerificationProvider,
     ReferenceProvider,

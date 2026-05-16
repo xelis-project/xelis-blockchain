@@ -5,6 +5,7 @@ mod provider;
 use std::{
     borrow::Cow,
     collections::{HashMap, hash_map::Entry},
+    marker::PhantomData,
     ops::{Deref, DerefMut},
 };
 use anyhow::Context;
@@ -222,7 +223,7 @@ impl<'s, 'b, P: ApplicableChainStateProvider> BlockchainVerificationState<'b, Bl
 }
 
 #[async_trait]
-impl<'s, 'b, P: ApplicableChainStateProvider> BlockchainApplyState<'b, P, BlockchainError> for ApplicableChainState<'s, 'b, P> {
+impl<'s, 'b, 'ty, P: ApplicableChainStateProvider> BlockchainApplyState<'b, 'ty, P, BlockchainError> for ApplicableChainState<'s, 'b, P> {
     /// Track burned supply
     async fn add_burned_coins(&mut self, asset: &Hash, amount: u64) -> Result<(), BlockchainError> {
         let changes = self.get_asset_changes_for(asset, false).await?;
@@ -255,7 +256,7 @@ impl<'s, 'b, P: ApplicableChainStateProvider> BlockchainApplyState<'b, P, Blockc
 }
 
 #[async_trait]
-impl<'s, 'b, P: ApplicableChainStateProvider> BlockchainContractState<'b, P, BlockchainError> for ApplicableChainState<'s, 'b, P> {
+impl<'s, 'b, 'ty, P: ApplicableChainStateProvider> BlockchainContractState<'b, 'ty, P, BlockchainError> for ApplicableChainState<'s, 'b, P> {
     async fn set_contract_logs(
         &mut self,
         caller: ContractCaller<'b>,
@@ -279,7 +280,7 @@ impl<'s, 'b, P: ApplicableChainStateProvider> BlockchainContractState<'b, P, Blo
         deposits: Option<&'c IndexMap<Hash, ContractDeposit>>,
         caller: ContractCaller<'c>,
         permission: Cow<'c, InterContractPermission>,
-    ) -> Result<(ContractEnvironment<'c, P>, ContractChainState<'c>), BlockchainError> {
+    ) -> Result<(ContractEnvironment<'c, 'ty, P>, ContractChainState<'c>), BlockchainError> {
         debug!("get contract environments for contract {} from caller {}", contract_hash, caller.get_hash());
 
         // Find the contract module in our cache
@@ -379,6 +380,7 @@ impl<'s, 'b, P: ApplicableChainStateProvider> BlockchainContractState<'b, P, Blo
             module: &contract.module,
             version: contract.version,
             provider: self.inner.provider,
+            _phantom: PhantomData,
         };
 
         Ok((contract_environment, state))

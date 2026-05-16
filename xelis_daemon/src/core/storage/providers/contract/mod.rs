@@ -28,7 +28,7 @@ pub use event_callback::*;
 pub type VersionedContractModule<'a> = Versioned<Option<Cow<'a, ContractModule>>>;
 
 #[async_trait]
-pub trait ContractProvider: ContractDataProvider + ContractLogsProvider + ContractInfoProvider + ContractBalanceProvider + ContractScheduledExecutionProvider + ContractEventCallbackProvider {
+pub trait ContractProvider: ContractDataProvider + ContractLogsProvider + for<'ty> ContractInfoProvider<'ty> + ContractBalanceProvider + ContractScheduledExecutionProvider + ContractEventCallbackProvider {
     // Deploy a contract
     async fn set_last_contract_to<'a>(&mut self, hash: &Hash, topoheight: TopoHeight, contract: &VersionedContractModule<'a>) -> Result<(), BlockchainError>;
 
