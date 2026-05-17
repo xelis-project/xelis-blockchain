@@ -1,6 +1,7 @@
 mod providers;
 
 use std::collections::{BTreeMap, HashMap};
+use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -50,12 +51,14 @@ pub(crate) struct AccountEntry {
     pub registered_at: Option<TopoHeight>,
 }
 
+#[derive(Clone)]
 pub(crate) struct BlockEntry {
     pub header: Arc<BlockHeader>,
     pub metadata: BlockMetadata,
     pub mergeset: MergeSet,
 }
 
+#[derive(Clone)]
 pub(crate) struct TransactionEntry {
     pub transaction: Arc<Transaction>,
     pub executed_in_block: Option<PooledArc<Hash>>,
@@ -94,8 +97,15 @@ pub(crate) struct BlockMetadata {
 
 pub struct MemoryStorage {
     network: Network,
-    cache: ChainCache,
     concurrency: usize,
+    state: MemoryStorageState,
+    // Snapshot support: active snapshot marker (for RwSnapshotWrapper swap semantics)
+    snapshot: Option<MemoryStorageState>,
+}
+
+// A full clone of MemoryStorage's mutable data fields, used for snapshot/rollback.
+pub struct MemoryStorageState {
+    cache: ChainCache,
     tips: Tips,
 
     accounts: HashMap<PooledArc<PublicKey>, AccountEntry>,
@@ -128,6 +138,26 @@ pub struct MemoryStorage {
     scheduled_executions_per_topoheight: BTreeMap<TopoHeight, HashMap<PooledArc<Hash>, TopoHeight>>,
 }
 
+impl MemoryStorageState {
+    pub fn clone_mut(&mut self) -> Self {
+        Self {
+            cache: self.cache.clone_mut(),
+            tips: self.tips.clone(),
+            accounts: self.accounts.clone(),
+            blocks: self.blocks.clone(),
+            blocks_at_height: self.blocks_at_height.clone(),
+            transactions: self.transactions.clone(),
+            topo_by_hash: self.topo_by_hash.clone(),
+            hash_at_topo: self.hash_at_topo.clone(),
+            topoheight_metadata: self.topoheight_metadata.clone(),
+            assets: self.assets.clone(),
+            contracts: self.contracts.clone(),
+            contract_logs: self.contract_logs.clone(),
+            scheduled_executions_per_topoheight: self.scheduled_executions_per_topoheight.clone(),
+        }
+    }
+}
+
 tid!(MemoryStorage);
 
 impl MemoryStorage {
@@ -135,20 +165,51 @@ impl MemoryStorage {
         Self {
             concurrency,
             network,
-            tips: Tips::default(),
-            cache: ChainCache::default(),
-            blocks: IndexMap::new(),
-            blocks_at_height: BTreeMap::new(),
-            transactions: HashMap::new(),
-            topo_by_hash: HashMap::new(),
-            hash_at_topo: BTreeMap::new(),
-            topoheight_metadata: BTreeMap::new(),
-            assets: HashMap::new(),
-            accounts: HashMap::new(),
-            contracts: HashMap::new(),
-            contract_logs: HashMap::new(),
-            scheduled_executions_per_topoheight: BTreeMap::new(),
+            state: MemoryStorageState {
+                tips: Tips::default(),
+                cache: ChainCache::default(),
+                blocks: IndexMap::new(),
+                blocks_at_height: BTreeMap::new(),
+                transactions: HashMap::new(),
+                topo_by_hash: HashMap::new(),
+                hash_at_topo: BTreeMap::new(),
+                topoheight_metadata: BTreeMap::new(),
+                assets: HashMap::new(),
+                accounts: HashMap::new(),
+                contracts: HashMap::new(),
+                contract_logs: HashMap::new(),
+                scheduled_executions_per_topoheight: BTreeMap::new(),
+            },
+            snapshot: None,
         }
+    }
+}
+
+impl AsRef<MemoryStorageState> for MemoryStorage {
+    fn as_ref(&self) -> &MemoryStorageState {
+        &self.state
+    }
+}
+
+impl AsMut<MemoryStorageState> for MemoryStorage {
+    fn as_mut(&mut self) -> &mut MemoryStorageState {
+        &mut self.state
+    }
+}
+
+impl Deref for MemoryStorage {
+    type Target = MemoryStorageState;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.state
+    }
+}
+
+impl DerefMut for MemoryStorage {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.state
     }
 }
 
