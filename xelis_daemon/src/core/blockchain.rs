@@ -2247,7 +2247,7 @@ impl<S: Storage> Blockchain<S> {
 
         // Compute cumulative difficulty for block
         let (mergeset, _, blue_work) = blockdag::compute_block_mergesets(&*storage, &block_hash, block.get_tips(), difficulty).await?;
-        let cumulative_difficulty = if version >= BlockVersion::V6 {
+        let cumulative_difficulty = if is_v6_enabled {
             blue_work
         } else if let Some(base) = base {
             let (_, cumulative_difficulty) = blockdag::compute_tip_work_score(
