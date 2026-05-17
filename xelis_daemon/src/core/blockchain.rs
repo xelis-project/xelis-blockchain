@@ -3005,6 +3005,17 @@ impl<S: Storage> Blockchain<S> {
             debug!("Storing new tips in storage");
             // Store the new tips available
             storage.store_tips(&tips).await?;
+
+            // Update caches
+            let mut sorted_tips = SortedTips::default();
+            for hash in tips {
+                let cd = storage.get_cumulative_difficulty_for_block_hash(&hash).await?;
+                sorted_tips.insert(hash, cd);
+            }
+            sorted_tips.truncate(MAX_TIPS_IN_CACHE);
+
+            let chain_cache = storage.chain_cache_mut().await?;
+            chain_cache.tips = sorted_tips;
         }
 
         // trace!("Re acquiring storage read lock after ordering for block {}", block_hash);
