@@ -317,21 +317,11 @@ const DEV_NET_HARD_FORKS: [HardFork; 1] = [
 ];
 
 // Mainnet seed nodes
-const MAINNET_SEED_NODES: [&str; 7] = [
+const MAINNET_SEED_NODES: [&str; 2] = [
     // France
     "51.210.117.23:2125",
     // US
     "198.71.55.87:2125",
-    // Germany
-    "162.19.249.100:2125",
-    // Singapore
-    "139.99.89.27:2125",
-    // Poland
-    "51.68.142.141:2125",
-    // Great Britain
-    "51.195.220.137:2125",
-    // "Canada"
-    "66.70.179.137:2125"
 ];
 
 // Testnet seed nodes
