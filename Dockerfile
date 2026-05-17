@@ -27,7 +27,9 @@ RUN cargo chef cook --release --recipe-path recipe.json --bin $app
 
 COPY Cargo.toml Cargo.lock ./
 COPY xelis_common ./xelis_common
-COPY $app ./$app
+COPY xelis_wallet ./xelis_wallet
+COPY xelis_miner ./xelis_miner
+COPY xelis_daemon ./xelis_daemon
 
 RUN XELIS_COMMIT_HASH=${commit_hash} cargo build --release --bin $app
 
