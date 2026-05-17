@@ -1,7 +1,7 @@
 mod apply;
 pub mod provider;
 
-pub use provider::{ChainStateProvider, MempoolProvider, TxVerificationProvider, ReferenceProvider};
+pub use provider::{ChainStateProvider, MempoolProvider, TxVerificationProvider, ReferenceProvider, BalanceSelectorProvider};
 
 use std::{
     borrow::Cow,

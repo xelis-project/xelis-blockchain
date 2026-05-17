@@ -15,7 +15,7 @@ use crate::core::{
     state::search_versioned_balance_for_reference,
     storage::{Storage, VersionedContractBalance, VersionedContractModule, VersionedSupply},
 };
-use super::{ReferenceProvider, TxVerificationProvider, ChainStateProvider};
+use super::{ReferenceProvider, TxVerificationProvider, ChainStateProvider, BalanceSelectorProvider};
 
 #[async_trait]
 impl<S: Storage> ReferenceProvider for S {
@@ -175,5 +175,44 @@ impl<S: Storage> ChainStateProvider for S {
         topoheight: TopoHeight,
     ) -> Result<ScheduledExecution, BlockchainError> {
         self.get_contract_scheduled_execution_at_topoheight(contract, topoheight).await
+    }
+}
+
+#[async_trait]
+impl<S: Storage> BalanceSelectorProvider for S {
+    #[inline(always)]
+    fn is_mainnet(&self) -> bool {
+        self.is_mainnet()
+    }
+
+    #[inline(always)]
+    async fn get_output_balance_in_range(
+        &self,
+        key: &PublicKey,
+        asset: &Hash,
+        min_topoheight: TopoHeight,
+        max_topoheight: TopoHeight,
+    ) -> Result<Option<(TopoHeight, VersionedBalance)>, BlockchainError> {
+        self.get_output_balance_in_range(key, asset, min_topoheight, max_topoheight).await
+    }
+
+    #[inline(always)]
+    async fn get_balance_at_maximum_topoheight(
+        &self,
+        key: &PublicKey,
+        asset: &Hash,
+        topoheight: TopoHeight,
+    ) -> Result<Option<(TopoHeight, VersionedBalance)>, BlockchainError> {
+        self.get_balance_at_maximum_topoheight(key, asset, topoheight).await
+    }
+
+    #[inline(always)]
+    async fn get_new_versioned_balance(
+        &self,
+        key: &PublicKey,
+        asset: &Hash,
+        topoheight: TopoHeight,
+    ) -> Result<(VersionedBalance, bool), BlockchainError> {
+        self.get_new_versioned_balance(key, asset, topoheight).await
     }
 }

@@ -8,6 +8,7 @@ pub use chain_state::{
     MempoolProvider,
     TxVerificationProvider,
     ReferenceProvider,
+    BalanceSelectorProvider,
 };
 
 use log::{trace, debug};
@@ -24,7 +25,6 @@ use super::{
     hard_fork,
     blockchain,
     error::BlockchainError,
-    storage::BalanceProvider,
 };
 
 pub use fee::FeeProvider;
@@ -204,7 +204,7 @@ async fn select_best_topoheight_for_reference<P: ReferenceProvider>(storage: &P,
 // - If we should use the output balance for verification
 // - is it a new version created
 // - Versioned Balance to use for verification
-pub (super) async fn search_versioned_balance_for_reference<S: ReferenceProvider + BalanceProvider>(storage: &S, key: &PublicKey, asset: &Hash, current_topoheight: TopoHeight, reference: &Reference, no_new: bool) -> Result<(bool, bool, VersionedBalance), BlockchainError> {
+pub (super) async fn search_versioned_balance_for_reference<S: ReferenceProvider + BalanceSelectorProvider>(storage: &S, key: &PublicKey, asset: &Hash, current_topoheight: TopoHeight, reference: &Reference, no_new: bool) -> Result<(bool, bool, VersionedBalance), BlockchainError> {
     trace!("search versioned balance for {} at topoheight {}, reference: {}", key.as_address(storage.is_mainnet()), current_topoheight, reference.topoheight);
     // Scenario A
     // TX A has reference topo 1000
