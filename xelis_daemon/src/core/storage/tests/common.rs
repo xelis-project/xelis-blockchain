@@ -2001,7 +2001,7 @@ pub async fn test_scheduled_execution_lifecycle<S: Storage>(mut storage: S) -> R
     // Register executions at different registration topoheights, each targeting different execution topoheights
     for (reg_topo, exec_topo) in [(1u64, 10u64), (3, 20), (5, 30), (8, 40)] {
         let execution = ScheduledExecution {
-            hash: Arc::new(Hash::new([253u8 + reg_topo as u8; 32])),
+            hash: Arc::new(Hash::new([1 + reg_topo as u8; 32])),
             contract: contract.clone(),
             kind: ScheduledExecutionKind::TopoHeight(exec_topo),
             params: vec![],
