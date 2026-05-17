@@ -2301,6 +2301,9 @@ impl<S: Storage> Blockchain<S> {
             ).await?;
 
             storage.add_block_execution_to_order(&block_hash).await?;
+            for tx_hash in block.get_txs_hashes() {
+                storage.add_block_linked_to_tx_if_not_present(&tx_hash, &block_hash).await?;
+            }
 
             histogram!("xelis_block_store_ms").record(start.elapsed().as_millis() as f64);
             debug!("Block {} saved on disk", block_hash);
@@ -2827,15 +2830,6 @@ impl<S: Storage> Blockchain<S> {
                         events.entry(NotifyEvent::NewTopoHeight)
                             .or_insert_with(Vec::new)
                             .push(value);
-                    }
-                }
-
-                // If block is directly orphaned
-                // Mark all TXs ourself as linked to it
-                if !block_is_ordered {
-                    debug!("Block {} is orphaned, marking all TXs as linked to it", block_hash);
-                    for tx_hash in block.get_txs_hashes() {
-                        storage.add_block_linked_to_tx_if_not_present(&tx_hash, &block_hash).await?;
                     }
                 }
 
