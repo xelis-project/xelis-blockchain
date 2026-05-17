@@ -162,10 +162,12 @@ pub fn scalar_to_bytes(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _:
     Ok(SysCallResult::Return(ValueCell::Bytes(bytes).into()))
 }
 
-pub fn scalar_hash_from_bytes(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn scalar_hash_from_bytes(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let bytes = params[0]
         .as_ref()
         .as_bytes()?;
+
+    context.increase_gas_usage(bytes.len() as u64 * 5)?;
 
     let scalar = Scalar::hash_from_bytes::<Sha3_512>(&bytes);
     Ok(SysCallResult::Return(OpaqueScalar(scalar).into()))
