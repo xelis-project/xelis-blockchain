@@ -403,7 +403,7 @@ async fn apply_config(config: Config, wallet: &Arc<Wallet>, #[cfg(feature = "xsw
         }
     }
 
-    wallet.set_history_scan(!config.disable_history_scan);
+    wallet.set_history_scan(config.history_scan_mode);
     wallet.set_stable_balance(config.force_stable_balance);
 
     #[cfg(feature = "api_server")]

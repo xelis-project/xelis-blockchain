@@ -4,22 +4,25 @@ use argon2::{Params, Argon2, Algorithm, Version};
 use lazy_static::lazy_static;
 use log::info;
 use serde::{Deserialize, Serialize};
-#[cfg(feature = "cli")]
-use clap::Parser;
 use xelis_common::{
     config::VERSION,
     crypto::ecdlp,
     network::Network,
     utils::detect_available_parallelism
 };
-
 #[cfg(feature = "cli")]
-use xelis_common::prompt::{
-    default_logs_datetime_format,
-    LogLevel,
-    ModuleConfig
+use {
+    clap::Parser,
+    xelis_common::prompt::{
+        default_logs_datetime_format,
+        LogLevel,
+        ModuleConfig
+    }
 };
-use crate::precomputed_tables;
+use crate::{
+    precomputed_tables,
+    wallet::HistoryScanMode
+};
 
 pub const DIR_PATH: &str = "wallets/";
 pub const XSWD_BIND_ADDRESS: &str = "0.0.0.0:44325";
@@ -39,7 +42,6 @@ lazy_static! {
         Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
     };
 }
-
 
 // This struct is used to configure the RPC Server
 // In case we want to enable it instead of starting
@@ -218,12 +220,12 @@ pub struct Config {
     #[clap(long)]
     #[serde(default)]
     pub enable_xswd: bool,
-    /// Disable the history scan
+    /// Set the history scan mode
     /// This will prevent syncing old TXs/blocks
     /// Only blocks / transactions caught by the network handler will be stored, not the old ones
     #[clap(long)]
     #[serde(default)]
-    pub disable_history_scan: bool,
+    pub history_scan_mode: HistoryScanMode,
     /// Force the wallet to use a stable balance only during transactions creation.
     /// This will prevent the wallet to use unstable balance and prevent any orphaned transaction due to DAG reorg.
     /// This is only working if the wallet is in online mode.

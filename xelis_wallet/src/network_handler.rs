@@ -269,7 +269,7 @@ impl NetworkHandler {
         let mut assets_changed = HashSet::new();
         // Miner address to verify if we mined the block
         let miner = block.miner.into_owned().to_public_key();
-        let should_scan_history = self.wallet.get_history_scan();
+        let scan_mode = self.wallet.get_history_scan();
 
         // Prevent storing changes multiple times
         let mut changes_stored = false;
@@ -280,7 +280,7 @@ impl NetworkHandler {
             if let Some(reward) = block.metadata.map(|m| m.miner_reward) {
                 assets_changed.insert(XELIS_ASSET);
                 
-                if should_scan_history {
+                if scan_mode.coinbase() {
                     let coinbase = EntryData::Coinbase { reward };
                     let entry = TransactionEntry::new(block_hash.clone(), topoheight, block.timestamp, coinbase);
 
@@ -370,7 +370,7 @@ impl NetworkHandler {
                                 let asset = transfer.asset.into_owned();
                                 assets_changed.insert(asset.clone());
 
-                                if !should_scan_history {
+                                if !scan_mode.all() {
                                     continue;
                                 }
 
@@ -456,7 +456,7 @@ impl NetworkHandler {
                             for (asset, deposit) in payload.deposits.0 {
                                 assets_changed.insert(asset.clone());
 
-                                if !should_scan_history {
+                                if !scan_mode.all() {
                                     continue;
                                 }
 
@@ -496,7 +496,7 @@ impl NetworkHandler {
                                 for (asset, deposit) in invoke.deposits.0 {
                                     assets_changed.insert(asset.clone());
 
-                                    if !should_scan_history {
+                                    if !scan_mode.all() {
                                         continue;
                                     }
 
@@ -560,7 +560,7 @@ impl NetworkHandler {
                     }
                 };
 
-                let entry = if let Some(entry) = entry.filter(|_| should_scan_history) {
+                let entry = if let Some(entry) = entry.filter(|_| scan_mode.all()) {
                     // Transaction found at which topoheight it was executed
                     let mut tx_topoheight = topoheight;
                     let mut tx_timestamp = block.timestamp;
@@ -673,7 +673,7 @@ impl NetworkHandler {
             }
         }
 
-        if (!changes_stored && should_scan_history) || assets_changed.is_empty() {
+        if (!changes_stored && !scan_mode.none()) || assets_changed.is_empty() {
             debug!("No changes found in block {} at topoheight {}, assets: {}, changes stored: {}", block_hash, topoheight, assets_changed.len(), changes_stored);
             Ok(None)
         } else {
@@ -1419,7 +1419,7 @@ impl NetworkHandler {
 
         // we have something that changed, sync transactions
         // prevent a double sync head state if history scan is disabled
-        if sync_new_blocks && self.wallet.get_history_scan() {
+        if sync_new_blocks && self.wallet.get_history_scan().all() {
             // We have to loop until we are fully synced
             // Because we have a fast block time, and the wallet can be on a low-end device.
             // if the sync new blocks function takes too long, it will skip the blocks between

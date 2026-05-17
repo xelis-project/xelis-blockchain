@@ -1,7 +1,7 @@
 use std::{
     io::Write,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU8, Ordering},
         Arc
     },
     borrow::Cow
@@ -19,7 +19,7 @@ use log::{
 };
 use anyhow::{Error, Context};
 use chrono::TimeZone;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use xelis_common::{
     api::{
         wallet::*,
@@ -219,6 +219,45 @@ impl Event {
     }
 }
 
+/// History scan mode for the wallet
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum), clap(rename_all = "snake_case"))]
+#[repr(u8)]
+pub enum HistoryScanMode {
+    None = 0,
+    #[default]
+    All = 1,
+    Coinbase = 2
+}
+
+impl HistoryScanMode {
+    pub fn all(&self) -> bool {
+        matches!(self, HistoryScanMode::All)
+    }
+
+    pub fn none(&self) -> bool {
+        matches!(self, HistoryScanMode::None)
+    }
+
+    pub fn coinbase(&self) -> bool {
+        matches!(self, HistoryScanMode::Coinbase | HistoryScanMode::All)
+    }
+}
+
+impl TryFrom<u8> for HistoryScanMode {
+    type Error = &'static str;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(HistoryScanMode::None),
+            1 => Ok(HistoryScanMode::All),
+            2 => Ok(HistoryScanMode::Coinbase),
+            _ => Err("Unknown history scan mode")
+        }
+    }
+}
+
 // Wallet structure
 // It holds the encrypted storage and the account keys
 // It also holds the network handler to keep the wallet synced in online mode
@@ -246,7 +285,7 @@ pub struct Wallet {
     event_broadcaster: Mutex<Option<broadcast::Sender<Event>>>,
     // If the wallet should scan also blocks and transactions history
     // Set to true by default
-    history_scan: AtomicBool,
+    history_scan: AtomicU8,
     // flag to prioritize the usage of stable balance version when its online
     force_stable_balance: AtomicBool,
     // Concurrency to use across the wallet
@@ -347,7 +386,7 @@ impl Wallet {
             #[cfg(feature = "xswd")]
             xswd_relayer: Mutex::new(None),
             event_broadcaster: Mutex::new(None),
-            history_scan: AtomicBool::new(true),
+            history_scan: AtomicU8::new(HistoryScanMode::All as u8),
             force_stable_balance: AtomicBool::new(false),
             account: Account::new(precomputed_tables, keypair, n_threads),
             concurrency,
@@ -528,13 +567,15 @@ impl Wallet {
 
     // Disable/enable the history scan
     // This is used by the network handler to avoid scanning history if requested
-    pub fn set_history_scan(&self, value: bool) {
-        self.history_scan.store(value, Ordering::SeqCst);
+    pub fn set_history_scan(&self, value: HistoryScanMode) {
+        self.history_scan.store(value as u8, Ordering::SeqCst);
     }
 
     // Get the history scan flag
-    pub fn get_history_scan(&self) -> bool {
+    pub fn get_history_scan(&self) -> HistoryScanMode {
         self.history_scan.load(Ordering::SeqCst)
+            .try_into()
+            .expect("Invalid value for history scan mode")
     }
 
     // Disable/enable the stable balance flag
