@@ -821,7 +821,7 @@ impl<'s, 'b, P: ApplicableChainStateProvider> ApplicableChainState<'s, 'b, P> {
     // This function is called after the verification of all needed transactions
     // This will consume ChainState and apply all changes to the storage
     // In case of incoming and outgoing transactions in same state, the final balance will be computed
-    pub async fn finalize(mut self) -> Result<FinalizedChainState<'b>, BlockchainError> {
+    pub async fn finalize(mut self, past_emitted_supply: u64, block_reward: u64) -> Result<FinalizedChainState<'b>, BlockchainError> {
         trace!("apply changes");
 
         // Copy the value to prevent immutable borrow
@@ -843,6 +843,8 @@ impl<'s, 'b, P: ApplicableChainStateProvider> ApplicableChainState<'s, 'b, P> {
             topoheight: self.inner.topoheight,
             contracts: self.inner.contracts,
             block_version: self.inner.block_version,
+            past_emitted_supply,
+            block_reward,
         })
     }
 }

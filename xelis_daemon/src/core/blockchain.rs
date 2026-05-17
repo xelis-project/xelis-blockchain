@@ -2483,9 +2483,9 @@ impl<S: Storage> Blockchain<S> {
                         continue;
                     }
                     dag_is_overwritten = true;
-    
+
                     trace!("Ordering block {} at topoheight {}", hash, highest_topo);
-    
+
                     let past_emitted_supply = if highest_topo == 0 {
                         0
                     } else {
@@ -2568,7 +2568,6 @@ impl<S: Storage> Blockchain<S> {
     
                     // compute rewards & execute txs
                     for (tx, tx_hash) in block.get_transactions().iter().zip(block.get_txs_hashes()) { // execute all txs
-                        
                         // Link the transaction hash to this block
                         // If the TX was already executed in chain state, we can skip it
                         // If its a contract invocation, we pass the contract so we can link it for easier lookup
@@ -2589,7 +2588,7 @@ impl<S: Storage> Blockchain<S> {
                                 orphaned_transactions.insert(tx_hash.clone());
                                 continue;
                             }
-    
+
                             let start = Instant::now();
                             // Execute the transaction by applying changes in storage
                             debug!("Executing tx {} in block {} with nonce {}", tx_hash, hash, tx.get_nonce());
@@ -2672,10 +2671,10 @@ impl<S: Storage> Blockchain<S> {
                             }
                         }
                     }
-    
+
                     // Execute all the scheduled executions for the block end
                     chain_state.process_executions_at_block_end().await?;
-    
+
                     let dev_fee_percentage = get_block_dev_fee(block.get_height());
                     // Dev fee are only applied on block reward
                     // Transaction fees are not affected by dev fee
@@ -2685,7 +2684,7 @@ impl<S: Storage> Blockchain<S> {
                         chain_state.reward_miner(&DEV_PUBLIC_KEY, dev_fee_part).await?;
                         miner_reward -= dev_fee_part;    
                     }
-    
+
                     // reward the miner
                     // Miner gets the block reward + total fees + gas fee
                     let gas_fee = chain_state.get_gas_fee();
@@ -2792,17 +2791,17 @@ impl<S: Storage> Blockchain<S> {
     
                         debug!("Processed contracts events in {}ms", start.elapsed().as_millis());
                     }
-    
+
                     // apply changes from Chain State
-                    let finalizer = chain_state.finalize().await?;
-    
+                    let finalizer = chain_state.finalize(past_emitted_supply, block_reward).await?;
+
                     // drop(storage);
                     // trace!("Re acquiring storage write lock to apply changes for block {}", hash);
                     // let mut storage = holder.write().await?;
                     // trace!("Storage write lock acquired to apply changes for block {}", hash);
-    
-                    finalizer.apply_changes(&mut *storage, past_emitted_supply, block_reward).await?;
-    
+
+                    finalizer.apply_changes(&mut *storage).await?;
+
                     if should_track_events.contains(&NotifyEvent::BlockOrdered) {
                         let value = json!(BlockOrderedEvent {
                             block_hash: Cow::Borrowed(&hash),

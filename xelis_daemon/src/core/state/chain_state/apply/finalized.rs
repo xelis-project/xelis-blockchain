@@ -53,15 +53,15 @@ pub struct FinalizedChainState<'b> {
     pub contracts: HashMap<Cow<'b, Hash>, Option<(VersionedState, Option<Cow<'b, ContractModule>>)>>,
     // Block header version
     pub block_version: BlockVersion,
+    // Block reward for this current block
+    pub block_reward: u64,
+    // Emitted supply in previous block
+    // so we can compute the new emitted supply with the block reward and update it in the metadata
+    pub past_emitted_supply: u64,
 }
 
 impl<'a> FinalizedChainState<'a> {
-    pub async fn apply_changes<S: Storage>(
-        mut self,
-        storage: &mut S,
-        past_emitted_supply: u64,
-        block_reward: u64,
-    ) -> Result<(), BlockchainError> {
+    pub async fn apply_changes<S: Storage>(mut self, storage: &mut S) -> Result<(), BlockchainError> {
         trace!("apply finalized changes");
 
         // Set the topoheight for the block
@@ -359,10 +359,9 @@ impl<'a> FinalizedChainState<'a> {
 
         // Finally, update the topoheight metadata
         debug!("updating topoheight metadata to {}", self.topoheight);
-        let emitted_supply = past_emitted_supply + block_reward;
         let metadata = TopoHeightMetadata {
-            block_reward,
-            emitted_supply,
+            block_reward: self.block_reward,
+            emitted_supply: self.block_reward + self.past_emitted_supply,
             total_fees: self.total_fees,
             total_fees_burned: self.total_fees_burned,
             is_side_block: self.is_side_block,
