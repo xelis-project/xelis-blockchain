@@ -38,7 +38,7 @@ use crate::{
         error::BlockchainError,
         storage::{
             Storage,
-            snapshot::{SnapshotWrapper, StorageHolder},
+            snapshot::{RwSnapshotWrapper, StorageHolder},
         }
     },
     p2p::{
@@ -414,7 +414,7 @@ impl<S: Storage> P2pServer<S> {
     // This may be faster, but we would use slightly more bandwidth
     // NOTE: ChainValidator must check the block hash and not trust it
     // as we are giving it the chain directly to prevent a re-compute
-    async fn handle_blocks_from_chain_validator(&self, peer: &Arc<Peer>, chain_validator: ChainValidator<'_, S>, snapshot: &SnapshotWrapper<'_, S>) -> Result<(), BlockchainError> {
+    async fn handle_blocks_from_chain_validator(&self, peer: &Arc<Peer>, chain_validator: ChainValidator<'_, S>, snapshot: &RwSnapshotWrapper<'_, S>) -> Result<(), BlockchainError> {
         // now retrieve all txs from all blocks header and add block in chain
 
         let capacity = if self.allow_boost_sync() {
@@ -502,7 +502,7 @@ impl<S: Storage> P2pServer<S> {
 
     // Handle the chain validator by rewinding our current chain first
     // This should only be called with a commit point enabled
-    async fn handle_chain_validator_with_rewind(&self, peer: &Arc<Peer>, pop_count: u64, chain_validator: ChainValidator<'_, S>, snapshot: &SnapshotWrapper<'_, S>) -> Result<(Vec<(Arc<Hash>, Arc<Transaction>)>, Result<(), BlockchainError>), BlockchainError> {
+    async fn handle_chain_validator_with_rewind(&self, peer: &Arc<Peer>, pop_count: u64, chain_validator: ChainValidator<'_, S>, snapshot: &RwSnapshotWrapper<'_, S>) -> Result<(Vec<(Arc<Hash>, Arc<Transaction>)>, Result<(), BlockchainError>), BlockchainError> {
         // peer chain looks correct, lets rewind our chain
         warn!("Rewinding chain because of {} (pop count: {})", peer, pop_count);
         let (topoheight, txs) = {
@@ -648,7 +648,7 @@ impl<S: Storage> P2pServer<S> {
 
                 {
                     info!("Starting commit point for chain validator");
-                    let storage = SnapshotWrapper::new(self.blockchain.get_storage());
+                    let storage = RwSnapshotWrapper::new(self.blockchain.get_storage());
                     let mut res = self.handle_chain_validator_with_rewind(peer, pop_count, chain_validator, &storage).await;
 
                     info!("Ending commit point for chain validator");

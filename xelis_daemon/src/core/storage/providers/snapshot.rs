@@ -12,7 +12,8 @@ pub trait SnapshotProvider {
 
     // Start a commit point
     // This is useful to do some operations before applying the batch
-    async fn start_snapshot(&mut self) -> Result<(), BlockchainError>;
+    // If a snapshot exists, it will fork it and returns the previous one.
+    async fn start_snapshot(&mut self) -> Result<Option<Snapshot<Self::Column>>, BlockchainError>;
 
     // Apply the batch to the storage
     async fn end_snapshot(&mut self, apply: bool) -> Result<(), BlockchainError>;

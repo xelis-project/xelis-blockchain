@@ -19,14 +19,17 @@ impl SnapshotProvider for RocksStorage {
         Ok(self.snapshot.is_some())
     }
 
-    async fn start_snapshot(&mut self) -> Result<(), BlockchainError> {
+    async fn start_snapshot(&mut self) -> Result<Option<Snapshot>, BlockchainError> {
         trace!("start snapshot");
-        if self.snapshot.is_some() {
-            return Err(BlockchainError::CommitPointAlreadyStarted);
+        let previous_snapshot = self.snapshot.clone();
+
+        if previous_snapshot.is_none() {
+            trace!("Creating new snapshot");
+            let snapshot = Snapshot::new(self.cache.clone_mut());
+            self.snapshot = Some(snapshot);
         }
 
-        self.snapshot = Some(Snapshot::new(self.cache.clone_mut()));
-        Ok(())
+        Ok(previous_snapshot)
     }
 
     async fn end_snapshot(&mut self, apply: bool) -> Result<(), BlockchainError> {

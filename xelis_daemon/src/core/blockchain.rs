@@ -2394,6 +2394,7 @@ impl<S: Storage> Blockchain<S> {
                 let mut skipped = 0;
                 // detect which part of DAG reorg stay, for other part, undo all executed txs
                 debug!("Detecting stable point of DAG and cleaning txs above it");
+                let mut storage = snapshot::SnapshotWrapper::new(&mut *storage).await?; 
                 {
                     // trace!("Acquiring storage write lock to clean transactions above stable point");
                     // let mut storage = holder.write().await?;
@@ -2821,6 +2822,12 @@ impl<S: Storage> Blockchain<S> {
                 // Record metrics
                 counter!("xelis_txs_executed").increment(total_txs_executed as u64);
                 histogram!("xelis_txs_execution_ms").record(elapsed.as_millis() as f64);
+
+                let apply_start = Instant::now();
+                // Now, apply on the real storage all the changes
+                storage.apply().await?;
+
+                debug!("Applied DAG reorganization changes in {}ms ({} ms apply)", start.elapsed().as_millis(), apply_start.elapsed().as_millis());
                 histogram!("xelis_dag_ordering_ms").record(start.elapsed().as_millis() as f64);
             }
 
