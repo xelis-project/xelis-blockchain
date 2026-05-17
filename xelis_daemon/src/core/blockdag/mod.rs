@@ -411,17 +411,17 @@ where
 // Check if all tips have a common base at or above stable height limit,
 // which means they have forked and merged again in the last STABLE_LIMIT blocks
 // This prevents too deep/big reorgs
-pub async fn find_common_base_at_or_above_stable_height<'a, P, I>(provider: &P, tips: I, block_height: u64, version: BlockVersion) -> Result<Option<(Hash, u64)>, BlockchainError>
+pub async fn find_common_dominator_at_or_above_height<'a, P, I>(
+    provider: &P,
+    tips: I,
+    highest_tip_height: u64,
+    min_height: u64,
+    descending: bool
+) -> Result<Option<(Hash, u64)>, BlockchainError>
 where
     P: DifficultyProvider + ConcurrencyProvider,
     I: Iterator<Item = &'a Hash> + Send + Sync,
 {
-    let stable_limit = get_stable_limit(version);
-    // Because block height is calculated as max tip height + 1, the highest tip height is block_height - 1
-    let highest_tip_height = block_height.saturating_sub(1);
-    // min_height = highest_tip_height - stable_limit, if highest_tip_height >= stable_limit, otherwise 0
-    let min_height = highest_tip_height.saturating_sub(stable_limit);
-
     // For each tip, collect ancestors reachable within the height window,
     // and also record each block's parents (restricted to the window) for
     // the bypass check.
@@ -454,8 +454,6 @@ where
         .try_collect::<Vec<_>>().await?;
 
     // Find all common ancestors above the search floor.
-    // Because the BFS never adds blocks at/below min_height to visited,
-    // every entry in the intersection is already above the floor.
     // If the intersection is empty, the dominator is at or below the floor.
     let (first, rest) = match ancestor_sets.split_first() {
         Some(pair) => pair,
@@ -465,7 +463,7 @@ where
     let mut common = Vec::new();
     for hash in first.iter().filter(|h| rest.iter().all(|s| s.contains(*h))) {
         let height = provider.get_height_for_block_hash(hash).await?;
-        if highest_tip_height.saturating_sub(height) < stable_limit {
+        if height >= min_height && height <= highest_tip_height {
             common.push((hash.clone(), height));
         }
     }
@@ -474,8 +472,11 @@ where
         return Ok(None)
     }
 
-    // Sort by height descending (we want the highest dominator)
-    common.sort_by(|a, b| b.1.cmp(&a.1));
+    // Sort by height ascending
+    common.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+    if descending {
+        common.reverse();
+    }
 
     // For each candidate (highest first), check if it is a true dominator:
     // A candidate C at height h_c is a dominator if no tip can reach any block
@@ -535,6 +536,30 @@ where
     }
 
     Ok(None)
+}
+
+pub async fn find_common_base_at_or_above_stable_height<'a, P, I>(provider: &P, tips: I, block_height: u64, version: BlockVersion) -> Result<Option<(Hash, u64)>, BlockchainError>
+where
+    P: DifficultyProvider + ConcurrencyProvider,
+    I: Iterator<Item = &'a Hash> + Send + Sync,
+{
+    let highest_tip_height = block_height.saturating_sub(1);
+    let min_height = highest_tip_height.saturating_sub(get_stable_limit(version).saturating_sub(1));
+
+    find_common_dominator_at_or_above_height(provider, tips, highest_tip_height, min_height, true).await
+}
+
+pub async fn find_daa_common_base<'a, P, I>(provider: &P, tips: I, block_height: u64, version: BlockVersion) -> Result<(Hash, u64), BlockchainError>
+where
+    P: DifficultyProvider + ConcurrencyProvider,
+    I: Iterator<Item = &'a Hash> + Send + Sync,
+{
+    let highest_tip_height = block_height.saturating_sub(1);
+    let min_height = highest_tip_height.saturating_sub(get_stable_limit(version));
+
+    find_common_dominator_at_or_above_height(provider, tips, highest_tip_height, min_height, false)
+        .await?
+        .ok_or(BlockchainError::TipsCommonBaseTooFar)
 }
 
 // find the common base (block hash and block height) of all tips
@@ -632,7 +657,7 @@ where
     P: DifficultyProvider + DagOrderProvider + ConcurrencyProvider,
     I: Iterator<Item = Hash> + ExactSizeIterator + Send + Sync,
 {
-    let order = generate_full_order::<_, _, LinkedHashSet<_>>(provider, tips, base, base_topoheight).await?;
+    let order = generate_full_order::<_, _, LinkedHashSet<_>>(provider, tips, base, Some(base_topoheight)).await?;
 
     let mut highest_topo = base_topoheight;
     for hash in order.into_iter().skip(1) {
@@ -922,7 +947,7 @@ where
 // first hash in order is the base hash
 // Hashes is expected to be sorted by cumulative difficulty / blue work descending
 // base_height is only used for the cache key
-pub async fn generate_full_order<P, I, S>(provider: &P, hashes: I, base: &Hash, base_topo_height: TopoHeight) -> Result<S, BlockchainError>
+pub async fn generate_full_order<P, I, S>(provider: &P, hashes: I, base: &Hash, base_topo_height: impl Into<Option<TopoHeight>>) -> Result<S, BlockchainError>
 where
     P: DifficultyProvider + DagOrderProvider + ConcurrencyProvider,
     I: Iterator<Item = Hash> + ExactSizeIterator,
@@ -932,6 +957,8 @@ where
     if hashes.len() == 0 {
         return Err(BlockchainError::ExpectedTips)
     }
+
+    let base_topo_height = base_topo_height.into();
 
     // Full order that is generated
     let mut full_order = S::default();
@@ -960,26 +987,29 @@ where
             continue 'main;
         }
 
-        // TODO: we can optimize it more by fully deleting it once the others optimizations are done
-        let scores = stream::iter(block_tips.iter())
-            .map(|tip_hash| async move {
-                let is_ordered = provider.is_block_topological_ordered(tip_hash).await?;
-                Ok::<_, BlockchainError>(if !is_ordered || provider.get_topo_height_for_hash(tip_hash).await? >= base_topo_height {
-                    Some(tip_hash.clone())
-                } else {
-                    None
-                })
-            })
-            .buffered(provider.concurrency())
-            .filter_map(|x| ready(x.transpose()))
-            .boxed()
-            .try_collect::<Vec<_>>().await?;
-
         stack.push_back(current_hash);
 
-        // We don't have to sort the tips here because when a block is added
-        // to the ledger, we already verify that its tips are sorted by cumulative difficulty / blue work descending
-        stack.extend(scores.into_iter().rev());
+        if let Some(base_topo_height) = base_topo_height {
+            let mut scores = stream::iter(block_tips.iter().rev())
+                .map(|tip_hash| async move {
+                    let is_ordered = provider.is_block_topological_ordered(tip_hash).await?;
+                    Ok::<_, BlockchainError>(if !is_ordered || provider.get_topo_height_for_hash(tip_hash).await? >= base_topo_height {
+                        Some(tip_hash.clone())
+                    } else {
+                        None
+                    })
+                })
+                .buffered(provider.concurrency())
+                .filter_map(|x| ready(x.transpose()))
+                .boxed();
+
+            while let Some(res) = scores.next().await {
+                let hash = res?;
+                stack.push_back(hash);
+            }
+        } else {
+            stack.extend(block_tips.iter().rev().cloned());
+        }
     }
 
     Ok(full_order)
@@ -998,7 +1028,7 @@ pub async fn validate_tips<P: DifficultyProvider>(provider: &P, best_tip: &Hash,
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::{collections::HashMap, iter};
     use std::sync::Arc;
 
     use indexmap::IndexSet;
@@ -1409,6 +1439,48 @@ mod tests {
         let tips: IndexSet<Hash> = vec![a_prev.clone(), b_prev.clone()].into_iter().collect();
         assert!(find_common_base_at_or_above_stable_height(&storage, tips.iter(), 26, BlockVersion::V6).await.unwrap().is_none(),
             "dominator at genesis (height 0) with span 25 must be rejected");
+    }
+
+    // Empty iterator: ancestor_sets is empty, split_first returns None → Ok(None).
+    #[tokio::test]
+    async fn test_find_common_dominator_empty_tips() {
+        let storage = MemoryStorage::new(Network::Devnet, 1);
+        let result = find_common_base_at_or_above_stable_height(
+            &storage,
+            iter::empty(),
+            10,
+            BlockVersion::V6,
+        )
+        .await
+        .unwrap();
+        assert!(result.is_none(), "empty tips must return None");
+    }
+
+    // Single tip: rest is empty, so every ancestor is vacuously common.
+    // The tip itself is within the window (span = 0 < stable_limit) and is
+    // a trivial dominator → Ok(Some(tip, height)).
+    #[tokio::test]
+    async fn test_find_common_dominator_single_tip() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+        let genesis = h(170);
+        let tip = h(171);
+
+        add_block(&mut storage, genesis.clone(), 0, 0, vec![], 1, 1, BlockVersion::V6, Some(0)).await;
+        add_block(&mut storage, tip.clone(), 1, 1, vec![genesis.clone()], 1, 2, BlockVersion::V6, None).await;
+
+        // block_height = 2, so highest_tip_height = 1 = tip's height; span = 0 < 24
+        let result = find_common_base_at_or_above_stable_height(
+            &storage,
+            std::iter::once(&tip),
+            2,
+            BlockVersion::V6,
+        )
+        .await
+        .unwrap();
+        assert!(result.is_some(), "single tip should always find itself as dominator");
+        let (dom_hash, dom_height) = result.unwrap();
+        assert_eq!(dom_hash, tip);
+        assert_eq!(dom_height, 1);
     }
 
     #[tokio::test]

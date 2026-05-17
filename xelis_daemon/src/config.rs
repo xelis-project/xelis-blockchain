@@ -63,9 +63,6 @@ pub const PRUNE_SAFETY_LIMIT: u64 = 80;
 pub const STABLE_LIMIT: u64 = 8;
 // Maximum height difference allowed between a block and its tips
 pub const MAX_TIP_HEIGHT_DIFFERENCE: u64 = 8;
-// DAA window size
-// Number of blocks to consider for difficulty adjustment algorithm
-pub const DAA_WINDOW: u64 = 50;
 // Maximum number of tips to keep in cache
 pub const MAX_TIPS_IN_CACHE: usize = u8::MAX as usize;
 

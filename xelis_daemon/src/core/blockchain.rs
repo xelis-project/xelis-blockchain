@@ -93,7 +93,7 @@ use crate::{
         MILLIS_PER_SECOND, SIDE_BLOCK_REWARD_MAX_BLOCKS, PRUNE_SAFETY_LIMIT,
         SIDE_BLOCK_REWARD_PERCENT, SIDE_BLOCK_REWARD_MIN_PERCENT,
         TIMESTAMP_IN_FUTURE_LIMIT, CHAIN_AVERAGE_BLOCK_TIME_N,
-        MAX_TIP_HEIGHT_DIFFERENCE, DAA_WINDOW, MAX_TIPS_IN_CACHE
+        MAX_TIP_HEIGHT_DIFFERENCE, MAX_TIPS_IN_CACHE,
     },
     core::{
         hard_fork,
@@ -1002,59 +1002,50 @@ impl<S: Storage> Blockchain<S> {
             }
         }
 
-        let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(provider, tips.clone().into_iter()).await?;
-        let biggest_difficulty = provider.get_difficulty_for_block_hash(best_tip).await?;
-        let p = provider.get_estimated_covariance_for_block_hash(best_tip).await?;
-
         // Get the minimum difficulty configured
         let minimum_difficulty = difficulty::get_minimum_difficulty(self.get_network(), version);
 
-        let solve_time = if version >= BlockVersion::V6 {
-            let (base, _) = blockdag::find_common_base(provider, tips.clone(), version).await?;
-            let base_topo_height = provider.get_topo_height_for_hash(&base).await?;
-
-            let order = blockdag::generate_full_order::<_, _, IndexSet<Hash>>(provider, tips.clone().into_iter().cloned(), &base, base_topo_height).await?;
+        let (difficulty, p_new) = if version >= BlockVersion::V6 {
+            let (base, _) = blockdag::find_daa_common_base(provider, tips.clone(), height, version).await?;
+            let order = blockdag::generate_full_order::<_, _, IndexSet<Hash>>(provider, tips.clone().into_iter().cloned(), &base, None).await?;
             debug_assert_eq!(order.first(), Some(&base));
 
-            let order_len = order.len();
-            let last_topoheight = base_topo_height + order_len as u64;
+            // order[0] is the common base. order[1] is the first observed block,
+            // whose metadata stores the DAA state used to mine it. Start there,
+            // then replay each observed block once to get the state for the next block.
+            let state_block = order.get_index(1)
+                .ok_or(BlockchainError::NotEnoughBlocks)?;
 
-            // Take the newest 50 blocks from the order
-            let (first, last) = if (order_len as u64) < DAA_WINDOW {
-                // Extend backwards via topoheight
-                let diff = DAA_WINDOW - order_len as u64;
-                let first_topoheight = base_topo_height.saturating_sub(diff);
-                let first = Cow::Owned(provider.get_hash_at_topo_height(first_topoheight).await?);
-                let last = order.last().ok_or(BlockchainError::NotEnoughBlocks)?;
-                (first, last)
-            } else {
-                // Take last 50 blocks: from index (len - 50) to (len - 1)
-                // TODO: in the full order generation, pass a param to directly generate the last 50 blocks to avoid generating the full order
-                let start_idx = order_len - DAA_WINDOW as usize;
-                let first = order.get_index(start_idx)
-                    .map(Cow::Borrowed)
-                    .ok_or(BlockchainError::NotEnoughBlocks)?;
-                let last = order.last().ok_or(BlockchainError::NotEnoughBlocks)?;
-                (first, last)
-            };
+            let state_difficulty = provider.get_difficulty_for_block_hash(state_block).await?;
+            let p = provider.get_estimated_covariance_for_block_hash(state_block).await?;
 
-            let first_timestamp = provider.get_timestamp_for_block_hash(&first).await?;
-            let last_timestamp = provider.get_timestamp_for_block_hash(last).await?;
+            let first_timestamp = provider.get_timestamp_for_block_hash(&base).await?;
+            let mut observed_work = Difficulty::zero();
+            let observed_count = (order.len() - 1) as u64;
 
-            let time_span = last_timestamp.saturating_sub(first_timestamp);
-            let mut count = DAA_WINDOW;
-            if last_topoheight < DAA_WINDOW {
-                count = last_topoheight;
+            for hash in order.iter().skip(1) {
+                observed_work += provider.get_difficulty_for_block_hash(hash).await?;
             }
 
-            // Divide by (count - 1) because count blocks span count-1 intervals.
-            let solve_time = time_span / (count.saturating_sub(1)).max(1);
+            let last = order.last()
+                .ok_or(BlockchainError::NotEnoughBlocks)?;
 
-            trace!("Calculated solve time is {} between first {} and last {} (intervals: {})", solve_time, first, last, (count - 1).max(1));
+            let newest_timestamp = provider.get_timestamp_for_block_hash(last).await?;
 
-            solve_time
+            let time_span = newest_timestamp
+                .saturating_sub(first_timestamp)
+                .max(observed_count);
+            let observed_hashrate = (observed_work * MILLIS_PER_SECOND / time_span).max(VarUint::one());
+
+            info!("Calculated V6 observed hashrate {} from base {} (blocks: {}, work: {}, time: {}ms)", observed_hashrate, base, observed_count, observed_work, time_span);
+
+            let block_time_target = get_block_time_target_for_version(version);
+            difficulty::v3::calculate_difficulty(observed_hashrate, state_difficulty, p, minimum_difficulty, block_time_target, observed_count)
         } else {
             // Search the highest difficulty available
+            let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(provider, tips.clone().into_iter()).await?;
+            let biggest_difficulty = provider.get_difficulty_for_block_hash(best_tip).await?;
+            let p = provider.get_estimated_covariance_for_block_hash(best_tip).await?;
 
             // Search the newest tip available to determine the real solve time
             let (_, newest_tip_timestamp) = blockdag::find_newest_tip_by_timestamp(provider, tips.clone().into_iter()).await?;
@@ -1063,16 +1054,16 @@ impl<S: Storage> Blockchain<S> {
             let parent_tips = provider.get_past_blocks_for_block_hash(best_tip).await?;
             let (_, parent_newest_tip_timestamp) = blockdag::find_newest_tip_by_timestamp(provider, parent_tips.iter()).await?;
 
-            newest_tip_timestamp.saturating_sub(parent_newest_tip_timestamp)
-        };
+            let solve_time = newest_tip_timestamp.saturating_sub(parent_newest_tip_timestamp);
 
-        let (difficulty, p_new) = difficulty::calculate_difficulty(
-            solve_time.max(1),
-            biggest_difficulty,
-            p,
-            minimum_difficulty,
-            version
-        );
+            difficulty::calculate_difficulty(
+                solve_time.max(1),
+                biggest_difficulty,
+                p,
+                minimum_difficulty,
+                version
+            )
+        };
 
         let elapsed = start.elapsed();
         trace!("Difficulty calculated in {:?}", elapsed);
