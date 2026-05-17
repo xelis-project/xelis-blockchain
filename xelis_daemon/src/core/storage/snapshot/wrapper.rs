@@ -5,7 +5,6 @@ use xelis_common::tokio::{
 use crate::core::{
     storage::Storage,
     error::BlockchainError,
-    storage::snapshot::Snapshot,
 };
 
 pub enum StorageHolder<'a, S: Storage> {
@@ -114,7 +113,7 @@ impl<'a, S: Storage> StorageHolder<'a, S> {
 
 pub struct SnapshotWrapper<'a, S: Storage> {
     storage: &'a mut S,
-    snapshot: Option<Snapshot<S::Column>>,
+    snapshot: Option<S::Snapshot>,
 }
 
 impl<'a, S: Storage> SnapshotWrapper<'a, S> {
@@ -174,7 +173,7 @@ impl<'a, S: Storage> DerefMut for SnapshotWrapper<'a, S> {
 /// The snapshot is kept internally and swapped in/out on lock/unlock
 pub struct RwSnapshotWrapper<'a, S: Storage> {
     storage: &'a RwLock<S>,
-    snapshot: Mutex<Option<Snapshot<S::Column>>>,
+    snapshot: Mutex<Option<S::Snapshot>>,
 }
 
 impl<'a, S: Storage> RwSnapshotWrapper<'a, S> {
@@ -207,7 +206,7 @@ impl<'a, S: Storage> RwSnapshotWrapper<'a, S> {
 }
 
 pub struct SnapshotGuard<'a, S: Storage> {
-    snapshot: &'a Mutex<Option<Snapshot<S::Column>>>,
+    snapshot: &'a Mutex<Option<S::Snapshot>>,
     guard: RwLockWriteGuard<'a, S>,
 }
 

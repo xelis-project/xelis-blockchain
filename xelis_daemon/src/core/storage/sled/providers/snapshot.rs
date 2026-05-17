@@ -3,7 +3,7 @@ use log::trace;
 use crate::core::{
     error::BlockchainError,
     storage::{
-        sled::{Snapshot, TreeWrapper},
+        sled::Snapshot,
         SledStorage,
         SnapshotProvider
     }
@@ -11,7 +11,7 @@ use crate::core::{
 
 #[async_trait]
 impl SnapshotProvider for SledStorage {
-    type Column = TreeWrapper;
+    type Snapshot = Snapshot;
 
     // Check if we have a commit point already set
     async fn has_snapshot(&self) -> Result<bool, BlockchainError> {

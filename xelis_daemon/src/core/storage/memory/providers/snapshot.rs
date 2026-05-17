@@ -1,27 +1,21 @@
 use async_trait::async_trait;
 use crate::core::{
     error::BlockchainError,
-    storage::{SnapshotProvider, snapshot::Snapshot},
+    storage::{SnapshotProvider, memory::MemoryStorageState},
 };
 use super::super::MemoryStorage;
 
 #[async_trait]
 impl SnapshotProvider for MemoryStorage {
-    type Column = ();
+    type Snapshot = MemoryStorageState;
 
     async fn has_snapshot(&self) -> Result<bool, BlockchainError> {
         Ok(self.snapshot.is_some())
     }
 
-    async fn start_snapshot(&mut self) -> Result<Option<Snapshot<()>>, BlockchainError> {
-        if self.snapshot.is_some() {
-            return Err(BlockchainError::UnsupportedOperation);
-        }
-
-        let snapshot = Snapshot::new(Default::default());
-        self.snapshot = Some(self.state.clone_mut());
-
-        Ok(Some(snapshot))
+    async fn start_snapshot(&mut self) -> Result<Option<Self::Snapshot>, BlockchainError> {
+        let state = self.state.clone_mut();
+        Ok(self.snapshot.replace(state))
     }
 
     async fn end_snapshot(&mut self, apply: bool) -> Result<(), BlockchainError> {
@@ -35,7 +29,7 @@ impl SnapshotProvider for MemoryStorage {
         Ok(())
     }
 
-    fn swap_snapshot(&mut self, _: Option<Snapshot<()>>) -> Result<Option<Snapshot<()>>, BlockchainError> {
-        Err(BlockchainError::UnsupportedOperation)
+    fn swap_snapshot(&mut self, snapshot: Option<Self::Snapshot>) -> Result<Option<Self::Snapshot>, BlockchainError> {
+        Ok(std::mem::replace(&mut self.snapshot, snapshot))
     }
 }

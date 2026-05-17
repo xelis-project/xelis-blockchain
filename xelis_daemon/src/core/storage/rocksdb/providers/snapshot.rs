@@ -3,7 +3,7 @@ use log::trace;
 use crate::core::{
     error::BlockchainError,
     storage::{
-        rocksdb::{Column, Snapshot},
+        rocksdb::Snapshot,
         RocksStorage,
         SnapshotProvider,
     }
@@ -11,7 +11,7 @@ use crate::core::{
 
 #[async_trait]
 impl SnapshotProvider for RocksStorage {
-    type Column = Column;
+    type Snapshot = Snapshot;
 
     // Check if we have a commit point already set
     async fn has_snapshot(&self) -> Result<bool, BlockchainError> {
