@@ -4,6 +4,19 @@ This file contains all the changelogs to ensure that changes can be tracked and 
 
 To see the full history and exact changes, please refer to the commits history directly.
 
+## v1.22.0
+
+- DAG optimizations (reorg on best candidate only)
+- New difficulty adjustment algorithm
+- New transaction variant: Blob (allow to share up to 32 KB on-chain without any transfer linked to it, this is useful for applications that want to communicate and other use cases)
+- Add new RPC methods for easier integration
+- Add new CLI commands for easier management
+- New Smart Contracts functions: (Contract Events, Iterator support)
+- Improved ZK Proofs verification performances
+- Several bug fixes and optimizations
+- New Network Upgrade configured:
+  Expected date: 30/05/2026 at block height 6 089 000
+
 ## v1.21.3
 
 - Add protection against stackoverflow attacks on deserialized types packed, contract data
