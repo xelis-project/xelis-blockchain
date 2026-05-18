@@ -224,6 +224,8 @@ impl Event {
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "cli", derive(clap::ValueEnum), clap(rename_all = "snake_case"))]
 #[repr(u8)]
+#[derive(strum::EnumString, strum::Display)]
+#[strum(serialize_all = "snake_case")]
 pub enum HistoryScanMode {
     None = 0,
     #[default]

@@ -223,7 +223,7 @@ pub struct Config {
     /// Set the history scan mode
     /// This will prevent syncing old TXs/blocks
     /// Only blocks / transactions caught by the network handler will be stored, not the old ones
-    #[clap(long)]
+    #[clap(long, default_value_t = HistoryScanMode::default())]
     #[serde(default)]
     pub history_scan_mode: HistoryScanMode,
     /// Force the wallet to use a stable balance only during transactions creation.
