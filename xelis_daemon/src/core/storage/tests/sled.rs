@@ -271,6 +271,29 @@ async fn test_sled_delete_versioned_data_above_topoheight_mixed() -> Result<()> 
 }
 
 #[tokio::test]
+async fn test_sled_delete_versioned_balances_above_topoheight() -> Result<()> {
+    let data = TestData::new()?;
+    let temp_dir = TempDir::new("storage_test")?;
+    let storage = new_sled_storage(data.network, temp_dir.path().to_str().unwrap())?;
+    test_delete_versioned_balances_above_topoheight(storage, &data).await
+}
+
+#[tokio::test]
+async fn test_sled_delete_versioned_balances_above_topoheight_multi_account() -> Result<()> {
+    let temp_dir = TempDir::new("storage_test")?;
+    let storage = new_sled_storage(Network::Devnet, temp_dir.path().to_str().unwrap())?;
+    test_delete_versioned_balances_above_topoheight_multi_account(storage).await
+}
+
+#[tokio::test]
+async fn test_sled_delete_versioned_balances_pop_blocks_scenario() -> Result<()> {
+    let data = TestData::new()?;
+    let temp_dir = TempDir::new("storage_test")?;
+    let storage = new_sled_storage(data.network, temp_dir.path().to_str().unwrap())?;
+    test_delete_versioned_balances_pop_blocks_scenario(storage, &data).await
+}
+
+#[tokio::test]
 async fn test_sled_event_callback_consumed_versioning() -> Result<()> {
     let temp_dir = TempDir::new("storage_test")?;
     let storage = new_sled_storage(Network::Devnet, temp_dir.path().to_str().unwrap())?;
