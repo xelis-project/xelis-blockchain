@@ -586,7 +586,7 @@ where
 
     // sort it descending by height
     // a = 5, b = 6, b.cmp(a) -> Ordering::Greater
-    bases.sort_by(|(_, a), (_, b)| b.cmp(a));
+    bases.sort_by(|(hash_a, a), (hash_b, b)| b.cmp(a).then_with(|| hash_b.cmp(hash_a)));
     debug_assert!(bases[0].1 >= bases[bases.len() - 1].1);
 
     // retrieve the first block hash with its height
