@@ -1704,8 +1704,8 @@ async fn status<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Res
     manager.message(format!("Size on Disk: {}", human_bytes(size_on_disk as f64)));
 
     manager.message(format!("Tips ({}):", tips.len()));
-    for hash in tips {
-        manager.message(format!("- {}", hash));
+    for entry in tips.entries() {
+        manager.message(format!("- {} ({})", entry.hash, format_difficulty(entry.cumulative_difficulty)));
     }
 
     if let Some(pruned_topoheight) = pruned_topoheight {

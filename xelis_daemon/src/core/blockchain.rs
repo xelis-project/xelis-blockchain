@@ -74,6 +74,7 @@ use xelis_common::{
         calculate_tx_fee_extra,
         calculate_tx_fee_per_kb,
         format_xelis,
+        format_difficulty,
     },
     tokio::{
         spawn_task,
@@ -1740,8 +1741,8 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // clean the tips based on the new block, and find the best tips to build the next block on top of
-    async fn clean_tips(&self, storage: &S, tips: &mut Tips, current_height: u64) -> Result<(), BlockchainError> {
-        let mut new_tips = Vec::new();
+    async fn clean_tips(&self, storage: &mut S, mut tips: Tips, current_height: u64) -> Result<(), BlockchainError> {
+        let mut new_tips = Vec::with_capacity(tips.len());
         // Find the version at the highest height between current chain and new block, to be able to apply the correct tip selection rules
         let version_at_height = hard_fork::get_version_at_height(self.get_network(), current_height);
         for hash in tips.drain() {
@@ -1778,6 +1779,38 @@ impl<S: Storage> Blockchain<S> {
             }
         }
         tips.insert(best_tip);
+
+        debug!("Storing new tips in storage");
+        // Store the new tips available
+        storage.store_tips(&tips).await?;
+
+        // Update caches
+        let (difficulty, _) = self.get_difficulty_at_tips(&*storage, tips.iter()).await?;
+        debug!("New difficulty at tips is {}", format_difficulty(difficulty));
+
+        let chain_cache = storage.chain_cache().await;
+        let mut sorted_tips = SortedTips::default();
+
+        for hash in tips.drain() {
+            if !chain_cache.tips.contains(&hash) {
+                let cd = storage.get_cumulative_difficulty_for_block_hash(&hash).await?;
+                sorted_tips.insert(hash, cd);
+            }
+        }
+
+        // Keep only the MAX_TIPS_IN_CACHE heavier tips in memory
+        sorted_tips.truncate(MAX_TIPS_IN_CACHE);
+
+        let chain_cache = storage.chain_cache_mut().await?;
+        chain_cache.tips = sorted_tips;
+        chain_cache.difficulty = difficulty;
+
+        {
+            let mut lock = self.mining_cache.write().await;
+            if lock.take().is_some() {
+                debug!("Clearing mining cache due to chain change");
+            }
+        }
 
         Ok(())
     }
@@ -2315,6 +2348,9 @@ impl<S: Storage> Blockchain<S> {
 
         debug!("New tips: {}", tips.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(","));
 
+        // Clean up the tips
+        self.clean_tips(&mut *storage, tips.clone(), current_height).await?;
+
         // rpc server lock
         let rpc_server = self.rpc.read().await;
         let should_track_events = if let Some(rpc) = rpc_server.as_ref() {
@@ -2839,36 +2875,18 @@ impl<S: Storage> Blockchain<S> {
                     }
                 }
 
-                // Clean up the tips
-                self.clean_tips(&*storage, &mut tips, current_height).await?;
-
-                debug!("Storing new tips in storage");
-                // Store the new tips available
-                storage.store_tips(&tips).await?;
-
                 if chain_height_extended {
                     debug!("storing new top height {}", block.get_height());
                     storage.set_top_height(block.get_height()).await?;
                     current_height = block.get_height();
                 }
         
-                // update stable height and difficulty in cache
-                debug!("update difficulty in cache for new tips");
-                let (difficulty, _) = self.get_difficulty_at_tips(&*storage, tips.iter()).await?;
-
-                // Update caches
-                let mut sorted_tips = SortedTips::default();
-                for hash in tips {
-                    let cd = storage.get_cumulative_difficulty_for_block_hash(&hash).await?;
-                    sorted_tips.insert(hash, cd);
-                }
-                sorted_tips.truncate(MAX_TIPS_IN_CACHE);
+                // update chain cache
+                debug!("update chain cache");
 
                 let chain_cache = storage.chain_cache_mut().await?;
                 chain_cache.stable_height = base_height;
                 chain_cache.stable_topoheight = base_topo_height;
-                chain_cache.difficulty = difficulty;
-                chain_cache.tips = sorted_tips;
 
                 if chain_height_extended {
                     chain_cache.height = current_height;
@@ -2882,11 +2900,6 @@ impl<S: Storage> Blockchain<S> {
 
                 gauge!("xelis_block_difficulty").set(difficulty.as_u64().unwrap_or(0) as f64);
 
-                let mut lock = self.mining_cache.write().await;
-                if lock.take().is_some() {
-                    debug!("Clearing mining cache due to chain change");
-                }
-    
                 // Flush to the disk
                 if self.flush_db_every_n_blocks.is_some_and(|n| current_topoheight % n == 0) {
                     debug!("force flushing storage");
@@ -2983,24 +2996,6 @@ impl<S: Storage> Blockchain<S> {
             }
         } else {
             info!("Block {} is not a better candidate, skipping DAG ordering and execution...", block_hash);
-
-            // Clean tips & store it
-            self.clean_tips(&*storage, &mut tips, current_height).await?;
-
-            debug!("Storing new tips in storage");
-            // Store the new tips available
-            storage.store_tips(&tips).await?;
-
-            // Update caches
-            let mut sorted_tips = SortedTips::default();
-            for hash in tips {
-                let cd = storage.get_cumulative_difficulty_for_block_hash(&hash).await?;
-                sorted_tips.insert(hash, cd);
-            }
-            sorted_tips.truncate(MAX_TIPS_IN_CACHE);
-
-            let chain_cache = storage.chain_cache_mut().await?;
-            chain_cache.tips = sorted_tips;
         }
 
         // trace!("Re acquiring storage read lock after ordering for block {}", block_hash);
