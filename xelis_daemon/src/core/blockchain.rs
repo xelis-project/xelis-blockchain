@@ -3196,7 +3196,7 @@ impl<S: Storage> Blockchain<S> {
 
                 // add all tips from block (but check that we didn't already added it)
                 for tip in block.get_tips() {
-                    if !processed.insert(tip.clone()) {
+                    if processed.insert(tip.clone()) {
                         queue.push(tip.clone());
                     }
                 }
