@@ -1429,12 +1429,10 @@ impl<S: Storage> Blockchain<S> {
                         continue;
                     }
 
-                    if !selected_tips.is_empty() {
-                        let iter = selected_tips.iter().chain(iter::once(hash));
-                        if blockdag::find_common_base_at_or_above_stable_height(storage, iter, block_height_by_tips, version_at_height).await?.is_none() {
-                            warn!("Tip {} is not selected for mining: no common base before stable height", hash);
-                            continue;
-                        }
+                    let iter = selected_tips.iter().chain(iter::once(hash));
+                    if blockdag::find_common_base_at_or_above_stable_height(storage, iter, block_height_by_tips, version_at_height).await?.is_none() {
+                        warn!("Tip {} is not selected for mining: no common base before stable height", hash);
+                        continue;
                     }
 
                     // Check that the tip is not too far in height from best height
@@ -1741,7 +1739,7 @@ impl<S: Storage> Blockchain<S> {
     }
 
     // clean the tips based on the new block, and find the best tips to build the next block on top of
-    async fn clean_tips(&self, storage: &mut S, mut tips: Tips, current_height: u64) -> Result<(), BlockchainError> {
+    async fn clean_tips(&self, storage: &mut S, tips: &mut Tips, current_height: u64) -> Result<(), BlockchainError> {
         let mut new_tips = Vec::with_capacity(tips.len());
         // Find the version at the highest height between current chain and new block, to be able to apply the correct tip selection rules
         let version_at_height = hard_fork::get_version_at_height(self.get_network(), current_height);
@@ -1784,10 +1782,6 @@ impl<S: Storage> Blockchain<S> {
         // Store the new tips available
         storage.store_tips(&tips).await?;
 
-        // Update caches
-        let (difficulty, _) = self.get_difficulty_at_tips(&*storage, tips.iter()).await?;
-        debug!("New difficulty at tips is {}", format_difficulty(difficulty));
-
         let chain_cache = storage.chain_cache().await;
         let mut sorted_tips = SortedTips::default();
 
@@ -1800,6 +1794,11 @@ impl<S: Storage> Blockchain<S> {
 
         // Keep only the MAX_TIPS_IN_CACHE heavier tips in memory
         sorted_tips.truncate(MAX_TIPS_IN_CACHE);
+
+        // Update caches$
+        // TODO: select more than one tip
+        let (difficulty, _) = self.get_difficulty_at_tips(&*storage, sorted_tips.iter().take(1)).await?;
+        debug!("New difficulty at tips is {}", format_difficulty(difficulty));
 
         let chain_cache = storage.chain_cache_mut().await?;
         chain_cache.tips = sorted_tips;
@@ -1987,7 +1986,7 @@ impl<S: Storage> Blockchain<S> {
 
             if is_v6_enabled {
                 let Some((stable_base, stable_base_height)) = blockdag::find_common_base_at_or_above_stable_height(&*storage, block.get_tips().iter(), block_height_by_tips, version).await? else {
-                    debug!("Block {} has common base before stable height, which is not allowed", block_hash);
+                    warn!("Block {} (with tips {}) has common base before stable height, which is not allowed", block_hash, block.get_tips().iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "));
                     return Err(BlockchainError::TipsCommonBaseTooFar)
                 };
 
@@ -2348,9 +2347,6 @@ impl<S: Storage> Blockchain<S> {
 
         debug!("New tips: {}", tips.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(","));
 
-        // Clean up the tips
-        self.clean_tips(&mut *storage, tips.clone(), current_height).await?;
-
         // rpc server lock
         let rpc_server = self.rpc.read().await;
         let should_track_events = if let Some(rpc) = rpc_server.as_ref() {
@@ -2365,7 +2361,8 @@ impl<S: Storage> Blockchain<S> {
         let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(&*storage, tips.iter()).await?;
 
         // New block has a bigger cumulative difficulty than our current best tip, we should try to reorganize the chain
-        if best_tip == block_hash.as_ref() {
+        let chain_height_extended = current_height == 0 || block.get_height() > current_height;
+        if best_tip == block_hash.as_ref() || chain_height_extended {
             debug!("Best tip selected: {}", best_tip);
             // Find a common base across all our TIPS in the chain
             let (base_hash, base_height) = blockdag::find_common_base(&*storage, &tips, version).await?;
@@ -2838,7 +2835,6 @@ impl<S: Storage> Blockchain<S> {
             debug!("Highest topo height found: {}", highest_topo);
             // if the DAG has been reorganized, we update the topoheight
             let chain_topoheight_extended = current_height == 0 || highest_topo > current_topoheight || dag_is_overwritten;
-            let chain_height_extended = current_height == 0 || block.get_height() > current_height;
 
             // trace!("acquiring final storage write lock to update stats for {}", block_hash);
             // let mut storage = holder.write().await?;
@@ -3004,6 +3000,9 @@ impl<S: Storage> Blockchain<S> {
 
         // Drop the storage again to re-acquire in write mode
         // drop(storage);
+
+        // Clean up the tips
+        self.clean_tips(&mut *storage, &mut tips, current_height).await?;
 
         trace!("Re acquiring storage read lock to finalize block {}", block_hash);
         let storage = storage.downgrade();
