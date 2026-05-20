@@ -2109,7 +2109,7 @@ impl<S: Storage> Blockchain<S> {
                     base_height,
                     block.get_tips().iter().cloned(),
                     !is_v2_enabled,
-                    is_v3_enabled,
+                    is_v3_enabled && !is_v6_enabled,
                 ).await?
             } else {
                 LinkedHashSet::new()
