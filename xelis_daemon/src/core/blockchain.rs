@@ -1018,7 +1018,12 @@ impl<S: Storage> Blockchain<S> {
                 .ok_or(BlockchainError::NotEnoughBlocks)?;
 
             let state_difficulty = provider.get_difficulty_for_block_hash(state_block).await?;
-            let p = provider.get_estimated_covariance_for_block_hash(state_block).await?;
+            let state_version = provider.get_version_for_block_hash(state_block).await?;
+            let p = if state_version >= BlockVersion::V6 {
+                provider.get_estimated_covariance_for_block_hash(state_block).await?
+            } else {
+                difficulty::v3::P
+            };
 
             let first_timestamp = provider.get_timestamp_for_block_hash(&base).await?;
             let observed_count = (order.len() - 1) as u64;
