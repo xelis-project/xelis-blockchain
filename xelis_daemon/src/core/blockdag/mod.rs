@@ -15,7 +15,7 @@ use itertools::Either;
 use log::{debug, error, trace};
 use futures::{StreamExt, TryStreamExt, future::ready, stream};
 use xelis_common::{
-    block::{BlockVersion, TopoHeight, get_combined_hash_for_tips},
+    block::{BlockVersion, TopoHeight},
     crypto::Hash,
     difficulty::{CumulativeDifficulty, Difficulty},
     time::TimestampMillis,
@@ -572,13 +572,15 @@ where
     debug!("find common base for tips {}", tips.clone().into_iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "));
     let chain_cache = provider.chain_cache().await;
 
-    let combined_tips = get_combined_hash_for_tips(tips.clone().into_iter());
+    let mut ordered_tips = tips.clone().into_iter().cloned().collect::<Vec<_>>();
+    ordered_tips.sort(); // sort by hash to have a deterministic cache key
+
     {
         debug!("accessing common base cache");
         let mut cache = chain_cache.common_base_cache.lock().await;
         debug!("common base cache locked");
 
-        if let Some((hash, height)) = cache.get(&combined_tips) {
+        if let Some((hash, height)) = cache.get(&ordered_tips) {
             debug!("Common base found in cache: {} at height {}", hash, height);
             return Ok((hash.clone(), *height))
         }
@@ -625,7 +627,7 @@ where
         debug!("accessing common base cache to save common base");
         let mut cache = chain_cache.common_base_cache.lock().await;
         debug!("common base cache locked for write");
-        cache.put(combined_tips, (base_hash.clone(), base_height));
+        cache.put(ordered_tips, (base_hash.clone(), base_height));
     }
 
     Ok((base_hash, base_height))

@@ -54,7 +54,7 @@ pub struct ChainCache {
     pub tip_base_cache: Mutex<LruCache<(Hash, u64), (Hash, u64)>>,
     // This cache is used to avoid to recompute the common base
     // key is a combined hash of tips
-    pub common_base_cache: Mutex<LruCache<Hash, (Hash, u64)>>,
+    pub common_base_cache: Mutex<LruCache<Vec<Hash>, (Hash, u64)>>,
     // tip work score is used to determine the best tip based on a block, tip base ands a base height
     pub tip_work_score_cache: Mutex<LruCache<WorkScoreCacheKey, (HashSet<Hash>, CumulativeDifficulty)>>,
     // current difficulty at tips
