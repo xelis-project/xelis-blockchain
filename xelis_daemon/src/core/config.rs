@@ -106,6 +106,16 @@ pub struct GetWorkConfig {
     pub notify_job_concurrency: usize,
 }
 
+impl Default for GetWorkConfig {
+    fn default() -> Self {
+        Self {
+            disable: false,
+            rate_limit_ms: default_getwork_rate_limit_ms(),
+            notify_job_concurrency: detect_available_parallelism(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
 pub struct PrometheusConfig {
     /// Enable Prometheus metrics server
@@ -117,6 +127,15 @@ pub struct PrometheusConfig {
     #[clap(name = "prometheus-route", long, default_value_t = default_prometheus_route())]
     #[serde(default = "default_prometheus_route")]
     pub route: String,
+}
+
+impl Default for PrometheusConfig {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            route: default_prometheus_route(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
@@ -178,6 +197,23 @@ pub struct RPCConfig {
     pub allow_contract_vm_executions: bool,
 }
 
+impl Default for RPCConfig {
+    fn default() -> Self {
+        Self {
+            getwork: GetWorkConfig::default(),
+            prometheus: PrometheusConfig::default(),
+            disable: false,
+            bind_address: default_rpc_bind_address(),
+            threads: detect_available_parallelism(),
+            notify_events_concurrency: detect_available_parallelism(),
+            batch_limit: default_rpc_batch_limit(),
+            cors_allowed_origins: Vec::new(),
+            allow_private_methods: false,
+            allow_contract_vm_executions: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, clap::ValueEnum, Serialize, Deserialize, strum::Display)]
 #[serde(rename_all = "lowercase")]
 pub enum ProxyKind {
@@ -187,7 +223,7 @@ pub enum ProxyKind {
     Socks4,
 }
 
-#[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
+#[derive(Debug, Clone, clap::Args, Serialize, Deserialize, Default)]
 pub struct ProxyConfig {
     /// Configure a proxy address to be used
     /// Make sure to set the `proxy` type along it
@@ -389,6 +425,40 @@ pub struct P2pConfig {
     pub reorg_from_priority_only: bool,
 }
 
+impl Default for P2pConfig {
+    fn default() -> Self {
+        Self {
+            proxy: ProxyConfig::default(),
+            tag: None,
+            bind_address: default_p2p_bind_address(),
+            max_peers: default_max_peers(),
+            max_outgoing_peers: default_max_outgoing_peers(),
+            priority_nodes: Vec::new(),
+            exclusive_nodes: Vec::new(),
+            disable: false,
+            allow_fast_sync: false,
+            allow_boost_sync: false,
+            allow_priority_blocks: false,
+            max_chain_response_size: default_chain_sync_response_blocks(),
+            disable_ip_sharing: false,
+            concurrency_task_count_limit: default_p2p_concurrency_task_count_limit(),
+            on_dh_key_change: KeyVerificationAction::Ignore,
+            dh_private_key: None,
+            stream_concurrency: detect_available_parallelism(),
+            temp_ban_duration: default_p2p_temp_ban_duration(),
+            fail_count_limit: default_p2p_fail_count_limit(),
+            disable_reexecute_blocks_on_sync: false,
+            block_propagation_log_level: debug_log_level(),
+            disable_fetching_txs_propagated: false,
+            handle_peer_packets_in_dedicated_task: false,
+            enable_compression: false,
+            disable_fast_sync_support: false,
+            sync_from_priority_only: false,
+            reorg_from_priority_only: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, clap::ValueEnum, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum StorageBackend {
@@ -415,7 +485,7 @@ impl Default for StorageBackend {
 
         #[cfg(all(not(feature = "rocksdb"), not(feature = "sled")))]
         {
-            compile_error!("At least one storage backend must be enabled: sled or rocksdb")
+            return Self::Memory;
         }
     }
 }
@@ -538,7 +608,7 @@ impl Default for RocksDBConfig {
     }
 }
 
-#[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
+#[derive(Debug, Clone, clap::Args, Serialize, Deserialize, Default)]
 pub struct Config {
     /// RPC configuration
     #[clap(flatten)]
