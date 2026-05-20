@@ -1030,10 +1030,16 @@ impl<S: Storage> Blockchain<S> {
                 .try_fold(Difficulty::zero(), |acc, x| ready(Ok(acc + x)))
                 .await?;
 
-            let last = order.last()
-                .ok_or(BlockchainError::NotEnoughBlocks)?;
-
-            let newest_timestamp = provider.get_timestamp_for_block_hash(last).await?;
+            // One of the tips is the newest block since all block must have >= timestamp
+            // of each of its parents, so we don't have to go through the order to find the newest timestamp,
+            // we can just check the actual tips
+            let newest_timestamp = stream::iter(tips.clone().into_iter())
+                .map(|hash| provider.get_timestamp_for_block_hash(hash))
+                .buffer_unordered(provider.concurrency())
+                .boxed()
+                .try_fold(None, |acc, x| ready(Ok(acc.max(Some(x)))))
+                .await?
+                .ok_or(BlockchainError::ExpectedTips)?;
 
             let time_span = newest_timestamp
                 .saturating_sub(first_timestamp)
