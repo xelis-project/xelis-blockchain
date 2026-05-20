@@ -1,5 +1,5 @@
 use anyhow::Error;
-use futures::{stream, TryStreamExt};
+use futures::{StreamExt, TryStreamExt, future::ready, stream};
 use linked_hash_table::LinkedHashSet;
 use indexmap::{IndexMap, IndexSet};
 use metrics::{counter, gauge, histogram};
@@ -1021,12 +1021,14 @@ impl<S: Storage> Blockchain<S> {
             let p = provider.get_estimated_covariance_for_block_hash(state_block).await?;
 
             let first_timestamp = provider.get_timestamp_for_block_hash(&base).await?;
-            let mut observed_work = Difficulty::zero();
             let observed_count = (order.len() - 1) as u64;
 
-            for hash in order.iter().skip(1) {
-                observed_work += provider.get_difficulty_for_block_hash(hash).await?;
-            }
+            let observed_work = stream::iter(order.iter().skip(1))
+                .map(|hash| provider.get_difficulty_for_block_hash(hash))
+                .buffer_unordered(provider.concurrency())
+                .boxed()
+                .try_fold(Difficulty::zero(), |acc, x| ready(Ok(acc + x)))
+                .await?;
 
             let last = order.last()
                 .ok_or(BlockchainError::NotEnoughBlocks)?;
