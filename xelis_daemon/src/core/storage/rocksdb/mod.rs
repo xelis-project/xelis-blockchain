@@ -1,6 +1,7 @@
 mod column;
 mod types;
 mod providers;
+mod config;
 
 use std::sync::Arc;
 
@@ -34,7 +35,6 @@ use xelis_common::{
     tokio,
 };
 use crate::core::{
-    config::RocksDBConfig,
     error::{BlockchainError, DiskContext},
     storage::{
         snapshot::{
@@ -55,6 +55,7 @@ use xelis_vm::tid;
 
 pub use column::*;
 pub use types::*;
+pub use config::*;
 
 use super::Storage;
 

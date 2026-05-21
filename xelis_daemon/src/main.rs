@@ -62,7 +62,7 @@ use core::{
         PreVerifyBlock,
     },
     blockdag,
-    config::{Config as InnerConfig, StorageBackend},
+    config::{BlockchainConfig as InnerConfig, StorageBackend},
     hard_fork::{
         get_block_time_target_for_version,
         get_pow_algorithm_for_version,
@@ -72,10 +72,10 @@ use core::{
 };
 
 #[cfg(feature = "rocksdb")]
-use core::storage::rocksdb::RocksStorage;
+use core::storage::{RocksStorage, RocksDBConfig};
 
 #[cfg(feature = "sled")]
-use core::storage::sled::SledStorage;
+use core::storage::{SledStorage, SledConfig};
 
 use std::{
     fs::File,
@@ -170,6 +170,20 @@ pub struct CliConfig {
     /// Blockchain core configuration
     #[structopt(flatten)]
     core: InnerConfig,
+    /// Sled DB Backend if enabled
+    #[cfg(feature = "sled")]
+    #[clap(flatten)]
+    pub sled: SledConfig,
+    /// RocksDB Backend if enabled
+    #[cfg(feature = "rocksdb")]
+    #[clap(flatten)]
+    pub rocksdb: RocksDBConfig,
+    /// Use a different DB backend from the default.
+    /// Note that the data will not be migrated from one to another
+    /// and you may lose your data.
+    #[clap(long, value_enum, default_value_t)]
+    #[serde(default)]
+    pub use_db_backend: StorageBackend,
     /// Log configuration
     #[structopt(flatten)]
     log: LogConfig,
@@ -263,21 +277,21 @@ async fn main() -> Result<()> {
     let dir_path = blockchain_config.dir_path.as_deref()
         .unwrap_or_default();
 
-    match blockchain_config.use_db_backend {
+    match config.use_db_backend {
         #[cfg(feature = "sled")]
         StorageBackend::Sled => {
-            let use_cache = if blockchain_config.sled.cache_size > 0 {
-                Some(blockchain_config.sled.cache_size)
+            let use_cache = if config.sled.cache_size > 0 {
+                Some(config.sled.cache_size)
             } else {
                 None
             };
 
-            let storage = SledStorage::new(dir_path.to_owned(), use_cache, config.network, blockchain_config.sled.internal_cache_size, blockchain_config.sled.internal_db_mode, blockchain_config.concurrency)?;
+            let storage = SledStorage::new(dir_path.to_owned(), use_cache, config.network, config.sled.internal_cache_size, config.sled.internal_db_mode, blockchain_config.concurrency)?;
             start_chain(prompt, storage, config).await
         },
         #[cfg(feature = "rocksdb")]
         StorageBackend::RocksDB => {
-            let storage = RocksStorage::new(&dir_path, config.network, &blockchain_config.rocksdb, blockchain_config.concurrency)?;
+            let storage = RocksStorage::new(&dir_path, config.network, &config.rocksdb, blockchain_config.concurrency)?;
             start_chain(prompt, storage, config).await
         },
         StorageBackend::Memory => {

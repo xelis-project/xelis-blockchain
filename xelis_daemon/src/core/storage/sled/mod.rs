@@ -1,5 +1,6 @@
 mod migrations;
 mod providers;
+mod config;
 
 use anyhow::Context;
 use async_trait::async_trait;
@@ -40,6 +41,8 @@ use super::{
         IteratorMode
     },
 };
+
+pub use config::SledConfig;
 
 #[derive(Clone)]
 pub struct TreeWrapper(pub Tree);

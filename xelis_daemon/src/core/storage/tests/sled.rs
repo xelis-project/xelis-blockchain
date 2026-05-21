@@ -1,8 +1,10 @@
 use anyhow::Result;
 use tempdir::TempDir;
-use crate::core::{config::SledConfig, storage::SledStorage};
 use xelis_common::network::Network;
-use super::common::*;
+use super::{
+    common::*,
+    super::*,
+};
 
 fn new_sled_storage(network: Network, path: &str) -> Result<SledStorage> {
     let config = SledConfig::default();

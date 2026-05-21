@@ -98,7 +98,7 @@ use crate::{
     },
     core::{
         hard_fork,
-        config::Config,
+        config::BlockchainConfig,
         blockdag,
         difficulty,
         error::BlockchainError,
@@ -239,7 +239,7 @@ pub struct Blockchain<S: Storage> {
 tid! { impl<'a, S: 'static> TidAble<'a> for Blockchain<S> where S: Storage }
 
 impl<S: Storage> Blockchain<S> {
-    pub async fn new(mut config: Config, network: Network, storage: S) -> Result<Arc<Self>, Error> {
+    pub async fn new(mut config: BlockchainConfig, network: Network, storage: S) -> Result<Arc<Self>, Error> {
         // Do some checks on config params
         {
             if config.simulator.is_some() && network != Network::Devnet {

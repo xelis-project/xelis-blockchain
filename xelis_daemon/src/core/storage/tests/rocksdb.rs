@@ -1,7 +1,5 @@
 use anyhow::{Context, Result};
 use tempdir::TempDir;
-use crate::core::storage::RocksStorage;
-use crate::core::config::RocksDBConfig;
 use xelis_common::{crypto::PublicKey, network::Network};
 use super::{
     common::*,

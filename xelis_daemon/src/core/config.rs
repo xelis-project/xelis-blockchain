@@ -13,12 +13,6 @@ use crate::{
 
 use super::simulator::Simulator;
 
-#[cfg(feature = "sled")]
-use super::storage::sled::StorageMode;
-
-#[cfg(feature = "rocksdb")]
-use super::storage::rocksdb::{CacheMode, CompressionMode};
-
 // Functions helpers for serde default values
 fn default_p2p_bind_address() -> String {
     DEFAULT_P2P_BIND_ADDRESS.to_owned()
@@ -38,11 +32,6 @@ fn default_rpc_bind_address() -> String {
 
 fn default_prometheus_route() -> String {
     "/metrics".to_owned()
-}
-
-#[cfg(feature = "sled")]
-const fn default_sled_cache_size() -> usize {
-    DEFAULT_CACHE_SIZE
 }
 
 const fn default_p2p_concurrency_task_count_limit() -> usize {
@@ -67,18 +56,6 @@ const fn default_p2p_fail_count_limit() -> u8 {
 
 const fn debug_log_level() -> LogLevel {
     LogLevel::Debug
-}
-
-const fn default_db_cache_size() -> u64 {
-    64 * 1024 * 1024 // 64 MB
-}
-
-const fn default_max_open_files() -> i32 {
-    256
-}
-
-const fn default_keep_max_log_files() -> usize {
-    4
 }
 
 const fn default_rpc_batch_limit() -> usize {
@@ -491,139 +468,13 @@ impl Default for StorageBackend {
 }
 
 #[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
-#[cfg(feature = "sled")]
-pub struct SledConfig {
-    /// Set LRUCache size (0 = disabled).
-    #[clap(name = "sled-cache-size", long, default_value_t = default_sled_cache_size())]
-    #[serde(default = "default_sled_cache_size")]
-    pub cache_size: usize,
-    /// DB cache size in bytes
-    #[clap(name = "sled-internal-cache-size", long, default_value_t = default_db_cache_size())]
-    #[serde(default = "default_db_cache_size")]
-    pub internal_cache_size: u64,
-    /// Internal DB mode to use
-    #[clap(name = "sled-internal-db-mode", long, value_enum, default_value_t)]
-    #[serde(default)]
-    pub internal_db_mode: StorageMode,
-}
-
-#[cfg(feature = "sled")]
-impl Default for SledConfig {
-    fn default() -> Self {
-        Self {
-            cache_size: default_sled_cache_size(),
-            internal_cache_size: default_db_cache_size(),
-            internal_db_mode: StorageMode::default(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
-#[cfg(feature = "rocksdb")]
-pub struct RocksDBConfig {
-    /// How many background threads RocksDB should use for parallelism.
-    /// Default set to the available parallelism detected.
-    #[clap(name = "rocksdb-background-threads", long, default_value_t = detect_available_parallelism())]
-    #[serde(default = "detect_available_parallelism")]
-    pub parallelism: usize,
-    /// Sets maximum number of concurrent background jobs (compactions and flushes).
-    /// Default set to the available parallelism detected.
-    #[clap(name = "rocksdb-max-background-jobs", long, default_value_t = detect_available_parallelism())]
-    #[serde(default = "detect_available_parallelism")]
-    pub max_background_jobs: usize,
-    /// Sets maximum number of threads that will concurrently perform a compaction job by breaking it into multiple,
-    /// smaller ones that are run simultaneously.
-    /// Default set to the available parallelism detected.
-    #[clap(name = "rocksdb-max-subcompaction-jobs", long, default_value_t = detect_available_parallelism())]
-    #[serde(default = "detect_available_parallelism")]
-    pub max_subcompaction_jobs: usize,
-    /// Sets the size of the low priority thread pool that can be used to prevent compactions from stalling memtable flushes.
-    /// Default set to the available parallelism detected.
-    #[clap(name = "rocksdb-low-priority-background-threads", long, default_value_t = detect_available_parallelism())]
-    #[serde(default = "detect_available_parallelism")]
-    pub low_priority_background_threads: usize,
-    /// Sets the number of open files that can be used by the DB.
-    /// You may need to increase this if your database has a large working set.
-    /// Value -1 means files opened are always kept open.
-    #[clap(name = "rocksdb-max-open-files", long, default_value_t = default_max_open_files())]
-    #[serde(default = "default_max_open_files")]
-    pub max_open_files: i32,
-    /// Specify the maximal number of info log files to be kept.
-    #[clap(name = "rocksdb-keep-max-log-files", long, default_value_t = default_keep_max_log_files())]
-    #[serde(default = "default_keep_max_log_files")]
-    pub keep_max_log_files: usize,
-    /// Compression mode to use for RocksDB.
-    #[cfg(feature = "rocksdb")]
-    #[clap(name = "rocksdb-compression-mode", value_enum, long, default_value_t)]
-    #[serde(default)]
-    pub compression_mode: CompressionMode,
-    /// RocksDB block based cache mode to use.
-    #[cfg(feature = "rocksdb")]
-    #[clap(name = "rocksdb-cache-mode", value_enum, long, default_value_t)]
-    #[serde(default)]
-    pub cache_mode: CacheMode,
-    /// Size in bytes for the RocksDB block based to cache use if mode is not None.
-    #[clap(name = "rocksdb-cache-size", long, default_value_t = default_db_cache_size())]
-    #[serde(default = "default_db_cache_size")]
-    pub cache_size: u64,
-    /// Write buffer to use for the amount of data to build up in memtables.
-    #[clap(name = "rocksdb-write-buffer-size", long, default_value_t = default_db_cache_size())]
-    #[serde(default = "default_db_cache_size")]
-    pub write_buffer_size: u64,
-    /// Enforces a limit for a single memtable using the above write buffer size.
-    /// Disabled by default, each column will have its own buffer.
-    #[clap(name = "rocksdb-write-buffer-shared", long)]
-    #[serde(default)]
-    pub write_buffer_shared: bool,
-    /// Bloom filter bits per key for column families that use a prefix extractor.
-    /// Higher values reduce false positives but increase memory usage.
-    #[clap(name = "rocksdb-bloom-filter-bits-per-key", long)]
-    #[serde(default)]
-    pub bloom_filter_bits_per_key: Option<f64>,
-    /// Override for target SST file size in bytes.
-    /// None (default) uses the RocksDB default of 64 MiB.
-    #[clap(name = "rocksdb-target-file-size-base", long)]
-    #[serde(default)]
-    pub target_file_size_base: Option<u64>,
-}
-
-#[cfg(feature = "rocksdb")]
-impl Default for RocksDBConfig {
-    fn default() -> Self {
-        Self {
-            parallelism: detect_available_parallelism(),
-            max_background_jobs: detect_available_parallelism(),
-            max_subcompaction_jobs: detect_available_parallelism(),
-            low_priority_background_threads: detect_available_parallelism(),
-            max_open_files: default_max_open_files(),
-            keep_max_log_files: default_keep_max_log_files(),
-            compression_mode: CompressionMode::default(),
-            cache_mode: CacheMode::default(),
-            cache_size: default_db_cache_size(),
-            write_buffer_size: default_db_cache_size(),
-            write_buffer_shared: false,
-            bloom_filter_bits_per_key: None,
-            target_file_size_base: None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, clap::Args, Serialize, Deserialize, Default)]
-pub struct Config {
+pub struct BlockchainConfig {
     /// RPC configuration
     #[clap(flatten)]
     pub rpc: RPCConfig,
     /// P2P configuration
     #[clap(flatten)]
     pub p2p: P2pConfig,
-    /// Sled DB Backend if enabled
-    #[cfg(feature = "sled")]
-    #[clap(flatten)]
-    pub sled: SledConfig,
-    /// RocksDB Backend if enabled
-    #[cfg(feature = "rocksdb")]
-    #[clap(flatten)]
-    pub rocksdb: RocksDBConfig,
     /// Set dir path for blockchain storage.
     /// This will be appended by the network name for the database directory.
     /// It must ends with a slash.
@@ -689,12 +540,6 @@ pub struct Config {
     #[clap(long)]
     #[serde(default)]
     pub flush_db_every_n_blocks: Option<u64>,
-    /// Use a different DB backend from the default.
-    /// Note that the data will not be migrated from one to another
-    /// and you may lose your data.
-    #[clap(long, value_enum, default_value_t)]
-    #[serde(default)]
-    pub use_db_backend: StorageBackend,
     // Disable the TX Cache (ZKP Cache)
     // ZKP Cache is enabled by default and
     // prevent to re-verify the same ZK Proofs more than once.
@@ -706,6 +551,30 @@ pub struct Config {
     #[clap(long, default_value_t = detect_available_parallelism())]
     #[serde(default = "detect_available_parallelism")]
     pub concurrency: usize,
+}
+
+impl Default for BlockchainConfig {
+    fn default() -> Self {
+        Self {
+            rpc: RPCConfig::default(),
+            p2p: P2pConfig::default(),
+            dir_path: None,
+            simulator: None,
+            skip_pow_verification: false,
+            enable_contracts_logging: false,
+            auto_prune_keep_n_blocks: None,
+            skip_block_template_txs_verification: false,
+            genesis_block_hex: None,
+            checkpoints: Vec::new(),
+            txs_verification_threads_count: detect_available_parallelism(),
+            pre_verify_block_threads_count: detect_available_parallelism(),
+            check_db_integrity: false,
+            recovery_mode: false,
+            flush_db_every_n_blocks: None,
+            disable_zkp_cache: false,
+            concurrency: detect_available_parallelism(),
+        }
+    }
 }
 
 mod humantime_serde {

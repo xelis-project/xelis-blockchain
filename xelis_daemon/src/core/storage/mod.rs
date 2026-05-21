@@ -21,10 +21,10 @@ pub use self::providers::*;
 pub use cache::*;
 
 #[cfg(feature = "rocksdb")]
-pub use rocksdb::RocksStorage;
+pub use rocksdb::{RocksStorage, RocksDBConfig};
 
 #[cfg(feature = "sled")]
-pub use sled::SledStorage;
+pub use sled::{SledStorage, SledConfig};
 
 // re-export tips types
 pub use types::{Tips, SortedTips};
