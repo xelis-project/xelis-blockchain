@@ -551,6 +551,12 @@ pub struct BlockchainConfig {
     #[clap(long, default_value_t = detect_available_parallelism())]
     #[serde(default = "detect_available_parallelism")]
     pub concurrency: usize,
+    // Enable snapshot mode during DAG reorganizations.
+    // This will create a snapshot of the current state before applying the reorg and will use
+    // as a memory buffer to apply the reorg and then flush it to the storage at the end of the reorg.
+    #[clap(long)]
+    #[serde(default)]
+    pub enable_snapshot_on_reorg: bool,
 }
 
 impl Default for BlockchainConfig {
@@ -573,6 +579,7 @@ impl Default for BlockchainConfig {
             flush_db_every_n_blocks: None,
             disable_zkp_cache: false,
             concurrency: detect_available_parallelism(),
+            enable_snapshot_on_reorg: false,
         }
     }
 }

@@ -114,28 +114,36 @@ impl<'a, S: Storage> StorageHolder<'a, S> {
 pub struct SnapshotWrapper<'a, S: Storage> {
     storage: &'a mut S,
     snapshot: Option<S::Snapshot>,
+    enabled: bool,
 }
 
 impl<'a, S: Storage> SnapshotWrapper<'a, S> {
     #[inline]
-    pub async fn new(storage: &'a mut S) -> Result<Self, BlockchainError> {
+    pub async fn new(storage: &'a mut S, enabled: bool) -> Result<Self, BlockchainError> {
         Ok(Self {
-            snapshot: storage.start_snapshot().await?,
+            snapshot: if enabled { storage.start_snapshot().await? } else { None },
             storage,
+            enabled,
         })
     }
 
     #[inline]
     pub async fn apply(self) -> Result<(), BlockchainError> {
-        self.storage.end_snapshot(true).await
+        if self.enabled {
+            self.storage.end_snapshot(true).await
+        } else {
+            Ok(())
+        }
     }
 }
 
 impl<'a, S: Storage> Drop for SnapshotWrapper<'a, S> {
     fn drop(&mut self) {
-        // SAFETY: Because we hold a mutable reference to the storage, no other thread can access it at this time
-        self.storage.swap_snapshot(self.snapshot.take())
-            .expect("Failed to swap snapshot on drop");
+        if self.enabled {
+            // SAFETY: Because we hold a mutable reference to the storage, no other thread can access it at this time
+            self.storage.swap_snapshot(self.snapshot.take())
+                .expect("Failed to swap snapshot on drop");
+        }
     }
 }
 

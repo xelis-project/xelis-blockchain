@@ -233,7 +233,9 @@ pub struct Blockchain<S: Storage> {
     // Cache for mining block header templates
     mining_cache: RwLock<Option<BlockHeader>>,
     // Should contracts show logs on execution
-    contracts_logging: bool
+    contracts_logging: bool,
+    // Enable snapshot mode during DAG reorganizations.
+    snapshot_on_reorg: bool,
 }
 
 tid! { impl<'a, S: 'static> TidAble<'a> for Blockchain<S> where S: Storage }
@@ -324,6 +326,7 @@ impl<S: Storage> Blockchain<S> {
             concurrency: config.concurrency,
             mining_cache: RwLock::new(None),
             contracts_logging: config.enable_contracts_logging,
+            snapshot_on_reorg: config.enable_snapshot_on_reorg,
         };
 
         // include genesis block
@@ -2407,7 +2410,7 @@ impl<S: Storage> Blockchain<S> {
                 let mut skipped = 0;
                 // detect which part of DAG reorg stay, for other part, undo all executed txs
                 debug!("Detecting stable point of DAG and cleaning txs above it");
-                let mut storage = snapshot::SnapshotWrapper::new(&mut *storage).await?; 
+                let mut storage = snapshot::SnapshotWrapper::new(&mut *storage, self.snapshot_on_reorg).await?; 
                 {
                     // trace!("Acquiring storage write lock to clean transactions above stable point");
                     // let mut storage = holder.write().await?;
