@@ -257,7 +257,7 @@ mod tests {
         assert!(is_version_enabled_at_height(&Network::Mainnet, 3_373_000, BlockVersion::V5));
 
         // V6 is enabled
-        assert!(is_version_enabled_at_height(&Network::Mainnet, 6_089_000, BlockVersion::V6));
+        assert!(is_version_enabled_at_height(&Network::Mainnet, 6_220_000, BlockVersion::V6));
 
         // Testnet
         assert!(is_version_enabled_at_height(&Network::Testnet, 0, BlockVersion::V0));
