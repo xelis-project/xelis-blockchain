@@ -2119,7 +2119,25 @@ impl<S: Storage> Blockchain<S> {
             };
 
             debug!("Grouping all TXs from parents by source for block {}", block_hash);
-            if is_v3_enabled {
+            if is_v6_enabled {
+                // if V3 is enabled, we should also group the TXs by source
+                // to re inject them in case of orphaned blocks
+                debug!("Grouping all TXs from parents by source for block {}", block_hash);
+                for hash in parents_txs.iter() {
+                    if blockdag::is_tx_executed_for_topoheight(&*storage, hash, nearest_base_topoheight).await? {
+                        debug!("TX {} from parent is executed, skipping it", hash);
+                        continue;
+                    }
+
+                    let tx = storage.get_transaction(hash).await?
+                        .into_arc();
+
+                    let source = tx.get_source();
+                    txs_grouped.entry(Cow::Owned(source.clone()))
+                        .or_insert_with(IndexMap::new)
+                        .insert(Cow::Borrowed(hash), tx);
+                }
+            } else if is_v3_enabled {
                 // if V3 is enabled, we should also group the TXs by source
                 // to re inject them in case of orphaned blocks
                 debug!("Grouping all TXs from parents by source for block {}", block_hash);
