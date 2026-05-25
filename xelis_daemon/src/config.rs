@@ -249,8 +249,8 @@ const HARD_FORKS: [HardFork; 7] = [
         version_requirement: Some(">=1.21.0")
     },
     HardFork {
-        // Expected date: around 07/06/2026 UTC
-        height: 6_220_000,
+        // Expected date: around 13/06/2026 UTC
+        height: 6_330_000,
         version: BlockVersion::V6,
         changelog: "BlockDAG improvements, new smart contracts features",
         version_requirement: Some(">=1.22.0")
