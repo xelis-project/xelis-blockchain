@@ -419,13 +419,26 @@ pub async fn find_common_dominator_at_or_above_height<'a, P, I>(
     descending: bool
 ) -> Result<Option<(Hash, u64)>, BlockchainError>
 where
-    P: DifficultyProvider + ConcurrencyProvider,
+    P: DifficultyProvider + ConcurrencyProvider + CacheProvider,
     I: Iterator<Item = &'a Hash> + Send + Sync,
 {
+    // Collect and sort tips to form a deterministic cache key
+    let mut tips_key: Vec<Hash> = tips.cloned().collect();
+    tips_key.sort();
+
+    // Check cache
+    {
+        let chain_cache = provider.chain_cache().await;
+        let mut cache = chain_cache.dominator_cache.lock().await;
+        if let Some(cached) = cache.get(&(tips_key.clone(), min_height, descending)) {
+            return Ok(cached.clone());
+        }
+    }
+
     // For each tip, collect ancestors reachable within the height window,
     // and also record each block's parents (restricted to the window) for
     // the bypass check.
-    let ancestor_sets = stream::iter(tips)
+    let ancestor_sets = stream::iter(tips_key.iter())
         .map(|tip| async move {
             let mut visited = HashSet::new();
             let mut stack = VecDeque::new();
@@ -457,7 +470,12 @@ where
     // If the intersection is empty, the dominator is at or below the floor.
     let (first, rest) = match ancestor_sets.split_first() {
         Some(pair) => pair,
-        None => return Ok(None)
+        None => {
+            let chain_cache = provider.chain_cache().await;
+            let mut cache = chain_cache.dominator_cache.lock().await;
+            cache.put((tips_key, min_height, descending), None);
+            return Ok(None)
+        }
     };
 
     let mut common = Vec::new();
@@ -469,6 +487,9 @@ where
     }
 
     if common.is_empty() {
+        let chain_cache = provider.chain_cache().await;
+        let mut cache = chain_cache.dominator_cache.lock().await;
+        cache.put((tips_key, min_height, descending), None);
         return Ok(None)
     }
 
@@ -531,16 +552,25 @@ where
         }
 
         if is_dominator {
-            return Ok(Some((candidate_hash, candidate_height)))
+            let result = Some((candidate_hash, candidate_height));
+            let chain_cache = provider.chain_cache().await;
+            let mut cache = chain_cache.dominator_cache.lock().await;
+            cache.put((tips_key, min_height, descending), result.clone());
+            return Ok(result)
         }
     }
 
+    {
+        let chain_cache = provider.chain_cache().await;
+        let mut cache = chain_cache.dominator_cache.lock().await;
+        cache.put((tips_key, min_height, descending), None);
+    }
     Ok(None)
 }
 
 pub async fn find_common_base_at_or_above_stable_height<'a, P, I>(provider: &P, tips: I, block_height: u64, version: BlockVersion) -> Result<Option<(Hash, u64)>, BlockchainError>
 where
-    P: DifficultyProvider + ConcurrencyProvider,
+    P: DifficultyProvider + ConcurrencyProvider + CacheProvider,
     I: Iterator<Item = &'a Hash> + Send + Sync,
 {
     let highest_tip_height = block_height.saturating_sub(1);
@@ -551,7 +581,7 @@ where
 
 pub async fn find_daa_common_base<'a, P, I>(provider: &P, tips: I, block_height: u64, version: BlockVersion) -> Result<(Hash, u64), BlockchainError>
 where
-    P: DifficultyProvider + ConcurrencyProvider,
+    P: DifficultyProvider + ConcurrencyProvider + CacheProvider,
     I: Iterator<Item = &'a Hash> + Send + Sync,
 {
     let highest_tip_height = block_height.saturating_sub(1);
