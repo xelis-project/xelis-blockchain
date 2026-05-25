@@ -80,6 +80,11 @@ pub struct RocksDBConfig {
     #[clap(name = "rocksdb-target-file-size-base", long)]
     #[serde(default)]
     pub target_file_size_base: Option<u64>,
+    /// Disable compaction on flush.
+    /// This can be useful to speed up shutdown time at the cost of increased storage usage and potentially slower read performance.
+    #[clap(name = "rocksdb-disable-compaction-on-flush", long)]
+    #[serde(default)]
+    pub disable_compaction_on_flush: bool,
 }
 
 impl Default for RocksDBConfig {
@@ -98,6 +103,7 @@ impl Default for RocksDBConfig {
             write_buffer_shared: false,
             bloom_filter_bits_per_key: None,
             target_file_size_base: None,
+            disable_compaction_on_flush: false,
         }
     }
 }

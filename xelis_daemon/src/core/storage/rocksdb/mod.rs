@@ -189,6 +189,7 @@ pub struct RocksStorage {
     snapshot: Option<Snapshot>,
     cache: StorageCache,
     concurrency: usize,
+    disable_compaction_on_flush: bool,
 }
 
 tid!(RocksStorage);
@@ -263,6 +264,7 @@ impl RocksStorage {
             snapshot: None,
             cache: StorageCache::new(None),
             concurrency,
+            disable_compaction_on_flush: config.disable_compaction_on_flush,
         };
 
         if let Some(pruned_topoheight) = db.load_optional_from_disk(Column::Common, PRUNED_TOPOHEIGHT)?{
@@ -520,6 +522,7 @@ impl RocksStorage {
 
     pub async fn flush_and_compact(&mut self) -> Result<(), BlockchainError> {
         let db = Arc::clone(&self.db);
+        let disable_compaction_on_flush = self.disable_compaction_on_flush;
         // To prevent starving the current async worker,
         // We execute the following on a blocking thread
         // and simply await its result 
@@ -527,6 +530,10 @@ impl RocksStorage {
             info!("flushing DB");
             db.flush()
                 .context("Error while flushing DB")?;
+
+            if disable_compaction_on_flush {
+                return Ok(())                
+            }
 
             info!("compacting DB");
             db.compact_range::<&[u8], &[u8]>(None, None);
