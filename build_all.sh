@@ -51,13 +51,9 @@ for target in "${targets[@]}"; do
             exit 1
         fi
 
-        # Pull the image once if missing
-        if ! docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
-            echo "Docker image $IMAGE_NAME not found locally, pulling..."
-            docker pull "$IMAGE_NAME"
-        else
-            echo "Docker image $IMAGE_NAME already present, skipping pull."
-        fi
+        # Always pull the latest image to ensure an up-to-date Rust toolchain
+        echo "Pulling latest Docker image $IMAGE_NAME..."
+        docker pull "$IMAGE_NAME"
 
         docker run --rm -it -e XELIS_COMMIT_HASH="$commit_hash" -v "$PWD:/work" -w /work "$IMAGE_NAME" cargo xwin build --target "$target" --profile release-with-lto 
     else
