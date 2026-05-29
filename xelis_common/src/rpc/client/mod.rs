@@ -1,5 +1,6 @@
 use serde::Deserialize;
 use serde_json::Value;
+use strum::IntoStaticStr;
 use thiserror::Error;
 
 mod http;
@@ -43,7 +44,8 @@ struct JsonRPCErrorResponse {
     data: Option<Value>,
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, IntoStaticStr)]
+#[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum JsonRPCError {
     #[error("Server failed to parse request JSON data")]
     ParseError,

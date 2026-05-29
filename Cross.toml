@@ -1,3 +1,13 @@
+[target.x86_64-pc-windows-gnu]
+image = "ghcr.io/cross-rs/x86_64-pc-windows-gnu:main"
+pre-build = [
+    "apt-get update",
+    "DEBIAN_FRONTEND=noninteractive apt-get install -y clang libclang-dev",
+]
+
+[target.x86_64-pc-windows-gnu.env]
+set = { BINDGEN_EXTRA_CLANG_ARGS = "-target x86_64-pc-windows-gnu -I/usr/x86_64-w64-mingw32/include" }
+
 [target.armv7-unknown-linux-gnueabihf]
 image = "ghcr.io/cross-rs/armv7-unknown-linux-gnueabihf:main"
 

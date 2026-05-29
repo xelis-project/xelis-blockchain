@@ -112,7 +112,7 @@ pub fn balance_proof_verify(zelf: FnInstance, mut params: FnParams, _: &ModuleMe
 
     let zelf = zelf?;
     let zelf: &BalanceProof = zelf.as_opaque_type()?;
-    let valid = zelf.verify(&source_pubkey, source_ciphertext, &mut transcript.0)
+    let valid = zelf.verify_with_transcript(&source_pubkey, source_ciphertext, &mut transcript.0)
         .is_ok();
 
     Ok(SysCallResult::Return(Primitive::Boolean(valid).into()))

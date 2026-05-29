@@ -6,7 +6,8 @@ mod wrapper;
 use std::{
     collections::HashMap,
     error::Error as StdError,
-    hash::Hash
+    hash::Hash,
+    ops::Bound
 };
 
 use anyhow::Context;
@@ -239,11 +240,19 @@ impl<C: Hash + Eq> Snapshot<C> {
                         )
                     },
                     IteratorMode::Range { lower_bound, upper_bound, direction } => {
-                        let lower = Bytes::from(lower_bound.to_vec());
-                        let upper = Bytes::from(upper_bound.to_vec());
+                        let lower = lower_bound.map(|b| Bytes::from(b.to_vec()));
+                        let upper = upper_bound.map(|b| Bytes::from(b.to_vec()));
+                        let bound = match (lower, upper) {
+                            (Some(lower), Some(upper)) => (Bound::Included(lower), Bound::Excluded(upper)),
+                            (Some(lower), None) => (Bound::Included(lower), Bound::Unbounded),
+                            (None, Some(upper)) => (Bound::Unbounded, Bound::Excluded(upper)),
+                            (None, None) => (Bound::Unbounded, Bound::Unbounded),
+                        };
+
+                        let range = tree.writes.range(bound);
                         let iter = match direction {
-                            Direction::Forward => Either::Left(tree.writes.range(lower..upper)),
-                            Direction::Reverse => Either::Right(tree.writes.range(lower..upper).rev()),
+                            Direction::Forward => Either::Left(range),
+                            Direction::Reverse => Either::Right(range.rev()),
                         };
                         Box::new(iter
                             .filter_map(|(k, v)| v.as_ref().map(|v| (k.into(), v.into())))

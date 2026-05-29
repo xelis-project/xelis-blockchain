@@ -15,7 +15,7 @@ use indexmap::IndexSet;
 use log::{debug, error, info, trace, warn};
 use metrics::histogram;
 use xelis_common::{
-    block::{Block, BlockVersion},
+    block::Block,
     crypto::Hash,
     difficulty::CumulativeDifficulty,
     immutable::Immutable,
@@ -33,14 +33,13 @@ use xelis_common::{
 use crate::{
     config::{CHAIN_SYNC_DELAY, MILLIS_PER_SECOND, PEER_OBJECTS_CONCURRENCY, STABLE_LIMIT},
     core::{
-        hard_fork,
         blockchain::{BroadcastOption, PreVerifyBlock},
+        blockdag,
         error::BlockchainError,
         storage::{
             Storage,
-            snapshot::{SnapshotWrapper, StorageHolder},
-        },
-        blockdag,
+            snapshot::{RwSnapshotWrapper, StorageHolder},
+        }
     },
     p2p::{
         error::P2pError,
@@ -134,21 +133,27 @@ impl<S: Storage> P2pServer<S> {
 
             if let Some(common_point) = &common_point {
                 let mut topoheight = common_point.get_topoheight();
-                // lets add all blocks ordered hash
-                let chain_cache = storage.chain_cache().await;
-                let top_topoheight = chain_cache.topoheight;
                 // used to detect if we find unstable height for alt tips
                 let mut unstable_height = None;
-                let top_height = chain_cache.height;
-                // check to see if we should search for alt tips (and above unstable height)
-                let should_search_alt_tips = top_topoheight - topoheight < accepted_response_size as u64;
 
-                // Don't search for block below our DAG common point order
-                let common_block_height = storage.get_height_for_block_hash(&common_point.get_hash()).await?;
-                if should_search_alt_tips {
-                    debug!("Peer is near to be synced, will send him alt tips blocks");
-                    unstable_height = Some(chain_cache.stable_height.max(common_block_height) + 1);
-                }
+                let (top_height, top_topoheight) = {
+                    // lets add all blocks ordered hash
+                    let chain_cache = storage.chain_cache().await;
+                    let top_topoheight = chain_cache.topoheight;
+
+                    let top_height = chain_cache.height;
+                    // check to see if we should search for alt tips (and above unstable height)
+                    let should_search_alt_tips = top_topoheight - topoheight < accepted_response_size as u64;
+
+                    // Don't search for block below our DAG common point order
+                    if should_search_alt_tips {
+                        debug!("Peer is near to be synced, will send him alt tips blocks");
+                        let common_block_height = storage.get_height_for_block_hash(&common_point.get_hash()).await?;
+                        unstable_height = Some(chain_cache.stable_height.max(common_block_height) + 1);
+                    }
+
+                    (top_height, top_topoheight)
+                };
 
                 // Search the lowest height
                 let mut lowest_height = top_height;
@@ -157,26 +162,24 @@ impl<S: Storage> P2pServer<S> {
                 while response_blocks.len() < accepted_response_size && topoheight <= top_topoheight {
                     trace!("looking for hash at topoheight {}", topoheight);
                     let hash = storage.get_hash_at_topo_height(topoheight).await?;
+                    let height = storage.get_height_for_block_hash(&hash).await?;
 
                     // Find the lowest height
-                    let height = storage.get_height_for_block_hash(&hash).await?;
                     if height < lowest_height {
                         lowest_height = height;
                     }
 
                     let mut swap = false;
                     if let Some(previous_hash) = response_blocks.last() {
-                        let version = hard_fork::get_version_at_height(self.blockchain.get_network(), height);
                         // Due to the TX being orphaned, some TXs may be in the wrong order in V1
                         // It has been sorted in V2 and should not happen anymore
-                        if (version == BlockVersion::V0 || version >= BlockVersion::V3) && storage.has_block_position_in_order(&hash).await? && storage.has_block_position_in_order(&previous_hash).await? {
+                        let metadata = storage.get_metadata_at_topoheight(topoheight).await?;
+
+                        if metadata.is_side_block && storage.has_block_position_in_order(&hash).await? && storage.has_block_position_in_order(&previous_hash).await? {
                             let position = storage.get_block_position_in_order(&hash).await?;
                             let previous_position = storage.get_block_position_in_order(&previous_hash).await?;
-                            // if the block is a side block, we need to check if it's in the right order
                             if position < previous_position {
-                                if blockdag::is_side_block_internal(&*storage, &hash, Some(topoheight), top_topoheight, version).await? {
-                                    swap = true;
-                                }
+                                swap = true;
                             }
                         }
                     }
@@ -194,6 +197,7 @@ impl<S: Storage> P2pServer<S> {
                     }
                     topoheight += 1;
                 }
+
                 lowest_common_height = Some(lowest_height);
 
                 // now, lets check if peer is near to be synced, and send him alt tips blocks
@@ -410,7 +414,7 @@ impl<S: Storage> P2pServer<S> {
     // This may be faster, but we would use slightly more bandwidth
     // NOTE: ChainValidator must check the block hash and not trust it
     // as we are giving it the chain directly to prevent a re-compute
-    async fn handle_blocks_from_chain_validator(&self, peer: &Arc<Peer>, chain_validator: ChainValidator<'_, S>, snapshot: &SnapshotWrapper<'_, S>) -> Result<(), BlockchainError> {
+    async fn handle_blocks_from_chain_validator(&self, peer: &Arc<Peer>, chain_validator: ChainValidator<'_, S>, snapshot: &RwSnapshotWrapper<'_, S>) -> Result<(), BlockchainError> {
         // now retrieve all txs from all blocks header and add block in chain
 
         let capacity = if self.allow_boost_sync() {
@@ -498,7 +502,7 @@ impl<S: Storage> P2pServer<S> {
 
     // Handle the chain validator by rewinding our current chain first
     // This should only be called with a commit point enabled
-    async fn handle_chain_validator_with_rewind(&self, peer: &Arc<Peer>, pop_count: u64, chain_validator: ChainValidator<'_, S>, snapshot: &SnapshotWrapper<'_, S>) -> Result<(Vec<(Hash, Immutable<Transaction>)>, Result<(), BlockchainError>), BlockchainError> {
+    async fn handle_chain_validator_with_rewind(&self, peer: &Arc<Peer>, pop_count: u64, chain_validator: ChainValidator<'_, S>, snapshot: &RwSnapshotWrapper<'_, S>) -> Result<(Vec<(Arc<Hash>, Arc<Transaction>)>, Result<(), BlockchainError>), BlockchainError> {
         // peer chain looks correct, lets rewind our chain
         warn!("Rewinding chain because of {} (pop count: {})", peer, pop_count);
         let (topoheight, txs) = {
@@ -512,7 +516,7 @@ impl<S: Storage> P2pServer<S> {
         debug!("Rewinded chain until topoheight {}", topoheight);
         let res = self.handle_blocks_from_chain_validator(peer, chain_validator, snapshot).await;
 
-        if let Err(BlockchainError::ErrorOnP2p(e)) = &res {
+        if let Err(BlockchainError::P2pError(e)) = &res {
             debug!("Mark {} as sync chain from validator failed: {}", peer, e);
             peer.set_sync_chain_failed(true);
 
@@ -644,7 +648,7 @@ impl<S: Storage> P2pServer<S> {
 
                 {
                     info!("Starting commit point for chain validator");
-                    let storage = SnapshotWrapper::new(self.blockchain.get_storage());
+                    let storage = RwSnapshotWrapper::new(self.blockchain.get_storage());
                     let mut res = self.handle_chain_validator_with_rewind(peer, pop_count, chain_validator, &storage).await;
 
                     info!("Ending commit point for chain validator");
@@ -672,7 +676,7 @@ impl<S: Storage> P2pServer<S> {
                         let mut storage = storage.lock().await?;
                         debug!("locked storage write mode for commit point");
 
-                        storage.end_snapshot(apply)?;
+                        storage.end_snapshot(apply).await?;
                         info!("Commit point ended for chain validator, apply: {}", apply);
                     }
 
@@ -688,7 +692,7 @@ impl<S: Storage> P2pServer<S> {
                                 debug!("Trying to apply orphaned TX {}", hash);
                                 if !self.blockchain.is_tx_included(&hash).await? {
                                     debug!("TX {} is not in chain, adding it to mempool", hash);
-                                    if let Err(e) = self.blockchain.add_tx_to_mempool_with_hash(tx.into_arc(), Immutable::Owned(hash), false).await {
+                                    if let Err(e) = self.blockchain.add_tx_to_mempool_with_hash(tx, Immutable::Arc(hash), false).await {
                                         debug!("Couldn't add back to mempool after commit point rollbacked: {}", e);
                                     }
                                 } else {
@@ -873,7 +877,7 @@ impl<S: Storage> P2pServer<S> {
             return Ok(())
         }
 
-        warn!("Forcing block {} re-execution", hash);
+        debug!("trying to force block {} re-execution", hash);
         let block = {
             debug!("acquiring storage semaphore for block forced re-execution");
             let _permit = self.blockchain.storage_semaphore().acquire().await?;
@@ -881,7 +885,7 @@ impl<S: Storage> P2pServer<S> {
 
             let mut storage = storage.write().await?;
             if storage.is_block_topological_ordered(&hash).await? {
-                warn!("block {} is already ordered, skipping its re-execution", hash);
+                debug!("block {} is already ordered, skipping its re-execution", hash);
                 return Ok(())
             }
 
@@ -895,15 +899,10 @@ impl<S: Storage> P2pServer<S> {
                 storage.store_tips(&tips).await?;
             }
 
-            let mut blocks = storage.get_blocks_at_height(block.get_height()).await?;
-            if blocks.shift_remove(hash.as_ref()) {
-                debug!("Block {} was at height {}, removing it from blocks at height", hash, block);
-                storage.set_blocks_at_height(&blocks, block.get_height()).await?;
-            }
-
             block
         };
 
+        warn!("Block {} is not in topological order, forcing its re-execution", hash);
         // Replicate same behavior as above branch
         self.blockchain.add_new_block_with_storage(storage, block, PreVerifyBlock::Hash(hash), BroadcastOption::All, false).await
     }

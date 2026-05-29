@@ -11,6 +11,8 @@ pub enum TxVersion {
     V1 = 1,
     // Smart Contracts
     V2 = 2,
+    // Carrier
+    V3 = 3,
 }
 
 impl Default for TxVersion {
@@ -27,6 +29,7 @@ impl TryFrom<u8> for TxVersion {
             0 => Ok(TxVersion::V0),
             1 => Ok(TxVersion::V1),
             2 => Ok(TxVersion::V2),
+            3 => Ok(TxVersion::V3),
             _ => Err(()),
         }
     }
@@ -34,11 +37,7 @@ impl TryFrom<u8> for TxVersion {
 
 impl Into<u8> for TxVersion {
     fn into(self) -> u8 {
-        match self {
-            TxVersion::V0 => 0,
-            TxVersion::V1 => 1,
-            TxVersion::V2 => 2,
-        }
+        self as u8
     }
 }
 
@@ -51,11 +50,7 @@ impl Into<u64> for TxVersion {
 
 impl Serializer for TxVersion {
     fn write(&self, writer: &mut Writer) {
-        match self {
-            TxVersion::V0 => writer.write_u8(0),
-            TxVersion::V1 => writer.write_u8(1),
-            TxVersion::V2 => writer.write_u8(2),
-        }
+        writer.write_u8(*self as u8);
     }
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError>
@@ -71,11 +66,7 @@ impl Serializer for TxVersion {
 
 impl fmt::Display for TxVersion {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            TxVersion::V0 => write!(f, "V0"),
-            TxVersion::V1 => write!(f, "V1"),
-            TxVersion::V2 => write!(f, "V2"),
-        }
+        write!(f, "V{}", *self as u8)
     }
 }
 

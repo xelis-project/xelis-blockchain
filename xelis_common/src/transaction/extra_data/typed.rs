@@ -4,6 +4,26 @@ use crate::{
 };
 use super::{ExtraData, PlaintextData};
 
+#[derive(Clone, Copy, Debug)]
+#[repr(u8)]
+pub enum ExtraDataKind {
+    Private,
+    Public,
+    Proprietary
+}
+
+impl TryFrom<u8> for ExtraDataKind {
+    type Error = &'static str;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        Ok(match value {
+            0 => Self::Private,
+            1 => Self::Public,
+            2 => Self::Proprietary,
+            _ => return Err("Invalid value")
+        })
+    }
+}
 
 // Versioned extra data
 pub enum ExtraDataType {
@@ -17,6 +37,7 @@ pub enum ExtraDataType {
     Proprietary(Vec<u8>)
 }
 
+
 impl ExtraDataType {
     // Estimate the final size for the extra data based on the plaintext format
     pub fn estimate_size(data: &DataElement, private: bool) -> usize {
@@ -27,6 +48,14 @@ impl ExtraDataType {
             // 2 bytes for inner data len
             // 2 bytes for unknown data format len
             1 + 2 + 2 + data.size()
+        }
+    }
+
+    pub fn kind(&self) -> ExtraDataKind {
+        match self {
+            Self::Private(_) => ExtraDataKind::Private,
+            Self::Public(_) => ExtraDataKind::Public,
+            Self::Proprietary(_) => ExtraDataKind::Proprietary
         }
     }
 }
@@ -66,7 +95,8 @@ impl Serializer for ExtraDataType {
 
 #[cfg(test)]
 mod tests {
-    use crate::{serializer::Serializer, transaction::extra_data::ExtraDataType};
+    use super::*;
+    use crate::serializer::Serializer;
 
     #[test]
     fn test_proprietary() {
@@ -74,6 +104,7 @@ mod tests {
         let v = ExtraDataType::Proprietary(inner.clone());
         let bytes = v.to_bytes();
         let v2 = ExtraDataType::from_bytes(&bytes).unwrap();
+        assert!(matches!(v2.kind(), ExtraDataKind::Proprietary));
         let ExtraDataType::Proprietary(v2) = v2 else {
             panic!("invalid variant");
         };

@@ -5,7 +5,6 @@ use std::{
     sync::Arc
 };
 
-use indexmap::IndexSet;
 use lru::LruCache;
 use xelis_common::{
     tokio::sync::Mutex,
@@ -17,13 +16,19 @@ use xelis_common::{
 
 use crate::config::{DEFAULT_CACHE_SIZE, GENESIS_BLOCK_DIFFICULTY};
 
-use super::Tips;
+use super::SortedTips;
 
 #[macro_export]
 macro_rules! init_cache {
     ($cache_size: expr) => {{
         Mutex::new(LruCache::new(NonZeroUsize::new($cache_size).expect("Non zero value for cache")))
     }};
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub struct WorkScoreCacheKey {
+    pub tip: Hash,
+    pub base: Hash,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -40,8 +45,6 @@ pub struct CounterCache {
     pub blocks_execution_count: u64,
     // Count of contracts
     pub contracts_count: u64,
-    // Pruned topoheight cache
-    pub pruned_topoheight: Option<TopoHeight>,
 }
 
 #[derive(Debug)]
@@ -51,11 +54,12 @@ pub struct ChainCache {
     pub tip_base_cache: Mutex<LruCache<(Hash, u64), (Hash, u64)>>,
     // This cache is used to avoid to recompute the common base
     // key is a combined hash of tips
-    pub common_base_cache: Mutex<LruCache<Hash, (Hash, u64)>>,
+    pub common_base_cache: Mutex<LruCache<Vec<Hash>, (Hash, u64)>>,
     // tip work score is used to determine the best tip based on a block, tip base ands a base height
-    pub tip_work_score_cache: Mutex<LruCache<(Hash, Hash, u64), (HashSet<Hash>, CumulativeDifficulty)>>,
-    // using base hash, current tip hash and base height, this cache is used to store the DAG order
-    pub full_order_cache: Mutex<LruCache<(Hash, Hash, u64), IndexSet<Hash>>>,
+    pub tip_work_score_cache: Mutex<LruCache<WorkScoreCacheKey, (HashSet<Hash>, CumulativeDifficulty)>>,
+    // common dominator cache for find_common_dominator_at_or_above_height
+    // key is (sorted tips, min_height, descending) while value is the optional dominator (hash, height)
+    pub dominator_cache: Mutex<LruCache<(Vec<Hash>, u64, bool), Option<(Hash, u64)>>>,
     // current difficulty at tips
     // its used as cache to display current network hashrate
     pub difficulty: Difficulty,
@@ -69,7 +73,9 @@ pub struct ChainCache {
     // It is used mostly for chain rewind limit
     pub stable_topoheight: TopoHeight,
     // current tips of the chain
-    pub tips: Tips,
+    pub tips: SortedTips,
+    // Pruned topoheight cache
+    pub pruned_topoheight: Option<TopoHeight>,
 }
 
 impl ChainCache {
@@ -77,7 +83,7 @@ impl ChainCache {
         self.tip_base_cache.get_mut().clear();
         self.common_base_cache.get_mut().clear();
         self.tip_work_score_cache.get_mut().clear();
-        self.full_order_cache.get_mut().clear();
+        self.dominator_cache.get_mut().clear();
     }
 
     pub fn clone_mut(&mut self) -> Self {
@@ -85,13 +91,14 @@ impl ChainCache {
             tip_base_cache: Mutex::new(self.tip_base_cache.get_mut().clone()),
             common_base_cache: Mutex::new(self.common_base_cache.get_mut().clone()),
             tip_work_score_cache: Mutex::new(self.tip_work_score_cache.get_mut().clone()),
-            full_order_cache: Mutex::new(self.full_order_cache.get_mut().clone()),
+            dominator_cache: Mutex::new(self.dominator_cache.get_mut().clone()),
             height: self.height,
             topoheight: self.topoheight,
             stable_height: self.stable_height,
             stable_topoheight: self.stable_topoheight,
             difficulty: self.difficulty.clone(),
             tips: self.tips.clone(),
+            pruned_topoheight: self.pruned_topoheight,
         }
     }
 }
@@ -102,13 +109,14 @@ impl Default for ChainCache {
             tip_base_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).expect("Default cache size for tip base must be above 0"))),
             tip_work_score_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).expect("Default cache size for tip work score must be above 0"))),
             common_base_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).expect("Default cache size for common base must be above 0"))),
-            full_order_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).expect("Default cache size for full order must be above 0"))),
+            dominator_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).expect("Default cache size for dominator must be above 0"))),
             height: 0,
             topoheight: 0,
             stable_height: 0,
             stable_topoheight: 0,
             difficulty: GENESIS_BLOCK_DIFFICULTY,
-            tips: Tips::default(),
+            tips: SortedTips::default(),
+            pruned_topoheight: None,
         }
     }
 }

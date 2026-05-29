@@ -1,4 +1,5 @@
 use anyhow::Error as AnyError;
+use strum::IntoStaticStr;
 use thiserror::Error;
 use xelis_vm::ValidatorError;
 
@@ -8,13 +9,37 @@ use crate::{
         proofs::ProofVerificationError,    
         Hash
     },
-    contract::vm::ContractError
+    contract::vm::{ContractError, ContractStateError},
 };
 
 #[derive(Error, Debug)]
-pub enum VerificationError<T> {
+pub enum VerificationStateError<T> {
     #[error("State error: {0}")]
     State(T),
+    #[error(transparent)]
+    VerificationError(VerificationError),
+    #[error(transparent)]
+    ContractError(#[from] ContractError),
+}
+
+impl<S, T: Into<VerificationError>> From<T> for VerificationStateError<S> {
+    fn from(err: T) -> Self {
+        Self::VerificationError(err.into())
+    }
+}
+
+impl<S> From<ContractStateError<S>> for VerificationStateError<S> {
+    fn from(err: ContractStateError<S>) -> Self {
+        match err {
+            ContractStateError::State(state_err) => Self::State(state_err),
+            ContractStateError::Contract(contract_err) => Self::ContractError(contract_err),
+        }
+    }
+}
+
+#[derive(Error, Debug, IntoStaticStr)]
+#[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
+pub enum VerificationError {
     #[error("Invalid TX {} nonce, got {} expected {}", _0, _1, _2)]
     InvalidNonce(Hash, Nonce, Nonce),
     #[error("Sender is receiver")]
@@ -55,6 +80,8 @@ pub enum VerificationError<T> {
     DepositNotFound,
     #[error("Configured max gas is above the network limit")]
     MaxGasReached,
-    #[error(transparent)]
-    Contract(#[from] ContractError<T>),
+    #[error("Transaction size {} bytes is above the maximum allowed {} bytes", _0, _1)]
+    TxTooBig(usize, usize),
+    #[error("Contract parameters size {} bytes is above the maximum allowed {} bytes", _0, _1)]
+    ContractParametersSize(usize, usize),
 }

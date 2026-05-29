@@ -113,6 +113,8 @@ pub enum P2pError {
     UnrequestedBootstrapChainResponse,
     #[error("Invalid common point at topoheight {}", _0)]
     InvalidCommonPoint(u64),
+    #[error("No common point found with peer")]
+    NoCommonPoint,
     #[error("Peer disconnected")]
     Disconnected,
     #[error("Invalid handshake")]

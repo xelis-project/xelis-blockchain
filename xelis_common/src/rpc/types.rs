@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use super::tid;
+use runtime_context::tid;
 
 pub const JSON_RPC_VERSION: &str = "2.0";
 

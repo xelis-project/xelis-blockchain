@@ -21,7 +21,7 @@ use crate::{
         ModuleMetadata,
     },
     crypto::Hash,
-    versioned_type::VersionedState
+    versioned::VersionedState
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -31,7 +31,7 @@ impl JSONHelper for OpaqueReadOnlyStorage {}
 
 impl Serializable for OpaqueReadOnlyStorage {}
 
-pub async fn read_only_storage<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut parameters: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+pub async fn read_only_storage<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, mut parameters: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let (storage, state) = from_context::<P>(context)?;
     let hash: Hash = parameters.remove(0)
         .into_owned()
@@ -46,7 +46,7 @@ pub async fn read_only_storage<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(OpaqueReadOnlyStorage(hash))).into()))
 }
 
-pub async fn read_only_storage_load<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+pub async fn read_only_storage_load<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let (storage, state) = from_context::<P>(context)?;
     let zelf = zelf?;
     let zelf: &OpaqueReadOnlyStorage = zelf
@@ -60,28 +60,36 @@ pub async fn read_only_storage_load<'a, 'ty, 'r, P: ContractProvider>(zelf: FnIn
     }
 
     // Read from global cache first, then fallback to provider
-    let value = match get_cache_for_contract(&mut state.changes.caches, state.global_caches, zelf.0.clone())
+    let value = match get_cache_for_contract(&mut state.changes.caches, state.global_caches, zelf.0.clone(), state.cache_clone_refs)
         .storage
-        .entry(key.clone()) {
+        .entry(key.clone_ref()) {
             Entry::Occupied(v) => v.get()
                 .as_ref()
-                .and_then(|(_, v)| v.clone()),
+                .and_then(|(_, v)| v.as_ref().map(|v| if state.cache_clone_refs {
+                    v.clone_ref()
+                } else {
+                    v.clone()
+                })),
             Entry::Vacant(v) => {
                 let data = storage.load_data(&zelf.0, &key, state.topoheight).await?
                     .map(|(topo, v)| (VersionedState::FetchedAt(topo), v));
 
                 v.insert(data)
                     .as_ref()
-                    .and_then(|(_, v)| v.clone())
+                    .and_then(|(_, v)| v.as_ref().map(|v| if state.cache_clone_refs {
+                        v.clone_ref()
+                    } else {
+                        v.clone()
+                    }))
             }
     };
 
     // We are forced to do a deep clone in case a contract try to attack
     // another contract memory due to how XVM handle references
-    Ok(SysCallResult::Return(value.map(|v| v.deep_clone()).unwrap_or_default().into()))
+    Ok(SysCallResult::Return(value.unwrap_or_default().into()))
 }
 
-pub async fn read_only_storage_has<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+pub async fn read_only_storage_has<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let (storage, state) = from_context::<P>(context)?;
     let zelf = zelf?;
     let zelf: &OpaqueReadOnlyStorage = zelf
@@ -95,9 +103,9 @@ pub async fn read_only_storage_has<'a, 'ty, 'r, P: ContractProvider>(zelf: FnIns
     }
 
     // Read from global cache first, then fallback to provider
-    let contains = match get_cache_for_contract(&mut state.changes.caches, state.global_caches, zelf.0.clone())
+    let contains = match get_cache_for_contract(&mut state.changes.caches, state.global_caches, zelf.0.clone(), state.cache_clone_refs)
         .storage
-        .entry(key.clone()) {
+        .entry(key.clone_ref()) {
             Entry::Occupied(v) => v.get()
                 .as_ref()
                 .map_or(false, |(_, v)| v.is_some()),

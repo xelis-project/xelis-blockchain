@@ -103,7 +103,7 @@ where
         self.xswd.verify_application(self.as_ref(), &app_data.app_data).await?;
 
         let state = Arc::new(AppState::new(app_data.app_data));
-        let client = ClientImpl::new(app_data.relayer, Arc::clone(self), app_data.encryption_mode, state.clone()).await?;
+        let client = ClientImpl::new(app_data.relayer, Arc::clone(self), app_data.encryption_mode, state.clone(), true).await?;
 
         let response = self.xswd.add_application(&state).await?;
         client.send_message(response).await;
@@ -125,7 +125,9 @@ where
     pub async fn on_close(&self, state: AppStateShared) {
         {
             let mut applications = self.applications.write().await;
-            if applications.remove(&state).is_none() {
+            if let Some(client) = applications.remove(&state) {
+                client.close().await;
+            } else {
                 return;
             }
         }
@@ -136,8 +138,7 @@ where
     }
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[async_trait]
 impl<W> XSWDProvider for XSWDRelayer<W>
 where
     W: ShareableTid<'static> + XSWDHandler

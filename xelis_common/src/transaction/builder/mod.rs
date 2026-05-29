@@ -9,6 +9,7 @@ mod payload;
 use schemars::JsonSchema;
 pub use state::AccountState;
 pub use fee::*;
+use strum::IntoStaticStr;
 pub use unsigned::UnsignedTransaction;
 
 use indexmap::{IndexMap, IndexSet};
@@ -73,6 +74,7 @@ use super::{
     Transaction,
     TransactionType,
     TransferPayload,
+    BlobPayload,
     TxVersion,
     EXTRA_DATA_LIMIT_SIZE,
     EXTRA_DATA_LIMIT_SUM_SIZE,
@@ -82,10 +84,13 @@ use super::{
 
 pub use payload::*;
 
-#[derive(Error, Debug, Clone)]
-pub enum GenerationError<T> {
-    #[error("Error in the state: {0}")]
-    State(T),
+#[derive(Error, Debug, Clone, IntoStaticStr)]
+#[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
+pub enum GenerationError {
+    #[error("Missing blob destination key")]
+    BlobMissingDestination,
+    #[error("Expected exactly one destination for blob, got {0}")]
+    ExpectedOneDestinationForBlob(usize),
     #[error("Invalid constructor invoke on deploy")]
     InvalidConstructorInvoke,
     #[error("No contract key provided for private deposits")]
@@ -124,6 +129,29 @@ pub enum GenerationError<T> {
     FeeMax,
 }
 
+#[derive(Error, Debug, Clone)]
+pub enum GenerationStateError<T> {
+    #[error("Error in the state: {0}")]
+    State(T),
+    #[error(transparent)]
+    GenerationError(#[from] GenerationError),
+}
+
+impl<T> From<ProofGenerationError> for GenerationStateError<T> {
+    fn from(value: ProofGenerationError) -> Self {
+        GenerationStateError::GenerationError(GenerationError::Proof(value))
+    }
+}
+
+impl<T> Into<&'static str> for GenerationStateError<T> {
+    fn into(self) -> &'static str {
+        match self {
+            GenerationStateError::State(_) => "STATE_ERROR",
+            GenerationStateError::GenerationError(e) => e.into(),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TransactionTypeBuilder {
@@ -133,6 +161,7 @@ pub enum TransactionTypeBuilder {
     MultiSig(MultiSigBuilder),
     InvokeContract(InvokeContractBuilder),
     DeployContract(DeployContractBuilder),
+    Blob(BlobPayloadBuilder),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -220,6 +249,9 @@ impl TransactionTypeBuilder {
                 for transfer in transfers {
                     used_keys.insert(transfer.destination.get_public_key());
                 }
+            },
+            TransactionTypeBuilder::Blob(payload) => {
+                used_keys.extend(payload.destinations.iter().map(|addr| addr.get_public_key()));
             }
             _ => {},
         }
@@ -347,6 +379,9 @@ impl TransactionBuilder {
                     commitments_count += commitments;
                     size += deposits_size + invoke.max_gas.size();
                 }
+            },
+            TransactionTypeBuilder::Blob(payload) => {
+                size += 1 + ExtraDataType::estimate_size(&payload.data, payload.encrypt) + (payload.destinations.len() * RISTRETTO_COMPRESSED_SIZE);
             }
         };
 
@@ -390,7 +425,7 @@ impl TransactionBuilder {
     }
 
     // Estimate the fees for this TX
-    pub fn estimate_fees<B: FeeHelper>(&self, state: &mut B) -> Result<u64, GenerationError<B::Error>> {
+    pub fn estimate_fees<B: FeeHelper>(&self, state: &mut B) -> Result<u64, GenerationStateError<B::Error>> {
         let calculated_fee = match self.fee_builder {
             // If the value is set, use it
             FeeBuilder::Fixed(value) => value,
@@ -407,7 +442,7 @@ impl TransactionBuilder {
                 match &self.data {
                     TransactionTypeBuilder::Transfers(transfers) => {
                         for transfer in transfers {
-                            if !state.account_exists(&transfer.destination.get_public_key()).map_err(GenerationError::State)? {
+                            if !state.account_exists(&transfer.destination.get_public_key()).map_err(GenerationStateError::State)? {
                                 new_addresses += 1;
                             }
                         }
@@ -507,7 +542,8 @@ impl TransactionBuilder {
                 if *asset == XELIS_ASSET {
                     ct -= Scalar::from(BURN_PER_CONTRACT);
                 }
-            }
+            },
+            TransactionTypeBuilder::Blob(_) => {}
         }
 
         ct
@@ -560,7 +596,8 @@ impl TransactionBuilder {
                         cost += invoke.max_gas;
                     }
                 }
-            }
+            },
+            TransactionTypeBuilder::Blob(_) => {}
         }
 
         cost
@@ -571,7 +608,7 @@ impl TransactionBuilder {
         deposits: &IndexMap<Hash, ContractDepositBuilder>,
         public_key: &PublicKey,
         contract_key: &Option<PublicKey>,
-    ) -> Result<IndexMap<Hash, DepositWithCommitment>, GenerationError<E>> {
+    ) -> Result<IndexMap<Hash, DepositWithCommitment>, GenerationStateError<E>> {
         let mut deposits_commitments = IndexMap::new();
         for (asset, deposit) in deposits.iter() {
             if deposit.private {
@@ -592,7 +629,7 @@ impl TransactionBuilder {
                 });
             } else {
                 if deposit.amount == 0 {
-                    return Err(GenerationError::DepositZero);
+                    return Err(GenerationError::DepositZero.into());
                 }
             }
         }
@@ -663,7 +700,7 @@ impl TransactionBuilder {
         self,
         state: &mut B,
         source_keypair: &KeyPair,
-    ) -> Result<Transaction, GenerationError<B::Error>> {
+    ) -> Result<Transaction, GenerationStateError<B::Error>> {
         let unsigned = self.build_unsigned(state, source_keypair)?;
         Ok(unsigned.finalize(source_keypair))
     }
@@ -672,18 +709,18 @@ impl TransactionBuilder {
         mut self,
         state: &mut B,
         source_keypair: &KeyPair,
-    ) -> Result<UnsignedTransaction, GenerationError<B::Error>> {
+    ) -> Result<UnsignedTransaction, GenerationStateError<B::Error>> {
         // Compute the fees
         let fee = self.estimate_fees(state)?;
         // Use the configured max fee, otherwise fallback to estimated fee
         let fee_limit = state.get_max_fee(fee);
         if fee > fee_limit {
-            return Err(GenerationError::FeeMax);
+            return Err(GenerationError::FeeMax.into());
         }
 
         // Get the nonce
-        let nonce = state.get_nonce().map_err(GenerationError::State)?;
-        state.update_nonce(nonce + 1).map_err(GenerationError::State)?;
+        let nonce = state.get_nonce().map_err(GenerationStateError::State)?;
+        state.update_nonce(nonce + 1).map_err(GenerationStateError::State)?;
 
         // 0.a Create the commitments
 
@@ -693,26 +730,26 @@ impl TransactionBuilder {
         match &mut self.data {
             TransactionTypeBuilder::Transfers(transfers) => {
                 if transfers.len() == 0 {
-                    return Err(GenerationError::EmptyTransfers);
+                    return Err(GenerationError::EmptyTransfers.into());
                 }
 
                 if transfers.len() > MAX_TRANSFER_COUNT {
-                    return Err(GenerationError::MaxTransferCountReached);
+                    return Err(GenerationError::MaxTransferCountReached.into());
                 }
     
                 let mut extra_data_size = 0;
                 for transfer in transfers.iter_mut() {
                     if *transfer.destination.get_public_key() == self.source {
-                        return Err(GenerationError::SenderIsReceiver);
+                        return Err(GenerationError::SenderIsReceiver.into());
                     }
     
                     if state.is_mainnet() != transfer.destination.is_mainnet() {
-                        return Err(GenerationError::InvalidNetwork);
+                        return Err(GenerationError::InvalidNetwork.into());
                     }
     
                     // Either extra data provided or an integrated address, not both
                     if transfer.extra_data.is_some() && !transfer.destination.is_normal() {
-                        return Err(GenerationError::ExtraDataAndIntegratedAddress);
+                        return Err(GenerationError::ExtraDataAndIntegratedAddress.into());
                     }
     
                     // Set the integrated data as extra data
@@ -723,14 +760,14 @@ impl TransactionBuilder {
                     if let Some(extra_data) = &transfer.extra_data {
                         let size = extra_data.size();
                         if size > EXTRA_DATA_LIMIT_SIZE {
-                            return Err(GenerationError::ExtraDataTooLarge);
+                            return Err(GenerationError::ExtraDataTooLarge.into());
                         }
                         extra_data_size += size;
                     }
                 }
     
                 if extra_data_size > EXTRA_DATA_LIMIT_SUM_SIZE {
-                    return Err(GenerationError::ExtraDataTooLarge);
+                    return Err(GenerationError::ExtraDataTooLarge.into());
                 }
     
                 transfers_commitments = transfers
@@ -758,7 +795,7 @@ impl TransactionBuilder {
                             amount_opening,
                         })
                     })
-                    .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?;
+                    .collect::<Result<Vec<_>, GenerationStateError<B::Error>>>()?;
             },
             TransactionTypeBuilder::InvokeContract(payload) => {
                 if payload.max_gas > MAX_GAS_USAGE_PER_TX {
@@ -784,6 +821,11 @@ impl TransactionBuilder {
                     )?;
                 }
             },
+            TransactionTypeBuilder::Blob(payload) => {
+                if payload.encrypt && payload.destinations.len() != 1 {
+                    return Err(GenerationError::ExpectedOneDestinationForBlob(payload.destinations.len()).into());
+                }
+            },
             _ => {}
         };
 
@@ -801,7 +843,7 @@ impl TransactionBuilder {
                 let cost = self.get_transaction_cost(fee_limit, &asset);
                 let current_balance = state
                 .get_account_balance(asset)
-                .map_err(GenerationError::State)?;
+                .map_err(GenerationStateError::State)?;
 
                 let source_new_balance = current_balance
                     .checked_sub(cost)
@@ -812,7 +854,7 @@ impl TransactionBuilder {
 
                 Ok(source_new_balance)
             })
-            .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?;
+            .collect::<Result<Vec<_>, GenerationStateError<B::Error>>>()?;
 
         // Prepare the transcript used for proofs
         let mut transcript = Transaction::prepare_transcript(self.version, &self.source, fee, fee_limit, nonce);
@@ -826,7 +868,7 @@ impl TransactionBuilder {
 
                 let source_current_ciphertext = state
                     .get_account_ciphertext(&asset)
-                    .map_err(GenerationError::State)?
+                    .map_err(GenerationStateError::State)?
                     .take_ciphertext()
                     .map_err(|err| GenerationError::Proof(err.into()))?;
 
@@ -861,11 +903,11 @@ impl TransactionBuilder {
                 // Store the new balance in preparation of next transaction
                 state
                     .update_account_balance(&asset, source_new_balance, new_source_ciphertext)
-                    .map_err(GenerationError::State)?;
+                    .map_err(GenerationStateError::State)?;
 
                 Ok(SourceCommitment::new(commitment, proof, asset.clone()))
             })
-            .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?;
+            .collect::<Result<Vec<_>, GenerationStateError<B::Error>>>()?;
 
         let source_pubkey = source_keypair.get_public_key();
         let mut transfers = Vec::new();
@@ -945,10 +987,10 @@ impl TransactionBuilder {
                             ct_validity_proof,
                         ))
                     })
-                    .collect::<Result<Vec<_>, GenerationError<B::Error>>>()?;
+                    .collect::<Result<Vec<_>, GenerationError>>()?;
     
                 if total_cipher_size > EXTRA_DATA_LIMIT_SUM_SIZE {
-                    return Err(GenerationError::EncryptedExtraDataTooLarge(total_cipher_size, EXTRA_DATA_LIMIT_SUM_SIZE));
+                    return Err(GenerationError::EncryptedExtraDataTooLarge(total_cipher_size, EXTRA_DATA_LIMIT_SUM_SIZE).into());
                 }
             },
             TransactionTypeBuilder::InvokeContract(payload) => {
@@ -997,7 +1039,7 @@ impl TransactionBuilder {
                 // Check if the burn amount is zero
                 // Burn of zero are useless and consume fees for nothing
                 if payload.amount == 0 {
-                    return Err(GenerationError::BurnZero);
+                    return Err(GenerationError::BurnZero.into());
                 }
 
                 if self.version >= TxVersion::V1 {
@@ -1010,11 +1052,11 @@ impl TransactionBuilder {
             },
             TransactionTypeBuilder::MultiSig(payload) => {
                 if payload.participants.len() > MAX_MULTISIG_PARTICIPANTS {
-                    return Err(GenerationError::MultiSigParticipants);
+                    return Err(GenerationError::MultiSigParticipants.into());
                 }
 
                 if payload.threshold as usize > payload.participants.len() || (payload.threshold == 0 && !payload.participants.is_empty()) {
-                    return Err(GenerationError::MultiSigThreshold);
+                    return Err(GenerationError::MultiSigThreshold.into());
                 }
 
                 transcript.multisig_proof_domain_separator();
@@ -1029,7 +1071,7 @@ impl TransactionBuilder {
 
                 // You can't contains yourself in the participants
                 if keys.contains(&self.source) {
-                    return Err(GenerationError::MultiSigSelfParticipant);
+                    return Err(GenerationError::MultiSigSelfParticipant.into());
                 }
 
                 TransactionType::MultiSig(MultiSigPayload {
@@ -1062,7 +1104,7 @@ impl TransactionBuilder {
                     .map_err(|_| GenerationError::InvalidModule)?;
 
                 if payload.invoke.is_none() != module.get_chunk_id_of_hook(0).is_none() {
-                    return Err(GenerationError::InvalidConstructorInvoke);
+                    return Err(GenerationError::InvalidConstructorInvoke.into());
                 }
 
                 TransactionType::DeployContract(DeployContractPayload {
@@ -1079,6 +1121,28 @@ impl TransactionBuilder {
                             deposits
                         }
                     }),
+                })
+            },
+            TransactionTypeBuilder::Blob(payload) => {
+                transcript.blob_proof_domain_separator();
+                for destination in payload.destinations.iter() {
+                    transcript.append_public_key(b"blob_pubkey", &destination.get_public_key());
+                }
+
+                let bytes = payload.data.to_bytes();
+                let data = if payload.encrypt {
+                    let receiver = payload.destinations.first()
+                        .and_then(|d| d.get_public_key().decompress().ok())
+                        .ok_or(GenerationError::BlobMissingDestination)?;
+
+                    ExtraDataType::Private(ExtraData::new(PlaintextData(bytes), source_keypair.get_public_key(), &receiver))
+                } else {
+                    ExtraDataType::Public(PlaintextData(bytes))
+                }.into();
+
+                TransactionType::Blob(BlobPayload {
+                    data,
+                    destinations: payload.destinations.into_iter().map(|d| d.to_public_key()).collect(),
                 })
             }
         };

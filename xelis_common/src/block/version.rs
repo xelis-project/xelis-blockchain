@@ -22,8 +22,8 @@ pub enum BlockVersion {
     V4 = 4,
     // TX Base Fee in DAG
     V5 = 5,
-    // DAG Improvements
-    V6,
+    // DAG Improvements, Smart Contracts new features
+    V6 = 6,
 }
 
 impl BlockVersion {
@@ -34,8 +34,10 @@ impl BlockVersion {
             BlockVersion::V2 => matches!(tx_version, TxVersion::V1),
             BlockVersion::V3
             | BlockVersion::V4
-            | BlockVersion::V5
-            | BlockVersion::V6 => matches!(tx_version, TxVersion::V2),
+            | BlockVersion::V5 => matches!(tx_version, TxVersion::V2),
+            // allows V2 & V3 transactions, as there is no breaking change in V3
+            // and banning V2 would block old wallets from sending transactions
+            | BlockVersion::V6 => matches!(tx_version, TxVersion::V2 | TxVersion::V3),
         }
     }
 
@@ -46,8 +48,8 @@ impl BlockVersion {
             BlockVersion::V2 => TxVersion::V1,
             BlockVersion::V3
             | BlockVersion::V4
-            | BlockVersion::V5
-            | BlockVersion::V6 => TxVersion::V2,
+            | BlockVersion::V5 => TxVersion::V2,
+            | BlockVersion::V6 => TxVersion::V3,
         }
     }
 }
@@ -89,15 +91,7 @@ impl Serializer for BlockVersion {
 
 impl fmt::Display for BlockVersion {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            BlockVersion::V0 => write!(f, "V0"),
-            BlockVersion::V1 => write!(f, "V1"),
-            BlockVersion::V2 => write!(f, "V2"),
-            BlockVersion::V3 => write!(f, "V3"),
-            BlockVersion::V4 => write!(f, "V4"),
-            BlockVersion::V5 => write!(f, "V5"),
-            BlockVersion::V6 => write!(f, "V6"),
-        }
+        write!(f, "V{}", *self as u8)
     }
 }
 

@@ -18,16 +18,7 @@ use crate::core::{
     blockdag,
     error::BlockchainError,
     hard_fork::{get_pow_algorithm_for_version, get_version_at_height},
-    storage::{
-        BlocksAtHeightProvider,
-        CacheProvider,
-        ChainCache,
-        DagOrderProvider,
-        DifficultyProvider,
-        MerkleHashProvider,
-        PrunedTopoheightProvider,
-        Storage
-    }
+    storage::*
 };
 use log::{debug, trace};
 
@@ -188,7 +179,7 @@ impl<'a, S: Storage> ChainValidator<'a, S> {
         trace!("Common base: {} at height {} and hash {}", base, base_height, hash);
 
         // Find the cumulative difficulty for this block
-        let (_, cumulative_difficulty) = blockdag::find_tip_work_score(
+        let (_, cumulative_difficulty) = blockdag::compute_tip_work_score(
             &provider,
             &hash,
             header.get_tips().iter(),
@@ -235,6 +226,12 @@ impl<S: Storage> CacheProvider for ChainValidatorProvider<'_, S> {
 
     async fn chain_cache(&self) -> &ChainCache {
         &self.parent.chain_cache
+    }
+}
+
+impl<S: Storage> ConcurrencyProvider for ChainValidatorProvider<'_, S> {
+    fn concurrency(&self) -> usize {
+        self.parent.blockchain.concurrency_limit()
     }
 }
 
@@ -437,5 +434,12 @@ impl<S: Storage> MerkleHashProvider for ChainValidatorProvider<'_, S> {
 
     async fn set_balances_merkle_hash_at_topoheight(&mut self,  _: TopoHeight, _: &Hash) -> Result<(), BlockchainError> {
         Err(BlockchainError::UnsupportedOperation)
+    }
+}
+
+#[async_trait]
+impl<S: Storage> MergeSetProvider for ChainValidatorProvider<'_, S> {
+    async fn get_mergeset(&self, hash: &Hash) -> Result<MergeSet, BlockchainError> {
+        self.storage.get_mergeset(hash).await
     }
 }

@@ -44,31 +44,33 @@ impl MultiSigProvider for RocksStorage {
 
     // Retrieve the multisig setup at the maximum topoheight for a given account
     async fn get_multisig_at_maximum_topoheight_for<'a>(&'a self, account: &PublicKey, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedMultiSig<'a>)>, BlockchainError> {
-        trace!("get multisig at maximum topoheight for {}", account.as_address(self.is_mainnet()));
-        let account = self.get_account_type(account)?;
-        let Some(topoheight_pointer) = account.multisig_pointer else {
-            return Ok(None);
-        };
+        trace!("get multisig at maximum topoheight for {}", account.as_address(self.is_mainnet()));        
+        self.run_blocking(|| {
+            let account = self.get_account_type(account)?;
+            let Some(topoheight_pointer) = account.multisig_pointer else {
+                return Ok(None);
+            };
 
-        let topo = if topoheight_pointer > maximum_topoheight
-            && self.contains_data(Column::VersionedMultisig, &Self::get_versioned_multisig_key(account.id, maximum_topoheight))? {
-            maximum_topoheight
-        } else {
-            topoheight_pointer
-        };
+            let topo = if topoheight_pointer > maximum_topoheight
+                && self.contains_data(Column::VersionedMultisig, &Self::get_versioned_multisig_key(account.id, maximum_topoheight))? {
+                maximum_topoheight
+            } else {
+                topoheight_pointer
+            };
 
-        let mut next_topoheight = Some(topo);
-        while let Some(topoheight) = next_topoheight {
-            let versioned_key = Self::get_versioned_multisig_key(account.id, topoheight);
-            if topoheight <= maximum_topoheight {
-                let version = self.load_from_disk(Column::VersionedMultisig, &versioned_key)?;
-                return Ok(Some((topoheight, version)));
+            let mut next_topoheight = Some(topo);
+            while let Some(topoheight) = next_topoheight {
+                let versioned_key = Self::get_versioned_multisig_key(account.id, topoheight);
+                if topoheight <= maximum_topoheight {
+                    let version = self.load_from_disk(Column::VersionedMultisig, &versioned_key)?;
+                    return Ok(Some((topoheight, version)));
+                }
+
+                next_topoheight = self.load_from_disk(Column::VersionedMultisig, &versioned_key)?;
             }
 
-            next_topoheight = self.load_from_disk(Column::VersionedMultisig, &versioned_key)?;
-        }
-
-        Ok(None)
+            Ok(None)
+        })
     }
 
     // Verify if an account has a multisig setup
@@ -93,7 +95,7 @@ impl MultiSigProvider for RocksStorage {
         trace!("get last multisig for {}", account.as_address(self.is_mainnet()));
         let account = self.get_account_type(account)?;
         let topoheight = account.multisig_pointer
-            .ok_or(BlockchainError::NoMultisig)?;
+            .ok_or(BlockchainError::MultisigNotFound)?;
 
         let key = Self::get_versioned_multisig_key(account.id, topoheight);
         let version = self.load_from_disk(Column::VersionedMultisig, &key)?;

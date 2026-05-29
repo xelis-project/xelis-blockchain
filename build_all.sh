@@ -1,10 +1,10 @@
 #! /bin/bash
 set -euo pipefail
 
-IMAGE_NAME="messense/cargo-xwin"
+IMAGE_NAME="xelis-cargo-xwin"
 
 # support: ARM64, ARMv7, x86_64 linux, Windows x86_64 (MSVC)
-targets=("aarch64-unknown-linux-gnu" "armv7-unknown-linux-gnueabihf" "x86_64-unknown-linux-musl" "x86_64-unknown-linux-gnu" "x86_64-pc-windows-msvc")
+targets=("x86_64-pc-windows-msvc")
 binaries=("xelis_daemon" "xelis_miner" "xelis_wallet")
 extra_files=("README.md" "API.md" "CHANGELOG.md" "LICENSE")
 
@@ -51,15 +51,11 @@ for target in "${targets[@]}"; do
             exit 1
         fi
 
-        # Pull the image once if missing
-        if ! docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
-            echo "Docker image $IMAGE_NAME not found locally, pulling..."
-            docker pull "$IMAGE_NAME"
-        else
-            echo "Docker image $IMAGE_NAME already present, skipping pull."
-        fi
+        # Build the local image (based on messense/cargo-xwin + latest stable Rust)
+        echo "Building local Docker image $IMAGE_NAME..."
+        docker build -t "$IMAGE_NAME" -f Dockerfile.xwin .
 
-        docker run --rm -it -e XELIS_COMMIT_HASH="$commit_hash" -v "$PWD:/work" -w /work "$IMAGE_NAME" cargo xwin build --target "$target" --profile release-with-lto 
+        docker run --rm -e XELIS_COMMIT_HASH="$commit_hash" -v "$PWD:/work" -w /work "$IMAGE_NAME" cargo xwin build --target "$target" --profile release-with-lto
     else
         # ---- Non-Windows builds via cross ----
         XELIS_COMMIT_HASH="$commit_hash" cross build --target "$target" --profile release-with-lto

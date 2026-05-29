@@ -1,8 +1,7 @@
 use std::{
-    collections::HashSet,
     io::Write,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU8, Ordering},
         Arc
     },
     borrow::Cow
@@ -20,18 +19,20 @@ use log::{
 };
 use anyhow::{Error, Context};
 use chrono::TimeZone;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use xelis_common::{
     api::{
         wallet::*,
         DataElement
     },
+    block::TopoHeight,
     asset::RPCAssetData,
     crypto::{
         elgamal::{
             Ciphertext,
             DecryptHandle
         },
+        proofs::{OwnershipProof, BalanceProof},
         Address,
         Hash,
         Hashable,
@@ -120,6 +121,7 @@ use {
         XSWDResponse,
     },
     xelis_common::{
+        error::ErrorWithKind,
         rpc::{
             RPCHandler,
             RpcRequest,
@@ -217,6 +219,47 @@ impl Event {
     }
 }
 
+/// History scan mode for the wallet
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum), clap(rename_all = "snake_case"))]
+#[repr(u8)]
+#[derive(strum::EnumString, strum::Display)]
+#[strum(serialize_all = "snake_case")]
+pub enum HistoryScanMode {
+    None = 0,
+    #[default]
+    All = 1,
+    Coinbase = 2
+}
+
+impl HistoryScanMode {
+    pub fn all(&self) -> bool {
+        matches!(self, HistoryScanMode::All)
+    }
+
+    pub fn none(&self) -> bool {
+        matches!(self, HistoryScanMode::None)
+    }
+
+    pub fn coinbase(&self) -> bool {
+        matches!(self, HistoryScanMode::Coinbase | HistoryScanMode::All)
+    }
+}
+
+impl TryFrom<u8> for HistoryScanMode {
+    type Error = &'static str;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(HistoryScanMode::None),
+            1 => Ok(HistoryScanMode::All),
+            2 => Ok(HistoryScanMode::Coinbase),
+            _ => Err("Unknown history scan mode")
+        }
+    }
+}
+
 // Wallet structure
 // It holds the encrypted storage and the account keys
 // It also holds the network handler to keep the wallet synced in online mode
@@ -244,7 +287,7 @@ pub struct Wallet {
     event_broadcaster: Mutex<Option<broadcast::Sender<Event>>>,
     // If the wallet should scan also blocks and transactions history
     // Set to true by default
-    history_scan: AtomicBool,
+    history_scan: AtomicU8,
     // flag to prioritize the usage of stable balance version when its online
     force_stable_balance: AtomicBool,
     // Concurrency to use across the wallet
@@ -345,7 +388,7 @@ impl Wallet {
             #[cfg(feature = "xswd")]
             xswd_relayer: Mutex::new(None),
             event_broadcaster: Mutex::new(None),
-            history_scan: AtomicBool::new(true),
+            history_scan: AtomicU8::new(HistoryScanMode::All as u8),
             force_stable_balance: AtomicBool::new(false),
             account: Account::new(precomputed_tables, keypair, n_threads),
             concurrency,
@@ -526,13 +569,15 @@ impl Wallet {
 
     // Disable/enable the history scan
     // This is used by the network handler to avoid scanning history if requested
-    pub fn set_history_scan(&self, value: bool) {
-        self.history_scan.store(value, Ordering::SeqCst);
+    pub fn set_history_scan(&self, value: HistoryScanMode) {
+        self.history_scan.store(value as u8, Ordering::SeqCst);
     }
 
     // Get the history scan flag
-    pub fn get_history_scan(&self) -> bool {
+    pub fn get_history_scan(&self) -> HistoryScanMode {
         self.history_scan.load(Ordering::SeqCst)
+            .try_into()
+            .expect("Invalid value for history scan mode")
     }
 
     // Disable/enable the stable balance flag
@@ -580,6 +625,7 @@ impl Wallet {
     }
 
     // Mark an asset tracked by the wallet
+    // Will asynchronously request the network handler to scan for this asset if it's running
     pub async fn track_asset(&self, asset: Hash) -> Result<bool, WalletError> {
         debug!("track asset {}", asset);
         {
@@ -596,8 +642,10 @@ impl Wallet {
         #[cfg(feature = "network_handler")]
         {
             if let Some(network_handler) = self.network_handler.lock().await.as_ref() {
-                debug!("Syncing head state for newly tracked asset {}", asset);
-                network_handler.sync_head_state(&self.get_address(), Some(&HashSet::from_iter([asset])), None, false, false).await?;
+                if network_handler.is_running().await {
+                    trace!("Requesting network handler to scan for asset {}", asset);
+                    network_handler.scan_assets([asset].into()).await?;
+                }
             }
         }
 
@@ -820,6 +868,32 @@ impl Wallet {
         trace!("decrypt extra data");
         let res = cipher.decrypt(self.account.inner.keypair.get_private_key(), handle, role, version)?;
         Ok(res)
+    }
+
+    // Create an Ownership Proof for a given asset and amount
+    // It also to prove that you own at least the amount of the asset, without revealing the exact amount you own
+    pub async fn create_ownership_proof(&self, asset: &Hash, amount: u64) -> Result<(OwnershipProof, TopoHeight), WalletError> {
+        trace!("create ownership proof for asset {} and amount {}", asset, amount);
+
+        let storage = self.storage.read().await;
+        let balance = storage.get_balance_for(asset).await?;
+        let decompressed = balance.ciphertext.take_ciphertext()?;
+        let proof = OwnershipProof::new(&self.account.inner.keypair, balance.amount, amount, decompressed)?;
+
+        Ok((proof, balance.topoheight))
+    }
+
+    // Create a Balance Proof for the given asset
+    // This generate a proof that reveal the whole balance of the asset
+    pub async fn create_balance_proof(&self, asset: &Hash) -> Result<(BalanceProof, TopoHeight), WalletError> {
+        trace!("create balance proof for asset {}", asset);
+
+        let storage = self.storage.read().await;
+        let balance = storage.get_balance_for(asset).await?;
+        let decompressed = balance.ciphertext.take_ciphertext()?;
+        let proof = BalanceProof::new(&self.account.inner.keypair, balance.amount, decompressed);
+
+        Ok((proof, balance.topoheight))
     }
 
     // Create a transaction with the given transaction type and fee
@@ -1070,8 +1144,7 @@ impl Wallet {
         let builder = TransactionBuilder::new(tx_version, self.get_public_key().clone(), threshold, transaction_type, fee);
 
         // Build the final transaction
-        let transaction = builder.build(state, self.get_keypair())
-            .map_err(|e| WalletError::Any(e.into()))?;
+        let transaction = builder.build(state, self.get_keypair())?;
 
         let tx_hash = transaction.hash();
         debug!("Transaction created: {} with nonce {} and reference {}", tx_hash, transaction.get_nonce(), transaction.get_reference());
@@ -1084,8 +1157,7 @@ impl Wallet {
     pub fn create_unsigned_transaction(&self, state: &mut TransactionBuilderState, threshold: Option<u8>, transaction_type: TransactionTypeBuilder, fee: FeeBuilder, tx_version: TxVersion) -> Result<UnsignedTransaction, WalletError> {
         trace!("create unsigned transaction");
         let builder = TransactionBuilder::new(tx_version, self.get_public_key().clone(), threshold, transaction_type, fee);
-        let unsigned = builder.build_unsigned(state, self.get_keypair())
-            .map_err(|e| WalletError::Any(e.into()))?;
+        let unsigned = builder.build_unsigned(state, self.get_keypair())?;
 
         Ok(unsigned)
     }
@@ -1184,8 +1256,7 @@ impl Wallet {
         };
 
         let builder = TransactionBuilder::new(version, self.get_public_key().clone(), threshold, tx_type, fee);
-        let estimated_fees = builder.estimate_fees(&mut state)
-            .map_err(|e| WalletError::Any(e.into()))?;
+        let estimated_fees = builder.estimate_fees(&mut state)?;
 
         Ok(estimated_fees)
     }
@@ -1267,6 +1338,9 @@ impl Wallet {
                     }
 
                     writeln!(w, "{},{},{},{},{},-,-,-,-", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "IncomingContract", assets.join("|")).context("Error while writing csv line")?;
+                },
+                EntryData::Blob { .. } => {
+                    writeln!(w, "{},{},{},{},-,-,-,-,-", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "Blob").context("Error while writing csv line")?;
                 }
             }
         }
@@ -1343,9 +1417,11 @@ impl Wallet {
             return Err(WalletError::NotOnlineMode)
         }
 
-        let mut storage = self.get_storage().write().await;
-        if topoheight > storage.get_synced_topoheight()? {
-            return Err(WalletError::RescanTopoheightTooHigh)
+        {
+            let storage = self.get_storage().read().await;
+            if topoheight > storage.get_synced_topoheight()? {
+                return Err(WalletError::RescanTopoheightTooHigh)
+            }
         }
 
         let handler = self.network_handler.lock().await;
@@ -1358,26 +1434,31 @@ impl Wallet {
                 topoheight = pruned_topo;
             }
 
-            debug!("Stopping network handler!");
-            network_handler.stop(false).await?;
-            {
-                debug!("set synced topoheight to {}", topoheight);
-                storage.set_synced_topoheight(topoheight)?;
-                storage.delete_top_block_hash()?;
-                // balances will be re-fetched from daemon
-                storage.delete_balances().await?;
-                storage.delete_assets().await?;
-                // unconfirmed balances are going to be outdated, we delete them
-                storage.delete_unconfirmed_balances().await;
-                storage.set_last_coinbase_topoheight(None)?;
-
-                if !network_handler.get_api().is_online() {
-                    debug!("reconnect API");
-                    network_handler.get_api().reconnect().await?;
+            if network_handler.is_running().await {
+                network_handler.rescan(topoheight).await?;
+            } else {
+                debug!("Stopping network handler!");
+                network_handler.stop(false).await?;
+                {
+                    debug!("set synced topoheight to {}", topoheight);
+                    let mut storage = self.get_storage().write().await;
+                    storage.set_synced_topoheight(topoheight)?;
+                    storage.delete_top_block_hash()?;
+                    // balances will be re-fetched from daemon
+                    storage.delete_balances().await?;
+                    storage.delete_assets().await?;
+                    // unconfirmed balances are going to be outdated, we delete them
+                    storage.delete_unconfirmed_balances().await;
+                    storage.set_last_coinbase_topoheight(None)?;
+    
+                    if !network_handler.get_api().is_online() {
+                        debug!("reconnect API");
+                        network_handler.get_api().reconnect().await?;
+                    }
                 }
+                debug!("Starting again network handler");
+                network_handler.start(auto_reconnect).await?;
             }
-            debug!("Starting again network handler");
-            network_handler.start(auto_reconnect).await?;
         } else {
             return Err(WalletError::NotOnlineMode)
         }
@@ -1469,10 +1550,9 @@ pub enum XSWDEvent {
 }
 
 #[cfg(feature = "xswd")]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[async_trait]
 impl XSWDHandler for Arc<Wallet> {
-    async fn request_permission(&self, app_state: &AppStateShared, request: PermissionRequest<'_>) -> Result<PermissionResult, Error> {
+    async fn request_permission(&self, app_state: &AppStateShared, request: PermissionRequest<'_>) -> Result<PermissionResult, ErrorWithKind> {
         if let Some(sender) = self.xswd_channel.read().await.as_ref() {
             // no other way ?
             let app_state = app_state.clone();
@@ -1484,10 +1564,23 @@ impl XSWDHandler for Arc<Wallet> {
             };
 
             // Send the XSWD Message
-            sender.send(event)?;
+            sender.send(event)
+                .map_err(|e| ErrorWithKind {
+                    kind: "NO_HANDLER",
+                    error: e.into(),
+                })?;
 
+            debug!("Permission request sent to XSWD handler, waiting for response");
             // Wait on the callback
-            return receiver.await?;
+            let res = receiver.await.map_err(|e| ErrorWithKind {
+                kind: "PERMISSION_WAIT",
+                error: e.into(),
+            })?;
+
+            return res.map_err(|error| ErrorWithKind {
+                kind: "PERMISSION_RESULT",
+                error,
+            });
         }
 
         Err(WalletError::NoHandlerAvailable.into())
@@ -1495,20 +1588,32 @@ impl XSWDHandler for Arc<Wallet> {
 
     // there is a lock to acquire so it make it "single threaded"
     // the one who has the lock is the one who is requesting so we don't need to check and can cancel directly
-    async fn cancel_request_permission(&self, app: &AppStateShared) -> Result<(), Error> {
+    async fn cancel_request_permission(&self, app: &AppStateShared) -> Result<(), ErrorWithKind> {
         if let Some(sender) = self.xswd_channel.read().await.as_ref() {
             let (callback, receiver) = oneshot::channel();
             // Send XSWD Message
-            sender.send(XSWDEvent::CancelRequest(app.clone(), callback))?;
+            sender.send(XSWDEvent::CancelRequest(app.clone(), callback))
+                .map_err(|e| ErrorWithKind {
+                    kind: "NO_HANDLER",
+                    error: e.into(),
+                })?;
 
             // Wait on callback
-            return receiver.await?;
+            let res = receiver.await.map_err(|e| ErrorWithKind {
+                kind: "CANCEL_PERMISSION_WAIT",
+                error: e.into(),
+            })?;
+
+            return res.map_err(|error| ErrorWithKind {
+                kind: "CANCEL_PERMISSION_RESULT",
+                error,
+            });
         }
 
         Err(WalletError::NoHandlerAvailable.into())
     }
 
-    async fn get_public_key(&self) -> Result<&DecompressedPublicKey, Error> {
+    async fn get_public_key(&self) -> Result<&DecompressedPublicKey, ErrorWithKind> {
         Ok(self.get_keypair().get_public_key())
     }
 
@@ -1526,14 +1631,14 @@ impl XSWDHandler for Arc<Wallet> {
                         let params: SubscribeParams<DaemonNotifyEvent> = serde_json::from_value(
                             request.params.take()
                                 .ok_or_else(|| RpcResponseError::new(id.clone(), InternalRpcError::InvalidParams("Missing event parameter")))?
-                        ).map_err(|e| RpcResponseError::new(id.clone(), InternalRpcError::AnyError(e.into())))?;
+                        ).map_err(|e| RpcResponseError::new(id.clone(), e))?;
 
                         let event = params.notify.into_owned();
 
                         if request.method == "subscribe" {
                             let stream = api.client()
                                 .subscribe_event_raw(event.clone(), api.capacity()).await
-                                .map_err(|e| RpcResponseError::new(id.clone(), InternalRpcError::AnyError(e.into())))?;
+                                .map_err(|e| RpcResponseError::new(id.clone(), e))?;
     
                             let response = if id.is_some() {
                                 Some(json!(RpcResponse::new(Cow::Owned(id.clone()), Cow::Owned(json!(true)))))
@@ -1559,13 +1664,13 @@ impl XSWDHandler for Arc<Wallet> {
                     let response = if id.is_some() {
                         let response = api.client()
                             .call_with(&request.method, &request.params).await
-                            .map_err(|e| RpcResponseError::new(id.clone(), InternalRpcError::AnyError(e.into())))?;
+                            .map_err(|e| RpcResponseError::new(id.clone(), e))?;
     
                         Some(json!(RpcResponse::new(Cow::Owned(id), Cow::Owned(response))))
                     } else {
                         api.client()
                             .notify_with(&request.method, &request.params).await
-                            .map_err(|e| RpcResponseError::new(id.clone(), InternalRpcError::AnyError(e.into())))?;
+                            .map_err(|e| RpcResponseError::new(id.clone(), e))?;
 
                         None
                     };

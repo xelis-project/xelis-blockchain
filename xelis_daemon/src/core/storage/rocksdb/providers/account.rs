@@ -44,6 +44,7 @@ impl AccountProvider for RocksStorage {
         let mut account = self.get_or_create_account_type(key)?;
         account.registered_at = Some(topoheight);
 
+        self.insert_into_disk(Column::PrefixedRegistrations, Self::get_prefixed_account_registration_key(topoheight, account.id), &account)?;
         self.insert_into_disk(Column::Account, key.as_bytes(), &account)
     }
 
@@ -104,57 +105,59 @@ impl AccountProvider for RocksStorage {
     // It will also check balances if no nonce found
     async fn has_key_updated_in_range(&self, key: &PublicKey, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<bool, BlockchainError> {
         trace!("has key {} updated in range {:?} - {:?}", key.as_address(self.is_mainnet()), minimum_topoheight, maximum_topoheight);
-        let Some(account) = self.get_optional_account_type(key)? else {
-            trace!("account {} not found", key.as_address(self.is_mainnet()));
-            return Ok(false)
-        };
+        self.run_blocking(|| {
+            let Some(account) = self.get_optional_account_type(key)? else {
+                trace!("account {} not found", key.as_address(self.is_mainnet()));
+                return Ok(false)
+            };
 
-        let Some(registered_at) = account.registered_at else {
-            trace!("account {} has no registered_at", key.as_address(self.is_mainnet()));
-            return Ok(false)
-        };
+            let Some(registered_at) = account.registered_at else {
+                trace!("account {} has no registered_at", key.as_address(self.is_mainnet()));
+                return Ok(false)
+            };
 
-        if registered_at > maximum_topoheight {
-            trace!("account {} registered_at {} not in range", key.as_address(self.is_mainnet()), registered_at);
-            return Ok(false)
-        }
-
-        let Some(nonce_pointer) = account.nonce_pointer else {
-            trace!("account {} has no nonce_pointer", key.as_address(self.is_mainnet()));
-            return Ok(false)
-        };
-
-        // Check if the nonce is in the range
-        if nonce_pointer >= minimum_topoheight && nonce_pointer <= maximum_topoheight {
-            trace!("account {} nonce_pointer {} in range", key.as_address(self.is_mainnet()), nonce_pointer);
-            return Ok(true)
-        }
-
-        // for the key, we only read the asset id, we skip the 8 bytes representing the account ID
-        // as we already know it as we iter prefix on it
-        let prefix = account.id.to_be_bytes();
-        for res in self.iter::<Skip<8, AssetId>, TopoHeight>(Column::Balances, IteratorMode::WithPrefix(&prefix, Direction::Forward))? {
-            let (k, topo) = res?;
-
-            let asset_id = k.0;
-            let mut next_topo = Some(topo);
-            while let Some(topo) = next_topo {
-                if topo < minimum_topoheight {
-                    trace!("skipping asset {} at {} below minimum topoheight {}", asset_id, topo, minimum_topoheight);
-                    break;
-                }
-
-                if topo <= maximum_topoheight {
-                    trace!("account {} asset {} balance updated at {}", key.as_address(self.is_mainnet()), asset_id, topo);
-                    return Ok(true)
-                }
-
-                let key = Self::get_versioned_account_balance_key(account.id, asset_id, topo);
-                next_topo = self.load_from_disk(Column::VersionedBalances, &key)?;
+            if registered_at > maximum_topoheight {
+                trace!("account {} registered_at {} not in range", key.as_address(self.is_mainnet()), registered_at);
+                return Ok(false)
             }
-        }
 
-        Ok(false)
+            let Some(nonce_pointer) = account.nonce_pointer else {
+                trace!("account {} has no nonce_pointer", key.as_address(self.is_mainnet()));
+                return Ok(false)
+            };
+
+            // Check if the nonce is in the range
+            if nonce_pointer >= minimum_topoheight && nonce_pointer <= maximum_topoheight {
+                trace!("account {} nonce_pointer {} in range", key.as_address(self.is_mainnet()), nonce_pointer);
+                return Ok(true)
+            }
+
+            // for the key, we only read the asset id, we skip the 8 bytes representing the account ID
+            // as we already know it as we iter prefix on it
+            let prefix = account.id.to_be_bytes();
+            for res in self.iter::<Skip<8, AssetId>, TopoHeight>(Column::Balances, IteratorMode::WithPrefix(&prefix, Direction::Forward))? {
+                let (k, topo) = res?;
+
+                let asset_id = k.0;
+                let mut next_topo = Some(topo);
+                while let Some(topo) = next_topo {
+                    if topo < minimum_topoheight {
+                        trace!("skipping asset {} at {} below minimum topoheight {}", asset_id, topo, minimum_topoheight);
+                        break;
+                    }
+
+                    if topo <= maximum_topoheight {
+                        trace!("account {} asset {} balance updated at {}", key.as_address(self.is_mainnet()), asset_id, topo);
+                        return Ok(true)
+                    }
+
+                    let key = Self::get_versioned_account_balance_key(account.id, asset_id, topo);
+                    next_topo = self.load_from_disk(Column::VersionedBalances, &key)?;
+                }
+            }
+
+            Ok(false)
+        })
     }
 }
 
@@ -180,6 +183,14 @@ impl RocksStorage {
         let mut bytes = [0; 16];
         bytes[0..8].copy_from_slice(&topoheight.to_be_bytes());
         bytes[8..16].copy_from_slice(&key.to_be_bytes());
+
+        bytes
+    }
+
+    pub(super) fn get_prefixed_account_registration_key(topoheight: TopoHeight, account_id: AccountId) -> [u8; 16] {
+        let mut bytes = [0; 16];
+        bytes[0..8].copy_from_slice(&topoheight.to_be_bytes());
+        bytes[8..16].copy_from_slice(&account_id.to_be_bytes());
 
         bytes
     }

@@ -12,8 +12,10 @@ use crate::{
         Hash,
         PrivateKey,
         Signature,
+        HumanReadableProof,
     },
     serializer::Hexable,
+    time::TimestampMillis,
     transaction::{
         builder::{FeeBuilder, TransactionTypeBuilder, UnsignedTransaction},
         extra_data::{PlaintextExtraData, UnknownExtraDataFormat},
@@ -208,6 +210,9 @@ pub struct ListTransactionsParams {
     // Filter by topoheight range (inclusive)
     pub min_topoheight: Option<TopoHeight>,
     pub max_topoheight: Option<TopoHeight>,
+    // Filter by timestamp range (inclusive, milliseconds)
+    pub min_timestamp: Option<TimestampMillis>,
+    pub max_timestamp: Option<TimestampMillis>,
     /// Receiver address for outgoing txs, and owner/sender for incoming
     pub address: Option<Address>,
     #[serde(default = "default_true_value")]
@@ -224,6 +229,36 @@ pub struct ListTransactionsParams {
     pub limit: Option<usize>,
     // Skip the first N entries
     pub skip: Option<usize>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct CreateOwnershipProofParams<'a> {
+    // Asset to create the proof for
+    pub asset: Cow<'a, Hash>,
+    // If set to None, it is set to current wallet balance topoheight
+    // If set to Some, the balance at requested topoheight will be fetched
+    // and used for the proof creation
+    pub topoheight: Option<TopoHeight>,
+    // Amount to prove ownership of.
+    pub amount: u64,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct CreateBalanceProofParams<'a> {
+    // Asset to create the proof for
+    pub asset: Cow<'a, Hash>,
+    // If set to None, it is set to current wallet balance topoheight
+    // If set to Some, the balance at requested topoheight will be fetched
+    // and used for the proof creation
+    pub topoheight: Option<TopoHeight>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct VerifyHumanReadableProofParams<'a> {
+    // Proof to verify
+    pub proof: Cow<'a, HumanReadableProof>,
+    // Address of the prover, used to check the ownership of the proof
+    pub address: Cow<'a, Address>,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
@@ -254,6 +289,7 @@ pub struct GetAssetsEntry {
 pub struct TransactionResponse<'a> {
     #[serde(flatten)]
     pub inner: DataHash<'a, Transaction>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tx_as_hex: Option<String>
 }
 
@@ -524,6 +560,9 @@ pub enum EntryType {
     IncomingContract {
         // Transfers received from the contract
         transfers: IndexMap<Hash, u64>,
+    },
+    Blob {
+        data: PlaintextExtraData
     }
 }
 

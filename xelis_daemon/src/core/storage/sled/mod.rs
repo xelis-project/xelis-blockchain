@@ -1,6 +1,8 @@
 mod migrations;
 mod providers;
+mod config;
 
+use anyhow::Context;
 use async_trait::async_trait;
 use itertools::Either;
 use crate::core::{
@@ -26,6 +28,7 @@ use serde::{Deserialize, Serialize};
 use lru::LruCache;
 use sled::{IVec, Tree};
 use log::{debug, trace, info, error};
+use xelis_vm::tid;
 
 use super::{
     cache::StorageCache,
@@ -37,8 +40,9 @@ use super::{
         Direction,
         IteratorMode
     },
-    Tips
 };
+
+pub use config::SledConfig;
 
 #[derive(Clone)]
 pub struct TreeWrapper(pub Tree);
@@ -90,6 +94,8 @@ pub(super) const CONTRACTS_COUNT: &[u8; 4] = b"CCON";
 pub(super) const DB_VERSION: &[u8; 4] = b"VRSN";
 
 pub struct SledStorage {
+    // Async operations allowed concurrency
+    concurrency: usize,
     // Network used by the storage
     pub(super) network: Network,
     // All trees used to store data
@@ -109,6 +115,8 @@ pub struct SledStorage {
     pub(super) topo_by_hash: Tree,
     // hash at topo height on disk
     pub(super) hash_at_topo: Tree,
+    // mergeset data for each block hash on disk
+    pub(super) mergeset: Tree,
     // cumulative difficulty for each block hash on disk
     pub(super) cumulative_difficulty: Tree,
     // Difficulty estimated covariance (P)
@@ -233,8 +241,10 @@ impl Into<sled::Mode> for StorageMode {
     }
 }
 
+tid!(SledStorage);
+
 impl SledStorage {
-    pub fn new(dir_path: String, cache_size: Option<usize>, network: Network, internal_cache_size: u64, mode: StorageMode) -> Result<Self, BlockchainError> {
+    pub fn new(dir_path: String, cache_size: Option<usize>, network: Network, internal_cache_size: u64, mode: StorageMode, concurrency: usize) -> Result<Self, BlockchainError> {
         let path = format!("{}{}", dir_path, network.to_string().to_lowercase());
         let config = sled::Config::new()
             .temporary(false)
@@ -242,49 +252,57 @@ impl SledStorage {
             .cache_capacity(internal_cache_size)
             .mode(mode.into());
 
-        let sled = config.open()?;
+        let sled = config.open()
+            .context("Failed to open sled database")?;
+
+        fn open_tree(sled: &sled::Db, name: &str) -> Result<Tree, anyhow::Error> {
+            sled.open_tree(name)
+                .with_context(|| format!("Failed to open sled tree {}", name))
+        }
 
         let mut storage = Self {
+            concurrency,
             network,
-            transactions: sled.open_tree("transactions")?,
-            txs_executed: sled.open_tree("txs_executed")?,
-            blocks_execution_order: sled.open_tree("blocks_execution_order")?,
-            blocks: sled.open_tree("blocks")?,
-            blocks_at_height: sled.open_tree("blocks_at_height")?,
-            extra: sled.open_tree("extra")?,
-            topo_by_hash: sled.open_tree("topo_at_hash")?,
-            hash_at_topo: sled.open_tree("hash_at_topo")?,
-            cumulative_difficulty: sled.open_tree("cumulative_difficulty")?,
-            difficulty_covariance: sled.open_tree("difficulty_covariance")?,
-            block_size_ema: sled.open_tree("block_size_ema")?,
-            assets: sled.open_tree("assets")?,
-            versioned_assets: sled.open_tree("versioned_assets")?,
-            nonces: sled.open_tree("nonces")?,
-            topoheight_metadata: sled.open_tree("topoheight_metadata")?,
-            difficulty: sled.open_tree("difficulty")?,
-            tx_blocks: sled.open_tree("tx_blocks")?,
-            versioned_nonces: sled.open_tree("versioned_nonces")?,
-            balances: sled.open_tree("balances")?,
-            multisig: sled.open_tree("multisig")?,
-            versioned_multisigs: sled.open_tree("versioned_multisig")?,
-            versioned_balances: sled.open_tree("versioned_balances")?,
-            merkle_hashes: sled.open_tree("merkle_hashes")?,
-            registrations: sled.open_tree("registrations")?,
-            registrations_prefixed: sled.open_tree("registrations_prefixed")?,
-            contracts: sled.open_tree("contracts")?,
-            versioned_contracts: sled.open_tree("versioned_contracts")?,
-            contracts_data: sled.open_tree("contracts_data")?,
-            versioned_contracts_data: sled.open_tree("versioned_contracts_data")?,
-            contracts_balances: sled.open_tree("contracts_balances")?,
-            versioned_contracts_balances: sled.open_tree("versioned_contracts_balances")?,
-            contracts_logs: sled.open_tree("contracts_logs")?,
-            contracts_scheduled_executions: sled.open_tree("contracts_scheduled_executions")?,
-            contracts_scheduled_executions_registrations: sled.open_tree("contracts_scheduled_executions_registrations")?,
-            assets_supply: sled.open_tree("assets_supply")?,
-            contracts_event_callbacks: sled.open_tree("contracts_event_callbacks")?,
-            versioned_contracts_event_callbacks: sled.open_tree("versioned_contracts_event_callbacks")?,
-            versioned_assets_supply: sled.open_tree("versioned_assets_supply")?,
-            contracts_transactions: sled.open_tree("contracts_transactions")?,
+            transactions: open_tree(&sled, "transactions")?,
+            txs_executed: open_tree(&sled, "txs_executed")?,
+            blocks_execution_order: open_tree(&sled, "blocks_execution_order")?,
+            blocks: open_tree(&sled, "blocks")?,
+            blocks_at_height: open_tree(&sled, "blocks_at_height")?,
+            extra: open_tree(&sled, "extra")?,
+            topo_by_hash: open_tree(&sled, "topo_at_hash")?,
+            hash_at_topo: open_tree(&sled, "hash_at_topo")?,
+            mergeset: open_tree(&sled, "mergeset")?,
+            cumulative_difficulty: open_tree(&sled, "cumulative_difficulty")?,
+            difficulty_covariance: open_tree(&sled, "difficulty_covariance")?,
+            block_size_ema: open_tree(&sled, "block_size_ema")?,
+            assets: open_tree(&sled, "assets")?,
+            versioned_assets: open_tree(&sled, "versioned_assets")?,
+            nonces: open_tree(&sled, "nonces")?,
+            topoheight_metadata: open_tree(&sled, "topoheight_metadata")?,
+            difficulty: open_tree(&sled, "difficulty")?,
+            tx_blocks: open_tree(&sled, "tx_blocks")?,
+            versioned_nonces: open_tree(&sled, "versioned_nonces")?,
+            balances: open_tree(&sled, "balances")?,
+            multisig: open_tree(&sled, "multisig")?,
+            versioned_multisigs: open_tree(&sled, "versioned_multisig")?,
+            versioned_balances: open_tree(&sled, "versioned_balances")?,
+            merkle_hashes: open_tree(&sled, "merkle_hashes")?,
+            registrations: open_tree(&sled, "registrations")?,
+            registrations_prefixed: open_tree(&sled, "registrations_prefixed")?,
+            contracts: open_tree(&sled, "contracts")?,
+            versioned_contracts: open_tree(&sled, "versioned_contracts")?,
+            contracts_data: open_tree(&sled, "contracts_data")?,
+            versioned_contracts_data: open_tree(&sled, "versioned_contracts_data")?,
+            contracts_balances: open_tree(&sled, "contracts_balances")?,
+            versioned_contracts_balances: open_tree(&sled, "versioned_contracts_balances")?,
+            contracts_logs: open_tree(&sled, "contracts_logs")?,
+            contracts_scheduled_executions: open_tree(&sled, "contracts_scheduled_executions")?,
+            contracts_scheduled_executions_registrations: open_tree(&sled, "contracts_scheduled_executions_registrations")?,
+            assets_supply: open_tree(&sled, "assets_supply")?,
+            contracts_event_callbacks: open_tree(&sled, "contracts_event_callbacks")?,
+            versioned_contracts_event_callbacks: open_tree(&sled, "versioned_contracts_event_callbacks")?,
+            versioned_assets_supply: open_tree(&sled, "versioned_assets_supply")?,
+            contracts_transactions: open_tree(&sled, "contracts_transactions")?,
             db: sled,
             cache: StorageCache::new(cache_size),
             snapshot: None,
@@ -293,7 +311,7 @@ impl SledStorage {
         // Verify that we are opening a DB on same network
         // This prevent any corruption made by user
         if storage.has_network()? {
-            let storage_network = storage.load_from_disk::<Network>(&storage.extra, NETWORK, DiskContext::Network)?;
+            let storage_network = storage.load_from_disk::<Network, _>(&storage.extra, NETWORK, DiskContext::Network)?;
             if storage_network != network {
                 return Err(BlockchainError::InvalidNetwork);
             }
@@ -305,7 +323,7 @@ impl SledStorage {
             error!("Error while migrating database: {}", e);
         }
 
-        storage.load_cache_from_disk();
+        storage.load_cache_from_disk()?;
 
         Ok(storage)
     }
@@ -325,60 +343,57 @@ impl SledStorage {
     }
 
     // Load all the needed cache and counters in memory from disk 
-    pub fn load_cache_from_disk(&mut self) {
-        // Load tips from disk if available
-        if let Ok(tips) = self.load_from_disk::<Tips>(&self.extra, TIPS, DiskContext::Tips) {
-            debug!("Found tips: {}", tips.len());
-            self.cache.chain.tips = tips;
-        }
-
+    pub fn load_cache_from_disk(&mut self) -> Result<(), BlockchainError> {
         // Load the pruned topoheight from disk if available
-        if let Ok(pruned_topoheight) = self.load_from_disk::<u64>(&self.extra, PRUNED_TOPOHEIGHT, DiskContext::PrunedTopoHeight) {
+        if let Some(pruned_topoheight) = self.load_optional_from_disk::<u64, _>(&self.extra, PRUNED_TOPOHEIGHT)? {
             debug!("Found pruned topoheight: {}", pruned_topoheight);
-            self.cache.pruned_topoheight = Some(pruned_topoheight);
+            self.cache.chain.pruned_topoheight = Some(pruned_topoheight);
         }
 
         // Load the assets count from disk if available
-        if let Ok(assets_count) = self.load_from_disk::<u64>(&self.extra, ASSETS_COUNT, DiskContext::AssetsCount) {
+        if let Some(assets_count) = self.load_optional_from_disk::<u64, _>(&self.extra, ASSETS_COUNT)? {
             debug!("Found assets count: {}", assets_count);
             self.cache.assets_count = assets_count;
         }
 
         // Load the txs count from disk if available
-        if let Ok(txs_count) = self.load_from_disk::<u64>(&self.extra, TXS_COUNT, DiskContext::TxsCount) {
+        if let Some(txs_count) = self.load_optional_from_disk::<u64, _>(&self.extra, TXS_COUNT)? {
             debug!("Found txs count: {}", txs_count);
             self.cache.transactions_count = txs_count;
         }
 
         // Load the blocks count from disk if available
-        if let Ok(blocks_count) = self.load_from_disk::<u64>(&self.extra, BLOCKS_COUNT, DiskContext::BlocksCount) {
+        if let Some(blocks_count) = self.load_optional_from_disk::<u64, _>(&self.extra, BLOCKS_COUNT)? {
             debug!("Found blocks count: {}", blocks_count);
             self.cache.blocks_count = blocks_count;
         }
 
         // Load the accounts count from disk if available
-        if let Ok(accounts_count) = self.load_from_disk::<u64>(&self.extra, ACCOUNTS_COUNT, DiskContext::AccountsCount) {
+        if let Some(accounts_count) = self.load_optional_from_disk::<u64, _>(&self.extra, ACCOUNTS_COUNT)? {
             debug!("Found accounts count: {}", accounts_count);
             self.cache.accounts_count = accounts_count;
         }
 
         // Load the blocks execution count from disk if available
-        if let Ok(blocks_execution_count) = self.load_from_disk::<u64>(&self.extra, BLOCKS_EXECUTION_ORDER_COUNT, DiskContext::BlocksExecutionOrderCount) {
+        if let Some(blocks_execution_count) = self.load_optional_from_disk::<u64, _>(&self.extra, BLOCKS_EXECUTION_ORDER_COUNT)? {
             debug!("Found blocks execution count: {}", blocks_execution_count);
             self.cache.blocks_execution_count = blocks_execution_count;
         }
 
         // Load the contracts count from disk if available
-        if let Ok(contracts_count) = self.load_from_disk::<u64>(&self.extra, CONTRACTS_COUNT, DiskContext::ContractsCount) {
+        if let Some(contracts_count) = self.load_optional_from_disk::<u64, _>(&self.extra, CONTRACTS_COUNT)? {
             debug!("Found contracts count: {}", contracts_count);
             self.cache.contracts_count = contracts_count;
         }
+
+        Ok(())
     }
 
-    pub fn load_optional_from_disk_internal<T: Serializer>(snapshot: Option<&Snapshot>, tree: &Tree, key: &[u8]) -> Result<Option<T>, BlockchainError> {
+    pub fn load_optional_from_disk_internal<T: Serializer, K: AsRef<[u8]>>(snapshot: Option<&Snapshot>, tree: &Tree, key: K) -> Result<Option<T>, BlockchainError> {
         trace!("load optional from disk internal");
-        if let Some(v) = snapshot.map(|s| s.get(tree.into(), key)) {
-            trace!("loaded from snapshot key {:?} from db", key);
+        let key_ref = key.as_ref();
+        if let Some(v) = snapshot.map(|s| s.get(tree.into(), key_ref)) {
+            trace!("loaded from snapshot key {:?} from db", key_ref);
             match v {
                 EntryState::Stored(v) => return Ok(Some(T::from_bytes(&v)?)),
                 EntryState::Deleted => return Ok(None),
@@ -386,26 +401,26 @@ impl SledStorage {
             }
         }
 
-        match tree.get(key)? {
+        match tree.get(key_ref)? {
             Some(bytes) => Ok(Some(T::from_bytes(&bytes)?)),
             None => Ok(None)
         }
     }
 
-    pub fn load_from_disk_internal<T: Serializer>(snapshot: Option<&Snapshot>, tree: &Tree, key: &[u8], context: DiskContext) -> Result<T, BlockchainError> {
+    pub fn load_from_disk_internal<T: Serializer, K: AsRef<[u8]>>(snapshot: Option<&Snapshot>, tree: &Tree, key: K, context: DiskContext) -> Result<T, BlockchainError> {
         trace!("load from disk internal");
         Self::load_optional_from_disk_internal(snapshot, tree, key)?
             .ok_or(BlockchainError::NotFoundOnDisk(context))
     }
 
     // Load an optional value from the DB
-    pub(super) fn load_optional_from_disk<T: Serializer>(&self, tree: &Tree, key: &[u8]) -> Result<Option<T>, BlockchainError> {
+    pub(super) fn load_optional_from_disk<T: Serializer, K: AsRef<[u8]>>(&self, tree: &Tree, key: K) -> Result<Option<T>, BlockchainError> {
         trace!("load optional from disk");
         Self::load_optional_from_disk_internal(self.snapshot.as_ref(), tree, key)
     }
 
     // Load a value from the DB
-    pub(super) fn load_from_disk<T: Serializer>(&self, tree: &Tree, key: &[u8], context: DiskContext) -> Result<T, BlockchainError> {
+    pub(super) fn load_from_disk<T: Serializer, K: AsRef<[u8]>>(&self, tree: &Tree, key: K, context: DiskContext) -> Result<T, BlockchainError> {
         trace!("load from disk");
         self.load_optional_from_disk(tree, key)?
             .ok_or(BlockchainError::NotFoundOnDisk(context))
@@ -474,21 +489,22 @@ impl SledStorage {
         })
     }
 
-    pub(super) fn remove_from_disk_internal<T: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, key: &[u8]) -> Result<Option<T>, BlockchainError> {
+    pub(super) fn remove_from_disk_internal<T: Serializer, K: AsRef<[u8]>>(snapshot: Option<&mut Snapshot>, tree: &Tree, key: K) -> Result<Option<T>, BlockchainError> {
         trace!("remove from disk internal");
+        let key_ref = key.as_ref();
         let prev = if let Some(snapshot) = snapshot {
-            match snapshot.delete(tree.into(), key.to_vec()) {
+            match snapshot.delete(tree.into(), key_ref.to_vec()) {
                 EntryState::Stored(prev) => Some(T::from_bytes(&prev)?),
                 EntryState::Deleted => None,
                 EntryState::Absent => {
                     // Fallback to the disk for the previous value
-                    tree.get(key)?
+                    tree.get(key_ref)?
                         .map(|bytes| T::from_bytes(&bytes))
                         .transpose()?
                 }
             }
         } else {
-            tree.remove(key)?
+            tree.remove(key_ref)?
                 .map(|bytes| T::from_bytes(&bytes))
                 .transpose()?
         };
@@ -516,7 +532,7 @@ impl SledStorage {
     }
 
     // Delete a key from the DB
-    pub(super) fn remove_from_disk<T: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, key: &[u8]) -> Result<Option<T>, BlockchainError> {
+    pub(super) fn remove_from_disk<T: Serializer, K: AsRef<[u8]>>(snapshot: Option<&mut Snapshot>, tree: &Tree, key: K) -> Result<Option<T>, BlockchainError> {
         trace!("remove from disk");
         Self::remove_from_disk_internal(snapshot, tree, key)
     }
@@ -660,7 +676,7 @@ impl SledStorage {
             }
         }
 
-        let value = Self::load_optional_from_disk_internal::<V>(snapshot.as_deref(), tree, &k)?
+        let value = Self::load_optional_from_disk_internal::<V, _>(snapshot.as_deref(), tree, &k)?
             .ok_or(BlockchainError::NotFoundOnDisk(DiskContext::DeleteData))?;
 
         Self::remove_from_disk_without_reading(snapshot, tree, &k)?;
@@ -672,7 +688,7 @@ impl SledStorage {
     // Delete a cacheable data from disk and cache behind a Arc
     pub(super) async fn delete_arc_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, cache: Option<&mut Mutex<LruCache<K, Arc<V>>>>, key: &K) -> Result<Immutable<V>, BlockchainError> {
         trace!("delete arc cacheable data");
-        let value = match Self::remove_from_disk::<V>(snapshot, tree, &key.to_bytes())? {
+        let value = match Self::remove_from_disk::<V, _>(snapshot, tree, &key.to_bytes())? {
             Some(data) => data,
             None => return Err(BlockchainError::NotFoundOnDisk(DiskContext::DeleteData))
         };
@@ -711,11 +727,11 @@ impl SledStorage {
     }
 
     // Check if our DB contains a data on disk
-    pub(super) fn contains_data<K: Serializer>(&self, tree: &Tree, key: &K) -> Result<bool, BlockchainError> {
+    pub(super) fn contains_data<K: AsRef<[u8]>>(&self, tree: &Tree, key: K) -> Result<bool, BlockchainError> {
         trace!("contains data");
-        let key_bytes = key.to_bytes();
+        let key_bytes = key.as_ref();
         if let Some(snapshot) = self.snapshot.as_ref() {
-            if let Some(v) = snapshot.contains(tree.into(), &key_bytes) {
+            if let Some(v) = snapshot.contains(tree.into(), key_bytes) {
                 trace!("snapshot contains data");
                 return Ok(v);
             }
@@ -737,7 +753,7 @@ impl SledStorage {
 #[async_trait]
 impl Storage for SledStorage {
     // Delete the whole block using its topoheight
-    async fn delete_block_at_topoheight(&mut self, topoheight: u64) -> Result<(Hash, Immutable<BlockHeader>, Vec<(Hash, Immutable<Transaction>)>), BlockchainError> {
+    async fn delete_block_at_topoheight(&mut self, topoheight: u64) -> Result<(Hash, Immutable<BlockHeader>), BlockchainError> {
         trace!("Delete block at topoheight {topoheight}");
 
         // delete topoheight<->hash pointers
@@ -757,7 +773,6 @@ impl Storage for SledStorage {
         trace!("Deleting topoheight metadata");
         let _: () = Self::delete_cacheable_data(self.snapshot.as_mut(), &self.topoheight_metadata, None, &topoheight).await?;
 
-        let mut txs = Vec::new();
         for tx_hash in block.get_transactions() {
             if self.is_tx_executed_in_block(tx_hash, &hash).await? {
                 trace!("Tx {} was executed, deleting", tx_hash);
@@ -768,23 +783,25 @@ impl Storage for SledStorage {
             // Because the TX is not linked to any other block, we can safely delete that block
             if !self.is_tx_linked_to_blocks(&tx_hash).await? {
                 trace!("Deleting TX {} in block {}", tx_hash, hash);
-                let tx: Immutable<Transaction> = Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.transactions, self.cache.objects.as_mut().map(|o| &mut o.transactions_cache), tx_hash).await?;
-                txs.push((tx_hash.clone(), tx));
+                let _: Immutable<Transaction> = Self::delete_arc_cacheable_data(self.snapshot.as_mut(), &self.transactions, self.cache.objects.as_mut().map(|o| &mut o.transactions_cache), tx_hash).await?;
             }
         }
 
-        Ok((hash, block, txs))
+        Ok((hash, block))
     }
 
     // Returns the current size on disk in bytes
     async fn get_size_on_disk(&self) -> Result<u64, BlockchainError> {
-        Ok(self.db.size_on_disk()?)
+        let size = self.db.size_on_disk()
+            .context("Failed to get size on disk")?;
+        Ok(size)
     }
 
     async fn stop(&mut self) -> Result<(), BlockchainError> {
         info!("Stopping Storage...");
         info!("Flushing Sled database");
-        self.db.flush_async().await?;
+        self.db.flush_async().await
+            .context("Failed to flush sled database")?;
         info!("Sled database flushed");
         Ok(())
     }
@@ -794,7 +811,8 @@ impl Storage for SledStorage {
 
         let mut size = 0;
         for tree in self.db.tree_names() {
-            let tree = self.db.open_tree(tree)?;
+            let tree = self.db.open_tree(tree)
+                .context("Failed to open sled tree")?;
             debug!("Estimating size for tree {}", String::from_utf8_lossy(&tree.name()));
             for el in Self::iter_raw(self.snapshot.as_ref(), &tree) {
                 let (key, value) = el?;
@@ -807,7 +825,9 @@ impl Storage for SledStorage {
 
     async fn flush(&mut self) -> Result<(), BlockchainError> {
         trace!("flush sled");
-        let n = self.db.flush_async().await?;
+        let n = self.db.flush_async().await
+            .context("Failed to flush sled database")?;
+
         debug!("Flushed {} bytes", n);
         Ok(())
     }

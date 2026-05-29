@@ -9,7 +9,7 @@ use xelis_common::{
     account::{VersionedBalance, VersionedNonce},
     crypto::{Hash, PublicKey},
     immutable::Immutable,
-    versioned_type::State,
+    versioned::State,
     asset::VersionedAssetData,
     serializer::Serializer,
 };
@@ -25,7 +25,8 @@ use crate::{
             VersionedContractBalance,
             VersionedContractData,
             VersionedMultiSig,
-            VersionedSupply
+            VersionedSupply,
+            VersionedEventCallbackRegistration,
         },
         blockdag,
     },
@@ -37,7 +38,6 @@ use crate::{
             BootstrapChainResponse,
             BootstrapChainRequest,
             ObjectRequest,
-            Packet,
             StepRequest,
             StepResponse,
             MAX_ITEMS_PER_PAGE
@@ -52,7 +52,7 @@ impl<S: Storage> P2pServer<S> {
     // Handle a bootstrap chain request
     // We have differents steps available for a bootstrap sync
     // We verify that they are send in good order
-    pub async fn handle_bootstrap_chain_request(self: &Arc<Self>, peer: &Arc<Peer>, request: BootstrapChainRequest<'_>) -> Result<(), BlockchainError> {
+    pub async fn handle_bootstrap_chain_request(self: &Arc<Self>, peer: &Arc<Peer>, request: BootstrapChainRequest<'_>) -> Result<BootstrapChainResponse, BlockchainError> {
         let id = request.id();
         let request = request.step();
         let request_kind = request.kind();
@@ -267,7 +267,7 @@ impl<S: Storage> P2pServer<S> {
                 }
 
                 let page = page.unwrap_or(0);
-                let contracts = storage.get_contracts(min, max).await?
+                let contracts = storage.get_contracts(Some(min), Some(max)).await?
                     .skip(page as usize * MAX_ITEMS_PER_PAGE)
                     .take(MAX_ITEMS_PER_PAGE)
                     .collect::<Result<IndexSet<Hash>, _>>()?;
@@ -393,7 +393,27 @@ impl<S: Storage> P2pServer<S> {
                     None
                 };
                 StepResponse::ContractsExecutions(executions, page)
-            }
+            },
+            StepRequest::ContractsEvents(contract, min, max, page) => {
+                let page = page.unwrap_or(0);
+
+                let stream = storage.get_listeners_for_contract_events(&contract, min, max).await?
+                    .skip(page as usize * MAX_ITEMS_PER_PAGE)
+                    .take(MAX_ITEMS_PER_PAGE);
+
+                let events: IndexMap<_, _> = stream.boxed()
+                    .map(|res| res.map(|(event_id, listener_contract, registration)| {
+                        ((listener_contract, event_id), registration)
+                    }))
+                    .try_collect().await?;
+
+                let page = if events.len() == MAX_ITEMS_PER_PAGE {
+                    Some(page + 1)
+                } else {
+                    None
+                };
+                StepResponse::ContractsEvents(events, page)
+            },
             StepRequest::BlocksMetadata(topoheight) => {
                 // go from the lowest available point until the requested stable topoheight
                 let lower = if topoheight - PRUNE_SAFETY_LIMIT <= pruned_topoheight {
@@ -407,6 +427,7 @@ impl<S: Storage> P2pServer<S> {
                     .map(|topoheight| async move {
                         let hash = storage.get_hash_at_topo_height(topoheight).await?;
                         let topoheight_metadata = storage.get_metadata_at_topoheight(topoheight).await?;
+                        let mergeset = storage.get_mergeset(&hash).await?;
                         let difficulty = storage.get_difficulty_for_block_hash(&hash).await?;
                         let cumulative_difficulty = storage.get_cumulative_difficulty_for_block_hash(&hash).await?;
                         let p = storage.get_estimated_covariance_for_block_hash(&hash).await?;
@@ -423,7 +444,7 @@ impl<S: Storage> P2pServer<S> {
                             }
                         }
 
-                        Ok::<_, BlockchainError>(BlockMetadata { hash, topoheight_metadata, difficulty, cumulative_difficulty, p, size_ema, executed_transactions })
+                        Ok::<_, BlockchainError>(BlockMetadata { hash, topoheight_metadata, mergeset, difficulty, cumulative_difficulty, p, size_ema, executed_transactions })
                     })
                     .buffered(self.stream_concurrency)
                     .try_collect()
@@ -432,8 +453,8 @@ impl<S: Storage> P2pServer<S> {
                 StepResponse::BlocksMetadata(blocks)
             },
         };
-        peer.send_packet(Packet::BootstrapChainResponse(BootstrapChainResponse::new(id, response))).await?;
-        Ok(())
+
+        Ok(BootstrapChainResponse::new(id, response))
     }
 
     // first, retrieve chain info of selected peer
@@ -479,7 +500,7 @@ impl<S: Storage> P2pServer<S> {
                         let hash_at_topo = storage.get_hash_at_topo_height(common_point.get_topoheight()).await?;
                         if hash_at_topo != *common_point.get_hash() {
                             warn!("Common point is {} while our hash at topoheight {} is {}. Aborting", common_point.get_hash(), common_point.get_topoheight(), storage.get_hash_at_topo_height(common_point.get_topoheight()).await?);
-                            return Err(BlockchainError::Unknown)
+                            return Err(P2pError::InvalidCommonPoint(common_point.get_topoheight()).into());
                         }
 
                         let top_block_hash = storage.get_top_block_hash().await?;
@@ -500,7 +521,7 @@ impl<S: Storage> P2pServer<S> {
                         }
                     } else {
                         warn!("No common point with {} ! Not same chain ?", peer);
-                        return Err(BlockchainError::Unknown)
+                        return Err(P2pError::NoCommonPoint.into());
                     }
 
                     top_topoheight = topoheight;
@@ -620,6 +641,34 @@ impl<S: Storage> P2pServer<S> {
                     if next_page.is_some() {
                         Some(StepRequest::Keys(our_topoheight, stable_topoheight, next_page))
                     } else {
+                        // We must request all current local contracts
+                        let mut i = 0;
+                        let mut skip = 0;
+                        loop {
+                            info!("Requesting local contracts #{} until our topoheight {}", i, our_topoheight);
+                            let contracts = {
+                                let storage = self.blockchain.get_storage().read().await;
+                                let contracts: IndexSet<Hash> = storage.get_contracts(None, None).await?
+                                    .skip(skip)
+                                    .take(MAX_ITEMS_PER_PAGE)
+                                    .collect::<Result<IndexSet<_>, _>>()?;
+
+                                // Same logic as keys, we can get the minimum topoheight of the last contract
+                                skip += contracts.len();
+
+                                contracts
+                            };
+
+                            self.update_bootstrap_contracts(peer, &contracts, our_topoheight, stable_topoheight).await?;
+                            if contracts.len() < MAX_ITEMS_PER_PAGE {
+                                break;
+                            }
+
+                            i += 1;
+                        }
+
+                        info!("Updated {} local contracts in {} steps", skip, i);
+
                         // Go to next step
                         Some(StepRequest::Contracts(our_topoheight, stable_topoheight, None))
                     }
@@ -702,7 +751,7 @@ impl<S: Storage> P2pServer<S> {
                             }
 
                             // save the block with its transactions, difficulty
-                            storage.save_block(Arc::new(header), &txs, metadata.difficulty, metadata.cumulative_difficulty, metadata.p, metadata.size_ema, Immutable::Owned(hash)).await?;
+                            storage.save_block(Arc::new(header), &txs, metadata.mergeset, metadata.difficulty, metadata.cumulative_difficulty, metadata.p, metadata.size_ema, Immutable::Owned(hash)).await?;
 
                             Ok(())
                         }).await?;
@@ -1014,6 +1063,34 @@ impl<S: Storage> P2pServer<S> {
         Ok(())
     }
 
+    // Request every events callbacks registered for this contract
+    async fn handle_contract_events(&self, peer: &Arc<Peer>, contract: &Hash, current_topoheight: u64, stable_topoheight: u64) -> Result<(), P2pError> {
+        let mut next_page = None;
+        loop {
+            let StepResponse::ContractsEvents(events, page) = peer.request_boostrap_chain(StepRequest::ContractsEvents(Cow::Borrowed(&contract), current_topoheight, stable_topoheight, next_page)).await? else {
+                // shouldn't happen
+                error!("Received an invalid StepResponse (how ?) while fetching contract events");
+                return Err(P2pError::MalformedPacket.into())
+            };
+
+            let mut storage = self.blockchain.get_storage().write().await;
+            for ((listener_contract, event_id), registration) in events {
+                let topo = storage.get_event_callback_for_contract_at_maximum_topoheight(&contract, event_id, &listener_contract, current_topoheight).await?
+                    .map(|(topo, _)| topo);
+
+                let version = VersionedEventCallbackRegistration::new(registration, topo);
+                storage.set_last_contract_event_callback(contract, event_id, &listener_contract, version, stable_topoheight).await?;
+            }
+
+            next_page = page;
+            if next_page.is_none() {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
     // Update all keys using bootstrap request
     // This will fetch the nonce and associated balance for each asset
     async fn update_bootstrap_contracts(&self, peer: &Arc<Peer>, contracts: &IndexSet<Hash>, our_topoheight: u64, stable_topoheight: u64) -> Result<(), P2pError> {
@@ -1031,7 +1108,8 @@ impl<S: Storage> P2pServer<S> {
                 // But once the module is stored, we can support concurrency
                 try_join!(
                     self.handle_contract_stores(peer, contract, stable_topoheight),
-                    self.handle_contract_balances(peer, contract, stable_topoheight)
+                    self.handle_contract_balances(peer, contract, stable_topoheight),
+                    self.handle_contract_events(peer, contract, our_topoheight, stable_topoheight)
                 ).map(|_| ())
             }).await?;
 

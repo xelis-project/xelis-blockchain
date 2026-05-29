@@ -195,6 +195,7 @@ mod tests {
         assert_eq!(get_version_at_height(&Network::Testnet, 15), BlockVersion::V3);
         assert_eq!(get_version_at_height(&Network::Testnet, 20), BlockVersion::V4);
         assert_eq!(get_version_at_height(&Network::Testnet, 25), BlockVersion::V5);
+        assert_eq!(get_version_at_height(&Network::Testnet, 30), BlockVersion::V6);
     }
 
     #[test]
@@ -205,6 +206,7 @@ mod tests {
         assert_eq!(get_pow_algorithm_for_version(BlockVersion::V3), Algorithm::V3);
         assert_eq!(get_pow_algorithm_for_version(BlockVersion::V4), Algorithm::V3);
         assert_eq!(get_pow_algorithm_for_version(BlockVersion::V5), Algorithm::V3);
+        assert_eq!(get_pow_algorithm_for_version(BlockVersion::V6), Algorithm::V3);
     }
 
     #[test]
@@ -227,6 +229,10 @@ mod tests {
 
         assert!(is_tx_version_allowed_in_block_version(TxVersion::V2, BlockVersion::V4));
         assert!(is_tx_version_allowed_in_block_version(TxVersion::V2, BlockVersion::V5));
+
+        // Starting from V6, we allow TX V3 but also V2
+        assert!(is_tx_version_allowed_in_block_version(TxVersion::V2, BlockVersion::V6));
+        assert!(is_tx_version_allowed_in_block_version(TxVersion::V3, BlockVersion::V6));
     }
 
     #[test]
@@ -250,6 +256,9 @@ mod tests {
         // V5 is enabled
         assert!(is_version_enabled_at_height(&Network::Mainnet, 3_373_000, BlockVersion::V5));
 
+        // V6 is enabled
+        assert!(is_version_enabled_at_height(&Network::Mainnet, 6_330_000, BlockVersion::V6));
+
         // Testnet
         assert!(is_version_enabled_at_height(&Network::Testnet, 0, BlockVersion::V0));
         assert!(!is_version_enabled_at_height(&Network::Testnet, 0, BlockVersion::V1));
@@ -265,6 +274,7 @@ mod tests {
         assert!(is_version_enabled_at_height(&Network::Testnet, 15, BlockVersion::V3));
         assert!(is_version_enabled_at_height(&Network::Testnet, 20, BlockVersion::V4));
         assert!(is_version_enabled_at_height(&Network::Testnet, 25, BlockVersion::V5));
+        assert!(is_version_enabled_at_height(&Network::Testnet, 30, BlockVersion::V6));
     }
 
     #[test]
@@ -275,5 +285,6 @@ mod tests {
         assert_eq!(get_block_time_target_for_version(BlockVersion::V3), 5 * MILLIS_PER_SECOND);
         assert_eq!(get_block_time_target_for_version(BlockVersion::V4), 5 * MILLIS_PER_SECOND);
         assert_eq!(get_block_time_target_for_version(BlockVersion::V5), 5 * MILLIS_PER_SECOND);
+        assert_eq!(get_block_time_target_for_version(BlockVersion::V6), 5 * MILLIS_PER_SECOND);
     }
 }

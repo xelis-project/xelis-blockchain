@@ -15,18 +15,20 @@ use crate::{
         Address,
         Hash,
         Hashable,
-        KeyPair,
         PublicKey
     },
     serializer::Serializer,
     transaction::{
         builder::{
             AccountState,
+            BlobPayloadBuilder,
             ContractDepositBuilder,
             DeployContractBuilder,
             DeployContractInvokeBuilder,
             FeeBuilder,
             FeeHelper,
+            GenerationError,
+            GenerationStateError,
             InvokeContractBuilder,
             MultiSigBuilder,
             TransactionBuilder,
@@ -37,7 +39,8 @@ use crate::{
             derive_shared_key_from_opening,
             PlaintextData
         },
-        verify::{NoZKPCache, VerificationError, ZKPCache},
+        verify::{NoZKPCache, VerificationError, VerificationStateError, ZKPCache},
+        mock::*,
         BurnPayload,
         MultiSigPayload,
         Reference,
@@ -49,83 +52,33 @@ use crate::{
     },
 };
 
-mod mock;
-
-pub use mock::*;
-
-#[derive(Clone)]
-pub struct Balance {
-    pub ciphertext: CiphertextCache,
-    pub balance: u64,
-}
-
-#[derive(Clone)]
-pub struct Account {
-    pub balances: HashMap<Hash, Balance>,
-    pub keypair: KeyPair,
-    pub nonce: Nonce,
-}
-
-impl Account {
-    pub fn new() -> Self {
-        Self {
-            balances: HashMap::new(),
-            keypair: KeyPair::new(),
-            nonce: 0,
-        }
-    }
-
-    pub fn set_balance(&mut self, asset: Hash, balance: u64) {
-        let ciphertext = self.keypair.get_public_key().encrypt(balance);
-        self.balances.insert(asset, Balance {
-            balance,
-            ciphertext: CiphertextCache::Decompressed(None, ciphertext),
-        });
-    }
-
-    pub fn address(&self) -> Address {
-        self.keypair.get_public_key().to_address(false)
-    }
-}
-
 pub struct AccountStateImpl {
-    pub balances: HashMap<Hash, Balance>,
+    pub balances: HashMap<Hash, TrackedBalance>,
     pub reference: Reference,
     pub nonce: Nonce,
 }
 
-fn create_tx_for(account: Account, destination: Address, amount: u64, extra_data: Option<DataElement>) -> Arc<Transaction> {
-    let mut state = AccountStateImpl {
-        balances: account.balances,
-        nonce: account.nonce,
-        reference: Reference {
-            topoheight: 0,
-            hash: Hash::zero(),
-        },
+fn create_tx_for(mut account: TrackedAccount, destination: Address, amount: u64, extra_data: Option<DataElement>) -> Arc<Transaction> {
+    let reference = Reference {
+        topoheight: 0,
+        hash: Hash::zero(),
     };
 
-    let data = TransactionTypeBuilder::Transfers(vec![TransferBuilder {
-        amount,
+    let balance_before = account.get_balance(&XELIS_ASSET).unwrap();
+    let tx = create_transfer_tx_for_account(
+        &mut account,
         destination,
-        asset: XELIS_ASSET,
+        amount,
         extra_data,
-        encrypt_extra_data: true,
-    }]);
-
-
-    let balance = state.balances[&XELIS_ASSET].balance;
-    let builder = TransactionBuilder::new(TxVersion::V1, account.keypair.get_public_key().compress(), None, data, FeeBuilder::default());
-    let estimated_size = builder.estimate_size();
-    let tx = builder.build(&mut state, &account.keypair).unwrap();
-    assert!(estimated_size == tx.size(), "expected {} bytes got {} bytes", tx.size(), estimated_size);
-    assert!(tx.to_bytes().len() == estimated_size);
-    // this is done by the AccountStateImpl
+        TxVersion::V1,
+        reference,
+    ).unwrap();
+    
     assert!(tx.fee * 2 == tx.fee_limit);
-
     let total_spend = amount + tx.fee_limit;
-    let new_balance = state.balances[&XELIS_ASSET].balance;
-    let expected_balance = balance - total_spend;
-    assert!(new_balance == expected_balance, "expected balance {} got {}", expected_balance, new_balance);
+    let balance_after = account.get_balance(&XELIS_ASSET).unwrap();
+    let expected_balance = balance_before - total_spend;
+    assert!(balance_after == expected_balance, "expected balance {} got {}", expected_balance, balance_after);
 
     Arc::new(tx)
 }
@@ -145,13 +98,13 @@ fn test_encrypt_decrypt() {
 
 #[test]
 fn test_encrypt_decrypt_two_parties() {
-    let mut alice = Account::new();
-    alice.balances.insert(XELIS_ASSET, Balance {
+    let mut alice = TrackedAccount::new();
+    alice.balances.insert(XELIS_ASSET, TrackedBalance {
         balance: 100 * COIN_VALUE,
         ciphertext: CiphertextCache::Decompressed(None, alice.keypair.get_public_key().encrypt(100 * COIN_VALUE)),
     });
 
-    let bob = Account::new();
+    let bob = TrackedAccount::new();
 
     let payload = DataElement::Value(DataValue::String("Hello, World!".to_string()));
     let tx = create_tx_for(alice.clone(), bob.address(), 50, Some(payload.clone()));
@@ -182,8 +135,8 @@ fn test_encrypt_decrypt_two_parties() {
 
 #[tokio::test]
 async fn test_tx_verify() {
-    let mut alice = Account::new();
-    let mut bob = Account::new();
+    let mut alice = TrackedAccount::new();
+    let mut bob = TrackedAccount::new();
 
     alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
     bob.set_balance(XELIS_ASSET, 0);
@@ -230,8 +183,8 @@ async fn test_tx_verify() {
 
 #[tokio::test]
 async fn test_tx_verify_with_zkp_cache() {
-    let mut alice = Account::new();
-    let mut bob = Account::new();
+    let mut alice = TrackedAccount::new();
+    let mut bob = TrackedAccount::new();
 
     alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
     bob.set_balance(XELIS_ASSET, 0);
@@ -286,7 +239,7 @@ async fn test_tx_verify_with_zkp_cache() {
         .nonce = 0;
 
     // Now, the chain state balances has changed, it should error even if the TX is in cache
-    assert!(matches!(tx.verify(&hash, &mut state, &DummyCache).await, Err(VerificationError::Proof(ProofVerificationError::GenericProof))));
+    assert!(matches!(tx.verify(&hash, &mut state, &DummyCache).await, Err(VerificationStateError::VerificationError(VerificationError::Proof(ProofVerificationError::GenericProof)))));
 
     // But should be fine for a clean state
     assert!(tx.verify(&hash, &mut clean_state, &DummyCache).await.is_ok());
@@ -294,7 +247,7 @@ async fn test_tx_verify_with_zkp_cache() {
 
 #[tokio::test]
 async fn test_burn_tx_verify() {
-    let mut alice = Account::new();
+    let mut alice = TrackedAccount::new();
     alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
 
     let tx = {
@@ -344,7 +297,7 @@ async fn test_burn_tx_verify() {
 
 #[tokio::test]
 async fn test_tx_invoke_contract() {
-    let mut alice = Account::new();
+    let mut alice = TrackedAccount::new();
 
     alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
 
@@ -417,7 +370,7 @@ async fn test_tx_invoke_contract() {
 
 #[tokio::test]
 async fn test_tx_deploy_contract() {
-    let mut alice = Account::new();
+    let mut alice = TrackedAccount::new();
 
     alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
 
@@ -489,8 +442,8 @@ async fn test_tx_deploy_contract() {
 
 #[tokio::test]
 async fn test_max_transfers() {
-    let mut alice = Account::new();
-    let mut bob = Account::new();
+    let mut alice = TrackedAccount::new();
+    let mut bob = TrackedAccount::new();
 
     alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
     bob.set_balance(XELIS_ASSET, 0);
@@ -558,9 +511,9 @@ async fn test_max_transfers() {
 
 #[tokio::test]
 async fn test_multisig_setup() {
-    let mut alice = Account::new();
-    let mut bob = Account::new();
-    let charlie = Account::new();
+    let mut alice = TrackedAccount::new();
+    let mut bob = TrackedAccount::new();
+    let charlie = TrackedAccount::new();
 
     alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
     bob.set_balance(XELIS_ASSET, 0);
@@ -621,46 +574,30 @@ async fn test_multisig_setup() {
 
 #[tokio::test]
 async fn test_multisig() {
-    let mut alice = Account::new();
-    let mut bob = Account::new();
+    let mut alice = TrackedAccount::new();
+    let mut bob = TrackedAccount::new();
 
     // Signers
-    let charlie = Account::new();
-    let dave = Account::new();
+    let charlie = TrackedAccount::new();
+    let dave = TrackedAccount::new();
 
     alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
     bob.set_balance(XELIS_ASSET, 0);
 
-    let tx = {
-        let mut state = AccountStateImpl {
-            balances: alice.balances.clone(),
-            nonce: alice.nonce,
-            reference: Reference {
-                topoheight: 0,
-                hash: Hash::zero(),
-            },
-        };
-    
-        let data = TransactionTypeBuilder::Transfers(vec![TransferBuilder {
-            amount: 1,
-            destination: bob.address(),
-            asset: XELIS_ASSET,
-            extra_data: None,
-            encrypt_extra_data: true,
-        }]);
-        let builder = TransactionBuilder::new(TxVersion::V1, alice.keypair.get_public_key().compress(), Some(2), data, FeeBuilder::default());
-        let mut tx = builder.build_unsigned(&mut state, &alice.keypair).unwrap();
-
-        tx.sign_multisig(&charlie.keypair, 0);
-        tx.sign_multisig(&dave.keypair, 1);
-
-        Arc::new(tx.finalize(&alice.keypair))
-    };
+    let reference = Reference { topoheight: 0, hash: Hash::zero() };
+    let tx = Arc::new(create_multisig_transfer_tx(
+        &mut alice.clone(),
+        bob.address(),
+        1,
+        &[(0, &charlie), (1, &dave)],
+        TxVersion::V1,
+        reference,
+    ));
 
     // Create the chain state
     let mut state = MockChainState::new();
 
-    // Alice
+    // Alice: use pre-TX balances so the ZKP verifies against the original ciphertext
     {
         let mut balances = HashMap::new();
         for (asset, balance) in alice.balances {
@@ -692,6 +629,780 @@ async fn test_multisig() {
 
     let hash = tx.hash();
     tx.verify(&hash, &mut state, &NoZKPCache).await.unwrap();
+}
+
+/// A TX whose nonce doesn't match what the chain state expects must be rejected.
+#[tokio::test]
+async fn test_tx_invalid_nonce() {
+    let mut alice = TrackedAccount::new();
+    let mut bob = TrackedAccount::new();
+
+    alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+    bob.set_balance(XELIS_ASSET, 0);
+
+    // TX is built with nonce 0
+    let tx = create_tx_for(alice.clone(), bob.address(), 50, None);
+
+    let mut state = MockChainState::new();
+
+    // Put nonce 1 in the chain state: the TX carries nonce 0, so it's stale
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in &alice.balances {
+            balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
+        }
+        state.accounts.insert(alice.keypair.get_public_key().compress(), MockAccount {
+            balances,
+            nonce: 1,
+        });
+    }
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in &bob.balances {
+            balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
+        }
+        state.accounts.insert(bob.keypair.get_public_key().compress(), MockAccount {
+            balances,
+            nonce: 0,
+        });
+    }
+
+    let hash = tx.hash();
+    let result = tx.verify(&hash, &mut state, &NoZKPCache).await;
+    assert!(
+        matches!(result, Err(VerificationStateError::VerificationError(VerificationError::InvalidNonce(..)))),
+        "expected InvalidNonce, got: {:?}", result
+    );
+}
+
+/// Replaying an already-applied TX must be rejected because the nonce was
+/// incremented during the first successful verification.
+#[tokio::test]
+async fn test_tx_replay() {
+    let mut alice = TrackedAccount::new();
+    let mut bob = TrackedAccount::new();
+
+    alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+    bob.set_balance(XELIS_ASSET, 0);
+
+    let tx = create_tx_for(alice.clone(), bob.address(), 50, None);
+
+    let mut state = MockChainState::new();
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in &alice.balances {
+            balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
+        }
+        state.accounts.insert(alice.keypair.get_public_key().compress(), MockAccount {
+            balances,
+            nonce: alice.nonce,
+        });
+    }
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in &bob.balances {
+            balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
+        }
+        state.accounts.insert(bob.keypair.get_public_key().compress(), MockAccount {
+            balances,
+            nonce: 0,
+        });
+    }
+
+    let hash = tx.hash();
+
+    // First application succeeds and advances Alice's on-chain nonce to 1
+    tx.verify(&hash, &mut state, &NoZKPCache).await.unwrap();
+
+    // Replaying the same TX now fails: on-chain nonce is 1, TX carries 0
+    let result = tx.verify(&hash, &mut state, &NoZKPCache).await;
+    assert!(
+        matches!(result, Err(VerificationStateError::VerificationError(VerificationError::InvalidNonce(..)))),
+        "expected InvalidNonce on replay, got: {:?}", result
+    );
+}
+
+/// The builder must reject a transfer whose destination equals the sender.
+#[test]
+fn test_sender_is_receiver_rejected_at_build() {
+    let mut alice = TrackedAccount::new();
+    alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+
+    let mut state = AccountStateImpl {
+        balances: alice.balances.clone(),
+        nonce: alice.nonce,
+        reference: Reference { topoheight: 0, hash: Hash::zero() },
+    };
+
+    let data = TransactionTypeBuilder::Transfers(vec![TransferBuilder {
+        amount: 50,
+        destination: alice.address(), // sender == receiver
+        asset: XELIS_ASSET,
+        extra_data: None,
+        encrypt_extra_data: true,
+    }]);
+
+    let builder = TransactionBuilder::new(
+        TxVersion::V0,
+        alice.keypair.get_public_key().compress(),
+        None,
+        data,
+        FeeBuilder::default(),
+    );
+    let result = builder.build(&mut state, &alice.keypair);
+    assert!(
+        matches!(result, Err(GenerationStateError::GenerationError(GenerationError::SenderIsReceiver))),
+        "expected SenderIsReceiver, got: {:?}", result
+    );
+}
+
+/// Invoking a contract that does not exist in the chain state must fail.
+#[tokio::test]
+async fn test_tx_invoke_unknown_contract() {
+    let mut alice = TrackedAccount::new();
+    alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+
+    let tx = {
+        let mut state = AccountStateImpl {
+            balances: alice.balances.clone(),
+            nonce: alice.nonce,
+            reference: Reference { topoheight: 0, hash: Hash::zero() },
+        };
+
+        let data = TransactionTypeBuilder::InvokeContract(InvokeContractBuilder {
+            contract: Hash::zero(),
+            entry_id: 0,
+            max_gas: 1000,
+            parameters: Vec::new(),
+            deposits: Default::default(),
+            permission: Default::default(),
+        });
+        let builder = TransactionBuilder::new(
+            TxVersion::V2,
+            alice.keypair.get_public_key().compress(),
+            None,
+            data,
+            FeeBuilder::default(),
+        );
+        Arc::new(builder.build(&mut state, &alice.keypair).unwrap())
+    };
+
+    // Chain state has no contract registered
+    let mut state = MockChainState::new();
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in &alice.balances {
+            balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
+        }
+        state.accounts.insert(alice.keypair.get_public_key().compress(), MockAccount {
+            balances,
+            nonce: alice.nonce,
+        });
+    }
+
+    let hash = tx.hash();
+    let result = tx.verify(&hash, &mut state, &NoZKPCache).await;
+    assert!(
+        matches!(result, Err(VerificationStateError::VerificationError(VerificationError::ContractNotFound))),
+        "expected ContractNotFound, got: {:?}", result
+    );
+}
+
+/// When the chain state records a multisig requirement for an account, a
+/// plain TX (no multisig block) submitted by that account must be rejected.
+#[tokio::test]
+async fn test_multisig_required_not_provided() {
+    let mut alice = TrackedAccount::new();
+    let mut bob = TrackedAccount::new();
+    let charlie = TrackedAccount::new();
+    let dave = TrackedAccount::new();
+
+    alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+    bob.set_balance(XELIS_ASSET, 0);
+
+    // Plain transfer, no multisig signature block
+    let tx = create_tx_for(alice.clone(), bob.address(), 50, None);
+
+    let mut state = MockChainState::new();
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in &alice.balances {
+            balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
+        }
+        state.accounts.insert(alice.keypair.get_public_key().compress(), MockAccount {
+            balances,
+            nonce: alice.nonce,
+        });
+    }
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in &bob.balances {
+            balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
+        }
+        state.accounts.insert(bob.keypair.get_public_key().compress(), MockAccount {
+            balances,
+            nonce: 0,
+        });
+    }
+
+    // Alice's account requires 2-of-2 multisig approval
+    state.multisig.insert(alice.keypair.get_public_key().compress(), MultiSigPayload {
+        threshold: 2,
+        participants: IndexSet::from_iter(vec![
+            charlie.keypair.get_public_key().compress(),
+            dave.keypair.get_public_key().compress(),
+        ]),
+    });
+
+    let hash = tx.hash();
+    let result = tx.verify(&hash, &mut state, &NoZKPCache).await;
+    assert!(
+        matches!(result, Err(VerificationStateError::VerificationError(VerificationError::MultiSigNotFound))),
+        "expected MultiSigNotFound, got: {:?}", result
+    );
+}
+
+/// Multisig signatures from a key that is not a registered participant must be
+/// rejected even when the signature count matches the threshold.
+#[tokio::test]
+async fn test_multisig_wrong_signer() {
+    let mut alice = TrackedAccount::new();
+    let mut bob = TrackedAccount::new();
+    let charlie = TrackedAccount::new(); // registered at index 0
+    let dave = TrackedAccount::new();    // registered at index 1
+    let eve = TrackedAccount::new();     // NOT registered
+
+    alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+    bob.set_balance(XELIS_ASSET, 0);
+
+    let reference = Reference { topoheight: 0, hash: Hash::zero() };
+    // Sign with eve at index 0 (charlie's slot) and charlie at index 1 (dave's slot)
+    // neither signature matches the expected key in the config
+    let tx = Arc::new(create_multisig_transfer_tx(
+        &mut alice.clone(),
+        bob.address(),
+        1,
+        &[(0, &eve), (1, &charlie)],
+        TxVersion::V1,
+        reference,
+    ));
+
+    let mut state = MockChainState::new();
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in &alice.balances {
+            balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
+        }
+        state.accounts.insert(alice.keypair.get_public_key().compress(), MockAccount {
+            balances,
+            nonce: alice.nonce,
+        });
+    }
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in &bob.balances {
+            balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
+        }
+        state.accounts.insert(bob.keypair.get_public_key().compress(), MockAccount {
+            balances,
+            nonce: bob.nonce,
+        });
+    }
+
+    // Config: charlie at index 0, dave at index 1
+    state.multisig.insert(alice.keypair.get_public_key().compress(), MultiSigPayload {
+        threshold: 2,
+        participants: IndexSet::from_iter(vec![
+            charlie.keypair.get_public_key().compress(),
+            dave.keypair.get_public_key().compress(),
+        ]),
+    });
+
+    let hash = tx.hash();
+    let result = tx.verify(&hash, &mut state, &NoZKPCache).await;
+    // eve's signature at index 0 is checked against charlie's key -> invalid
+    assert!(
+        matches!(result, Err(VerificationStateError::VerificationError(VerificationError::InvalidSignature))),
+        "expected InvalidSignature, got: {:?}", result
+    );
+}
+
+/// When a contract invocation TX is applied but the contract does not exist in
+/// the chain state (simulating a failed/removed deployment), the fee_limit MUST
+/// still be permanently deducted from the sender.  Gas is refunded because no
+/// execution happened.  The nonce is consumed so the slot is gone.
+#[tokio::test]
+async fn test_apply_partial_fee_paid_on_missing_contract() {
+    let mut alice = TrackedAccount::new();
+    alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+
+    let max_gas = 1000u64;
+
+    let tx = {
+        let mut state = AccountStateImpl {
+            balances: alice.balances.clone(),
+            nonce: alice.nonce,
+            reference: Reference { topoheight: 0, hash: Hash::zero() },
+        };
+
+        let data = TransactionTypeBuilder::InvokeContract(InvokeContractBuilder {
+            contract: Hash::zero(),
+            entry_id: 0,
+            max_gas,
+            parameters: Vec::new(),
+            deposits: Default::default(), // no deposit to keep the assertion simple
+            permission: Default::default(),
+        });
+        let builder = TransactionBuilder::new(
+            TxVersion::V2,
+            alice.keypair.get_public_key().compress(),
+            None,
+            data,
+            FeeBuilder::default(),
+        );
+        Arc::new(builder.build(&mut state, &alice.keypair).unwrap())
+    };
+
+    // State has Alice's balance but the contract is NOT registered.
+    let mut state = MockChainState::new();
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in &alice.balances {
+            balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
+        }
+        state.accounts.insert(alice.keypair.get_public_key().compress(), MockAccount {
+            balances,
+            nonce: alice.nonce,
+        });
+    }
+
+    let hash = tx.hash();
+    tx.apply_with_partial_verify(&hash, &mut state).await.unwrap();
+
+    // Nonce must be consumed even though the contract was not executed.
+    assert_eq!(
+        state.accounts[&alice.keypair.get_public_key().compress()].nonce,
+        1,
+        "nonce must be incremented to 1"
+    );
+
+    // No gas was actually executed so no gas fee should be tracked.
+    assert_eq!(state.gas_fee, 0, "gas_fee must be 0 since no execution occurred");
+
+    // Alice's balance must be reduced by exactly fee_limit.
+    // The full max_gas is refunded (unused), no deposits to worry about.
+    // The fee_limit is NOT refunded because apply_with_partial_verify does not
+    // apply the fee-limit refund that verify_dynamic_parts would apply.
+    let balance = alice.keypair.decrypt_to_point(
+        &state.accounts[&alice.keypair.get_public_key().compress()].balances[&XELIS_ASSET],
+    );
+    let expected = (100 * COIN_VALUE) - tx.get_fee_limit();
+    assert_eq!(
+        balance,
+        Scalar::from(expected) * (*G),
+        "expected balance {} (paid fee_limit = {}), but got a different decrypted point",
+        expected,
+        tx.get_fee_limit()
+    );
+}
+
+/// Extending the previous test: even when the failed contract invoke also
+/// carried a public deposit, the deposit is refunded while the fee_limit is not.
+#[tokio::test]
+async fn test_apply_partial_deposit_refunded_fee_paid_on_missing_contract() {
+    let mut alice = TrackedAccount::new();
+    alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+
+    let max_gas = 1000u64;
+    let deposit = 50 * COIN_VALUE;
+
+    let tx = {
+        let mut state = AccountStateImpl {
+            balances: alice.balances.clone(),
+            nonce: alice.nonce,
+            reference: Reference { topoheight: 0, hash: Hash::zero() },
+        };
+
+        let data = TransactionTypeBuilder::InvokeContract(InvokeContractBuilder {
+            contract: Hash::zero(),
+            entry_id: 0,
+            max_gas,
+            parameters: Vec::new(),
+            deposits: [(XELIS_ASSET, ContractDepositBuilder {
+                amount: deposit,
+                private: false,
+            })].into_iter().collect(),
+            permission: Default::default(),
+        });
+        let builder = TransactionBuilder::new(
+            TxVersion::V2,
+            alice.keypair.get_public_key().compress(),
+            None,
+            data,
+            FeeBuilder::default(),
+        );
+        Arc::new(builder.build(&mut state, &alice.keypair).unwrap())
+    };
+
+    let mut state = MockChainState::new();
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in &alice.balances {
+            balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
+        }
+        state.accounts.insert(alice.keypair.get_public_key().compress(), MockAccount {
+            balances,
+            nonce: alice.nonce,
+        });
+    }
+
+    let hash = tx.hash();
+    tx.apply_with_partial_verify(&hash, &mut state).await.unwrap();
+
+    // Nonce consumed.
+    assert_eq!(
+        state.accounts[&alice.keypair.get_public_key().compress()].nonce,
+        1,
+    );
+
+    // Gas fee is zero (no execution).
+    assert_eq!(state.gas_fee, 0);
+
+    // Deposit is refunded, max_gas is refunded, but fee_limit is permanently lost.
+    // Net deduction = fee_limit only.
+    let balance = alice.keypair.decrypt_to_point(
+        &state.accounts[&alice.keypair.get_public_key().compress()].balances[&XELIS_ASSET],
+    );
+    let expected = (100 * COIN_VALUE) - tx.get_fee_limit();
+    assert_eq!(
+        balance,
+        Scalar::from(expected) * (*G),
+        "expected balance {} (deposit and gas refunded, fee_limit = {} kept), got a different point",
+        expected,
+        tx.get_fee_limit()
+    );
+}
+
+/// Build a public blob TX (encrypt=false) with one destination and verify it.
+/// A blob transfers no assets, so the sender only pays the fee.
+#[tokio::test]
+async fn test_blob_tx_public_build_verify() {
+    let mut alice = TrackedAccount::new();
+    let bob = TrackedAccount::new();
+
+    alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+
+    let tx = {
+        let mut state = AccountStateImpl {
+            balances: alice.balances.clone(),
+            nonce: alice.nonce,
+            reference: Reference { topoheight: 0, hash: Hash::zero() },
+        };
+
+        let data = TransactionTypeBuilder::Blob(BlobPayloadBuilder {
+            data: DataElement::Value(DataValue::String("hello public blob".to_string())),
+            encrypt: false,
+            destinations: vec![bob.address()],
+        });
+        let builder = TransactionBuilder::new(
+            TxVersion::V3,
+            alice.keypair.get_public_key().compress(),
+            None,
+            data,
+            FeeBuilder::default(),
+        );
+        let estimated_size = builder.estimate_size();
+        let tx = builder.build(&mut state, &alice.keypair).unwrap();
+        assert_eq!(estimated_size, tx.size(), "estimated size mismatch");
+        assert_eq!(tx.to_bytes().len(), tx.size());
+
+        Arc::new(tx)
+    };
+
+    let mut state = MockChainState::new();
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in &alice.balances {
+            balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
+        }
+        state.accounts.insert(alice.keypair.get_public_key().compress(), MockAccount {
+            balances,
+            nonce: alice.nonce,
+        });
+    }
+
+    let hash = tx.hash();
+    tx.verify(&hash, &mut state, &NoZKPCache).await.unwrap();
+
+    // Blob sends no assets; Alice only pays the actual fee (fee_limit refund cancels the overhead).
+    let balance = alice.keypair.decrypt_to_point(
+        &state.accounts[&alice.keypair.get_public_key().compress()].balances[&XELIS_ASSET],
+    );
+    assert_eq!(balance, Scalar::from((100 * COIN_VALUE) - tx.fee) * (*G));
+}
+
+/// Build a private (encrypted) blob TX with one destination and verify it.
+/// After verification, the destination can decrypt the embedded payload.
+#[tokio::test]
+async fn test_blob_tx_private_build_verify_and_decrypt() {
+    let mut alice = TrackedAccount::new();
+    let bob = TrackedAccount::new();
+
+    alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+
+    let payload = DataElement::Value(DataValue::String("secret payload".to_string()));
+
+    let tx = {
+        let mut state = AccountStateImpl {
+            balances: alice.balances.clone(),
+            nonce: alice.nonce,
+            reference: Reference { topoheight: 0, hash: Hash::zero() },
+        };
+
+        let data = TransactionTypeBuilder::Blob(BlobPayloadBuilder {
+            data: payload.clone(),
+            encrypt: true,
+            destinations: vec![bob.address()],
+        });
+        let builder = TransactionBuilder::new(
+            TxVersion::V3,
+            alice.keypair.get_public_key().compress(),
+            None,
+            data,
+            FeeBuilder::default(),
+        );
+        let estimated_size = builder.estimate_size();
+        let tx = builder.build(&mut state, &alice.keypair).unwrap();
+        assert_eq!(estimated_size, tx.size(), "estimated size mismatch");
+        assert_eq!(tx.to_bytes().len(), tx.size());
+
+        Arc::new(tx)
+    };
+
+    let mut state = MockChainState::new();
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in &alice.balances {
+            balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
+        }
+        state.accounts.insert(alice.keypair.get_public_key().compress(), MockAccount {
+            balances,
+            nonce: alice.nonce,
+        });
+    }
+
+    let hash = tx.hash();
+    tx.verify(&hash, &mut state, &NoZKPCache).await.unwrap();
+
+    // Blob sends no assets; Alice only pays the fee.
+    let balance = alice.keypair.decrypt_to_point(
+        &state.accounts[&alice.keypair.get_public_key().compress()].balances[&XELIS_ASSET],
+    );
+    assert_eq!(balance, Scalar::from((100 * COIN_VALUE) - tx.fee) * (*G));
+
+    // Bob (the destination) can decrypt the blob data.
+    let TransactionType::Blob(blob) = tx.get_data() else { unreachable!() };
+    let decrypted = blob.get_data()
+        .decrypt(&bob.keypair.get_private_key(), None, Role::Receiver, TxVersion::V3)
+        .unwrap();
+    assert_eq!(decrypted.data(), Some(&payload));
+}
+
+/// A public blob can have multiple destinations. Build and verify succeeds.
+#[tokio::test]
+async fn test_blob_tx_public_multiple_destinations_build_verify() {
+    let mut alice = TrackedAccount::new();
+    let bob = TrackedAccount::new();
+    let charlie = TrackedAccount::new();
+    let dave = TrackedAccount::new();
+
+    alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+
+    let tx = {
+        let mut state = AccountStateImpl {
+            balances: alice.balances.clone(),
+            nonce: alice.nonce,
+            reference: Reference { topoheight: 0, hash: Hash::zero() },
+        };
+
+        let data = TransactionTypeBuilder::Blob(BlobPayloadBuilder {
+            data: DataElement::Value(DataValue::String("broadcast blob".to_string())),
+            encrypt: false,
+            destinations: vec![bob.address(), charlie.address(), dave.address()],
+        });
+        let builder = TransactionBuilder::new(
+            TxVersion::V3,
+            alice.keypair.get_public_key().compress(),
+            None,
+            data,
+            FeeBuilder::default(),
+        );
+        let estimated_size = builder.estimate_size();
+        let tx = builder.build(&mut state, &alice.keypair).unwrap();
+        assert_eq!(estimated_size, tx.size(), "estimated size mismatch");
+        assert_eq!(tx.to_bytes().len(), tx.size());
+
+        Arc::new(tx)
+    };
+
+    let mut state = MockChainState::new();
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in &alice.balances {
+            balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
+        }
+        state.accounts.insert(alice.keypair.get_public_key().compress(), MockAccount {
+            balances,
+            nonce: alice.nonce,
+        });
+    }
+
+    let hash = tx.hash();
+    tx.verify(&hash, &mut state, &NoZKPCache).await.unwrap();
+
+    let TransactionType::Blob(blob) = tx.get_data() else { unreachable!() };
+    assert_eq!(blob.get_destinations().len(), 3);
+}
+
+/// An encrypted blob with more than one destination is rejected at build time
+/// because the encrypted data can only be addressed to a single receiver.
+#[test]
+fn test_blob_tx_private_multiple_destinations_rejected_at_build() {
+    let mut alice = TrackedAccount::new();
+    let bob = TrackedAccount::new();
+    let charlie = TrackedAccount::new();
+
+    alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+
+    let mut state = AccountStateImpl {
+        balances: alice.balances.clone(),
+        nonce: alice.nonce,
+        reference: Reference { topoheight: 0, hash: Hash::zero() },
+    };
+
+    let data = TransactionTypeBuilder::Blob(BlobPayloadBuilder {
+        data: DataElement::Value(DataValue::String("too many receivers".to_string())),
+        encrypt: true,
+        destinations: vec![bob.address(), charlie.address()],
+    });
+    let builder = TransactionBuilder::new(
+        TxVersion::V3,
+        alice.keypair.get_public_key().compress(),
+        None,
+        data,
+        FeeBuilder::default(),
+    );
+    let result = builder.build(&mut state, &alice.keypair);
+    assert!(
+        matches!(result, Err(GenerationStateError::GenerationError(GenerationError::ExpectedOneDestinationForBlob(2)))),
+        "expected ExpectedOneDestinationForBlob(2), got: {:?}", result
+    );
+}
+
+/// A blob TX where the sender is listed as a destination is rejected at verification.
+#[tokio::test]
+async fn test_blob_tx_sender_is_destination_rejected_at_verify() {
+    let mut alice = TrackedAccount::new();
+
+    alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+
+    // Build a public blob where Alice (the sender) is also the destination.
+    // The builder does not check this; it is caught during verification.
+    let tx = {
+        let mut state = AccountStateImpl {
+            balances: alice.balances.clone(),
+            nonce: alice.nonce,
+            reference: Reference { topoheight: 0, hash: Hash::zero() },
+        };
+
+        let data = TransactionTypeBuilder::Blob(BlobPayloadBuilder {
+            data: DataElement::Value(DataValue::String("self-addressed blob".to_string())),
+            encrypt: false,
+            destinations: vec![alice.address()],
+        });
+        let builder = TransactionBuilder::new(
+            TxVersion::V3,
+            alice.keypair.get_public_key().compress(),
+            None,
+            data,
+            FeeBuilder::default(),
+        );
+        Arc::new(builder.build(&mut state, &alice.keypair).unwrap())
+    };
+
+    let mut state = MockChainState::new();
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in &alice.balances {
+            balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
+        }
+        state.accounts.insert(alice.keypair.get_public_key().compress(), MockAccount {
+            balances,
+            nonce: alice.nonce,
+        });
+    }
+
+    let hash = tx.hash();
+    let result = tx.verify(&hash, &mut state, &NoZKPCache).await;
+    assert!(
+        matches!(result, Err(VerificationStateError::VerificationError(VerificationError::InvalidFormat))),
+        "expected InvalidFormat, got: {:?}", result
+    );
+}
+
+/// A blob TX built with a version earlier than V3 must be rejected at verification
+/// because blobs are only supported since V3.
+#[tokio::test]
+async fn test_blob_tx_wrong_version_rejected_at_verify() {
+    let mut alice = TrackedAccount::new();
+    let bob = TrackedAccount::new();
+
+    alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+
+    // Build with V2 (blobs require >= V3); the builder accepts it but verify rejects it.
+    let tx = {
+        let mut state = AccountStateImpl {
+            balances: alice.balances.clone(),
+            nonce: alice.nonce,
+            reference: Reference { topoheight: 0, hash: Hash::zero() },
+        };
+
+        let data = TransactionTypeBuilder::Blob(BlobPayloadBuilder {
+            data: DataElement::Value(DataValue::String("versioned blob".to_string())),
+            encrypt: false,
+            destinations: vec![bob.address()],
+        });
+        let builder = TransactionBuilder::new(
+            TxVersion::V2,
+            alice.keypair.get_public_key().compress(),
+            None,
+            data,
+            FeeBuilder::default(),
+        );
+        Arc::new(builder.build(&mut state, &alice.keypair).unwrap())
+    };
+
+    // has_valid_version_format() returns false for a V2 blob, which triggers InvalidFormat.
+    assert!(!tx.has_valid_version_format());
+
+    let mut state = MockChainState::new();
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in &alice.balances {
+            balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
+        }
+        state.accounts.insert(alice.keypair.get_public_key().compress(), MockAccount {
+            balances,
+            nonce: alice.nonce,
+        });
+    }
+
+    let hash = tx.hash();
+    let result = tx.verify(&hash, &mut state, &NoZKPCache).await;
+    assert!(
+        matches!(result, Err(VerificationStateError::VerificationError(VerificationError::InvalidFormat))),
+        "expected InvalidFormat for V2 blob, got: {:?}", result
+    );
 }
 
 impl FeeHelper for AccountStateImpl {
@@ -728,7 +1439,7 @@ impl AccountState for AccountStateImpl {
     }
 
     fn update_account_balance(&mut self, asset: &Hash, balance: u64, ciphertext: Ciphertext) -> Result<(), Self::Error> {
-        self.balances.insert(asset.clone(), Balance {
+        self.balances.insert(asset.clone(), TrackedBalance {
             balance,
             ciphertext: CiphertextCache::Decompressed(None, ciphertext),
         });

@@ -172,24 +172,33 @@ where
     // register a new application
     // if the application is already registered, it will return an error
     async fn add_application(&self, session: &WebSocketSessionShared<Self>, app_data: ApplicationData) -> Result<Value, RpcResponseError> {
+        debug!("Adding application {} with id {}", app_data.get_name(), app_data.get_id());
+
         // Sanity check
         self.xswd.verify_application(self, &app_data).await
             .map_err(|e| RpcResponseError::new(None, e))?;
 
+        debug!("Application {} passed verification", app_data.get_name());
+
         let state = Arc::new(AppState::new(app_data));
+
+        let response = self.xswd.add_application(&state).await
+            .map_err(|e| RpcResponseError::new(None, e))?;
+
         {
             let mut applications = self.applications.write().await;
             applications.insert(session.clone(), state.clone());
         }
 
-        self.xswd.add_application(&state).await
-            .map_err(|e| RpcResponseError::new(None, e))
+        debug!("Application {} has been added to the applications list", state.get_name());
+        Ok(response)
     }
 
     // Internal method to handle the message received from the WebSocket connection
     // This method will parse the message and call the appropriate method if app is registered
     // Otherwise, it expects a JSON object with the application data to register it
     async fn on_message_internal(&self, session: &WebSocketSessionShared<Self>, message: &[u8]) -> Result<Option<Value>, RpcResponseError> {
+        debug!("on message internal");
         let app_state = {
             let applications = self.applications.read().await;
             applications.get(session).cloned()
@@ -197,6 +206,7 @@ where
 
         // Application is already registered, verify permission and call the method
         if let Some(app) = app_state {
+            debug!("Application {} is already registered, handling request...", app.get_name());
             match self.xswd.on_request(self, &app, message).await? {
                 XSWDResponse::Request(v) => Ok(v),
                 XSWDResponse::Event(event, stream, response) => {
@@ -233,6 +243,7 @@ where
                 }
             }
         } else {
+            debug!("Application is not registered, registering it...");
             let app_data: ApplicationData = serde_json::from_slice(&message)
                 .map_err(|_| RpcResponseError::new(None, XSWDError::InvalidApplicationData))?;
 

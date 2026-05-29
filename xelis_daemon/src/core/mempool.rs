@@ -1,6 +1,6 @@
 use super::{
     error::BlockchainError,
-    state::MempoolState,
+    state::{ChainState, MempoolProvider},
     storage::Storage,
     TxCache,
     blockchain::{ContractEnvironments, estimate_tx_fee_per_kb},
@@ -10,7 +10,7 @@ use std::{
     sync::Arc,
     mem,
 };
-use linked_hash_map::LinkedHashMap;
+use linked_hash_table::{LinkedHashMap, LinkedHashSet};
 use schemars::JsonSchema;
 use serde::{Serialize, Deserialize};
 use indexmap::IndexSet;
@@ -30,7 +30,8 @@ use xelis_common::{
     time::{get_current_time_in_seconds, TimestampSeconds},
     transaction::{
         MultiSigPayload,
-        Transaction
+        Transaction,
+        verify::TrustedZKPCache
     }
 };
 
@@ -58,7 +59,8 @@ pub struct AccountCache {
     // highest nonce used
     max: Nonce,
     // all txs for this user ordered by nonce
-    txs: IndexSet<Arc<Hash>>,
+    #[schemars(with = "Vec<Arc<Hash>>")]
+    txs: LinkedHashSet<Arc<Hash>>,
     // Expected balances after all txs in this cache
     // This is also used to verify the validity of the TX spendings
     balances: HashMap<Hash, Ciphertext>,
@@ -143,19 +145,79 @@ impl Mempool {
         Ok(Self::internal_estimate_fee_rates(fee_rates, base_fee))
     }
 
-    // All checks are made in Blockchain before calling this function
-    pub async fn add_tx<S: Storage>(&mut self, storage: &S, environments: &ContractEnvironments, stable_topoheight: TopoHeight, topoheight: TopoHeight, tx_base_fee: u64, base_height: u64, hash: Arc<Hash>, tx: Arc<Transaction>, size: usize, block_version: BlockVersion) -> Result<(), BlockchainError> {
-        let mut state = MempoolState::new(&self, storage, environments, stable_topoheight, topoheight, block_version, self.mainnet, tx_base_fee, base_height);
+    /// Add a TX to mempool after verifying it
+    // All checks MUST be made AND are made in Blockchain before calling this function
+    #[inline]
+    pub async fn add_tx<S: Storage>(
+        &mut self,
+        storage: &S,
+        environments: &ContractEnvironments,
+        stable_topoheight: TopoHeight,
+        topoheight: TopoHeight,
+        tx_base_fee: u64,
+        base_height: u64,
+        hash: Arc<Hash>,
+        tx: Arc<Transaction>,
+        size: usize,
+        block_version: BlockVersion,
+    ) -> Result<(), BlockchainError> {
+        debug!("Adding TX {} to mempool", hash);
+
+        let provider = MempoolProvider {
+            mempool: self,
+            storage
+        };
+        let mut state = ChainState::new(&provider, environments, stable_topoheight, topoheight, block_version, tx_base_fee, base_height);
         let tx_cache = TxCache::new(storage, self, self.disable_zkp_cache);
         tx.verify(&hash, &mut state, &tx_cache).await?;
 
         let (balances, multisig) = state.get_sender_cache(tx.get_source())
             .ok_or_else(|| BlockchainError::AccountNotFound(tx.get_source().as_address(self.mainnet)))?;
 
-        let balances = balances.into_iter()
-            .map(|(asset, ciphertext)| (asset.clone(), ciphertext))
-            .collect();
+        self.add_tx_internal(storage, stable_topoheight, hash, tx, size, block_version, balances, multisig).await
+    }
 
+    /// Add a TX to mempool without verifying the static proofs part of it
+    pub async fn add_known_tx<S: Storage>(
+        &mut self,
+        storage: &S,
+        environments: &ContractEnvironments,
+        stable_topoheight: TopoHeight,
+        topoheight: TopoHeight,
+        tx_base_fee: u64,
+        base_height: u64,
+        hash: Arc<Hash>,
+        tx: Arc<Transaction>,
+        size: usize,
+        block_version: BlockVersion,
+    ) -> Result<(), BlockchainError> {
+        debug!("Adding trusted TX {} to mempool", hash);
+
+        let provider = MempoolProvider {
+            mempool: self,
+            storage
+        };
+        let mut state = ChainState::new(&provider, environments, stable_topoheight, topoheight, block_version, tx_base_fee, base_height);
+        tx.verify(&hash, &mut state, &TrustedZKPCache).await?;
+
+        let (balances, multisig) = state.get_sender_cache(tx.get_source())
+            .ok_or_else(|| BlockchainError::AccountNotFound(tx.get_source().as_address(self.mainnet)))?;
+
+        self.add_tx_internal(storage, stable_topoheight, hash, tx, size, block_version, balances, multisig).await
+    }
+
+    /// Add a TX to mempool without verifying it
+    async fn add_tx_internal<S: Storage>(
+        &mut self,
+        storage: &S,
+        stable_topoheight: TopoHeight,
+        hash: Arc<Hash>,
+        tx: Arc<Transaction>,
+        size: usize,
+        block_version: BlockVersion,
+        balances: HashMap<Hash, Ciphertext>,
+        multisig: Option<MultiSigPayload>
+    ) -> Result<(), BlockchainError> {
         let nonce = tx.get_nonce();
         // update the cache for this owner
         if let Some(cache) = self.caches.get_mut(tx.get_source()) {
@@ -167,7 +229,7 @@ impl Mempool {
             cache.set_balances(balances);
             cache.set_multisig(multisig);
         } else {
-            let mut txs = IndexSet::new();
+            let mut txs = LinkedHashSet::new();
             txs.insert(hash.clone());
 
             // init the cache
@@ -211,8 +273,7 @@ impl Mempool {
         // True if no other TXs available for account
         let mut delete = false;
         if let Some(cache) = self.caches.get_mut(key) {
-            // Shift remove is O(n) on average, but we need to preserve the order
-            if !cache.txs.shift_remove(hash) {
+            if !cache.txs.remove(hash) {
                 warn!("TX {} not found in mempool while deleting", hash);
             }
 
@@ -300,17 +361,6 @@ impl Mempool {
         self.caches.get(key)
     }
 
-    // Check if the nonce is already used for user in mempool
-    pub fn is_nonce_used(&self, key: &PublicKey, nonce: u64) -> bool {
-        if let Some(cache) = self.caches.get(key) {
-            if nonce >= cache.min && nonce <= cache.max {
-                return cache.has_tx_with_same_nonce(nonce).is_some();
-            }
-        }
-
-        false
-    }
-
     // Returns the count of txs in mempool
     pub fn size(&self) -> usize {
         self.txs.len()
@@ -372,17 +422,13 @@ impl Mempool {
                 }
             }
 
-            // Process TXs normally
-            // TODO: maybe we can batch it for faster results
-            // We can also mark them as verified in ZKP Cache to only check
-            // dynamic
             for (hash, size, transaction) in txs {
                 if self.contains_tx(&hash) {
                     continue;
                 }
 
-                if let Err(e) = self.add_tx(storage, environments, stable_topoheight, topoheight, tx_base_fee, base_height, hash.clone(), transaction.clone(), size, block_version).await {
-                    warn!("Error while adding back TX {} for {}: {}", hash, source.as_address(self.mainnet), e);
+                if let Err(e) = self.add_known_tx(storage, environments, stable_topoheight, topoheight, tx_base_fee, base_height, hash.clone(), transaction.clone(), size, block_version).await {
+                    debug!("Error while adding back TX in mempool {} for {}: {}", hash, source.as_address(self.mainnet), e);
                     orphaned.push((hash, transaction));
                 }
             }
@@ -451,7 +497,7 @@ impl Mempool {
                 warn!("All TXs for {} are orphaned, deleting them because cache min is {} and last nonce is {}", key.as_address(self.mainnet), cache.get_min(), nonce);
 
                 // Don't let ghost TXs in mempool
-                for tx in cache.txs.drain(..) {
+                for tx in cache.txs.drain() {
                     let sorted_tx = self.txs.remove(&tx)
                         .ok_or_else(|| BlockchainError::TxNotFound(tx.as_ref().clone()))?;
 
@@ -477,7 +523,6 @@ impl Mempool {
                     cache.txs.retain(|hash| {
                         // Delete by default
                         let mut delete = true;
-    
                         if let Some(tx) = self.txs.get(hash) {
                             let tx_nonce = tx.get_tx().get_nonce();
                             // If TX is still compatible with new nonce, update bounds
@@ -525,14 +570,18 @@ impl Mempool {
                     // If we have deleted a TX from this cache, we need to verify the rest of them
                     // If we don't have to delete the cache, and we didn't have any nonce collision
                     // We don't have to reverify each TXs. They must be valid
-                    let first_tx =  cache.txs.first()
+                    let first_tx =  cache.txs.front()
                         .and_then(|hash| self.txs.get(hash)
                             .map(|tx| (tx, hash))
                         );
 
                     let tx_cache = TxCache::new(storage, &self, self.disable_zkp_cache);
                     if let Some((next_tx, tx_hash)) = first_tx {
-                        let mut state = MempoolState::new(&self, storage, environments, stable_topoheight, topoheight, block_version, self.mainnet, tx_base_fee, base_height);
+                        let provider = MempoolProvider {
+                            mempool: self,
+                            storage
+                        };
+                        let mut state = ChainState::new(&provider, environments, stable_topoheight, topoheight, block_version, tx_base_fee, base_height);
                         if let Err(e) = Transaction::verify(next_tx.get_tx(), &tx_hash, &mut state, &tx_cache).await {
                             warn!("Error while verifying TXs for source {}: {}", key.as_address(self.mainnet), e);
 
@@ -549,7 +598,7 @@ impl Mempool {
 
                 if delete_cache {
                     // We empty the cache, so we can delete all txs
-                    let mut local_cache = IndexSet::new();
+                    let mut local_cache = LinkedHashSet::new();
                     mem::swap(&mut local_cache, &mut cache.txs);
 
                     deleted_txs_hashes.extend(local_cache);
@@ -645,7 +694,7 @@ impl AccountCache {
     }
 
     // Get all txs hashes for this cache
-    pub fn get_txs(&self) -> &IndexSet<Arc<Hash>> {
+    pub fn get_txs(&self) -> &LinkedHashSet<Arc<Hash>> {
         &self.txs
     }
 
@@ -689,20 +738,200 @@ impl AccountCache {
     }
 
     // Verify if a TX is in cache using its nonce
-    pub fn has_tx_with_same_nonce(&self, nonce: Nonce) -> Option<&Arc<Hash>> {
+    pub fn has_tx_with_same_nonce(&self, nonce: Nonce) -> bool {
         if nonce < self.min || nonce > self.max || self.txs.is_empty() {
-            return None;
+            return false;
         }
 
         trace!("has tx with same nonce: {}, max: {}, min: {}, size: {}", nonce, self.max, self.min, self.txs.len());
         let index = ((nonce - self.min) % (self.max + 1 - self.min)) as usize;
-        self.txs.get_index(index)
+        index < self.txs.len()
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::{borrow::Cow, sync::Arc};
+    use xelis_common::{
+        account::{CiphertextCache, VersionedBalance, VersionedNonce},
+        config::{COIN_VALUE, FEE_PER_KB, XELIS_ASSET},
+        crypto::{Address, Hash, Hashable},
+        transaction::{
+            MultiSigPayload,
+            Reference,
+            TxVersion,
+            builder::{FeeBuilder, MultiSigBuilder, TransactionBuilder, TransactionTypeBuilder},
+            mock::{TrackedAccount, TrackedAccountState, create_transfer_tx_for_account, create_multisig_transfer_tx},
+            verify::VerificationError,
+        },
+        versioned::Versioned,
+        network::Network,
+    };
+    use crate::core::{
+        blockchain::ContractEnvironments,
+        error::BlockchainError,
+        storage::{MemoryStorage, BalanceProvider, MultiSigProvider, NonceProvider, AccountProvider},
+    };
     use super::*;
+
+    /// Setup a TrackedAccount in a MemoryStorage: registers the account, sets its nonce to 0,
+    /// and writes its XELIS encrypted balance so the chain-state verifier can find it.
+    async fn setup_account(storage: &mut MemoryStorage, account: &TrackedAccount) {
+        let pk = account.get_public_key();
+
+        let tracked_balance = account.balances.get(&XELIS_ASSET)
+            .expect("account must have an XELIS balance set via set_balance()");
+
+        let mut cache = tracked_balance.ciphertext.clone();
+        let ciphertext = cache.computable()
+            .expect("ciphertext must be decompressible")
+            .clone();
+
+        let versioned_balance = VersionedBalance::new(
+            CiphertextCache::Decompressed(None, ciphertext),
+            None,
+        );
+
+        storage.set_last_balance_to(&pk, &XELIS_ASSET, 0, &versioned_balance).await
+            .expect("set_last_balance_to failed");
+        storage.set_last_nonce_to(&pk, 0, &VersionedNonce::new(0, None)).await
+            .expect("set_last_nonce_to failed");
+        storage.set_account_registration_topoheight(&pk, 0).await
+            .expect("set_account_registration_topoheight failed");
+    }
+
+    fn make_reference() -> Reference {
+        Reference { topoheight: 0, hash: Hash::zero() }
+    }
+
+    #[tokio::test]
+    async fn test_add_valid_tx() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+
+        let mut alice = TrackedAccount::new();
+        alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+        setup_account(&mut storage, &alice).await;
+
+        let bob = TrackedAccount::new();
+        let tx = create_transfer_tx_for_account(
+            &mut alice,
+            bob.address(),
+            COIN_VALUE,
+            None,
+            TxVersion::V2,
+            make_reference(),
+        ).expect("failed to create transfer tx");
+
+        let mut mempool = Mempool::new(Network::Devnet, false);
+        add_tx_to_mempool(&mut mempool, &storage, Arc::new(tx)).await
+            .expect("add_tx should succeed for a valid TX");
+
+        assert_eq!(mempool.size(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_add_multiple_txs_same_source() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+
+        let mut alice = TrackedAccount::new();
+        alice.set_balance(XELIS_ASSET, 500 * COIN_VALUE);
+        setup_account(&mut storage, &alice).await;
+
+        let bob = TrackedAccount::new();
+        let mut mempool = Mempool::new(Network::Devnet, false);
+
+        for _ in 0..3 {
+            let tx = create_transfer_tx_for_account(
+                &mut alice,
+                bob.address(),
+                COIN_VALUE,
+                None,
+                TxVersion::V2,
+                make_reference(),
+            ).expect("failed to create transfer tx");
+
+            add_tx_to_mempool(&mut mempool, &storage, Arc::new(tx)).await
+                .expect("add_tx should succeed for sequential TXs from same source");
+        }
+
+        assert_eq!(mempool.size(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_add_txs_different_sources() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+
+        let mut alice = TrackedAccount::new();
+        alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+        setup_account(&mut storage, &alice).await;
+
+        let mut bob = TrackedAccount::new();
+        bob.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+        setup_account(&mut storage, &bob).await;
+
+        let carol = TrackedAccount::new();
+        let mut mempool = Mempool::new(Network::Devnet, false);
+
+        let tx_a = create_transfer_tx_for_account(
+            &mut alice,
+            carol.address(),
+            COIN_VALUE,
+            None,
+            TxVersion::V2,
+            make_reference(),
+        ).expect("alice tx failed");
+        let tx_b = create_transfer_tx_for_account(
+            &mut bob,
+            carol.address(),
+            COIN_VALUE,
+            None,
+            TxVersion::V2,
+            make_reference(),
+        ).expect("bob tx failed");
+
+        for tx in [tx_a, tx_b] {
+            add_tx_to_mempool(&mut mempool, &storage, Arc::new(tx)).await
+                .expect("add_tx should succeed for different sources");
+        }
+
+        assert_eq!(mempool.size(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_reject_duplicate_tx() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+
+        let mut alice = TrackedAccount::new();
+        alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+        setup_account(&mut storage, &alice).await;
+
+        let bob = TrackedAccount::new();
+
+        let tx = create_transfer_tx_for_account(
+            &mut alice,
+            bob.address(),
+            COIN_VALUE,
+            None,
+            TxVersion::V2,
+            make_reference(),
+        ).expect("failed to create transfer tx");
+
+        let tx = Arc::new(tx);
+        let mut mempool = Mempool::new(Network::Devnet, false);
+
+        // First add succeeds
+        add_tx_to_mempool(&mut mempool, &storage, tx.clone()).await
+            .expect("first add should succeed");
+
+        // Second add with the same nonce should be rejected
+        let err = add_tx_to_mempool(&mut mempool, &storage, tx.clone()).await
+            .expect_err("duplicate nonce should be rejected");
+
+        assert!(
+            matches!(err, BlockchainError::VerificationError(VerificationError::InvalidNonce(..))),
+            "expected VerificationError::InvalidNonce for duplicate nonce, got: {:?}", err
+        );
+    }
 
     #[test]
     fn test_estimated_fee_rates() {
@@ -740,5 +969,272 @@ mod tests {
         assert_eq!(estimated.medium, (FEE_PER_KB as f64 * 2.5) as u64);
         assert_eq!(estimated.low, FEE_PER_KB * 2);
         assert_eq!(estimated.default, FEE_PER_KB);
+    }
+
+    /// Build a MultiSig setup/delete TX from `account`, optionally signed by co-signers.
+    /// When `account` already has multisig configured, `signers` must carry the required co-sigs.
+    fn create_multisig_setup_tx(
+        account: &mut TrackedAccount,
+        participants: Vec<Address>,
+        threshold: u8,
+        signers: &[(u8, &TrackedAccount)],
+    ) -> Transaction {
+        let mut state = TrackedAccountState {
+            balances: account.balances.clone(),
+            nonce: account.nonce,
+            reference: make_reference(),
+        };
+        let required_thresholds = if signers.is_empty() { None } else { Some(signers.len() as u8) };
+        let builder = TransactionBuilder::new(
+            TxVersion::V2,
+            account.keypair.get_public_key().compress(),
+            required_thresholds,
+            TransactionTypeBuilder::MultiSig(MultiSigBuilder {
+                participants: participants.into_iter().collect(),
+                threshold,
+            }),
+            FeeBuilder::default(),
+        );
+        if signers.is_empty() {
+            let tx = builder.build(&mut state, &account.keypair).unwrap();
+            account.balances = state.balances;
+            account.nonce = state.nonce;
+            tx
+        } else {
+            let mut unsigned = builder.build_unsigned(&mut state, &account.keypair).unwrap();
+            for (id, signer) in signers {
+                unsigned.sign_multisig(&signer.keypair, *id);
+            }
+            let tx = unsigned.finalize(&account.keypair);
+            account.balances = state.balances;
+            account.nonce = state.nonce;
+            tx
+        }
+    }
+
+    /// Insert a MultiSigPayload directly into storage for an account.
+    async fn setup_multisig_in_storage(storage: &mut MemoryStorage, account: &TrackedAccount, payload: MultiSigPayload) {
+        let pk = account.get_public_key();
+        let versioned = Versioned::new(Some(Cow::Owned(payload)), None);
+        storage.set_last_multisig_to(&pk, 0, versioned).await.unwrap();
+    }
+
+    /// Convenience wrapper: add a TX to the mempool with sensible defaults.
+    async fn add_tx_to_mempool(
+        mempool: &mut Mempool,
+        storage: &MemoryStorage,
+        tx: Arc<Transaction>,
+    ) -> Result<(), BlockchainError> {
+        let environments = ContractEnvironments::default();
+        let hash = Arc::new(tx.hash());
+        let size = tx.size();
+        mempool.add_tx(storage, &environments, 0, 0, FEE_PER_KB, 0, hash, tx, size, BlockVersion::V6).await
+    }
+
+    /// A MultiSig setup TX (configuring multisig on `alice`) should be accepted by the mempool.
+    #[tokio::test]
+    async fn test_multisig_setup_tx() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+        let mut mempool = Mempool::new(Network::Devnet, false);
+
+        let mut alice = TrackedAccount::new();
+        alice.set_balance(XELIS_ASSET, COIN_VALUE * 100);
+        setup_account(&mut storage, &alice).await;
+
+        let bob = TrackedAccount::new();
+        let carol = TrackedAccount::new();
+
+        let participants = vec![bob.address(), carol.address()];
+        let tx = create_multisig_setup_tx(&mut alice, participants, 2, &[]);
+        let result = add_tx_to_mempool(&mut mempool, &storage, Arc::new(tx)).await;
+        assert!(result.is_ok(), "multisig setup TX should be accepted: {:?}", result.err());
+    }
+
+    /// A transfer from an account with multisig configured in storage should be accepted
+    /// when the TX carries the correct multisig signatures.
+    #[tokio::test]
+    async fn test_transfer_with_valid_multisig() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+        let mut mempool = Mempool::new(Network::Devnet, false);
+
+        let mut alice = TrackedAccount::new();
+        alice.set_balance(XELIS_ASSET, COIN_VALUE * 100);
+        setup_account(&mut storage, &alice).await;
+
+        let bob = TrackedAccount::new();
+        let carol = TrackedAccount::new();
+
+        // Pre-configure alice's account with 2-of-2 multisig (bob=0, carol=1)
+        let payload = MultiSigPayload {
+            threshold: 2,
+            participants: [bob.get_public_key(), carol.get_public_key()].into_iter().collect(),
+        };
+        setup_multisig_in_storage(&mut storage, &alice, payload).await;
+
+        // (id=0 => bob, id=1 => carol)
+        let tx = create_multisig_transfer_tx(&mut alice, bob.address(), COIN_VALUE, &[(0, &bob), (1, &carol)], TxVersion::V2, make_reference());
+        let result = add_tx_to_mempool(&mut mempool, &storage, Arc::new(tx)).await;
+        assert!(result.is_ok(), "transfer with valid multisig should be accepted: {:?}", result.err());
+    }
+
+    /// A transfer from a multisig-configured account that carries NO multisig field
+    /// should be rejected with `MultiSigNotFound`.
+    #[tokio::test]
+    async fn test_transfer_without_multisig_fails() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+        let mut mempool = Mempool::new(Network::Devnet, false);
+
+        let mut alice = TrackedAccount::new();
+        alice.set_balance(XELIS_ASSET, COIN_VALUE * 100);
+        setup_account(&mut storage, &alice).await;
+
+        let bob = TrackedAccount::new();
+        let carol = TrackedAccount::new();
+
+        let payload = MultiSigPayload {
+            threshold: 2,
+            participants: [bob.get_public_key(), carol.get_public_key()].into_iter().collect(),
+        };
+        setup_multisig_in_storage(&mut storage, &alice, payload).await;
+
+        // Normal transfer: no multisig signatures attached
+        let tx = create_transfer_tx_for_account(
+            &mut alice, bob.address(), COIN_VALUE, None, TxVersion::V2, make_reference()
+        ).unwrap();
+
+        let err = add_tx_to_mempool(&mut mempool, &storage, Arc::new(tx)).await.unwrap_err();
+        assert!(
+            matches!(err, BlockchainError::VerificationError(VerificationError::MultiSigNotFound)),
+            "expected MultiSigNotFound, got: {:?}", err
+        );
+    }
+
+    /// A transfer from a multisig account with fewer signatures than the threshold
+    /// should be rejected with `MultiSigParticipants`.
+    #[tokio::test]
+    async fn test_transfer_with_wrong_sig_count_fails() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+        let mut mempool = Mempool::new(Network::Devnet, false);
+
+        let mut alice = TrackedAccount::new();
+        alice.set_balance(XELIS_ASSET, COIN_VALUE * 100);
+        setup_account(&mut storage, &alice).await;
+
+        let bob = TrackedAccount::new();
+        let carol = TrackedAccount::new();
+
+        // threshold=2 but we'll only attach 1 signature
+        let payload = MultiSigPayload {
+            threshold: 2,
+            participants: [bob.get_public_key(), carol.get_public_key()].into_iter().collect(),
+        };
+        setup_multisig_in_storage(&mut storage, &alice, payload).await;
+
+        // Only sign with bob (id=0), missing carol
+        let tx = create_multisig_transfer_tx(&mut alice, bob.address(), COIN_VALUE, &[(0, &bob)], TxVersion::V2, make_reference());
+        let err = add_tx_to_mempool(&mut mempool, &storage, Arc::new(tx)).await.unwrap_err();
+        assert!(
+            matches!(err, BlockchainError::VerificationError(VerificationError::MultiSigParticipants)),
+            "expected MultiSigParticipants, got: {:?}", err
+        );
+    }
+
+    /// A transfer from an account WITHOUT multisig configured but carrying a multisig field
+    /// should be rejected with `MultiSigNotConfigured`.
+    #[tokio::test]
+    async fn test_tx_with_multisig_but_not_configured_fails() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+        let mut mempool = Mempool::new(Network::Devnet, false);
+
+        let mut alice = TrackedAccount::new();
+        alice.set_balance(XELIS_ASSET, COIN_VALUE * 100);
+        setup_account(&mut storage, &alice).await;
+
+        let bob = TrackedAccount::new();
+
+        // No multisig configured in storage for alice.
+        // Create a transfer TX with multisig sigs (as if alice had 1-of-1 multisig with bob).
+        let tx = create_multisig_transfer_tx(&mut alice, bob.address(), COIN_VALUE, &[(0, &bob)], TxVersion::V2, make_reference());
+        let err = add_tx_to_mempool(&mut mempool, &storage, Arc::new(tx)).await.unwrap_err();
+        assert!(
+            matches!(err, BlockchainError::VerificationError(VerificationError::MultiSigNotConfigured)),
+            "expected MultiSigNotConfigured, got: {:?}", err
+        );
+    }
+
+    /// A delete/reset multisig TX (threshold=0, no participants) from an account that HAS multisig
+    /// configured should be accepted.
+    #[tokio::test]
+    async fn test_multisig_delete_tx() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+        let mut mempool = Mempool::new(Network::Devnet, false);
+
+        let mut alice = TrackedAccount::new();
+        alice.set_balance(XELIS_ASSET, COIN_VALUE * 100);
+        setup_account(&mut storage, &alice).await;
+
+        let bob = TrackedAccount::new();
+
+        // Configure multisig first
+        let payload = MultiSigPayload {
+            threshold: 1,
+            participants: [bob.get_public_key()].into_iter().collect(),
+        };
+        setup_multisig_in_storage(&mut storage, &alice, payload).await;
+
+        // Delete multisig: threshold=0, no participants — but bob must co-sign since threshold=1
+        let delete_tx = create_multisig_setup_tx(&mut alice, vec![], 0, &[(0, &bob)]);
+        let result = add_tx_to_mempool(&mut mempool, &storage, Arc::new(delete_tx)).await;
+        assert!(result.is_ok(), "multisig delete TX should be accepted: {:?}", result.err());
+    }
+
+    /// A delete/reset multisig TX from an account that does NOT have multisig configured
+    /// should be rejected with `MultiSigNotConfigured`.
+    #[tokio::test]
+    async fn test_multisig_delete_without_config_fails() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+        let mut mempool = Mempool::new(Network::Devnet, false);
+
+        let mut alice = TrackedAccount::new();
+        alice.set_balance(XELIS_ASSET, COIN_VALUE * 100);
+        setup_account(&mut storage, &alice).await;
+
+        // No multisig configured — try to delete/reset
+        let delete_tx = create_multisig_setup_tx(&mut alice, vec![], 0, &[]);
+        let err = add_tx_to_mempool(&mut mempool, &storage, Arc::new(delete_tx)).await.unwrap_err();
+        assert!(
+            matches!(err, BlockchainError::VerificationError(VerificationError::MultiSigNotConfigured)),
+            "expected MultiSigNotConfigured, got: {:?}", err
+        );
+    }
+
+    /// After setting up multisig via TX and then deleting it via a follow-up TX, subsequent
+    /// normal transfers (without multisig sigs) should be accepted again.
+    #[tokio::test]
+    async fn test_multisig_setup_then_delete_allows_normal_transfer() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+        let mut mempool = Mempool::new(Network::Devnet, false);
+
+        let mut alice = TrackedAccount::new();
+        alice.set_balance(XELIS_ASSET, COIN_VALUE * 100);
+        setup_account(&mut storage, &alice).await;
+
+        let bob = TrackedAccount::new();
+        let carol = TrackedAccount::new();
+
+        // 1. Setup multisig (1-of-1 with bob)
+        let setup_tx = create_multisig_setup_tx(&mut alice, vec![bob.address()], 1, &[]);
+        add_tx_to_mempool(&mut mempool, &storage, Arc::new(setup_tx)).await.unwrap();
+
+        // 2. Delete multisig — alice now has 1-of-1 multisig (bob), so bob must co-sign the delete TX
+        let delete_tx = create_multisig_setup_tx(&mut alice, vec![], 0, &[(0, &bob)]);
+        add_tx_to_mempool(&mut mempool, &storage, Arc::new(delete_tx)).await.unwrap();
+
+        // 3. Normal transfer: no multisig signatures needed (multisig is now deleted in cache)
+        let tx = create_transfer_tx_for_account(
+            &mut alice, carol.address(), COIN_VALUE, None, TxVersion::V2, make_reference()
+        ).unwrap();
+        let result = add_tx_to_mempool(&mut mempool, &storage, Arc::new(tx)).await;
+        assert!(result.is_ok(), "normal transfer after multisig delete should be accepted: {:?}", result.err());
     }
 }

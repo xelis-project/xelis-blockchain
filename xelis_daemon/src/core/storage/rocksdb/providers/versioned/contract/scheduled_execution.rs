@@ -38,20 +38,20 @@ impl RocksStorage {
         mode: IteratorMode<'_>,
     ) -> Result<(), BlockchainError> {
         trace!("delete scheduled executions with mode {:?}", mode);
-        let snapshot = self.snapshot.clone();
-        for res in Self::iter_raw_internal(&self.db, snapshot.as_ref(), mode, Column::DelayedExecutionRegistrations)? {
-            let (key, _) = res?;
+        self.run_blocking_mut(|s| {
+            let snapshot = s.snapshot.clone();
+            for res in Self::iter_raw_internal(&s.db, snapshot.as_ref(), mode, Column::DelayedExecutionRegistrations)? {
+                let (key, _) = res?;
 
-            // Remove registration entry
-            Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), Column::DelayedExecutionRegistrations, &key)?;
+                Self::remove_from_disk_internal(&s.db, s.snapshot.as_mut(), Column::DelayedExecutionRegistrations, &key)?;
 
-            // Decode (contract_id, topoheight) from the key and remove corresponding scheduled execution
-            let (contract, execution_topoheight) = <(ContractId, TopoHeight)>::from_bytes(&key[8..])?;
-            let delayed_key = Self::get_contract_scheduled_execution_key(contract, execution_topoheight);
+                let (contract, execution_topoheight) = <(ContractId, TopoHeight)>::from_bytes(&key[8..])?;
+                let delayed_key = Self::get_contract_scheduled_execution_key(contract, execution_topoheight);
 
-            Self::remove_from_disk_internal(&self.db, self.snapshot.as_mut(), Column::DelayedExecution, &delayed_key)?;
-        }
+                Self::remove_from_disk_internal(&s.db, s.snapshot.as_mut(), Column::DelayedExecution, &delayed_key)?;
+            }
 
-        Ok(())
+            Ok(())
+        })
     }
 }

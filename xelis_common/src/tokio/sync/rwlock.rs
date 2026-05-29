@@ -200,19 +200,44 @@ pub struct RwLockWriteGuard<'a, T: ?Sized> {
     active_location: Arc<StdMutex<Option<(&'static Location<'static>, Instant)>>>,
 }
 
+impl<'a, T: ?Sized> RwLockWriteGuard<'a, T> {
+    /// Downgrades this write guard to a read guard, keeping the same location and updating the active guards accordingly.
+    #[allow(dead_code)]
+    pub fn downgrade(mut guard: Self) -> RwLockReadGuard<'a, T> {
+        let location = guard.init_location;
+        debug!("Downgrading {} RwLockWriteGuard to read guard at {}", guard.init_location, location);
+
+        // Clear active write location
+        let (location, instant) = guard.active_location.lock().expect("active write location").take()
+            .expect("active write location should be set");
+
+        let inner = guard.inner.take().expect("write guard");
+        let read_guard = InnerRwLockWriteGuard::downgrade(inner);
+
+        RwLockReadGuard {
+            init_location: guard.init_location,
+            inner: Some(read_guard),
+            locations: Arc::new(StdMutex::new(vec![(location, instant)])),
+            location,
+            read_guards: Arc::new(AtomicU64::new(1)),
+        }
+    }
+}
+
 impl<'a, T: ?Sized> Drop for RwLockWriteGuard<'a, T> {
     fn drop(&mut self) {
         {
-            let guard = self.inner.take().expect("drop");
-            drop(guard);
+            if let Some(guard) = self.inner.take() {
+                drop(guard);
+            }
         }
 
-        let (active_location, lifetime) = self.active_location.lock()
+        if let Some((active_location, lifetime)) = self.active_location.lock()
             .expect("active write location")
             .take()
-            .expect("active write location should be set");
-
-        debug!("Dropping {} RwLockWriteGuard at {} after {:?}", self.init_location, active_location, lifetime.elapsed());
+        {
+            debug!("Dropping {} RwLockWriteGuard at {} after {:?}", self.init_location, active_location, lifetime.elapsed());
+        }
     }
 }
 

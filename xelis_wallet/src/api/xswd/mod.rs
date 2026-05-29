@@ -10,16 +10,14 @@ use serde_json::{
     json
 };
 use xelis_common::{
+    error::ErrorWithKind,
     api::{
         wallet::{NotifyEvent, XSWDPrefetchPermissions},
         daemon::NotifyEvent as DaemonNotifyEvent
     },
     async_handler,
     crypto::elgamal::PublicKey as DecompressedPublicKey,
-    rpc::{
-        server::websocket::Events,
-        *
-    },
+    rpc::*,
     tokio::sync::{Semaphore, broadcast}
 };
 use log::{debug, info};
@@ -52,18 +50,16 @@ pub enum XSWDResponse {
     Event(DaemonNotifyEvent, Option<(broadcast::Receiver<Value>, Option<Id>)>, Option<Value>)
 }
 
-// WASM doesn't support Send bounds (single-threaded)
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[async_trait]
 pub trait XSWDHandler {
     // Handler function to request permission to user
-    async fn request_permission(&self, app_state: &AppStateShared, request: PermissionRequest<'_>) -> Result<PermissionResult, Error>;
+    async fn request_permission(&self, app_state: &AppStateShared, request: PermissionRequest<'_>) -> Result<PermissionResult, ErrorWithKind>;
 
     // Handler function to cancel the request permission from app (app has disconnected)
-    async fn cancel_request_permission(&self, app_state: &AppStateShared) -> Result<(), Error>;
+    async fn cancel_request_permission(&self, app_state: &AppStateShared) -> Result<(), ErrorWithKind>;
 
     // Public key to use to verify the signature
-    async fn get_public_key(&self) -> Result<&DecompressedPublicKey, Error>;
+    async fn get_public_key(&self) -> Result<&DecompressedPublicKey, ErrorWithKind>;
 
     // Call a node RPC method through the wallet current connection
     async fn call_node_with(&self, app_state: &AppStateShared, request: RpcRequest) -> Result<XSWDResponse, RpcResponseError>;
@@ -78,8 +74,7 @@ pub trait XSWDHandler {
     }
 }
 
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[async_trait]
 pub trait XSWDProvider {
     async fn has_app_with_id(&self, id: &str) -> bool;
 }
@@ -168,20 +163,25 @@ where
     }
 
     pub async fn add_application(&self, state: &AppStateShared) -> Result<Value, XSWDError> {
+        debug!("Adding application {} with id {}", state.get_name(), state.get_id());
         // Request permission to user
         let _permit = self.semaphore.acquire().await
             .map_err(|_| XSWDError::SemaphoreError)?;
+
+        debug!("Requesting permission for application {}", state.get_name());
 
         let wallet = self.handler.get_data();
         state.set_requesting(true);
         let permission = match wallet.request_permission(&state, PermissionRequest::Application).await {
             Ok(v) => v,
             Err(e) => {
-                debug!("Error while requesting permission: {}", e);
+                debug!("Error while requesting permission: {}", e.error);
                 PermissionResult::Reject
             }
         };
         state.set_requesting(false);
+
+        debug!("Permission result acquired for application {}", state.get_name());
 
         if !permission.is_positive() {
             return Err(XSWDError::PermissionDenied)
@@ -222,7 +222,8 @@ where
         // Special case: internal xswd methods are always allowed
         if !request.method.starts_with("xswd.") {
             app.set_requesting(true);
-            self.verify_permission_for_request(provider, &app, &request).await?;
+            self.verify_permission_for_request(provider, &app, &request).await
+                .map_err(|e| RpcResponseError::new(request.id.clone(), e))?;
             app.set_requesting(false);
         }
 
@@ -234,6 +235,7 @@ where
         if app.is_requesting() {
             debug!("Application {} is requesting a permission, aborting...", app.get_name());
             self.handler.get_data().cancel_request_permission(&app).await?;
+            debug!("Permission request for application {} has been cancelled", app.get_name());
         }
 
         self.events.on_close(&app).await;
@@ -255,16 +257,16 @@ where
 
     // verify the permission for a request
     // if the permission is not set, it will request it to the user
-    pub async fn verify_permission_for_request<P>(&self, provider: &P, app: &AppStateShared, request: &RpcRequest) -> Result<(), RpcResponseError>
+    async fn verify_permission_for_request<P>(&self, provider: &P, app: &AppStateShared, request: &RpcRequest) -> Result<(), InternalRpcError>
     where
         P: XSWDProvider,
     {
         let _permit = self.semaphore.acquire().await
-            .map_err(|_| RpcResponseError::new(request.id.clone(), InternalRpcError::InternalError("Permission handler semaphore error")))?;
+            .map_err(|_| InternalRpcError::InternalError("Permission handler semaphore error"))?;
 
         // We acquired the lock, lets check that the app is still registered
         if !provider.has_app_with_id(app.get_id()).await {
-            return Err(RpcResponseError::new(request.id.clone(), XSWDError::ApplicationNotFound))
+            return Err(XSWDError::ApplicationNotFound.into())
         }
 
         let permission = {
@@ -273,23 +275,25 @@ where
                 .copied()
         };
 
+        debug!("permission for method '{}' is '{:?}'", request.method, permission);
         match permission {
             // If the permission wasn't mentionned at AppState creation
             // It is directly rejected
-            None =>  Err(RpcResponseError::new(request.id.clone(), XSWDError::PermissionInvalid)),
+            None =>  Err(XSWDError::PermissionUnknown.into()),
             // User has already accepted this method
             Some(Permission::Allow) => Ok(()),
             // User has denied access to this method
-            Some(Permission::Reject) => Err(RpcResponseError::new(request.id.clone(), XSWDError::PermissionDenied)),
+            Some(Permission::Reject) => Err(XSWDError::PermissionDenied.into()),
             // Request permission from user
             Some(Permission::Ask) => {
                 let result = self.handler.get_data()
-                    .request_permission(app, PermissionRequest::Request(request)).await
-                    .map_err(|err| RpcResponseError::new(request.id.clone(), InternalRpcError::AnyError(err)))?;
+                    .request_permission(app, PermissionRequest::Request(request)).await?;
+
+                debug!("Permission request result for method '{}' is '{:?}'", request.method, result);
 
                 match result {
                     PermissionResult::Accept => Ok(()),
-                    PermissionResult::Reject => Err(RpcResponseError::new(request.id.clone(), XSWDError::PermissionDenied)),
+                    PermissionResult::Reject => Err(XSWDError::PermissionDenied.into()),
                     PermissionResult::AlwaysAccept => {
                         let mut permissions = app.get_permissions().lock().await;
                         permissions.insert(request.method.clone(), Permission::Allow);
@@ -298,7 +302,7 @@ where
                     PermissionResult::AlwaysReject => {
                         let mut permissions = app.get_permissions().lock().await;
                         permissions.insert(request.method.clone(), Permission::Allow);
-                        Err(RpcResponseError::new(request.id.clone(), XSWDError::PermissionDenied))
+                        Err(XSWDError::PermissionDenied.into())
                     }   
                 }
             }

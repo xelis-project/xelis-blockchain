@@ -141,13 +141,19 @@ impl OwnershipProof {
             .map_err(ProofVerificationError::from)
     }
 
-    /// Verify the ownership proof.
-    pub fn verify(&self, public_key: &PublicKey, source_ciphertext: Ciphertext, transcript: &mut Transcript) -> Result<(), ProofVerificationError> {
+    /// Verify the ownership proof with the provided public key, source ciphertext and transcript.
+    pub fn verify_with_transcript(&self, public_key: &PublicKey, source_ciphertext: Ciphertext, transcript: &mut Transcript) -> Result<(), ProofVerificationError> {
         let (commitment, balance_left) = self.verify_internal(public_key, source_ciphertext, transcript)?;
         self.commitment_eq_proof.verify(public_key, &balance_left, &commitment, transcript)?;
 
         self.range_proof.verify_single(&BP_GENS, &PC_GENS, transcript, &(commitment.as_point().clone(), self.commitment.as_point().clone()), BULLET_PROOF_SIZE)
             .map_err(ProofVerificationError::from)
+    }
+
+    // Verify the ownership proof with the provided public key and source ciphertext.
+    pub fn verify(&self, public_key: &PublicKey, source_ciphertext: Ciphertext) -> Result<(), ProofVerificationError> {
+        let mut transcript = Transcript::new(b"ownership_proof");
+        self.verify_with_transcript(public_key, source_ciphertext, &mut transcript)
     }
 }
 
@@ -192,7 +198,7 @@ mod tests {
         let proof = OwnershipProof::new(&keypair, balance, amount, ct.clone()).unwrap();
 
         // Verify the proof
-        assert!(proof.verify(keypair.get_public_key(), ct, &mut Transcript::new(b"ownership_proof")).is_ok());
+        assert!(proof.verify_with_transcript(keypair.get_public_key(), ct, &mut Transcript::new(b"ownership_proof")).is_ok());
     }
 
     #[test]
@@ -208,7 +214,7 @@ mod tests {
 
         // Verify the proof with a different balance ct
         let ct = keypair.get_public_key().encrypt(balance);
-        assert!(proof.verify(keypair.get_public_key(), ct, &mut Transcript::new(b"ownership_proof")).is_err());
+        assert!(proof.verify_with_transcript(keypair.get_public_key(), ct, &mut Transcript::new(b"ownership_proof")).is_err());
     }
 
     #[test]
@@ -241,7 +247,7 @@ mod tests {
 
         proof.commitment = decompressed.compress();
 
-        assert!(proof.verify(keypair.get_public_key(), ct, &mut Transcript::new(b"ownership_proof")).is_err());
+        assert!(proof.verify_with_transcript(keypair.get_public_key(), ct, &mut Transcript::new(b"ownership_proof")).is_err());
     }
 
     #[test]
@@ -292,6 +298,6 @@ mod tests {
             range_proof
         };
 
-        assert!(proof.verify(keypair.get_public_key(), balance_ct, &mut Transcript::new(b"ownership_proof")).is_err());
+        assert!(proof.verify_with_transcript(keypair.get_public_key(), balance_ct, &mut Transcript::new(b"ownership_proof")).is_err());
     }
 }

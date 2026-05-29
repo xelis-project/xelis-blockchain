@@ -608,6 +608,39 @@ No parameters
 }
 ```
 
+#### Prune Chain
+Prune the chain up to a specific topoheight. This reduces disk usage by removing old block data.
+
+##### Method `prune_chain`
+
+##### Parameters
+|    Name    |   Type  | Required |                   Note                   |
+|:----------:|:-------:|:--------:|:----------------------------------------:|
+| topoheight | Integer | Required | Topoheight until which to prune          |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "prune_chain",
+    "id": 1,
+    "params": {
+        "topoheight": 1000
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "pruned_topoheight": 1000
+    }
+}
+```
+
 ### JSON-RPC methods
 
 #### Get Version
@@ -908,6 +941,45 @@ No parameters
 }
 ```
 
+#### Get Hard Forks
+Retrieve the list of configured hard forks with their activation heights and changelogs.
+
+##### Method `get_hard_forks`
+
+##### Parameters
+No parameters
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_hard_forks",
+    "id": 1
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": [
+        {
+            "height": 0,
+            "version": 0,
+            "changelog": "Genesis version",
+            "version_requirement": null
+        },
+        {
+            "height": 434514,
+            "version": 1,
+            "changelog": "...",
+            "version_requirement": ">=1.10.0"
+        }
+    ]
+}
+```
+
 #### Validate Address
 Validate a wallet address by accepting or not integrated address.
 
@@ -1072,6 +1144,102 @@ It is not mandatory and support any data formatted in JSON up to 1 KB in seriali
     "id": 1,
     "jsonrpc": "2.0",
     "result": "xel:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32szqsrqyzkjar9d4esyqgpq4ehwmmjvsqqypgpq45x2mrvduqqzpthdaexceqpq4mk7unywvqsgqqpq4yx2mrvduqqzp2hdaexceqqqyzxvun0d5qqzp2cg4xyj5ct5udlg"
+}
+```
+
+#### Get Block Difficulty By Hash
+Retrieve the difficulty and hashrate for a specific block by its hash.
+
+##### Method `get_block_difficulty_by_hash`
+
+##### Parameters
+|    Name    | Type | Required |           Note           |
+|:----------:|:----:|:--------:|:------------------------:|
+| block_hash | Hash | Required | Block hash to look up    |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_block_difficulty_by_hash",
+    "id": 1,
+    "params": {
+        "block_hash": "000000000bc1070fda6b86eb31fbf3f15e89be9c10928415b2254fcab96088a8"
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "difficulty": "79746345000",
+        "hashrate": "5316423000",
+        "hashrate_formatted": "5.32 GH/s"
+    }
+}
+```
+
+#### Get Block Base Fee By Hash
+Retrieve the base fee per KB and block size EMA for a specific block by its hash.
+
+##### Method `get_block_base_fee_by_hash`
+
+##### Parameters
+|    Name    | Type | Required |           Note           |
+|:----------:|:----:|:--------:|:------------------------:|
+| block_hash | Hash | Required | Block hash to look up    |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_block_base_fee_by_hash",
+    "id": 1,
+    "params": {
+        "block_hash": "000000000bc1070fda6b86eb31fbf3f15e89be9c10928415b2254fcab96088a8"
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "fee_per_kb": 10000,
+        "block_size_ema": 1024
+    }
+}
+```
+
+#### Key To Address
+Convert a public key to an address.
+
+##### Method `key_to_address`
+
+##### Parameters
+Parameter is either a hex string or a byte array representing the public key.
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "key_to_address",
+    "id": 1,
+    "params": "6423b4908e5bd32241e3443fccfb7bab86a899a8cca12b3fedf255634d156d66"
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk"
 }
 ```
 
@@ -1432,6 +1600,100 @@ Retrieve the highest block based on the topological height
 ```
 NOTE: `total_fees` field is not `null` when TXs are fetched (`include_txs` is at `true`).
 
+#### Get Block Summary At TopoHeight
+Retrieve a summarized version of a block at a specific topoheight, including transaction summaries.
+
+##### Method `get_block_summary_at_topoheight`
+
+##### Parameters
+|    Name    |   Type  | Required |             Note              |
+|:----------:|:-------:|:--------:|:-----------------------------:|
+| topoheight | Integer | Required | Topoheight of block to fetch  |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_block_summary_at_topoheight",
+    "id": 1,
+    "params": {
+        "topoheight": 22177
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "block_hash": "0000000001ef6ad0bcc58afd8ffdd458ce262132b88211dcc0b6fd0f8505b858",
+        "height": 22177,
+        "timestamp": 1711663576873,
+        "miner": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk",
+        "transactions": [],
+        "block_type": "Normal",
+        "difficulty": "79746345000",
+        "cumulative_difficulty": "1234567890000",
+        "topoheight": 22177,
+        "reward": 137924147,
+        "miner_reward": 124131733,
+        "dev_reward": 13792414,
+        "supply": 3209375196561,
+        "total_fees": 0,
+        "total_fees_burned": 0
+    }
+}
+```
+
+#### Get Block Summary By Hash
+Retrieve a summarized version of a block by its hash, including transaction summaries.
+
+##### Method `get_block_summary_by_hash`
+
+##### Parameters
+| Name | Type | Required |          Note           |
+|:----:|:----:|:--------:|:-----------------------:|
+| hash | Hash | Required | Block hash to look up   |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_block_summary_by_hash",
+    "id": 1,
+    "params": {
+        "hash": "0000000001ef6ad0bcc58afd8ffdd458ce262132b88211dcc0b6fd0f8505b858"
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "block_hash": "0000000001ef6ad0bcc58afd8ffdd458ce262132b88211dcc0b6fd0f8505b858",
+        "height": 22177,
+        "timestamp": 1711663576873,
+        "miner": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk",
+        "transactions": [],
+        "block_type": "Normal",
+        "difficulty": "79746345000",
+        "cumulative_difficulty": "1234567890000",
+        "topoheight": 22177,
+        "reward": 137924147,
+        "miner_reward": 124131733,
+        "dev_reward": 13792414,
+        "supply": 3209375196561,
+        "total_fees": 0,
+        "total_fees_burned": 0
+    }
+}
+```
+
 #### Get Nonce
 Retrieve the nonce for address in request params.
 
@@ -1724,6 +1986,53 @@ An error his returned if account has no asset's balance at requested topoheight.
 }
 ```
 
+#### Get Balances At Maximum TopoHeight
+Retrieve balances for multiple assets at a maximum topoheight for an account.
+This returns the last version of each balance that is at or below the specified topoheight.
+
+##### Method `get_balances_at_maximum_topoheight`
+
+##### Parameters
+|        Name        |     Type    | Required |                     Note                      |
+|:------------------:|:-----------:|:--------:|:---------------------------------------------:|
+|      address       |   Address   | Required |         Valid address registered on chain     |
+|       assets       |   Hash[]    | Required |    List of asset hashes to retrieve balances  |
+| maximum_topoheight |   Integer   | Required | Maximum topoheight to search for balances     |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_balances_at_maximum_topoheight",
+    "id": 1,
+    "params": {
+        "address": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk",
+        "assets": [
+            "0000000000000000000000000000000000000000000000000000000000000000"
+        ],
+        "maximum_topoheight": 22177
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": [
+        {
+            "topoheight": 22100,
+            "output_balance": {
+                "commitment": [...],
+                "handle": [...]
+            },
+            "previous_topoheight": 21500
+        }
+    ]
+}
+```
+
 #### Get Assets
 Get all assets available on network with its registered topoheight and necessary decimals for a full coin.
 
@@ -1791,6 +2100,77 @@ Get registered topoheight and decimals data from a specific asset.
     "result": {
         "decimals": 8,
         "topoheight": 0
+    }
+}
+```
+
+#### Get Asset Supply
+Retrieve the current circulating supply for an asset.
+
+##### Method `get_asset_supply`
+
+##### Parameters
+| Name  | Type | Required |           Note           |
+|:-----:|:----:|:--------:|:------------------------:|
+| asset | Hash | Required | Asset hash to look up    |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_asset_supply",
+    "id": 1,
+    "params": {
+        "asset": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "topoheight": 22177,
+        "data": 3209375196561,
+        "previous_topoheight": 22176
+    }
+}
+```
+
+#### Get Asset Supply At TopoHeight
+Retrieve the circulating supply for an asset at a specific topoheight.
+
+##### Method `get_asset_supply_at_topoheight`
+
+##### Parameters
+|    Name    |   Type  | Required |           Note            |
+|:----------:|:-------:|:--------:|:-------------------------:|
+|    asset   |   Hash  | Required | Asset hash to look up     |
+| topoheight | Integer | Required | Topoheight to retrieve at |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_asset_supply_at_topoheight",
+    "id": 1,
+    "params": {
+        "asset": "0000000000000000000000000000000000000000000000000000000000000000",
+        "topoheight": 22177
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "data": 3209375196561,
+        "previous_topoheight": 22176
     }
 }
 ```
@@ -2041,6 +2421,49 @@ No parameters
 }
 ```
 NOTE: Addresses displayed in this example are not real one and were replaced for privacy reasons.
+
+#### Get P2P Block Propagation
+Retrieve the P2P block propagation timing information, showing when each peer sent or received a specific block.
+
+##### Method `get_p2p_block_propagation`
+
+##### Parameters
+|    Name  |   Type  | Required |                       Note                        |
+|:--------:|:-------:|:--------:|:-------------------------------------------------:|
+|   hash   |   Hash  | Required | Block hash to retrieve propagation data for       |
+| outgoing | Boolean | Optional | Include outgoing propagation data (default: true) |
+| incoming | Boolean | Optional | Include incoming propagation data (default: true) |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_p2p_block_propagation",
+    "id": 1,
+    "params": {
+        "hash": "000000000bc1070fda6b86eb31fbf3f15e89be9c10928415b2254fcab96088a8"
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "peers": {
+            "7542674138406502028": {
+                "In": {
+                    "received_at": 1711663576873
+                }
+            }
+        },
+        "first_seen": 1711663576800,
+        "processing_at": 1711663576850
+    }
+}
+```
 
 #### Get DAG Order
 Retrieve the whole DAG order (all blocks hash ordered by topoheight).
@@ -2444,6 +2867,47 @@ Fetch transactions by theirs hashes from database and mempool of daemon and keep
                 }
             ],
             "version": 0
+        }
+    ]
+}
+```
+
+#### Get Transactions Summary
+Fetch a summarized version of transactions by their hashes. Returns source, fee, size and hash for each transaction.
+If a transaction is not found, its position in the result array will be `null`.
+
+##### Method `get_transactions_summary`
+
+##### Parameters
+|    Name   |   Type   | Required |              Note              |
+|:---------:|:--------:|:--------:|:------------------------------:|
+| tx_hashes | Hash[]   | Required | Transaction hashes to fetch    |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_transactions_summary",
+    "id": 1,
+    "params": {
+        "tx_hashes": [
+            "dd693bad09cb03ba0bf9a6fa7b787f918748db869c1463b7fa16e20b498dea88"
+        ]
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": [
+        {
+            "hash": "dd693bad09cb03ba0bf9a6fa7b787f918748db869c1463b7fa16e20b498dea88",
+            "source": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk",
+            "fee": 25000,
+            "size": 1517
         }
     ]
 }
@@ -2960,6 +3424,66 @@ This includes nonce range (min/max) used, final output balances expected per ass
 }
 ```
 
+#### Get Estimated Fee Rates
+Retrieve estimated fee rates for low, medium, and high priority transactions based on current mempool state.
+
+##### Method `get_estimated_fee_rates`
+
+##### Parameters
+No parameters
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_estimated_fee_rates",
+    "id": 1
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "low": 10000,
+        "medium": 25000,
+        "high": 50000,
+        "default": 10000
+    }
+}
+```
+
+#### Get Estimated Fee Per KB
+Retrieve the current base fee per KB and the predicted fee per KB.
+
+##### Method `get_estimated_fee_per_kb`
+
+##### Parameters
+No parameters
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_estimated_fee_per_kb",
+    "id": 1
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "fee_per_kb": 10000,
+        "predicated_fee_per_kb": 10000
+    }
+}
+```
+
 #### Get Multisig
 Retrieve the latest multisig information for a specific address.
 
@@ -3152,12 +3676,12 @@ Decrypt the extra data from a transaction.
 }
 ```
 
-#### Get Contract Outputs
+#### Get Contracts Outputs
 Retrieve the contract outputs that have occurred in the requested transaction hash.
 
 It contains, the refunded gas amount, exit code and transfers.
 
-##### Method `get_contract_outputs`
+##### Method `get_contracts_outputs`
 
 ##### Parameters
 
@@ -3402,6 +3926,275 @@ Retrieve the contract balance at a specific topoheight.
         "data": 99900000,
         "previous_topoheight": null
     }
+}
+```
+
+#### Get Contract Logs
+Retrieve all contract logs for a specific caller (transaction hash).
+
+Logs include information about gas refunds, transfers, asset minting/burning, scheduled executions, events, and more.
+
+##### Method `get_contract_logs`
+
+##### Parameters
+|  Name  | Type | Required |                   Note                    |
+|:------:|:----:|:--------:|:-----------------------------------------:|
+| caller | Hash | Required | Transaction hash that called the contract |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_contract_logs",
+    "id": 1,
+    "params": {
+        "caller": "8a354baac1d53d02249aadee92c5a3e0585b126439947cb4a3c3aa9baaea5f17"
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": [
+        {
+            "exit_code": 0
+        },
+        {
+            "refund_gas": {
+                "amount": 99593
+            }
+        }
+    ]
+}
+```
+
+#### Get Contract Scheduled Executions At TopoHeight
+Retrieve the scheduled contract executions at a specific topoheight.
+
+##### Method `get_contract_scheduled_executions_at_topoheight`
+
+##### Parameters
+|    Name    |   Type  | Required |                     Note                      |
+|:----------:|:-------:|:--------:|:---------------------------------------------:|
+| topoheight | Integer | Required | Topoheight to retrieve scheduled executions   |
+|    max     | Integer | Optional | Maximum number of results to return           |
+|    skip    | Integer | Optional | Number of results to skip                     |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_contract_scheduled_executions_at_topoheight",
+    "id": 1,
+    "params": {
+        "topoheight": 22177
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": []
+}
+```
+
+#### Get Contract Registered Executions At TopoHeight
+Retrieve the registered scheduled contract executions at a specific topoheight.
+
+##### Method `get_contract_registered_executions_at_topoheight`
+
+##### Parameters
+|    Name    |   Type  | Required |                     Note                          |
+|:----------:|:-------:|:--------:|:-------------------------------------------------:|
+| topoheight | Integer | Required | Topoheight to retrieve registered executions      |
+|    max     | Integer | Optional | Maximum number of results to return               |
+|    skip    | Integer | Optional | Number of results to skip                         |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_contract_registered_executions_at_topoheight",
+    "id": 1,
+    "params": {
+        "topoheight": 22177
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": [
+        {
+            "execution_hash": "740e2f94ba264464551787ddd6fa5e3222da464c6c659848f6e9a9d0730ac288",
+            "execution_topoheight": 22200
+        }
+    ]
+}
+```
+
+#### Get Contract Module
+Retrieve the contract module (compiled code) for a specific contract.
+
+##### Method `get_contract_module`
+
+##### Parameters
+|   Name   | Type | Required |          Note           |
+|:--------:|:----:|:--------:|:-----------------------:|
+| contract | Hash | Required | Contract hash to fetch  |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_contract_module",
+    "id": 1,
+    "params": {
+        "contract": "740e2f94ba264464551787ddd6fa5e3222da464c6c659848f6e9a9d0730ac288"
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "topoheight": 70,
+        "data": "...",
+        "previous_topoheight": null
+    }
+}
+```
+
+#### Get Contract Assets
+Retrieve all asset hashes that a contract has balances for.
+
+##### Method `get_contract_assets`
+
+##### Parameters
+|   Name   |   Type  | Required |                 Note                  |
+|:--------:|:-------:|:--------:|:-------------------------------------:|
+| contract |   Hash  | Required | Contract hash to fetch assets for     |
+|   skip   | Integer | Optional | Number of assets to skip              |
+| maximum  | Integer | Optional | Maximum number of assets to return    |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_contract_assets",
+    "id": 1,
+    "params": {
+        "contract": "740e2f94ba264464551787ddd6fa5e3222da464c6c659848f6e9a9d0730ac288"
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": [
+        "0000000000000000000000000000000000000000000000000000000000000000"
+    ]
+}
+```
+
+#### Get Contracts
+Retrieve all deployed contract hashes with optional pagination and topoheight filtering.
+
+##### Method `get_contracts`
+
+##### Parameters
+|        Name        |   Type  | Required |                       Note                       |
+|:------------------:|:-------:|:--------:|:------------------------------------------------:|
+|        skip        | Integer | Optional | Number of contracts to skip                      |
+|      maximum       | Integer | Optional | Maximum number of contracts to return            |
+| minimum_topoheight | Integer | Optional | Only include contracts deployed at or after this |
+| maximum_topoheight | Integer | Optional | Only include contracts deployed at or before this|
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_contracts",
+    "id": 1,
+    "params": {}
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": [
+        "740e2f94ba264464551787ddd6fa5e3222da464c6c659848f6e9a9d0730ac288"
+    ]
+}
+```
+
+#### Get Contract Data Entries
+Retrieve multiple data entries from a contract's storage with optional pagination and topoheight filtering.
+
+##### Method `get_contract_data_entries`
+
+##### Parameters
+|        Name        |   Type  | Required |                        Note                         |
+|:------------------:|:-------:|:--------:|:---------------------------------------------------:|
+|      contract      |   Hash  | Required | Contract hash to fetch data entries for             |
+| minimum_topoheight | Integer | Optional | Only include entries modified at or after this       |
+| maximum_topoheight | Integer | Optional | Only include entries modified at or before this      |
+|        skip        | Integer | Optional | Number of entries to skip                           |
+|      maximum       | Integer | Optional | Maximum number of entries to return (max 20)        |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_contract_data_entries",
+    "id": 1,
+    "params": {
+        "contract": "740e2f94ba264464551787ddd6fa5e3222da464c6c659848f6e9a9d0730ac288"
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": [
+        {
+            "key": {
+                "type": "default",
+                "value": {
+                    "type": "string",
+                    "value": "my beautiful key"
+                }
+            },
+            "value": {
+                "type": "default",
+                "value": {
+                    "type": "string",
+                    "value": "my beautiful value"
+                }
+            }
+        }
+    ]
 }
 ```
 
@@ -3915,6 +4708,100 @@ No parameters
 }
 ```
 
+#### Is Asset Tracked
+Verify if the requested asset is tracked by the wallet.
+
+##### Method `is_asset_tracked`
+
+##### Parameters
+|  Name | Type | Required |        Note       |
+|:-----:|:----:|:--------:|:-----------------:|
+| asset | Hash | Required | Asset to check    |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "is_asset_tracked",
+    "id": 1,
+    "params": {
+        "asset": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": true
+}
+```
+
+#### Track Asset
+Track a new asset on the wallet.
+If the wallet is in online mode it will fetch the balance for this asset from the daemon.
+
+##### Method `track_asset`
+
+##### Parameters
+|  Name | Type | Required |        Note       |
+|:-----:|:----:|:--------:|:-----------------:|
+| asset | Hash | Required | Asset to track    |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "track_asset",
+    "id": 1,
+    "params": {
+        "asset": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": true
+}
+```
+
+#### Untrack Asset
+Untrack an asset from the wallet.
+
+##### Method `untrack_asset`
+
+##### Parameters
+|  Name | Type | Required |        Note        |
+|:-----:|:----:|:--------:|:------------------:|
+| asset | Hash | Required | Asset to untrack   |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "untrack_asset",
+    "id": 1,
+    "params": {
+        "asset": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": true
+}
+```
+
 #### Get Asset Precision
 Retrieve the decimals precision for the selected asset.
 
@@ -3945,6 +4832,84 @@ This is useful to format correctly the atomic units coins to human readable.
     "id": 1,
     "jsonrpc": "2.0",
     "result": 8
+}
+```
+
+#### Get Assets
+Retrieve all assets with their data that the wallet is aware of.
+
+##### Method `get_assets`
+
+##### Parameters
+|   Name  |   Type  | Required |               Note               |
+|:-------:|:-------:|:--------:|:--------------------------------:|
+|   skip  | Integer | Optional | Skip the first N assets          |
+| maximum | Integer | Optional | Maximum number of assets to return (max 100) |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_assets",
+    "id": 1,
+    "params": {}
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": [
+        {
+            "asset": "0000000000000000000000000000000000000000000000000000000000000000",
+            "data": {
+                "decimals": 8,
+                "name": "XELIS",
+                "ticker": "XEL",
+                "max_supply": 1840000000000000,
+                "owner": "..."
+            }
+        }
+    ]
+}
+```
+
+#### Get Asset
+Retrieve an asset data from the wallet storage using its hash.
+
+##### Method `get_asset`
+
+##### Parameters
+|  Name | Type | Required |        Note        |
+|:-----:|:----:|:--------:|:------------------:|
+| asset | Hash | Required | Asset hash to use  |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_asset",
+    "id": 1,
+    "params": {
+        "asset": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "decimals": 8,
+        "name": "XELIS",
+        "ticker": "XEL",
+        "max_supply": 1840000000000000,
+        "owner": "..."
+    }
 }
 ```
 
@@ -3992,6 +4957,88 @@ Get transaction by hash from wallet.
         },
         "topoheight": 11982
     }
+}
+```
+
+#### Search Transaction
+Perform a debug search across all entries for a transaction from the wallet storage using its hash.
+This is useful when a transaction may not be directly found but exists in the raw storage.
+
+##### Method `search_transaction`
+
+##### Parameters
+| Name | Type | Required |                   Note                   |
+|:----:|:----:|:--------:|:----------------------------------------:|
+| hash | Hash | Required | Transaction hash to search from wallet   |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "search_transaction",
+    "id": 1,
+    "params": {
+        "hash": "6e4bbd77b305fb68e2cc7576b4846d2db3617e3cbc2eb851cb2ae69b879e9d0f"
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "transaction": {
+            "hash": "6e4bbd77b305fb68e2cc7576b4846d2db3617e3cbc2eb851cb2ae69b879e9d0f",
+            "outgoing": {
+                "fee": 25000,
+                "nonce": 1458,
+                "transfers": [
+                    {
+                        "amount": 1,
+                        "asset": "0000000000000000000000000000000000000000000000000000000000000000",
+                        "destination": "xet:t23w8pp90zsj04sp5r3r9sjpz3vq7rxcwhydf5ztlk6efhnusersqvf8sny",
+                        "extra_data": null
+                    }
+                ]
+            },
+            "topoheight": 11982
+        },
+        "index": 1458,
+        "is_raw_search": false
+    }
+}
+```
+
+#### Dump Transaction
+Dump a transaction in hex format from the wallet storage using its hash.
+
+##### Method `dump_transaction`
+
+##### Parameters
+| Name | Type | Required |                   Note                   |
+|:----:|:----:|:--------:|:----------------------------------------:|
+| hash | Hash | Required | Transaction hash to dump from wallet     |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "dump_transaction",
+    "id": 1,
+    "params": {
+        "hash": "6e4bbd77b305fb68e2cc7576b4846d2db3617e3cbc2eb851cb2ae69b879e9d0f"
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": "00a8e2f001..."
 }
 ```
 
@@ -4759,6 +5806,8 @@ Meaning if you set max_topoheight at 10 and you have a TX at 10 its returned.
 |      asset      |   Hash  | Optional | Filter on a specific asset only. By default accept all assets |
 |  min_topoheight | Integer | Optional |                    Start from specific topo                   |
 |  max_topoheight | Integer | Optional |                      End at specific topo                     |
+|  min_timestamp  | Integer | Optional |             Start from specific timestamp (ms)                |
+|  max_timestamp  | Integer | Optional |              End at specific timestamp (ms)                   |
 |     address     |  String | Optional |                      Filter with address                      |
 | accept_incoming | Boolean | Optional |                        Filter incoming                        |
 | accept_outgoing | Boolean | Optional |                        Filter outgoing                        |
@@ -4833,6 +5882,43 @@ Parameter value can be anything (object, value, array...)
 }
 ```
 
+#### Verify Signed Data
+Verify a signature against a public key and the provided data.
+
+##### Method `verify_signed_data`
+
+##### Parameters
+|    Name   |     Type    | Required |                 Note                 |
+|:---------:|:-----------:|:--------:|:------------------------------------:|
+|   data    | DataElement | Required | Data that was originally signed      |
+| signature | Signature   | Required | Signature to verify                  |
+|  address  |   Address   | Required | Address of the signer to verify with |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "verify_signed_data",
+    "id": 1,
+    "params": {
+        "data": {
+            "hello": "world"
+        },
+        "signature": "5bb7a1f33c3c89e968be9f1c343aa15393ec98905976e38087d53595a3411bd0130f9414b7e5fe4e3bcdcad03e0c6d2cbee01c10514289ad3b2b5e3b2fe8fd03",
+        "address": "xet:t23w8pp90zsj04sp5r3r9sjpz3vq7rxcwhydf5ztlk6efhnusersqvf8sny"
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": true
+}
+```
+
 #### Estimate Fees
 Estimate the minimum required fees for a future transaction.
 Returned fees are in atomic units.
@@ -4872,6 +5958,41 @@ Returned fees are in atomic units.
 }
 ```
 
+#### Estimate Extra Data Size
+Estimate the extra data size for a list of destinations using their integrated data.
+
+##### Method `estimate_extra_data_size`
+
+##### Parameters
+|     Name     |      Type      | Required |                   Note                    |
+|:------------:|:--------------:|:--------:|:-----------------------------------------:|
+| destinations | Address[]      | Required | List of destination addresses with integrated data |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "estimate_extra_data_size",
+    "id": 1,
+    "params": {
+        "destinations": [
+            "xet:t23w8pp90zsj04sp5r3r9sjpz3vq7rxcwhydf5ztlk6efhnusersqvf8sny"
+        ]
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "size": 128
+    }
+}
+```
+
 #### Is Online
 Determine if the wallet is connected to a node or not (offline / online mode).
 
@@ -4885,6 +6006,67 @@ No parameter
 {
     "jsonrpc": "2.0",
     "method": "is_online",
+    "id": 1
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": true
+}
+```
+
+#### Set Online Mode
+Connect the wallet to a daemon node.
+The wallet must not already be connected.
+
+##### Method `set_online_mode`
+
+##### Parameters
+|      Name      |   Type  | Required |                  Note                  |
+|:--------------:|:-------:|:--------:|:--------------------------------------:|
+| daemon_address | String  | Required | Address of the daemon to connect to    |
+| auto_reconnect | Boolean | Optional | Automatically reconnect if disconnected (default: false) |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "set_online_mode",
+    "id": 1,
+    "params": {
+        "daemon_address": "ws://127.0.0.1:8080/json_rpc",
+        "auto_reconnect": true
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": true
+}
+```
+
+#### Set Offline Mode
+Disconnect the wallet from the daemon and switch to offline mode.
+The wallet must be in online mode.
+
+##### Method `set_offline_mode`
+
+##### Parameters
+No parameters
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "set_offline_mode",
     "id": 1
 }
 ```
@@ -5019,6 +6201,116 @@ Please note that the value returned is in atomic units.
 }
 ```
 
+#### Create Ownership Proof
+Create a cryptographic proof that you own at least a certain amount of an asset.
+The proof is returned as a bech32-encoded string that can be shared with other parties for verification.
+
+If `topoheight` is not provided, the current wallet balance topoheight is used.
+If `topoheight` is provided, the balance at the requested topoheight will be fetched from the daemon and used for proof creation.
+
+##### Method `create_ownership_proof`
+
+##### Parameters
+|     Name     |     Type    | Required |                           Note                            |
+|:------------:|:-----------:|:--------:|:---------------------------------------------------------:|
+|    asset     |    Hash     | Required |          Asset to create the proof for                    |
+| topoheight   |   Integer   | Optional | Topoheight to use for the balance (defaults to current)   |
+|    amount    |   Integer   | Required |          Amount to prove ownership of                     |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "create_ownership_proof",
+    "id": 1,
+    "params": {
+        "asset": "0000000000000000000000000000000000000000000000000000000000000000",
+        "amount": 10000
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": "proof:..."
+}
+```
+
+#### Create Balance Proof
+Create a cryptographic proof of your balance for a specific asset.
+The proof is returned as a bech32-encoded string that can be shared with other parties for verification.
+
+If `topoheight` is not provided, the current wallet balance topoheight is used.
+If `topoheight` is provided, the balance at the requested topoheight will be fetched from the daemon and used for proof creation.
+
+##### Method `create_balance_proof`
+
+##### Parameters
+|     Name     |     Type    | Required |                           Note                            |
+|:------------:|:-----------:|:--------:|:---------------------------------------------------------:|
+|    asset     |    Hash     | Required |          Asset to create the proof for                    |
+| topoheight   |   Integer   | Optional | Topoheight to use for the balance (defaults to current)   |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "create_balance_proof",
+    "id": 1,
+    "params": {
+        "asset": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": "proof:..."
+}
+```
+
+#### Verify Human Readable Proof
+Verify a cryptographic proof (ownership or balance) against an address.
+The wallet must be in online mode to fetch the on-chain balance at the proof's topoheight.
+
+Returns `true` if the proof is valid.
+
+##### Method `verify_human_readable_proof`
+
+##### Parameters
+|   Name   |       Type       | Required |                          Note                          |
+|:--------:|:----------------:|:--------:|:------------------------------------------------------:|
+|  proof   |      String      | Required | Bech32-encoded proof string (ownership or balance)     |
+| address  |      Address     | Required | Address of the prover to verify against                |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "verify_human_readable_proof",
+    "id": 1,
+    "params": {
+        "proof": "proof:...",
+        "address": "xel:..."
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": true
+}
+```
+
 ### Storage
 
 XELIS Wallet has the ability to have a built-in encrypted DB that can be used to store / fetch entries easily.
@@ -5053,6 +6345,107 @@ If key or value is a map or an array, you can also do filter on them:
 Please note that these functionalities are also available from XSWD calls, which mean, any accepted Application through XSWD can have its own DB like a local storage on web JavaScript.
 
 This query system will be used in daemon also once Smart Contracts are deployed to easily search entries in the Smart Contract database.
+
+#### Get Matching Keys
+Retrieve all keys available in the selected tree, with optional query filter.
+
+##### Method `get_matching_keys`
+
+##### Parameters
+|  Name | Type    | Required |                   Note                      |
+|:-----:|:-------:|:--------:|:-------------------------------------------:|
+| tree  | String  | Required | Tree name to search in                      |
+| query | Query   | Optional | Optional query filter for key values        |
+| limit | Integer | Optional | Maximum number of keys to return            |
+| skip  | Integer | Optional | Number of keys to skip                      |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_matching_keys",
+    "id": 1,
+    "params": {
+        "tree": "test"
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": [
+        "my_list",
+        "my_key"
+    ]
+}
+```
+
+#### Count Matching Entries
+Count all entries available in the selected tree, with optional query filters on key and value.
+
+##### Method `count_matching_entries`
+
+##### Parameters
+|  Name | Type   | Required |                   Note                    |
+|:-----:|:------:|:--------:|:-----------------------------------------:|
+| tree  | String | Required | Tree name to count entries in             |
+| key   | Query  | Optional | Optional query filter on keys             |
+| value | Query  | Optional | Optional query filter on values           |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "count_matching_entries",
+    "id": 1,
+    "params": {
+        "tree": "test"
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": 5
+}
+```
+
+#### Delete Tree Entries
+Delete all entries in the requested tree.
+
+##### Method `delete_tree_entries`
+
+##### Parameters
+| Name | Type   | Required |              Note             |
+|:----:|:------:|:--------:|:-----------------------------:|
+| tree | String | Required | Tree name to clear all entries|
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "delete_tree_entries",
+    "id": 1,
+    "params": {
+        "tree": "test"
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": true
+}
+```
 
 #### Store
 Store a new key / value entry in the requested Tree.

@@ -5,13 +5,11 @@ use std::{
     pin::Pin,
     sync::Arc,
 };
-use cfg_if::cfg_if;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use metrics::{counter, histogram};
 use log::trace;
 use schemars::{schema_for, JsonSchema, Schema};
-pub use xelis_vm::{Context, ShareableTid, tid};
 use crate::{
     async_handler,
     time::Instant,
@@ -23,28 +21,21 @@ use crate::{
     }
 };
 
+// Re-export the necessary types and traits for RPC handling
+pub use runtime_context::{Context, ShareableTid, tid};
+
 // Type definition for an RPC method handler
 // It is a boxed function that takes a context reference and a JSON value as parameters
 // and returns a pinned future that resolves to a Result containing a JSON value or an InternalRpcError
-// It is Send and Sync to allow safe sharing across threads except for wasm32 target where Send is not required
-cfg_if! {
-    if #[cfg(target_arch = "wasm32")] {
-        pub type Handler = Box<dyn for<'a> Fn(&'a Context, Value) -> Pin<Box<dyn Future<Output = Result<Value, InternalRpcError>> + 'a>>>;
+// It is Send and Sync to allow safe sharing across threads and async contexts
+pub type Handler = Box<
+    dyn for<'a> Fn(&'a Context, Value) -> Pin<Box<dyn Future<Output = Result<Value, InternalRpcError>> + Send + 'a>>
+    + Send + Sync
+>;
 
-        pub type HandlerParams<P, R> = for<'a> fn(&'a Context, P) -> Pin<Box<dyn Future<Output = Result<R, InternalRpcError>> + 'a>>;
+pub type HandlerParams<P, R> = for<'a> fn(&'a Context, P) -> Pin<Box<dyn Future<Output = Result<R, InternalRpcError>> + Send + 'a>>;
 
-        pub type HandlerNoParams<R> = for<'a> fn(&'a Context) -> Pin<Box<dyn Future<Output = Result<R, InternalRpcError>> + 'a>>;
-    } else {
-        pub type Handler = Box<
-            dyn for<'a> Fn(&'a Context, Value) -> Pin<Box<dyn Future<Output = Result<Value, InternalRpcError>> + Send + 'a>>
-            + Send + Sync
-        >;
-
-        pub type HandlerParams<P, R> = for<'a> fn(&'a Context, P) -> Pin<Box<dyn Future<Output = Result<R, InternalRpcError>> + Send + 'a>>;
-
-        pub type HandlerNoParams<R> = for<'a> fn(&'a Context) -> Pin<Box<dyn Future<Output = Result<R, InternalRpcError>> + Send + 'a>>;
-    }
-}
+pub type HandlerNoParams<R> = for<'a> fn(&'a Context) -> Pin<Box<dyn Future<Output = Result<R, InternalRpcError>> + Send + 'a>>;
 
 // Information about an RPC method
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -80,15 +71,16 @@ where
     T: ShareableTid<'static>
 {
     // Create a new RPC handler with optional batch limit
-    pub fn new(data: T, batch_limit: impl Into<Option<usize>>) -> Self {
+    pub fn new(data: T, limit: impl Into<Option<usize>>) -> Self {
         let mut handler = Self {
             methods: HashMap::new(),
             data,
-            batch_limit: batch_limit.into()
+            batch_limit: limit.into()
         };
 
         // Internally register the "schema" method to get all registered methods
         handler.register_method_no_params_custom_return::<Vec<RpcMethodInfo>>("schema", async_handler!(schema::<T>, single));
+        handler.register_method_no_params("batch_limit", async_handler!(batch_limit::<T>, single));
 
         handler
     }
@@ -309,7 +301,7 @@ where
 // Built-in "schema" method to get all registered methods and their schemas
 async fn schema<'a, T: ShareableTid<'static>>(context: &'a Context<'_, '_>) -> Result<Value, InternalRpcError> {
     let rpc_handler: &RPCHandler<T> = context.get()
-        .ok_or(InternalRpcError::InternalError("RPCHandler not found in context")).unwrap();
+        .ok_or(InternalRpcError::InternalError("RPCHandler not found in context"))?;
 
     let methods = rpc_handler.methods.iter()
         .map(|(name, handler)| RpcMethodInfo {
@@ -318,6 +310,15 @@ async fn schema<'a, T: ShareableTid<'static>>(context: &'a Context<'_, '_>) -> R
         }).collect::<Vec<_>>();
 
     Ok(json!(methods))
+}
+
+// Get the batch limit from the RPC handler, if any
+// This is used to limit the number of requests in a batch to prevent DoS attacks
+async fn batch_limit<'a, T: ShareableTid<'static>>(context: &'a Context<'_, '_>) -> Result<Option<usize>, InternalRpcError> {
+    let rpc_handler: &RPCHandler<T> = context.get()
+        .ok_or(InternalRpcError::InternalError("RPCHandler not found in context"))?;
+
+    Ok(rpc_handler.batch_limit)
 }
 
 // Parse an RPC request from raw bytes

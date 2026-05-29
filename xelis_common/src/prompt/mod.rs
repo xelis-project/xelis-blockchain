@@ -435,11 +435,11 @@ impl Prompt {
         }
 
         // register our reader
-        let receiver = {
+        let (previous, receiver) = {
             let mut prompt_sender = self.state.get_prompt_sender().lock()?;
             let (sender, receiver) = oneshot::channel();
-            *prompt_sender = Some(sender);
-            receiver
+            let prev = prompt_sender.replace(sender);
+            (prev, receiver)
         };
 
         // keep in memory the previous prompt
@@ -457,19 +457,19 @@ impl Prompt {
 
         // update the prompt to the requested one and keep blocking on the receiver
         self.update_prompt(prompt.to_string())?;
-        let input = {
-            let input = tokio::select! {
-                Some(()) = canceler.recv() => {
-                    self.state.get_prompt_sender().lock()?.take();
-                    Err(PromptError::Canceled)
-                },
-                res = receiver => res.map_err(|_| PromptError::EndOfStream)
-            };
-            input
+        let input = tokio::select! {
+            Some(()) = canceler.recv() => Err(PromptError::Canceled),
+            res = receiver => res.map_err(|_| PromptError::EndOfStream)
         };
 
         if apply_mask {
             self.set_mask_input(false);
+        }
+
+        // set the old prompt
+        {
+            let mut lock = self.state.get_prompt_sender().lock()?;
+            *lock = previous;
         }
 
         // set the old user input
@@ -477,6 +477,8 @@ impl Prompt {
             let mut user_input = self.state.get_user_input().lock()?;
             *user_input = old_user_input;
         }
+
+        
         self.set_prompt(old_prompt)?;
         self.state.show()?;
 
@@ -554,6 +556,7 @@ impl Prompt {
                 };
 
                 if interactive {
+                    state.mark_dirty();
                     if let Err(e) = state.show() {
                         error!("Error on prompt refresh: {}", e);
                     }

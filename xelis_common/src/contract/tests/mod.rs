@@ -12,18 +12,25 @@ use crate::{
     contract::{
         ContractMetadata,
         ContractModule,
+        ContractVersion,
+        InterContractPermission,
         Source,
-        vm::{self, ContractCaller, ContractError, InvokeContract}
+        vm::{self, ContractCaller, ContractStateError, InvokeContract}
     },
     crypto::Hash,
-    transaction::{tests::MockChainState, verify::BlockchainContractState}
+    transaction::{mock::MockChainState, verify::BlockchainContractState}
 };
 
 mod gas;
 mod events;
+mod storage;
+mod btree;
+mod permission;
+mod inter_calls;
 
 /// Compiles the given contract code into a Module
-pub fn compile_contract(environment: &EnvironmentBuilder<ContractMetadata>, code: &str) -> anyhow::Result<Module> {
+#[track_caller]
+pub fn compile_contract(environment: &EnvironmentBuilder<ContractMetadata>, enforce_public_params: bool, code: &str) -> anyhow::Result<Module> {
     let tokens = Lexer::new(code)
         .into_iter()
         .collect::<Result<Vec<_>, _>>()?;
@@ -32,21 +39,22 @@ pub fn compile_contract(environment: &EnvironmentBuilder<ContractMetadata>, code
     let (program, _) = parser.parse()
         .expect("contract code");
 
-    let compiler = Compiler::new(&program, environment.environment());
+    let compiler = Compiler::new(&program, environment.environment())
+        .with_enforce_public_parameters(enforce_public_params);
     let module = compiler.compile()?;
 
     Ok(module)
 }
 
 /// Creates a contract in the given chain state without invoking its constructor
-pub fn create_contract(state: &mut MockChainState, code: &str) -> anyhow::Result<Hash> {
-    let module = compile_contract(&state.env, code)?;
+pub fn create_contract(state: &mut MockChainState, code: &str, version: ContractVersion) -> anyhow::Result<Hash> {
+    let module = compile_contract(&state.env_builders[&version], version >= ContractVersion::V1, code)?;
 
     let hash = Hash::new(rand::random());
     state.internal_set_contract_module(
         hash.clone(),
         ContractModule {
-            version: Default::default(),
+            version,
             module: Arc::new(module),
         },
     );
@@ -55,8 +63,8 @@ pub fn create_contract(state: &mut MockChainState, code: &str) -> anyhow::Result
 }
 
 /// Deploys a contract by creating it and invoking its constructor (hook 0)
-pub async fn deploy_contract(state: &mut MockChainState, code: &str) -> anyhow::Result<(Hash, vm::ExecutionResult)> {
-    let contract_hash = create_contract(state, code)?;
+pub async fn deploy_contract(state: &mut MockChainState, code: &str, version: ContractVersion) -> anyhow::Result<(Hash, vm::ExecutionResult)> {
+    let contract_hash = create_contract(state, code, version)?;
 
     let execution = vm::invoke_contract(
         ContractCaller::System,
@@ -80,7 +88,23 @@ pub async fn invoke_contract(
     contract: &Hash,
     entry: InvokeContract,
     params: Vec<ValueCell>,
-) -> Result<vm::ExecutionResult, ContractError<anyhow::Error>> {
+) -> Result<vm::ExecutionResult, ContractStateError<anyhow::Error>> {
+    invoke_contract_with_permission(
+        state,
+        contract,
+        entry,
+        params,
+        InterContractPermission::default(),
+    ).await
+}
+
+pub async fn invoke_contract_with_permission<'a>(
+    state: &mut MockChainState,
+    contract: &Hash,
+    entry: InvokeContract,
+    params: Vec<ValueCell>,
+    permission: InterContractPermission,
+) -> Result<vm::ExecutionResult, ContractStateError<anyhow::Error>> {
     vm::invoke_contract(
         ContractCaller::System,
         state,
@@ -88,9 +112,9 @@ pub async fn invoke_contract(
         None,
         params.into_iter(),
         IndexMap::new(),
-        10000,
+        1_000_000,
         entry,
-        Cow::Owned(Default::default()),
+        Cow::Owned(permission),
         true,
     ).await
 }
@@ -105,7 +129,7 @@ async fn test_execute_simple_contract() {
     "#;
 
     let mut chain_state = MockChainState::new();
-    let contract_hash = create_contract(&mut chain_state, code).expect("create contract");
+    let contract_hash = create_contract(&mut chain_state, code, ContractVersion::V1).expect("create contract");
 
     // Invoke the contract with entry point 0
     let result = vm::invoke_contract(
@@ -139,7 +163,7 @@ async fn test_contract_with_computation() {
     "#;
 
     let mut chain_state = MockChainState::new();
-    let contract_hash = create_contract(&mut chain_state, code).expect("compile contract");
+    let contract_hash = create_contract(&mut chain_state, code, ContractVersion::V1).expect("compile contract");
 
     // Invoke the contract
     let result = vm::invoke_contract(
@@ -171,7 +195,7 @@ async fn test_contract_with_parameters() {
     "#;
 
     let mut chain_state = MockChainState::new();
-    let contract_hash = create_contract(&mut chain_state, code).expect("compile contract");
+    let contract_hash = create_contract(&mut chain_state, code, ContractVersion::V1).expect("compile contract");
 
     // Invoke the contract with parameters (10 and 20)
     let params = vec![
@@ -210,7 +234,7 @@ async fn test_refund_with_gas_sources() {
     "#;
 
     let mut chain_state = MockChainState::new();
-    let contract_hash = create_contract(&mut chain_state, code).expect("compile contract");
+    let contract_hash = create_contract(&mut chain_state, code, ContractVersion::V1).expect("compile contract");
 
     let contract1 = Hash::new([2u8; 32]);
     let contract2 = Hash::new([3u8; 32]);

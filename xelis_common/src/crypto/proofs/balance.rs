@@ -99,16 +99,21 @@ impl BalanceProof {
         Ok((destination_commitment, zeroed_balance))
     }
 
-    /// Verify the balance proof.
+    /// Verify the balance proof using a transcript and a batch collector for the inner proof.
     pub fn pre_verify(&self, public_key: &PublicKey, source_ciphertext: Ciphertext, transcript: &mut Transcript, batch_collector: &mut BatchCollector) -> Result<(), ProofVerificationError> {
         let (destination_commitment, zeroed_balance) = self.verify_internal(public_key, source_ciphertext, transcript)?;
         self.commitment_eq_proof.pre_verify(public_key, &zeroed_balance, &destination_commitment, TxVersion::V2, transcript, batch_collector)
     }
 
-    /// Verify the balance proof.
-    pub fn verify(&self, public_key: &PublicKey, source_ciphertext: Ciphertext, transcript: &mut Transcript) -> Result<(), ProofVerificationError> {
+    /// Verify the balance proof with a transcript.
+    pub fn verify_with_transcript(&self, public_key: &PublicKey, source_ciphertext: Ciphertext, transcript: &mut Transcript) -> Result<(), ProofVerificationError> {
         let (destination_commitment, zeroed_balance) = self.verify_internal(public_key, source_ciphertext, transcript)?;
         self.commitment_eq_proof.verify(public_key, &zeroed_balance, &destination_commitment, transcript)
+    }
+
+    /// Verify the balance proof.
+    pub fn verify(&self, public_key: &PublicKey, source_ciphertext: Ciphertext) -> Result<(), ProofVerificationError> {
+        self.verify_with_transcript(public_key, source_ciphertext, &mut Transcript::new(b"balance_proof"))
     }
 }
 
@@ -145,7 +150,7 @@ mod tests {
         let proof = BalanceProof::new(&keypair, amount, ct.clone());
 
         // Verify the proof
-        assert!(proof.verify(keypair.get_public_key(), ct, &mut Transcript::new(b"balance_proof")).is_ok());
+        assert!(proof.verify_with_transcript(keypair.get_public_key(), ct, &mut Transcript::new(b"balance_proof")).is_ok());
     }
 
     #[test]
@@ -159,7 +164,7 @@ mod tests {
         let proof = BalanceProof::new(&keypair, 95, ct.clone());
 
         // Verify the proof
-        assert!(proof.verify(keypair.get_public_key(), ct, &mut Transcript::new(b"balance_proof")).is_err());
+        assert!(proof.verify_with_transcript(keypair.get_public_key(), ct, &mut Transcript::new(b"balance_proof")).is_err());
     }
 
     #[test]
@@ -176,6 +181,6 @@ mod tests {
         // Generate another ciphertext with same amount
         let ct = keypair.get_public_key().encrypt(amount);
 
-        assert!(proof.verify(keypair.get_public_key(), ct, &mut Transcript::new(b"balance_proof")).is_err());
+        assert!(proof.verify_with_transcript(keypair.get_public_key(), ct, &mut Transcript::new(b"balance_proof")).is_err());
     }
 }

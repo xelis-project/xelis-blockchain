@@ -191,11 +191,13 @@ pub enum EncryptionMode {
     // Encrypt the data using AES-GCM
     #[serde(rename = "aes")]
     AES {
+        #[serde(with = "hex")]
         key: EncryptionKey
     },
     // Encrypt the data using ChaCha20Poly1305 AEAD cipher
     #[serde(rename = "chacha20poly1305")]
     Chacha20Poly1305 {
+        #[serde(with = "hex")]
         key: EncryptionKey
     }
 }
@@ -286,6 +288,7 @@ pub enum PermissionRequest<'a> {
     Request(&'a RpcRequest)
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum PermissionResult {
     Accept,
     Reject,

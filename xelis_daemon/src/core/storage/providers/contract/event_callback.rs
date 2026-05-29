@@ -1,5 +1,6 @@
 use async_trait::async_trait;
-use xelis_common::{block::TopoHeight, crypto::Hash, contract::EventCallbackRegistration, versioned_type::Versioned};
+use futures::Stream;
+use xelis_common::{block::TopoHeight, crypto::Hash, contract::EventCallbackRegistration, versioned::Versioned};
 
 use crate::core::error::BlockchainError;
 
@@ -39,7 +40,7 @@ pub trait ContractEventCallbackProvider {
         contract: &'a Hash,
         event_id: u64,
         max_topoheight: TopoHeight,
-    ) -> Result<impl Iterator<Item = Result<(Hash, TopoHeight, VersionedEventCallbackRegistration), BlockchainError>> + Send + 'a, BlockchainError>;
+    ) -> Result<impl Stream<Item = Result<(Hash, TopoHeight, VersionedEventCallbackRegistration), BlockchainError>> + Send + 'a, BlockchainError>;
 
     // Get all latest versions for a specific contract event 
     // Returns (listener_contract, version) for each latest version
@@ -48,5 +49,15 @@ pub trait ContractEventCallbackProvider {
         contract: &'a Hash,
         event_id: u64,
         max_topoheight: TopoHeight,
-    ) -> Result<impl Iterator<Item = Result<(Hash, EventCallbackRegistration), BlockchainError>> + Send + 'a, BlockchainError>;
+    ) -> Result<impl Stream<Item = Result<(Hash, EventCallbackRegistration), BlockchainError>> + Send + 'a, BlockchainError>;
+
+    // Get all available listeners for a contract at a maximum topoheight
+    // Returns (event_id, listener_contract, version) for each latest version
+    // version is None if the listener has been consumed and is no longer available
+    async fn get_listeners_for_contract_events<'a>(
+        &'a self,
+        contract: &'a Hash,
+        min_topoheight: TopoHeight,
+        max_topoheight: TopoHeight,
+    ) -> Result<impl Stream<Item = Result<(u64, Hash, Option<EventCallbackRegistration>), BlockchainError>> + Send + 'a, BlockchainError>;
 }

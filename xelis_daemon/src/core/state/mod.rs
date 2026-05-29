@@ -1,10 +1,14 @@
-mod mempool_state;
 mod chain_state;
+mod fee;
 
-pub use mempool_state::MempoolState;
 pub use chain_state::{
     ChainState,
     ApplicableChainState,
+    FinalizedChainState,
+    MempoolProvider,
+    TxVerificationProvider,
+    ReferenceProvider,
+    BalanceSelectorProvider,
 };
 
 use log::{trace, debug};
@@ -17,17 +21,16 @@ use xelis_common::{
     utils::format_xelis
 };
 
-use crate::core::storage::Storage;
-
 use super::{
     hard_fork,
     blockchain,
     error::BlockchainError,
-    storage::{AccountProvider, BalanceProvider, DagOrderProvider, PrunedTopoheightProvider}
 };
 
+pub use fee::FeeProvider;
+
 // Verify the transaction fee and returns the leftover from fee max
-pub async fn verify_fee<P: AccountProvider>(
+pub async fn verify_fee<P: FeeProvider>(
     provider: &P,
     tx: &Transaction,
     tx_size: usize,
@@ -64,11 +67,11 @@ pub async fn verify_fee<P: AccountProvider>(
 }
 
 // Check if a miner is in the unstable height of a reference block
-async fn is_miner_until_base_height<S: Storage>(storage: &S, miner: &PublicKey, stable_height: u64, reference: &Hash) -> Result<bool, BlockchainError> {
+async fn is_miner_until_base_height<S: TxVerificationProvider>(storage: &S, miner: &PublicKey, stable_height: u64, reference: &Hash) -> Result<bool, BlockchainError> {
     let mut stack = Vec::new();
-    stack.push((reference.clone(), 0));
+    stack.push(reference.clone());
 
-    while let Some((current_hash, depth)) = stack.pop() {
+    while let Some(current_hash) = stack.pop() {
         let block_height = storage.get_height_for_block_hash(&current_hash).await?;
         if block_height <= stable_height {
             continue;
@@ -84,14 +87,14 @@ async fn is_miner_until_base_height<S: Storage>(storage: &S, miner: &PublicKey, 
 
         // Add parents to stack
         for parent in block.get_tips() {
-            stack.push((parent.clone(), depth + 1));
+            stack.push(parent.clone());
         }
     }
 
     Ok(false)
 }
 
-async fn is_referencing_previous_output<S: Storage>(storage: &S, tx: &Transaction, reference: &Reference, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
+async fn is_referencing_previous_output<S: TxVerificationProvider>(storage: &S, tx: &Transaction, reference: &Reference, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
     let reference_block_topo = select_best_topoheight_for_reference(storage, reference, topoheight).await?;
     let min_topo = reference.topoheight
         .min(reference_block_topo)
@@ -117,8 +120,8 @@ async fn is_referencing_previous_output<S: Storage>(storage: &S, tx: &Transactio
 
 // Verify a transaction before adding it to mempool/chain state
 // We only verify the reference and the required fees
-pub(super) async fn pre_verify_tx<S: Storage>(storage: &S, tx: &Transaction, stable_topoheight: TopoHeight, base_height: u64, topoheight: TopoHeight, block_version: BlockVersion) -> Result<(), BlockchainError> {
-    debug!("Pre-verify TX at topoheight {} and stable topoheight {}", topoheight, stable_topoheight);
+pub(super) async fn pre_verify_tx(tx: &Transaction, topoheight: TopoHeight, block_version: BlockVersion) -> Result<(), BlockchainError> {
+    debug!("Pre-verify TX at topoheight {}", topoheight);
     if !hard_fork::is_tx_version_allowed_in_block_version(tx.get_version(), block_version) {
         debug!("Invalid version {} in block {}", tx.get_version(), block_version);
         return Err(BlockchainError::InvalidTxVersion);
@@ -138,7 +141,14 @@ pub(super) async fn pre_verify_tx<S: Storage>(storage: &S, tx: &Transaction, sta
         return Err(BlockchainError::InvalidReferenceTopoheight(reference.topoheight, topoheight));
     }
 
+    Ok(())
+}
+
+// Verify a transaction before adding it to mempool/chain state
+// This is the dynamic part that may vary based on the DAG order
+pub(super) async fn pre_verify_tx_dynamic<S: TxVerificationProvider>(storage: &S, tx: &Transaction, base_height: u64, topoheight: TopoHeight, block_version: BlockVersion) -> Result<(), BlockchainError> {
     if block_version >= BlockVersion::V4 {
+        let reference = tx.get_reference();
         if storage.has_block_with_hash(&reference.hash).await? {
             let block_height = storage.get_height_for_block_hash(&reference.hash).await?;
             if base_height < block_height
@@ -159,7 +169,7 @@ pub(super) async fn pre_verify_tx<S: Storage>(storage: &S, tx: &Transaction, sta
     Ok(())
 }
 
-async fn select_best_topoheight_for_reference<S: DagOrderProvider + PrunedTopoheightProvider>(storage: &S, reference: &Reference, current_topoheight: TopoHeight) -> Result<TopoHeight, BlockchainError> {
+async fn select_best_topoheight_for_reference<P: ReferenceProvider>(storage: &P, reference: &Reference, current_topoheight: TopoHeight) -> Result<TopoHeight, BlockchainError> {
     let pruned_topoheight = storage.get_pruned_topoheight().await?;
 
     let reference_block_topo = if storage.is_block_topological_ordered(&reference.hash).await? {
@@ -194,7 +204,7 @@ async fn select_best_topoheight_for_reference<S: DagOrderProvider + PrunedTopohe
 // - If we should use the output balance for verification
 // - is it a new version created
 // - Versioned Balance to use for verification
-pub (super) async fn search_versioned_balance_for_reference<S: DagOrderProvider + BalanceProvider + PrunedTopoheightProvider>(storage: &S, key: &PublicKey, asset: &Hash, current_topoheight: TopoHeight, reference: &Reference, no_new: bool) -> Result<(bool, bool, VersionedBalance), BlockchainError> {
+pub (super) async fn search_versioned_balance_for_reference<S: ReferenceProvider + BalanceSelectorProvider>(storage: &S, key: &PublicKey, asset: &Hash, current_topoheight: TopoHeight, reference: &Reference, no_new: bool) -> Result<(bool, bool, VersionedBalance), BlockchainError> {
     trace!("search versioned balance for {} at topoheight {}, reference: {}", key.as_address(storage.is_mainnet()), current_topoheight, reference.topoheight);
     // Scenario A
     // TX A has reference topo 1000

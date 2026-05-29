@@ -22,8 +22,9 @@ use anyhow::Error;
 
 pub const NORMAL_ADDRESS_LEN: usize = 63;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub enum AddressType {
+    #[default]
     Normal,
     // Data variant allow to integrate data in address for easier communication / data transfered
     // those data are directly integrated in the data part and can be transfered in the transaction directly

@@ -23,7 +23,12 @@ use crate::{
     difficulty::{CumulativeDifficulty, Difficulty},
     network::Network,
     time::{TimestampMillis, TimestampSeconds},
-    transaction::extra_data::{SharedKey, UnknownExtraDataFormat},
+    contract::{vm::ExecutionResult, InterContractPermission},
+    transaction::{
+        extra_data::{SharedKey, UnknownExtraDataFormat},
+        Deposits,
+    },
+    immutable::Immutable,
 };
 use super::{default_true_value, DataElement, RPCContractLog, RPCTransaction};
 
@@ -578,7 +583,8 @@ pub enum AccountHistoryType {
         asset: Hash,
         // Amount received from the contract
         amount: u64,
-    }
+    },
+    Blob
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
@@ -638,7 +644,7 @@ pub struct RewindChainResult {
     /// New topoheight after rewind
     pub topoheight: TopoHeight,
     /// All transactions that were removed from the chain
-    pub txs: Vec<Hash>,
+    pub txs: Vec<Immutable<Hash>>,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
@@ -969,6 +975,40 @@ pub struct GetContractAssetsParams<'a> {
     pub skip: Option<usize>,
     pub maximum: Option<usize>
 }
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct SimulateContractInvokeParams<'a> {
+    // The caller of the contract
+    pub source: Cow<'a, Address>,
+    // The contract address
+    // Contract are the TXID of the transaction that deployed the contract
+    pub contract: Cow<'a, Hash>,
+    // Assets deposited with this call
+    pub deposits: Cow<'a, Deposits>,
+    // The chunk to invoke
+    // It can only be a entry id
+    pub entry_id: u16,
+    // The parameters to call the contract
+    pub parameters: Cow<'a, Vec<ValueCell>>,
+    // The permission of this contract call
+    // It is used to restrict access to certain inter-contracts.
+    #[serde(default)]
+    pub permission: Cow<'a, InterContractPermission>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct SimulateContractInvokeResult<'a> {
+    // Current base fee per KB based on the blockchain state
+    pub base_fee: u64,
+    // Result of the execution of the contract,
+    // it contains the used gas and the returned value if any
+    pub result: ExecutionResult,
+    // Block hash used for the estimation, it is the best block at the time of estimation
+    pub block_hash: Cow<'a, Hash>,
+    // Block topoheight used for the estimation, it is the best block at the time of estimation
+    pub topoheight: TopoHeight,
+}
+
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct RPCVersioned<T> {

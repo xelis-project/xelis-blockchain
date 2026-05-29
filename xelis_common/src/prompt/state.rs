@@ -40,6 +40,8 @@ pub struct State {
     prompt_sender: Mutex<Option<oneshot::Sender<String>>>,
     exit: AtomicBool,
     ascii_escape_regex: Regex,
+    last_rendered_key: Mutex<String>,
+    dirty: AtomicBool,
     interactive: bool
 }
 
@@ -59,6 +61,8 @@ impl State {
             prompt_sender: Mutex::new(None),
             exit: AtomicBool::new(false),
             ascii_escape_regex: Regex::new("\x1B\\[[0-9;]*[A-Za-z]").unwrap(),
+            last_rendered_key: Mutex::new(String::new()),
+            dirty: AtomicBool::new(false),
             interactive
         }
     }
@@ -109,6 +113,10 @@ impl State {
 
     pub fn is_interactive(&self) -> bool {
         self.interactive
+    }
+
+    pub fn mark_dirty(&self) {
+        self.dirty.store(true, Ordering::SeqCst);
     }
 
     pub fn ioloop(self: &Arc<Self>, sender: UnboundedSender<String>) -> Result<(), PromptError> {
@@ -206,7 +214,7 @@ impl State {
                                     let mut prompt_sender = self.prompt_sender.lock()?;
                                     if let Some(sender) = prompt_sender.take() {
                                         if let Err(e) = sender.send(cloned_buffer) {
-                                            error!("Error while sending input to reader: {}", e);
+                                            error!("Error while sending to reader: {}", e);
                                             break;
                                         }
                                     } else {
@@ -246,7 +254,7 @@ impl State {
         let mut sender = self.prompt_sender.lock()?;
         if let Some(sender) = sender.take() {
             if let Err(e) = sender.send(String::new()) {
-                error!("Error while sending input to reader: {}", e);
+                error!("Error while sending input to reader in ioloop: {}", e);
             }
         }
 
@@ -284,6 +292,22 @@ impl State {
         // if not interactive, we don't need to show anything
         if !self.is_interactive() {
             return Ok(())
+        }
+
+        let width = self.width.load(Ordering::SeqCst);
+        let rendered_input = if self.should_mask_input() {
+            "*".repeat(input.len())
+        } else {
+            input.to_string()
+        };
+        let rendered_key = format!("{}|{}|{}", width, prompt, rendered_input);
+        let force_render = self.dirty.swap(false, Ordering::SeqCst);
+        {
+            let mut last = self.last_rendered_key.lock()?;
+            if !force_render && *last == rendered_key {
+                return Ok(());
+            }
+            *last = rendered_key;
         }
 
         let current_count = self.count_lines(&format!("\r{}{}", prompt, input));

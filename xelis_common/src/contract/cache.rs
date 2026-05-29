@@ -5,7 +5,7 @@ use crate::{
     context::NoOpBuildHasher,
     contract::DeterministicRandom,
     crypto::Hash,
-    versioned_type::VersionedState
+    versioned::VersionedState
 };
 
 #[derive(Debug, Clone)]
@@ -67,5 +67,22 @@ impl ContractCache {
     pub fn clean_up(&mut self) {
         // We clean the temporary memory from it
         self.memory.clear();
+    }
+
+    #[inline]
+    pub fn clone_with(&self, clone_refs: bool) -> Self {
+        if clone_refs {
+            Self {
+                random: self.random.clone(),
+                storage: self.storage.iter().map(|(k, v)| (k.clone_ref(), v.as_ref().map(|(s, v)| (s.clone(), v.as_ref().map(|v| v.clone_ref()))))).collect(),
+                balances: self.balances.clone(),
+                memory_shared: self.memory_shared.iter().map(|(k, v)| (k.clone_ref(), v.clone_ref())).collect(),
+                memory: self.memory.iter().map(|(k, v)| (k.clone_ref(), v.clone_ref())).collect(),
+                events: self.events.clone(),
+                events_listeners: self.events_listeners.clone()
+            }
+        } else {
+            self.clone()
+        }
     }
 }

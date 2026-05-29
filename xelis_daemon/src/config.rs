@@ -63,9 +63,8 @@ pub const PRUNE_SAFETY_LIMIT: u64 = 80;
 pub const STABLE_LIMIT: u64 = 8;
 // Maximum height difference allowed between a block and its tips
 pub const MAX_TIP_HEIGHT_DIFFERENCE: u64 = 8;
-// DAA window size
-// Number of blocks to consider for difficulty adjustment algorithm
-pub const DAA_WINDOW: u64 = 50;
+// Maximum number of tips to keep in cache
+pub const MAX_TIPS_IN_CACHE: usize = u8::MAX as usize;
 
 pub const fn get_stable_limit(version: BlockVersion) -> u64 {
     match version {
@@ -207,7 +206,7 @@ pub const PEER_PACKET_CHANNEL_SIZE: usize = 1024;
 pub const PEER_SEND_BYTES_TIMEOUT: u64 = 3_000;
 
 // Hard Forks configured
-const HARD_FORKS: [HardFork; 6] = [
+const HARD_FORKS: [HardFork; 7] = [
     HardFork {
         height: 0,
         version: BlockVersion::V0,
@@ -248,11 +247,18 @@ const HARD_FORKS: [HardFork; 6] = [
         version: BlockVersion::V5,
         changelog: "TX Base fee improvements",
         version_requirement: Some(">=1.21.0")
+    },
+    HardFork {
+        // Expected date: around 13/06/2026 UTC
+        height: 6_330_000,
+        version: BlockVersion::V6,
+        changelog: "BlockDAG improvements, new smart contracts features",
+        version_requirement: Some(">=1.22.0")
     }
 ];
 
 // Testnet / Stagenet / Devnet hard forks
-const OTHERS_NETWORK_HARD_FORKS: [HardFork; 6] = [
+const OTHERS_NETWORK_HARD_FORKS: [HardFork; 7] = [
     HardFork {
         height: 0,
         version: BlockVersion::V0,
@@ -288,25 +294,31 @@ const OTHERS_NETWORK_HARD_FORKS: [HardFork; 6] = [
         version: BlockVersion::V5,
         changelog: "TX Base fee improvements",
         version_requirement: Some(">=1.21.0")
+    },
+    HardFork {
+        height: 30,
+        version: BlockVersion::V6,
+        changelog: "BlockDAG improvements",
+        version_requirement: Some(">=1.22.0")
+    }
+];
+
+// Devnet hard forks
+const DEV_NET_HARD_FORKS: [HardFork; 1] = [
+    HardFork {
+        height: 0,
+        version: BlockVersion::V6,
+        changelog: "Initial version for devnet with all features enabled",
+        version_requirement: None
     }
 ];
 
 // Mainnet seed nodes
-const MAINNET_SEED_NODES: [&str; 7] = [
+const MAINNET_SEED_NODES: [&str; 2] = [
     // France
     "51.210.117.23:2125",
     // US
     "198.71.55.87:2125",
-    // Germany
-    "162.19.249.100:2125",
-    // Singapore
-    "139.99.89.27:2125",
-    // Poland
-    "51.68.142.141:2125",
-    // Great Britain
-    "51.195.220.137:2125",
-    // "Canada"
-    "66.70.179.137:2125"
 ];
 
 // Testnet seed nodes
@@ -366,6 +378,7 @@ pub const fn get_seed_nodes(network: &Network) -> &[&str] {
 pub const fn get_hard_forks(network: &Network) -> &'static [HardFork] {
     match network {
         Network::Mainnet => &HARD_FORKS,
+        Network::Devnet => &DEV_NET_HARD_FORKS,
         _ => &OTHERS_NETWORK_HARD_FORKS,
     }
 }

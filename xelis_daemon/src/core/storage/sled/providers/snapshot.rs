@@ -3,7 +3,7 @@ use log::trace;
 use crate::core::{
     error::BlockchainError,
     storage::{
-        sled::{Snapshot, TreeWrapper},
+        sled::Snapshot,
         SledStorage,
         SnapshotProvider
     }
@@ -11,7 +11,7 @@ use crate::core::{
 
 #[async_trait]
 impl SnapshotProvider for SledStorage {
-    type Column = TreeWrapper;
+    type Snapshot = Snapshot;
 
     // Check if we have a commit point already set
     async fn has_snapshot(&self) -> Result<bool, BlockchainError> {
@@ -19,18 +19,20 @@ impl SnapshotProvider for SledStorage {
         Ok(self.snapshot.is_some())
     }
 
-    async fn start_snapshot(&mut self) -> Result<(), BlockchainError> {
+    async fn start_snapshot(&mut self) -> Result<Option<Snapshot>, BlockchainError> {
         trace!("start snapshot");
-        if self.snapshot.is_some() {
-            return Err(BlockchainError::CommitPointAlreadyStarted);
+        let previous_snapshot = self.snapshot.clone();
+
+        if previous_snapshot.is_none() {
+            trace!("Creating new snapshot");
+            let snapshot = Snapshot::new(self.cache.clone_mut());
+            self.snapshot = Some(snapshot);
         }
 
-        let snapshot = Snapshot::new(self.cache.clone_mut());
-        self.snapshot = Some(snapshot);
-        Ok(())
+        Ok(previous_snapshot)
     }
 
-    fn end_snapshot(&mut self, apply: bool) -> Result<(), BlockchainError> {
+    async fn end_snapshot(&mut self, apply: bool) -> Result<(), BlockchainError> {
         trace!("end snapshot");
         let snapshot = self.snapshot.take()
             .ok_or(BlockchainError::CommitPointNotStarted)?;

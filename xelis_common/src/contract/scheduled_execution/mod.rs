@@ -1,6 +1,7 @@
 mod kind;
+mod manager;
 
-use std::{hash, sync::Arc};
+use std::{borrow::Borrow, hash, sync::Arc};
 
 use indexmap::IndexMap;
 use schemars::JsonSchema;
@@ -38,7 +39,6 @@ use crate::{
         ContractMetadata,
         ModuleMetadata,
         Source,
-        ContractCaller,
         MAX_VALUE_SIZE
     },
     crypto::{
@@ -49,6 +49,7 @@ use crate::{
 };
 
 pub use kind::*;
+pub use manager::*;
 
 // Scheduled executions are unique per contract
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
@@ -87,6 +88,12 @@ impl PartialEq for ScheduledExecution {
 }
 
 impl Eq for ScheduledExecution {}
+
+impl Borrow<Hash> for ScheduledExecution {
+    fn borrow(&self) -> &Hash {
+        &self.contract
+    }
+}
 
 impl Serializer for ScheduledExecution {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
@@ -144,10 +151,10 @@ impl Serializable for OpaqueScheduledExecution {}
 
 impl JSONHelper for OpaqueScheduledExecution {}
 
-async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
+async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider<'ty>>(
     kind: ScheduledExecutionKind,
     _: FnInstance<'a>,
-    params: FnParams,
+    mut params: FnParams,
     metadata: &ModuleMetadata<'_>,
     context: &mut VMContext<'ty, 'r>
 ) -> FnReturnType<ContractMetadata> {
@@ -170,14 +177,16 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
         }
     }
 
-    let chunk_id = params[0].as_u16()?;
+    let use_contract_balance = params.remove(3).as_bool()?;
+    let max_gas = params.remove(2).as_u64()?;
+    let p = params.remove(1)
+        .into_owned()
+        .into_vec()?;
+
+    let chunk_id = params.remove(0).as_u16()?;
     if !metadata.module.is_callable_chunk(chunk_id as _) {
         return Ok(SysCallResult::Return(Primitive::Null.into()));
     }
-
-    let p = params[1].as_ref().as_vec()?;
-    let max_gas = params[2].as_u64()?;
-    let use_contract_balance = params[3].as_bool()?;
 
     if max_gas > MAX_GAS_USAGE_PER_TX {
         return Err(EnvironmentError::Static("max_gas exceeds allowed limit"))
@@ -187,7 +196,7 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
         return Ok(SysCallResult::Return(Primitive::Null.into()));
     }
 
-    let params: Vec<ValueCell> = p.iter()
+    let params: Vec<ValueCell> = p.into_iter()
         .map(|v| v.into_owned().into())
         .collect();
     let params_size = params.size();
@@ -210,14 +219,10 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
 
         Source::Contract(metadata.metadata.contract_executor.clone())
     } else {
-        let source = match state.caller {
-            ContractCaller::Transaction(_, tx) => {
-                Source::Account(tx.get_source().clone())
-            },
-            _ => {
-                return Err(EnvironmentError::Static("cannot pay from non transaction call")).into();
-            }
-        };
+        let source = state.caller.get_source()
+            .cloned()
+            .map(Source::Account)
+            .ok_or(EnvironmentError::Static("cannot pay from non transaction call"))?;
 
         // only allocate the max gas
         // the extra cost must be paid
@@ -287,7 +292,7 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider>(
     }.into()))
 }
 
-pub async fn scheduled_execution_new_at_topoheight<'a, 'ty, 'r, P: ContractProvider>(
+pub async fn scheduled_execution_new_at_topoheight<'a, 'ty, 'r, P: ContractProvider<'ty>>(
     instance: FnInstance<'a>,
     params: FnParams,
     metadata: &ModuleMetadata<'_>,
@@ -297,7 +302,7 @@ pub async fn scheduled_execution_new_at_topoheight<'a, 'ty, 'r, P: ContractProvi
     schedule_execution::<P>(ScheduledExecutionKind::TopoHeight(topoheight), instance, params, metadata, context).await
 }
 
-pub async fn scheduled_execution_new_at_block_end<'a, 'ty, 'r, P: ContractProvider>(
+pub async fn scheduled_execution_new_at_block_end<'a, 'ty, 'r, P: ContractProvider<'ty>>(
     instance: FnInstance<'a>,
     params: FnParams,
     metadata: &ModuleMetadata<'_>,
@@ -375,7 +380,7 @@ pub fn scheduled_execution_get_pending<'a, 'ty, 'r>(
     }
 }
 
-pub async fn scheduled_execution_increase_max_gas<'a, 'ty, 'r, P: ContractProvider>(
+pub async fn scheduled_execution_increase_max_gas<'a, 'ty, 'r, P: ContractProvider<'ty>>(
     instance: FnInstance<'a>,
     params: FnParams,
     metadata: &ModuleMetadata<'_>,
@@ -424,14 +429,10 @@ pub async fn scheduled_execution_increase_max_gas<'a, 'ty, 'r, P: ContractProvid
 
         Source::Contract(metadata.metadata.contract_executor.clone())
     } else {
-        let source = match state.caller {
-            ContractCaller::Transaction(_, tx) => {
-                Source::Account(tx.get_source().clone())
-            },
-            _ => {
-                return Err(EnvironmentError::Static("cannot pay from non transaction caller")).into();
-            }
-        };
+        let source = state.caller.get_source()
+            .cloned()
+            .map(Source::Account)
+            .ok_or(EnvironmentError::Static("cannot pay from non transaction call"))?;
 
         // Pay from the gas allowance
         record_gas_allowance(context, amount)?;

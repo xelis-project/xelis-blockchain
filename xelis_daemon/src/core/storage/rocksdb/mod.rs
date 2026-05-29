@@ -1,6 +1,7 @@
 mod column;
 mod types;
 mod providers;
+mod config;
 
 use std::sync::Arc;
 
@@ -32,10 +33,8 @@ use xelis_common::{
     network::Network,
     serializer::{Count, Serializer},
     tokio,
-    transaction::Transaction,
 };
 use crate::core::{
-    config::RocksDBConfig,
     error::{BlockchainError, DiskContext},
     storage::{
         snapshot::{
@@ -52,9 +51,11 @@ use crate::core::{
         TransactionProvider
     }
 };
+use xelis_vm::tid;
 
 pub use column::*;
 pub use types::*;
+pub use config::*;
 
 use super::Storage;
 
@@ -129,16 +130,38 @@ impl<'a> IteratorMode<'a> {
     pub fn convert(self) -> (InternalIteratorMode<'a>, ReadOptions) {
         let mut opts = ReadOptions::default();
         let mode = match self {
-            Self::Start => InternalIteratorMode::Start,
-            Self::End => InternalIteratorMode::End,
-            Self::From(prefix, direction) => InternalIteratorMode::From(prefix, direction.into()),
+            Self::Start => {
+                // Iterate all keys across every prefix
+                opts.set_total_order_seek(true);
+                InternalIteratorMode::Start
+            },
+            Self::End => {
+                opts.set_total_order_seek(true);
+                InternalIteratorMode::End
+            },
+            Self::From(prefix, direction) => {
+                // Seeks to a specific position and then scans forward/backward across
+                // multiple prefix groups. Without total_order_seek, RocksDB is allowed
+                // to use per-prefix bloom filters and silently skip SST files that belong
+                // to a different prefix, producing incomplete/incorrect results once the
+                // chain is large enough that data has been compacted into deeper LSM levels.
+                opts.set_total_order_seek(true);
+                InternalIteratorMode::From(prefix, direction.into())
+            },
             Self::WithPrefix(prefix, direction) => {
+                // Intentionally stays within a single prefix group
                 opts.set_prefix_same_as_start(true);
                 InternalIteratorMode::From(prefix, direction.into())
             },
             Self::Range { lower_bound, upper_bound, direction } => {
-                opts.set_iterate_upper_bound(upper_bound);
-                opts.set_iterate_lower_bound(lower_bound);
+                opts.set_total_order_seek(true);
+                if let Some(lower_bound) = lower_bound {
+                    opts.set_iterate_lower_bound(lower_bound);
+                }
+
+                if let Some(upper_bound) = upper_bound {
+                    opts.set_iterate_upper_bound(upper_bound);
+                }
 
                 match direction {
                     Direction::Forward => InternalIteratorMode::Start,
@@ -151,15 +174,28 @@ impl<'a> IteratorMode<'a> {
     }
 }
 
+impl From<Direction> for rocksdb::Direction {
+    fn from(direction: Direction) -> Self {
+        match direction {
+            Direction::Forward => rocksdb::Direction::Forward,
+            Direction::Reverse => rocksdb::Direction::Reverse,
+        }
+    }
+}
+
 pub struct RocksStorage {
     db: Arc<InnerDB>,
     network: Network,
     snapshot: Option<Snapshot>,
     cache: StorageCache,
+    concurrency: usize,
+    disable_compaction_on_flush: bool,
 }
 
+tid!(RocksStorage);
+
 impl RocksStorage {
-    pub fn new(dir: &str, network: Network, config: &RocksDBConfig) -> Self {
+    pub fn new(dir: &str, network: Network, config: &RocksDBConfig, concurrency: usize) -> Result<Self, BlockchainError> {
         let cfs = Column::iter()
             .map(|column| {
                 let name = column.to_string();
@@ -167,6 +203,11 @@ impl RocksStorage {
                 let mut opts = Options::default();
                 if let Some(len) = prefix {
                     opts.set_prefix_extractor(SliceTransform::create_fixed_prefix(len));
+                    if let Some(bits) = config.bloom_filter_bits_per_key {
+                        let mut bbo = BlockBasedOptions::default();
+                        bbo.set_bloom_filter(bits, false);
+                        opts.set_block_based_table_factory(&bbo);
+                    }
                 }
 
                 ColumnFamilyDescriptor::new(name, opts)
@@ -184,7 +225,7 @@ impl RocksStorage {
         opts.set_max_open_files(config.max_open_files);
         opts.set_keep_log_file_num(config.keep_max_log_files);
 
-        let mut env = Env::new().expect("Creating new env");
+        let mut env = Env::new().context("Creating new env")?;
         env.set_low_priority_background_threads(config.low_priority_background_threads as _);
         opts.set_env(&env);
         opts.set_compression_type(config.compression_mode.convert());
@@ -205,6 +246,9 @@ impl RocksStorage {
         };
 
         opts.set_block_based_table_factory(&block_opts);
+        if let Some(file_size) = config.target_file_size_base {
+            opts.set_target_file_size_base(file_size);
+        }
         if config.write_buffer_shared {
             opts.set_db_write_buffer_size(config.write_buffer_size as _);
         } else {
@@ -212,14 +256,22 @@ impl RocksStorage {
         }
 
         let db  = DBWithThreadMode::<MultiThreaded>::open_cf_descriptors(&opts, format!("{}{}", dir, network.to_string().to_lowercase()), cfs)
-            .expect("Failed to open RocksDB");
+            .context("Failed to open RocksDB")?;
 
-        Self {
+        let mut db = Self {
             db: Arc::new(db),
             network,
             snapshot: None,
-            cache: StorageCache::new(None)
+            cache: StorageCache::new(None),
+            concurrency,
+            disable_compaction_on_flush: config.disable_compaction_on_flush,
+        };
+
+        if let Some(pruned_topoheight) = db.load_optional_from_disk(Column::Common, PRUNED_TOPOHEIGHT)?{
+            db.cache.chain.pruned_topoheight = Some(pruned_topoheight);
         }
+
+        Ok(db)
     }
 
     #[inline(always)]
@@ -236,6 +288,25 @@ impl RocksStorage {
             Some(snapshot) => &mut snapshot.cache,
             None => &mut self.cache
         }
+    }
+
+    // Run a heavy blocking operation with semaphore-limited concurrency.
+    // Uses block_in_place to avoid blocking the tokio async worker.
+    #[inline(always)]
+    fn run_blocking<F, R>(&self, f: F) -> Result<R, BlockchainError>
+    where
+        F: FnOnce() -> Result<R, BlockchainError>,
+    {
+        tokio::block_in_place_safe(f)
+    }
+
+    // Run a heavy blocking operation that requires mutable access.
+    #[inline(always)]
+    fn run_blocking_mut<F, R>(&mut self, f: F) -> Result<R, BlockchainError>
+    where
+        F: FnOnce(&mut Self) -> Result<R, BlockchainError>,
+    {
+        tokio::block_in_place_safe(|| f(self))
     }
 
     pub fn load_cache_from_disk(&mut self) {
@@ -282,17 +353,18 @@ impl RocksStorage {
     }
 
     // Count how many entries we have stored in a column
-    pub fn count_entries(&self, column: Column) -> Result<usize, BlockchainError> {
+    pub async fn count_entries(&self, column: Column) -> Result<usize, BlockchainError> {
         trace!("count entries {:?}", column);
+        self.run_blocking(|| {
+            let cf = cf_handle!(self.db, column);
+            let iterator = self.db.iterator_cf(&cf, InternalIteratorMode::Start);
 
-        let cf = cf_handle!(self.db, column);
-        let iterator = self.db.iterator_cf(&cf, InternalIteratorMode::Start);
+            if let Some(snapshot) = self.snapshot.as_ref() {
+                return Ok(snapshot.count_entries(column, iterator))
+            }
 
-        if let Some(snapshot) = self.snapshot.as_ref() {
-            return Ok(snapshot.count_entries(column, iterator))
-        }
-
-        Ok(iterator.count())
+            Ok(iterator.count())
+        })
     }
 
     pub fn load_optional_from_disk<K: AsRef<[u8]> + ?Sized, V: Serializer>(&self, column: Column, key: &K) -> Result<Option<V>, BlockchainError> {
@@ -447,12 +519,44 @@ impl RocksStorage {
     {
         Self::iter_keys_internal(&self.db, self.snapshot.as_ref(), mode, column)
     }
+
+    pub async fn flush_and_compact(&mut self) -> Result<(), BlockchainError> {
+        let db = Arc::clone(&self.db);
+        let disable_compaction_on_flush = self.disable_compaction_on_flush;
+        // To prevent starving the current async worker,
+        // We execute the following on a blocking thread
+        // and simply await its result 
+        tokio::task::spawn_blocking(move || {
+            info!("flushing DB");
+            db.flush()
+                .context("Error while flushing DB")?;
+
+            if disable_compaction_on_flush {
+                return Ok(())                
+            }
+
+            info!("compacting DB");
+            db.compact_range::<&[u8], &[u8]>(None, None);
+            for column in Column::iter() {
+                info!("compacting {:?}", column);
+                let cf = cf_handle!(db, column);
+                db.compact_range_cf::<&[u8], &[u8]>(&cf, None, None);
+            }
+
+            info!("wait for compact");
+            let options = WaitForCompactOptions::default();
+            db.wait_for_compact(&options)
+                .context("Error while waiting on compact")
+        }).await
+            .context("Flushing DB")?
+            .map_err(BlockchainError::from)
+    }
 }
 
 #[async_trait]
 impl Storage for RocksStorage {
     // delete block at topoheight, and all its data related
-    async fn delete_block_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(Hash, Immutable<BlockHeader>, Vec<(Hash, Immutable<Transaction>)>), BlockchainError> {
+    async fn delete_block_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(Hash, Immutable<BlockHeader>), BlockchainError> {
         trace!("Delete block at topoheight {topoheight}");
 
         // delete topoheight<->hash pointers
@@ -473,7 +577,6 @@ impl Storage for RocksStorage {
         self.remove_from_disk(Column::TopoHeightMetadata, &topoheight.to_be_bytes())?;
         trace!("topoheight metadata deleted");
 
-        let mut txs = Vec::with_capacity(block.get_txs_count());
         for tx_hash in block.get_transactions() {
             if self.is_tx_executed_in_block(tx_hash, &hash).await? {
                 trace!("Tx {} was executed in block {}, deleting", topoheight, tx_hash);
@@ -485,13 +588,11 @@ impl Storage for RocksStorage {
             // which allow multiple time the same txs in differents blocks
             if !self.is_tx_linked_to_blocks(tx_hash).await? {
                 trace!("Deleting TX {} in block {}", tx_hash, hash);
-                let tx = self.delete_transaction(tx_hash).await?;
-
-                txs.push((tx_hash.clone(), tx));
+                self.delete_transaction(tx_hash).await?;
             }
         }
 
-        Ok((hash, block, txs))
+        Ok((hash, block))
     }
 
     // Get the size of the chain on disk in bytes
@@ -526,34 +627,19 @@ impl Storage for RocksStorage {
     }
 
     // Stop the storage and wait for it to finish
+    #[inline(always)]
     async fn stop(&mut self) -> Result<(), BlockchainError> {
-        let db = Arc::clone(&self.db);
-        // To prevent starving the current async worker,
-        // We execute the following on a blocking thread
-        // and simply await its result 
-        tokio::task::spawn_blocking(move || {
-            info!("compacting DB");            
-            db.compact_range::<&[u8], &[u8]>(None, None);
-            info!("wait for compact");
-            let options = WaitForCompactOptions::default();
-            db.wait_for_compact(&options)
-                .context("Error while waiting on compact")?;
-
-            info!("flushing DB");
-            db.flush()
-                .context("Error while flushing DB")
-        }).await
-            .context("Flushing DB")?
-            .map_err(BlockchainError::from)
+        self.flush_and_compact().await
     }
 
     // Flush the inner DB after a block being written
     async fn flush(&mut self) -> Result<(), BlockchainError> {
         trace!("flush DB");
-        self.db.flush().context("Error while flushing DB")?;
-        debug!("DB flushed successfully");
-
-        Ok(())
+        self.run_blocking(|| {
+            self.db.flush().context("Error while flushing DB")?;
+            debug!("DB flushed successfully");
+            Ok(())
+        })
     }
 }
 

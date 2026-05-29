@@ -19,3 +19,8 @@ pub use curve25519_dalek::ecdlp;
 
 /// Public Key type used in the system
 pub type PublicKey = elgamal::CompressedPublicKey;
+
+use pooled_arc::impl_internable;
+
+impl_internable!(Hash);
+impl_internable!(PublicKey);

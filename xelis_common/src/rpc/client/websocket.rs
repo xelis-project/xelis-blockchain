@@ -9,7 +9,7 @@ use std::{
     },
     time::Duration
 };
-use anyhow::Error;
+use anyhow::{Context, Error};
 use futures_util::{
     future::join_all,
     SinkExt,
@@ -27,13 +27,20 @@ use crate::{
     tokio::{
         sync::{broadcast, oneshot, Mutex, mpsc},
         task::JoinHandle,
-        time::{sleep, timeout},
+        time::sleep,
         spawn_task,
         select
     },
     api::SubscribeParams,
     utils::sanitize_ws_address
 };
+
+#[cfg(not(all(
+    target_arch = "wasm32",
+    target_vendor = "unknown",
+    target_os = "unknown"
+)))]
+use crate::tokio::time::timeout;
 
 use super::{JSON_RPC_VERSION, JsonRPCError, JsonRPCErrorResponse, JsonRPCResponse, JsonRPCResult};
 
@@ -176,14 +183,13 @@ pub const DEFAULT_AUTO_RECONNECT: Duration = Duration::from_secs(5);
 impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static> WebSocketJsonRPCClientImpl<E> {
 
     // Create a new WebSocketJsonRPCClient with the target address
-    pub async fn new(target: String) -> Result<WebSocketJsonRPCClient<E>, JsonRPCError> {
+    pub async fn new<T: AsRef<str>>(target: T) -> Result<WebSocketJsonRPCClient<E>, JsonRPCError> {
         Self::with(target, Duration::from_secs(15)).await
     }
 
     // Create a new WebSocketJsonRPCClient with the target address and timeout
-    pub async fn with(mut target: String, timeout_after: Duration) -> Result<WebSocketJsonRPCClient<E>, JsonRPCError> {
-        target = sanitize_ws_address(target.as_str());
-        let ws = connect(&target).await?;
+    pub async fn with<T: AsRef<str>>(target: T, timeout_after: Duration) -> Result<WebSocketJsonRPCClient<E>, JsonRPCError> {
+        let target = sanitize_ws_address(target.as_ref());
 
         let (sender, receiver) = mpsc::channel(64);
         let client = Arc::new(WebSocketJsonRPCClientImpl {
@@ -205,7 +211,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
         // Start the background task
         {
             let zelf = client.clone();
-            zelf.start_background_task(receiver, ws).await?;
+            zelf.start_background_task(receiver).await?;
         }
 
         Ok(client)
@@ -372,7 +378,6 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
         }
 
         trace!("Reconnecting to the server '{}'", self.target);
-        let ws = connect(&self.target).await?;
         {
             let mut lock = self.background_task.lock().await;
             if let Some(handle) = lock.take() {
@@ -387,7 +392,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
 
             let zelf = Arc::clone(&self);
             trace!("Starting background task after reconnecting");
-            zelf.start_background_task(receiver, ws).await?;
+            zelf.start_background_task(receiver).await?;
         }
 
         if let Err(e) = Arc::clone(&self).resubscribe_events().await {
@@ -421,15 +426,28 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
         }
     }
 
-    async fn start_background_task(self: Arc<Self>, mut receiver: mpsc::Receiver<InternalMessage>, ws: WebSocketStream) -> Result<(), JsonRPCError> {
+    async fn start_background_task(self: Arc<Self>, mut receiver: mpsc::Receiver<InternalMessage>) -> Result<(), JsonRPCError> {
         debug!("Starting background task");
         self.set_online(true).await;
 
         let zelf = Arc::clone(&self);
+        let (start_sender, start_receiver) = oneshot::channel();
         let handle = spawn_task("ws-background-task", async move {
             debug!("Starting WS background task");
 
-            let mut ws = Some(ws);
+            let (mut ws, msg) = match connect(&zelf.target).await {
+                Ok(ws) => (Some(ws), None),
+                Err(e) => {
+                    error!("Error while connecting to the server '{}': {:?}", zelf.target, e);
+                    (None, Some(e))
+                }
+            };
+
+            if let Err(e) = start_sender.send(msg) {
+                error!("Error while sending the result of the connection attempt to the background task starter: {:?}", e);
+                return;
+            }
+
             while let Some(websocket) = ws.take() {
                 debug!("Connected to the server '{}'", zelf.target);
 
@@ -499,6 +517,11 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
             debug!("Events cleared, exiting background task");
         });
 
+        if let Some(e) = start_receiver.await
+            .context("waiting on background task to start")? {
+                return Err(e.into());
+        }
+
         {
             let mut lock = self.background_task.lock().await;
             if let Some(handle) = lock.take() {
@@ -538,13 +561,13 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
                             match parsed {
                                 Value::Array(responses) => {
                                     for response in responses {
-                                        if let Err(e) = self.process_response_value(response).await {
+                                        if let Err(e) = self.process_response_value(response, &mut write).await {
                                             debug!("Error while processing batch response: {:?}", e);
                                         }
                                     }
                                 }
                                 value => {
-                                    if let Err(e) = self.process_response_value(value).await {
+                                    if let Err(e) = self.process_response_value(value, &mut write).await {
                                         debug!("Error while processing response: {:?}", e);
                                     }
                                 }
@@ -565,7 +588,10 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
         Ok(())
     }
 
-    async fn process_response_value(&self, value: Value) -> JsonRPCResult<()> {
+    async fn process_response_value<W: SinkExt<Message> + Unpin>(&self, value: Value, write: &mut W) -> JsonRPCResult<()>
+    where 
+        JsonRPCError: From<W::Error>
+    {
         let mut response: JsonRPCResponse = serde_json::from_value(value)?;
         if let Some(id) = response.id {
             // send the response to the requester if it matches the ID
@@ -580,12 +606,33 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
             }
 
             // Check if this ID corresponds to a event subscribed
+            let mut delete = false;
             {
                 let mut handlers = self.handler_by_id.lock().await;
                 if let Some(sender) = handlers.get_mut(&id) {
                     if let Err(e) = sender.send(response.result.take().unwrap_or_default()) {
                         debug!("Error sending event to the request: {:?}", e);
+                        handlers.remove(&id);
+                        delete = true;
                     }
+                }
+            }
+
+            // If the event is not send to any handler, we need to unsubscribe from it because it means that the app is not listening anymore
+            if delete {
+                let mut events = self.events_to_id.lock().await;
+                // Find the key matching the id
+                let key = events.iter()
+                    .find_map(|(k, v)| if *v == id { Some(k.clone()) } else { None });
+                if let Some(key) = key {
+                    events.remove(&key);
+                    // Send the unsubscribe request to the server
+                    write.send(Message::Text(json!({
+                        "jsonrpc": JSON_RPC_VERSION,
+                        "method": "unsubscribe",
+                        "id": Value::Null,
+                        "params": key
+                    }).to_string().into())).await?;
                 }
             }
         }
@@ -718,9 +765,11 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
     async fn send_internal<P: Serialize, R: DeserializeOwned>(&self, method: &str, id: usize, params: &P, receiver: oneshot::Receiver<JsonRPCResponse>) -> JsonRPCResult<R> {
         self.send_message_internal(Some(id), method, params).await?;
 
-        let response = timeout(self.timeout_after, receiver).await
-            .map_err(|_| JsonRPCError::TimedOut(json!({ "method": method, "params": params }).to_string()))?
-            .map_err(|e| JsonRPCError::NoResponse(json!({ "method": method, "params": params }).to_string(), e.to_string()))?;
+        let response = recv_with_timeout(
+            self.timeout_after,
+            receiver,
+            json!({ "method": method, "params": params })
+        ).await?;
 
         if let Some(error) = response.error {
             return Err(JsonRPCError::ServerError {
@@ -732,7 +781,7 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
 
         let result = response.result.unwrap_or(Value::Null);
 
-        Ok(serde_json::from_value(result)?)
+        serde_json::from_value(result).map_err(|e| e.into())
     }
 
     // Send a batch of requests with heterogeneous params/results
@@ -763,13 +812,15 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
 
         self.send_value(Value::Array(payload)).await?;
 
+        let timeout_after = self.timeout_after;
         let futures = receivers
             .into_iter()
             .map(|(id, receiver)| async move {
-                let response = timeout(self.timeout_after, receiver)
-                    .await
-                    .map_err(|_| JsonRPCError::TimedOut(json!({ "id": id }).to_string()))?
-                    .map_err(|e| JsonRPCError::NoResponse(json!({ "id": id }).to_string(), e.to_string()))?;
+                let response = recv_with_timeout(
+                    timeout_after,
+                    receiver,
+                    json!({ "id": id })
+                ).await?;
 
                 Ok::<_, JsonRPCError>(BatchResponse {
                     id,
@@ -799,15 +850,71 @@ impl<E: Serialize + Hash + Eq + Send + Sync + Clone + std::fmt::Debug + 'static>
     }
 
     // Send a request to the server without waiting for the response
+    #[inline]
     pub async fn notify_with<P: Serialize>(&self, method: &str, params: &P) -> JsonRPCResult<()> {
         trace!("Notifying method '{}' with {}", method, json!(params));
-        self.send_message_internal(None, method, params).await?;
-        Ok(())
+        self.send_message_internal(None, method, params).await
     }
 
     // Send a request to the server without waiting for the response
+    #[inline]
     pub async fn notify<P: Serialize>(&self, method: &str) -> JsonRPCResult<()> {
         trace!("Notifying method '{}'", method);
         self.notify_with(method, &Value::Null).await
+    }
+}
+
+// Helper function for receiving with timeout - non-WASM version uses standard timeout
+#[cfg(not(all(
+    target_arch = "wasm32",
+    target_vendor = "unknown",
+    target_os = "unknown"
+)))]
+async fn recv_with_timeout<T>(
+    timeout_after: Duration,
+    receiver: oneshot::Receiver<T>,
+    context: Value,
+) -> JsonRPCResult<T> {
+    let context = context.to_string();
+    timeout(timeout_after, receiver)
+        .await
+        .map_err(|_| JsonRPCError::TimedOut(context.clone()))?
+        .map_err(|e| JsonRPCError::NoResponse(context, e.to_string()))
+}
+
+// Helper function for receiving with timeout - WASM version uses a dedicated task
+// to avoid the non-Send timeout future issue on WASM
+#[cfg(all(
+    target_arch = "wasm32",
+    target_vendor = "unknown",
+    target_os = "unknown"
+))]
+async fn recv_with_timeout<T>(
+    timeout_after: Duration,
+    receiver: oneshot::Receiver<T>,
+    context: Value,
+) -> JsonRPCResult<T> {
+    let context = context.to_string();
+    
+    // Create a channel for timeout signal
+    let (timeout_sender, timeout_receiver) = oneshot::channel::<()>();
+    
+    // Spawn a task that will signal timeout after the duration
+    // When the task completes, it drops timeout_sender which causes
+    // timeout_receiver to return an error, signaling the timeout
+    spawn_task("ws-timeout", async move {
+        sleep(timeout_after).await;
+        // Dropping timeout_sender by sending or just letting it drop
+        let _ = timeout_sender.send(());
+    });
+    
+    // Race between the actual response and the timeout signal
+    select! {
+        result = receiver => {
+            result.map_err(|e| JsonRPCError::NoResponse(context, e.to_string()))
+        }
+        _ = timeout_receiver => {
+            Err(JsonRPCError::TimedOut(context))
+        }
     }
 }

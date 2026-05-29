@@ -8,10 +8,10 @@ use crate::{
         proofs::G
     },
     transaction::{
-        tests::{MockAccount, MockChainState},
+        mock::{MockAccount, MockChainState},
         verify::{BlockchainApplyState, BlockchainContractState}
     },
-    versioned_type::VersionedState
+    versioned::VersionedState
 };
 
 #[tokio::test]

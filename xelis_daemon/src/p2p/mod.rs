@@ -444,15 +444,22 @@ impl<S: Storage> P2pServer<S> {
         let (mut stream, addr) = res?;
 
         // Verify if we can accept new connections
-        let reject = !self.is_compatible_with_exclusive_nodes(&addr)
-            // check that this incoming peer isn't blacklisted
-            || !self.accept_new_connections().await
-            || !self.peer_list.is_allowed(&addr.ip()).await?
-            || self.is_connected_to_addr(&addr).await;
+        let mut reject = true;
+
+        if !self.is_compatible_with_exclusive_nodes(&addr) {
+            debug!("Not in exclusive node list: {}, rejecting", addr);
+        } else if !self.accept_new_connections().await {
+            debug!("Max peers reached, rejecting connection from {}", addr);
+        } else if !self.peer_list.is_allowed(&addr.ip()).await? {
+            debug!("{} is not allowed, rejecting connection", addr);
+        } else if self.is_connected_to_addr(&addr).await {
+            debug!("Already connected to peer: {}, rejecting", addr);
+        } else {
+            reject = false;
+        }
 
         // Reject connection
         if reject {
-            debug!("Rejecting connection from {}", addr);
             stream.shutdown().await?;
             return Ok(())
         }
@@ -563,6 +570,20 @@ impl<S: Storage> P2pServer<S> {
         }
 
         Ok(())
+    }
+
+    // Request the inventory of all connected peers
+    pub async fn request_peers_inventory(&self) {
+        let peers = self.peer_list.get_cloned_peers().await;
+        stream::iter(peers)
+            .for_each_concurrent(self.stream_concurrency, |peer| async move {
+                debug!("Requesting inventory from peer {}", peer);
+                peer.set_requested_inventory(false);
+                if let Err(e) = self.request_inventory_of(&peer).await {
+                    debug!("Error while requesting inventory from peer {}: {}", peer, e);
+                }
+            })
+            .await;
     }
 
     // Build a handshake packet
@@ -2343,7 +2364,8 @@ impl<S: Storage> P2pServer<S> {
                 }
             },
             Packet::BootstrapChainRequest(request) => {
-                self.handle_bootstrap_chain_request(peer, request).await?;
+                let response = self.handle_bootstrap_chain_request(peer, request).await?;
+                peer.send_packet(Packet::BootstrapChainResponse(response)).await?;
             },
             Packet::BootstrapChainResponse(response) => {
                 debug!("Received a bootstrap chain response ({:?}) from {}", response.kind(), peer);

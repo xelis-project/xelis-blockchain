@@ -19,8 +19,12 @@ use crate::{
         ContractMetadata,
         ModuleMetadata,
         OpaqueRistrettoPoint,
+        OpaqueScalar,
     },
-    crypto::{Address, elgamal::{Ciphertext, CompressedCiphertext, RISTRETTO_COMPRESSED_SIZE}},
+    crypto::{
+        Address,
+        elgamal::*
+    },
     serializer::{Serializer, Writer}
 };
 
@@ -117,7 +121,7 @@ pub fn ciphertext_sub_plaintext(zelf: FnInstance, mut params: FnParams, _: &Modu
     Ok(SysCallResult::None)
 }
 
-pub fn ciphertext_new(_: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn ciphertext_generate(_: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let amount = params.remove(1)
         .into_owned()
         .as_u64()?;
@@ -133,6 +137,110 @@ pub fn ciphertext_new(_: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_
     Ok(SysCallResult::Return(Primitive::Opaque(ciphertext.into()).into()))
 }
 
+pub fn ciphertext_new(_: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+    let handle: OpaqueRistrettoPoint = params.remove(1)
+        .into_owned()
+        .into_opaque_type()?;
+    let commitment: OpaqueRistrettoPoint = params.remove(0)
+        .into_owned()
+        .into_opaque_type()?;
+
+    let ciphertext = match (handle, commitment) {
+        (OpaqueRistrettoPoint::Compressed(handle), OpaqueRistrettoPoint::Compressed(commitment)) => {
+            CiphertextCache::Compressed(CompressedCiphertext::new(CompressedCommitment::new(commitment), CompressedHandle::new(handle)))
+        },
+        (OpaqueRistrettoPoint::Decompressed(compressed_handle, handle), OpaqueRistrettoPoint::Decompressed(compressed_commitment, commitment)) => {
+            let compressed = match (compressed_handle, compressed_commitment) {
+                (Some(compressed_handle), Some(compressed_commitment)) => Some(CompressedCiphertext::new(CompressedCommitment::new(compressed_commitment), CompressedHandle::new(compressed_handle))),
+                _ => None,
+            };
+
+            CiphertextCache::Decompressed(compressed, Ciphertext::new(PedersenCommitment::from_point(commitment), DecryptHandle::from_point(handle)))
+        },
+        (handle, commitment) => {
+            let handle = handle.into_point()
+                .context("Invalid handle")?;
+            let commitment = commitment.into_point()
+                .context("Invalid commitment")?;
+
+            CiphertextCache::Decompressed(None, Ciphertext::new(PedersenCommitment::from_point(commitment), DecryptHandle::from_point(handle)))
+        }
+    };
+
+    Ok(SysCallResult::Return(Primitive::Opaque(ciphertext.into()).into()))
+}
+
+pub fn ciphertext_add_ct(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+    let mut zelf = zelf?;
+
+    let other: CiphertextCache = params.remove(0)
+        .into_owned()
+        .into_opaque_type()?;
+
+    let ct: &mut CiphertextCache = zelf.as_opaque_type_mut()?;
+
+    let ct_computable = ct.computable()
+        .context("Self not computable")?;
+    let other_computable = other.take_ciphertext()
+        .context("Ciphertext not computable")?;
+
+    *ct_computable += other_computable;
+
+    Ok(SysCallResult::None)
+}
+
+pub fn ciphertext_sub_ct(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+    let mut zelf = zelf?;
+
+    let other: CiphertextCache = params.remove(0)
+        .into_owned()
+        .into_opaque_type()?;
+
+    let ct: &mut CiphertextCache = zelf.as_opaque_type_mut()?;
+
+    let ct_computable = ct.computable()
+        .context("Self not computable")?;
+    let other_computable = other.take_ciphertext()
+        .context("Ciphertext not computable")?;
+
+    *ct_computable -= other_computable;
+
+    Ok(SysCallResult::None)
+}
+
+pub fn ciphertext_add_scalar(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+    let mut zelf = zelf?;
+
+    let scalar: OpaqueScalar = params.remove(0)
+        .into_owned()
+        .into_opaque_type()?;
+
+    let ct: &mut CiphertextCache = zelf.as_opaque_type_mut()?;
+
+    let ct_computable = ct.computable()
+        .context("Self not computable")?;
+
+    *ct_computable += scalar.0;
+
+    Ok(SysCallResult::None)
+}
+
+pub fn ciphertext_sub_scalar(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+    let mut zelf = zelf?;
+
+    let scalar: OpaqueScalar = params.remove(0)
+        .into_owned()
+        .into_opaque_type()?;
+
+    let ct: &mut CiphertextCache = zelf.as_opaque_type_mut()?;
+
+    let ct_computable = ct.computable()
+        .context("Self not computable")?;
+
+    *ct_computable -= scalar.0;
+
+    Ok(SysCallResult::None)
+}
 
 pub fn ciphertext_zero(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let ciphertext = CiphertextCache::Decompressed(Some(CompressedCiphertext::zero()), Ciphertext::zero());

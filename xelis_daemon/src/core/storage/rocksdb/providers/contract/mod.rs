@@ -59,7 +59,7 @@ impl ContractStorage for RocksStorage {
 }
 
 #[async_trait]
-impl ContractProvider for RocksStorage {
+impl<'ty> ContractProvider<'ty> for RocksStorage {
     async fn get_contract_balance_for_asset(&self, contract: &Hash, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, u64)>, anyhow::Error> {
         trace!("get contract balance for contract {} asset {}", contract, asset);
         let res = self.get_contract_balance_at_maximum_topoheight(contract, asset, topoheight).await?;

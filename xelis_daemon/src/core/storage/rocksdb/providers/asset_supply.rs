@@ -3,7 +3,7 @@ use log::trace;
 use xelis_common::{
     block::TopoHeight,
     crypto::Hash,
-    versioned_type::Versioned
+    versioned::Versioned
 };
 use crate::core::{
     error::BlockchainError,
@@ -42,32 +42,34 @@ impl AssetCirculatingSupplyProvider for RocksStorage {
     // Get the supply at the maximum topoheight
     async fn get_circulating_supply_for_asset_at_maximum_topoheight(&self, asset: &Hash, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedSupply)>, BlockchainError> {
         trace!("get asset {} supply at maximum topoheight {}", asset, maximum_topoheight);
-        let Some(asset) = self.get_optional_asset_type(asset)? else {
-            return Ok(None)
-        };
-        let Some(pointer) = asset.supply_pointer else {
-            return Ok(None)
-        };
+        self.run_blocking(|| {
+            let Some(asset) = self.get_optional_asset_type(asset)? else {
+                return Ok(None)
+            };
+            let Some(pointer) = asset.supply_pointer else {
+                return Ok(None)
+            };
 
-        let versioned_key = Self::get_asset_versioned_key(maximum_topoheight, asset.id);
-        let start_topo = if pointer > maximum_topoheight && self.contains_data(Column::VersionedAssetsSupply, &versioned_key)? {
-            maximum_topoheight
-        } else {
-            pointer
-        };
+            let versioned_key = Self::get_asset_versioned_key(maximum_topoheight, asset.id);
+            let start_topo = if pointer > maximum_topoheight && self.contains_data(Column::VersionedAssetsSupply, &versioned_key)? {
+                maximum_topoheight
+            } else {
+                pointer
+            };
 
-        let mut prev_topo = Some(start_topo);
-        while let Some(topo) = prev_topo {
-            let versioned_key = Self::get_asset_versioned_key(topo, asset.id);
-            if topo <= maximum_topoheight {
-                let version = self.load_from_disk(Column::VersionedAssetsSupply, &versioned_key)?;
-                return Ok(Some((topo, version)))
+            let mut prev_topo = Some(start_topo);
+            while let Some(topo) = prev_topo {
+                let versioned_key = Self::get_asset_versioned_key(topo, asset.id);
+                if topo <= maximum_topoheight {
+                    let version = self.load_from_disk(Column::VersionedAssetsSupply, &versioned_key)?;
+                    return Ok(Some((topo, version)))
+                }
+
+                prev_topo = self.load_from_disk(Column::VersionedAssetsSupply, &versioned_key)?;
             }
 
-            prev_topo = self.load_from_disk(Column::VersionedAssetsSupply, &versioned_key)?;
-        }
-
-        Ok(None)
+            Ok(None)
+        })
     }
 
     // Set the latest supply pointer for this asset and store the versioned data

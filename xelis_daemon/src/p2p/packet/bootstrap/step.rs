@@ -5,7 +5,7 @@ use xelis_common::{
     account::{AccountSummary, Balance, Nonce},
     asset::AssetData,
     block::TopoHeight,
-    contract::ContractModule,
+    contract::{ContractModule, EventCallbackRegistration},
     crypto::{
         Hash,
         PublicKey
@@ -17,7 +17,7 @@ use xelis_common::{
         Writer
     },
     transaction::MultiSigPayload,
-    versioned_type::State
+    versioned::State
 };
 use xelis_vm::ValueCell;
 use crate::{
@@ -99,6 +99,8 @@ pub enum StepRequest<'a> {
     ContractStores(Cow<'a, Hash>, TopoHeight, u64),
     // Min topoheight, Max topoheight, pagination
     ContractsExecutions(TopoHeight, TopoHeight, Option<u64>),
+    // Request the contracts events registered for a given contract
+    ContractsEvents(Cow<'a, Hash>, TopoHeight, TopoHeight, Option<u64>),
     // Request blocks metadata starting topoheight
     BlocksMetadata(TopoHeight)
 }
@@ -118,12 +120,14 @@ impl<'a> StepRequest<'a> {
             Self::ContractBalances(_, _, _) => StepKind::Contracts,
             Self::ContractStores(_, _, _) => StepKind::Contracts,
             Self::ContractsExecutions(_, _, _) => StepKind::Contracts,
+            Self::ContractsEvents(_, _, _, _) => StepKind::Contracts,
             Self::BlocksMetadata(_) => StepKind::BlocksMetadata
         }
     }
 
     pub fn get_requested_topoheight(&self) -> Option<u64> {
         Some(*match self {
+            Self::ChainInfo(_) => return None,
             Self::Assets(_, topo, _) => topo,
             Self::AssetsSupply(topo, _) => topo,
             Self::Keys(_, topo, _) => topo,
@@ -134,8 +138,9 @@ impl<'a> StepRequest<'a> {
             Self::ContractModule(_, topo, _) => topo,
             Self::ContractBalances(_, topo, _) => topo,
             Self::ContractStores(_, topo, _) => topo,
+            Self::ContractsExecutions(_, topo, _) => topo,
+            Self::ContractsEvents(_, _, topo, _) => topo,
             Self::BlocksMetadata(topo) => topo,
-            _ => return None,
         })
     }
 }
@@ -309,6 +314,21 @@ impl Serializer for StepRequest<'_> {
                 Self::ContractsExecutions(min, max, page)
             },
             12 => {
+                let hash = Cow::read(reader)?;
+                let min_topoheight = reader.read_u64()?;
+                let max_topoheight = reader.read_u64()?;
+
+                let page = Option::read(reader)?;
+                if let Some(page_number) = &page {
+                    if *page_number == 0 {
+                        debug!("Invalid page number (0) in Step Request");
+                        return Err(ReaderError::InvalidValue)
+                    }
+                }
+
+                Self::ContractsEvents(hash, min_topoheight, max_topoheight, page)
+            },
+            13 => {
                 Self::BlocksMetadata(reader.read_u64()?)
             },
             id => {
@@ -394,8 +414,15 @@ impl Serializer for StepRequest<'_> {
                 max.write(writer);
                 page.write(writer);
             },
-            Self::BlocksMetadata(topoheight) => {
+            Self::ContractsEvents(hash, min_topoheight, max_topoheight, page) => {
                 writer.write_u8(12);
+                hash.write(writer);
+                min_topoheight.write(writer);
+                max_topoheight.write(writer);
+                page.write(writer);
+            },
+            Self::BlocksMetadata(topoheight) => {
+                writer.write_u8(13);
                 topoheight.write(writer);
             },
         };
@@ -415,6 +442,7 @@ impl Serializer for StepRequest<'_> {
             Self::ContractBalances(hash, topoheight, page) => hash.size() + topoheight.size() + page.size(),
             Self::ContractStores(hash, topoheight, skip) => hash.size() + topoheight.size() + skip.size(),
             Self::ContractsExecutions(min, max, page) => min.size() + max.size() + page.size(),
+            Self::ContractsEvents(hash, min_topoheight, max_topoheight, page) => hash.size() + min_topoheight.size() + max_topoheight.size() + page.size(),
             Self::BlocksMetadata(topoheight) => topoheight.size()
         };
         // 1 for the id
@@ -454,6 +482,9 @@ pub enum StepResponse {
     ContractStores(IndexMap<ValueCell, ValueCell>, u64),
     // Contract executions
     ContractsExecutions(IndexSet<ScheduledExecutionMetadata>, Option<u64>),
+    // Contracts events registered for the requested
+    // event id, listener contract and max topoheight (for pagination)
+    ContractsEvents(IndexMap<(Hash, u64), Option<EventCallbackRegistration>>, Option<u64>),
     // top blocks metadata
     BlocksMetadata(IndexSet<BlockMetadata>),
 }
@@ -473,6 +504,7 @@ impl StepResponse {
             Self::ContractBalances(_, _) => StepKind::Contracts,
             Self::ContractStores(_, _) => StepKind::Contracts,
             Self::ContractsExecutions(_, _) => StepKind::Contracts,
+            Self::ContractsEvents(_, _) => StepKind::Contracts,
             Self::BlocksMetadata(_) => StepKind::BlocksMetadata
         }
     }
@@ -704,6 +736,35 @@ impl Serializer for StepResponse {
             }
             12 => {
                 let len = reader.read_u16()?;
+                if len > MAX_ITEMS_PER_PAGE as u16 {
+                    debug!("Invalid contracts events response length: {}", len);
+                    return Err(ReaderError::InvalidValue)
+                }
+
+                let mut events = IndexMap::with_capacity(len as usize);
+                for _ in 0..len {
+                    let listener_contract = Hash::read(reader)?;
+                    let event_id = reader.read_u64()?;
+
+                    let event = Option::read(reader)?;
+                    if events.insert((listener_contract, event_id), event).is_some() {
+                        debug!("Duplicated contract event in Step Response");
+                        return Err(ReaderError::InvalidValue)
+                    }
+                }
+
+                let page = Option::read(reader)?;
+                if let Some(page_number) = &page {
+                    if *page_number == 0 {
+                        debug!("Invalid page number (0) in Step Response");
+                        return Err(ReaderError::InvalidValue)
+                    }
+                }
+
+                Self::ContractsEvents(events, page)
+            },
+            13 => {
+                let len = reader.read_u16()?;
                 if len > PRUNE_SAFETY_LIMIT as u16 + 1 {
                     debug!("Invalid blocks metadata response length: {}", len);
                     return Err(ReaderError::InvalidValue)
@@ -788,8 +849,13 @@ impl Serializer for StepResponse {
                 executions.write(writer);
                 page.write(writer);
             },
-            Self::BlocksMetadata(blocks) => {
+            Self::ContractsEvents(events, page) => {
                 writer.write_u8(12);
+                events.write(writer);
+                page.write(writer);
+            },
+            Self::BlocksMetadata(blocks) => {
+                writer.write_u8(13);
                 blocks.write(writer);
             }
         };
@@ -809,6 +875,7 @@ impl Serializer for StepResponse {
             Self::ContractBalances(assets, page) => assets.size() + page.size(),
             Self::ContractStores(entries, next_skip) => entries.size() + next_skip.size(),
             Self::ContractsExecutions(executions, page) => executions.size() + page.size(),
+            Self::ContractsEvents(events, page) => events.size() + page.size(),
             Self::BlocksMetadata(blocks) => blocks.size()
         };
         // 1 for the id

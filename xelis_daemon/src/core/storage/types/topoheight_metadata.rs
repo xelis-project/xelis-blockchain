@@ -9,6 +9,8 @@ pub struct TopoHeightMetadata {
     pub total_fees: u64,
     // total fee burned at this topoheight
     pub total_fees_burned: u64,
+    // if the block was calculated as a side block
+    pub is_side_block: bool,
 }
 
 impl Serializer for TopoHeightMetadata {
@@ -17,12 +19,14 @@ impl Serializer for TopoHeightMetadata {
         let emitted_supply = reader.read_u64()?;
         let total_fees = reader.read_u64()?;
         let total_fees_burned = reader.read_u64()?;
+        let is_side_block = reader.read_bool()?;
 
         Ok(Self {
             block_reward: rewards,
             emitted_supply,
             total_fees,
             total_fees_burned,
+            is_side_block,
         })
     }
 
@@ -31,6 +35,7 @@ impl Serializer for TopoHeightMetadata {
         self.emitted_supply.write(writer);
         self.total_fees.write(writer);
         self.total_fees_burned.write(writer);
+        self.is_side_block.write(writer);
     }
 
     fn size(&self) -> usize {
@@ -38,5 +43,6 @@ impl Serializer for TopoHeightMetadata {
         + self.emitted_supply.size()
         + self.total_fees.size()
         + self.total_fees_burned.size()
+        + self.is_side_block.size()
     }
 }

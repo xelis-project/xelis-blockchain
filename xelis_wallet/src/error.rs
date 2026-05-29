@@ -1,19 +1,22 @@
-use strum::{EnumDiscriminants, IntoDiscriminant};
+use strum::{EnumDiscriminants, IntoDiscriminant, IntoStaticStr};
 use thiserror::Error;
 use chacha20poly1305::Error as CryptoError;
-#[cfg(feature = "network_handler")]
-use super::network_handler::NetworkError;
 use xelis_common::{
-    crypto::Hash,
-    transaction::extra_data::CipherFormatError,
+    crypto::{Hash, elgamal::DecompressionError, proofs::ProofGenerationError},
+    error::ErrorWithKind,
+    transaction::{builder::{GenerationError, GenerationStateError},
+    extra_data::CipherFormatError},
     utils::{format_coin, format_xelis}
 };
+
 #[cfg(feature = "xswd")]
-use xelis_common::rpc::InternalRpcError;
+use xelis_common::rpc::{RPCError, InternalRpcError};
 
-use anyhow::Error;
+#[cfg(feature = "network_handler")]
+use super::network_handler::NetworkError;
 
-#[derive(Error, Debug, EnumDiscriminants)]
+#[derive(Error, Debug, EnumDiscriminants, IntoStaticStr)]
+#[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum WalletError {
     #[error("Cipher error")]
     Cipher,
@@ -70,7 +73,7 @@ pub enum WalletError {
     #[error("Topoheight is too high to rescan")]
     RescanTopoheightTooHigh,
     #[error(transparent)]
-    Any(#[from] Error),
+    Any(#[from] ErrorWithKind),
     #[error("No API Server is running")]
     NoAPIServer,
     #[error("RPC Server is not running")]
@@ -99,7 +102,28 @@ pub enum WalletError {
     #[error("Poison error")]
     PoisonError,
     #[error("unsupported operation")]
-    Unsupported
+    Unsupported,
+    #[error(transparent)]
+    GenerationError(#[from] GenerationError),
+    #[error(transparent)]
+    ProofGenerationError(#[from] ProofGenerationError),
+    #[error(transparent)]
+    DecompressionError(#[from] DecompressionError),
+}
+
+impl From<GenerationStateError<Self>> for WalletError {
+    fn from(value: GenerationStateError<Self>) -> Self {
+        match value {
+            GenerationStateError::State(e) => e,
+            GenerationStateError::GenerationError(e) => Self::GenerationError(e),
+        }
+    }
+}
+
+impl From<anyhow::Error> for WalletError {
+    fn from(value: anyhow::Error) -> Self {
+        Self::Any(ErrorWithKind::from(value))
+    }
 }
 
 impl WalletError {
@@ -107,11 +131,30 @@ impl WalletError {
     pub  fn id(&self) -> usize {
         self.discriminant() as usize
     }
+
+    // Return the kind for the variant, used for RPC error mapping
+    pub fn kind(&self) -> &'static str {
+        match self {
+            WalletError::Any(e) => e.kind,
+            WalletError::GenerationError(e) => e.into(),
+            _ => self.into()
+        }
+    }
+}
+
+#[cfg(feature = "xswd")]
+impl RPCError for WalletError {
+    fn kind(&self) -> &'static str {
+        WalletError::kind(self)
+    }
 }
 
 #[cfg(feature = "xswd")]
 impl From<WalletError> for InternalRpcError {
     fn from(e: WalletError) -> Self {
-        InternalRpcError::AnyError(e.into())
+        InternalRpcError::Any {
+            kind: e.kind(),
+            error: e.into()
+        }
     }
 }

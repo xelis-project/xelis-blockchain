@@ -1,6 +1,6 @@
 [package]
 name = "xelis_wallet"
-version = "1.21.3"
+version = "1.22.0"
 edition = "2021"
 authors = ["Slixe <slixeprivate@gmail.com>"]
 
@@ -55,3 +55,8 @@ tokio-multi-thread = ["xelis_common/tokio-multi-thread"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "xelis_wallet"
+path = "src/main.rs"
+required-features = ["cli"]

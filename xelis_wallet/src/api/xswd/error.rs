@@ -1,14 +1,16 @@
+use strum::IntoStaticStr;
 use thiserror::Error;
 use xelis_common::rpc::InternalRpcError;
 
-#[derive(Error, Debug, Clone)]
+#[derive(Error, Debug, Clone, IntoStaticStr)]
+#[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum XSWDError {
     #[error("semaphore error")]
     SemaphoreError,
     #[error("Permission denied")]
     PermissionDenied,
-    #[error("Permission invalid: method wasn't mentionned during handshake")]
-    PermissionInvalid,
+    #[error("Permission unknown: method wasn't mentioned during handshake")]
+    PermissionUnknown,
     #[error("Application not found")]
     ApplicationNotFound,
     #[error("Invalid application data")]
@@ -34,12 +36,14 @@ pub enum XSWDError {
     #[error("Application permissions are not signed")]
     ApplicationPermissionsNotSigned,
     #[error("Invalid signature for application data")]
-    InvalidSignatureForApplicationData
+    InvalidSignatureForApplicationData,
 }
 
 impl From<XSWDError> for InternalRpcError {
-    fn from(e: XSWDError) -> Self {
-        let err = e.into();
-        InternalRpcError::AnyError(err)
+    fn from(value: XSWDError) -> Self {
+        InternalRpcError::Any {
+            kind: (&value).into(),
+            error: value.into()
+        }
     }
 }

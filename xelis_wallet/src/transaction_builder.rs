@@ -103,13 +103,11 @@ impl TransactionBuilderState {
 
     pub async fn from_tx(storage: &EncryptedStorage, transaction: &Transaction, mainnet: bool) -> Result<Self, WalletError> {
         let mut state = Self::new(mainnet, transaction.get_reference().clone(), transaction.get_nonce(), Some(transaction.get_fee_limit()));
-        let ciphertexts = transaction.get_expected_sender_outputs()
-            .map_err(|e| WalletError::Any(e.into()))?;
+        let ciphertexts = transaction.get_expected_sender_outputs()?;
 
         for (asset, ct) in ciphertexts {
             let (mut balance, _) = storage.get_unconfirmed_balance_for(asset).await?;
-            let balance_ct = balance.ciphertext.computable()
-                .map_err(|e| WalletError::Any(e.into()))?;
+            let balance_ct = balance.ciphertext.computable()?;
 
             *balance_ct -= ct;
             state.add_balance(asset.clone(), balance);

@@ -8,6 +8,7 @@ use xelis_vm::{
     FnInstance,
     FnParams,
     FnReturnType,
+    ModuleValidator,
     Primitive,
     Reference,
     SysCallResult,
@@ -24,7 +25,7 @@ use crate::{
         ModuleMetadata,
         ContractModule
     },
-    versioned_type::VersionedState,
+    versioned::VersionedState,
     crypto::Hash,
     transaction::ContractDeposit
 };
@@ -55,7 +56,7 @@ impl Serializable for OpaqueContract {}
 
 impl JSONHelper for OpaqueContract {}
 
-pub async fn contract_new<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+pub async fn contract_new<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
     let contract: Hash = params.remove(0)
@@ -94,7 +95,7 @@ pub async fn contract_new<'a, 'ty, 'r, P: ContractProvider>(_: FnInstance<'a>, m
     Ok(SysCallResult::Return(opaque.into()))
 }
 
-pub async fn contract_call<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+pub async fn contract_call<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let opaque: &OpaqueContract = zelf.as_opaque_type()?;
 
@@ -125,8 +126,30 @@ pub async fn contract_call<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a
         return Err(EnvironmentError::Static("Permission denied to call this contract"));
     }
 
+    // For backward compatibility, we need to switch the environment
+    let environment = if metadata.metadata.contract_version != opaque.contract_module.version {
+        debug!("Contract version is different between caller ({}) and callee ({}).", metadata.metadata.contract_version, opaque.contract_module.version);
+        Some(
+            chain_state
+                .environments
+                .get(&opaque.contract_module.version)
+                .cloned()
+                .ok_or(EnvironmentError::Static("Contract environment not found"))?
+        )
+    } else {
+        None
+    };
+
+    // Verify the chunk and parameters before executing the contract
+    let validator = ModuleValidator::new(&opaque.contract_module.module, environment.as_ref().map_or(&metadata.environment, |e| &e));
+    validator.verify_invoke_chunk(chunk_id as usize, p.iter().map(|v| v.as_ref()))
+        .map_err(|e| {
+            debug!("Contract call {} chunk {} validation failed from {}: {}", opaque.hash, chunk_id, metadata.metadata.contract_executor, e);
+            EnvironmentError::Static("Invalid parameters for contract call")
+        })?;
+
     let mut deposits = IndexMap::new();
-    for (mut k, v) in assets {
+    for (k, v) in assets {
         let asset: Hash = k.into_opaque_type()?;
         let amount = v.as_ref().as_u64()?;
 
@@ -148,22 +171,8 @@ pub async fn contract_call<'a, 'ty, 'r, P: ContractProvider>(zelf: FnInstance<'a
 
     let p = p.into_iter()
         .rev()
-        .map(|v| v.to_owned().into())
+        .map(|v| v.as_ref().clone().into())
         .collect::<VecDeque<_>>();
-
-    // For backward compatibility, we need to switch the environment
-    let environment = if metadata.metadata.contract_version != opaque.contract_module.version {
-        debug!("Contract version is different between caller ({}) and callee ({}).", metadata.metadata.contract_version, opaque.contract_module.version);
-        Some(
-            chain_state
-                .environments
-                .get(&opaque.contract_module.version)
-                .cloned()
-                .ok_or(EnvironmentError::Static("Contract environment not found"))?
-        )
-    } else {
-        None
-    };
 
     Ok(SysCallResult::ModuleCall {
         module: opaque.contract_module.module.clone(),
@@ -205,7 +214,7 @@ pub async fn contract_delegate<'a, 'ty, 'r>(zelf: FnInstance<'a>, mut params: Fn
             Reference::Borrowed(v) => Arc::new((**v).clone()),
             Reference::Shared(v) => v.clone(),
         },
-        // TODO: fetch the environment when we have a different one
+        // Environment stay the same as we have currently
         environment: None,
         chunk: chunk_id,
         params: p,

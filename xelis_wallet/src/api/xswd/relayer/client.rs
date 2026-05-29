@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashMap, sync::Arc};
+use std::{borrow::Cow, collections::HashMap, sync::Arc, time::Duration};
 
 use futures::{SinkExt, StreamExt};
 use log::{error, debug};
@@ -14,6 +14,7 @@ use xelis_common::{
     tokio::{
         select,
         spawn_task,
+        time::sleep,
         sync::{RwLock, mpsc},
         task
     }
@@ -38,34 +39,58 @@ pub struct ClientImpl {
     target: String,
     sender: mpsc::Sender<InternalMessage>,
     events: RwLock<HashMap<NotifyEvent, task::JoinHandle<()>>>,
+    auto_reconnect: bool,
 }
 
 pub type Client = Arc<ClientImpl>;
 
 impl ClientImpl {
-    pub async fn new<W>(target: String, relayer: XSWDRelayerShared<W>, encryption_mode: Option<EncryptionMode>, state: AppStateShared) -> Result<Client, anyhow::Error>
+    pub async fn new<W>(target: String, relayer: XSWDRelayerShared<W>, encryption_mode: Option<EncryptionMode>, state: AppStateShared, auto_reconnect: bool) -> Result<Client, anyhow::Error>
     where
         W: ShareableTid<'static> + XSWDHandler
     {
         // Create a cipher based on the provided encryption mode
-        let cipher = Cipher::new(encryption_mode)?;
+        let mut cipher = Cipher::new(encryption_mode)?;
 
-        let ws = connect(&target).await?;
-        let (sender, receiver) = mpsc::channel(64);
+        let mut ws = connect(&target).await?;
+        let (sender, mut receiver) = mpsc::channel(64);
 
         let client = Arc::new(Self {
             target,
             sender,
             events: RwLock::new(HashMap::new()),
+            auto_reconnect,
         });
 
         {
             let client = client.clone();
             spawn_task(format!("xswd-relayer-{}", state.get_id()), async move {
-                if let Err(e) = Self::background_task(client, ws, &state, &relayer, receiver, cipher).await {
-                    debug!("Error on xswd relayer #{}: {}", state.get_id(), e);
+                loop {
+                    if let Err(e) = Self::background_task(&client, ws, &state, &relayer, &mut receiver, &mut cipher).await {
+                        debug!("Error on xswd relayer #{}: {}", state.get_id(), e);
+
+                        if client.auto_reconnect {
+                            debug!("Reconnecting to xswd relayer in 5 seconds #{}...", state.get_id());
+                            sleep(Duration::from_secs(5)).await;
+
+                            match connect(&client.target).await {
+                                Ok(new_ws) => {
+                                    debug!("Reconnected to xswd relayer #{}", state.get_id());
+                                    ws = new_ws;
+
+                                    // Loop to try again
+                                    continue;
+                                },
+                                Err(e) => {
+                                    error!("Failed to reconnect to xswd relayer #{}: {}", state.get_id(), e);
+                                }
+                            }
+                        }
+                    }
+
+                    break;
                 }
-    
+
                 relayer.on_close(state).await;
             });
         }
@@ -73,10 +98,13 @@ impl ClientImpl {
         Ok(client)
     }
 
+    /// Target URL of the relayer
+    #[inline(always)]
     pub fn target(&self) -> &str {
         &self.target
     }
 
+    /// Send a message to the relayer
     pub async fn send_message<V: ToString>(&self, msg: V) -> bool {
         if let Err(e) = self.sender.send(InternalMessage::Send(msg.to_string())).await {
             error!("Error while sending message: {}", e);
@@ -86,19 +114,21 @@ impl ClientImpl {
         true
     }
 
+    /// Close the connection to the relayer
     pub async fn close(&self) {
         if let Err(e) = self.sender.send(InternalMessage::Close).await {
             error!("Error while sending close message: {}", e);
         }
     }
 
+    /// start the background task that listens for messages from the relayer and handles them
     async fn background_task<W>(
-        client: Client,
+        client: &Client,
         mut ws: WebSocketStream,
         state: &AppStateShared,
         relayer: &XSWDRelayerShared<W>,
-        mut receiver: mpsc::Receiver<InternalMessage>,
-        mut cipher: Cipher
+        receiver: &mut mpsc::Receiver<InternalMessage>,
+        cipher: &mut Cipher
     ) -> Result<(), anyhow::Error>
     where
         W: ShareableTid<'static> + XSWDHandler

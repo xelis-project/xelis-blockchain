@@ -1,6 +1,5 @@
 mod handler;
 mod http_request;
-mod events;
 
 use std::{
     collections::HashSet,
@@ -28,6 +27,7 @@ use futures_util::StreamExt;
 use log::{debug, error, trace};
 use serde::Serialize;
 use serde_json::json;
+use runtime_context::tid;
 use crate::{
     config::MAX_BLOCK_SIZE,
     immutable::Immutable,
@@ -47,13 +47,11 @@ use crate::{
             error::Elapsed,
             timeout
         }
-    },
-    rpc::tid,
+    }
 };
 pub use self::{
     handler::EventWebSocketHandler,
     http_request::HttpRequest,
-    events::*
 };
 
 pub type WebSocketServerShared<H> = Arc<WebSocketServer<H>>;

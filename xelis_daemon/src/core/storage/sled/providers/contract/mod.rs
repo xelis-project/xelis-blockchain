@@ -86,7 +86,7 @@ impl ContractProvider for SledStorage {
         let mut previous_topo = Some(pointer);
         while let Some(topoheight) = previous_topo {
             if topoheight <= maximum_topoheight {
-                let exists = self.load_from_disk::<(Option<TopoHeight>, bool)>(
+                let exists = self.load_from_disk::<(Option<TopoHeight>, bool), _>(
                     &self.versioned_contracts,
                     &self.get_versioned_contract_key(hash, topoheight),
                     DiskContext::ContractTopoHeight
@@ -105,8 +105,8 @@ impl ContractProvider for SledStorage {
         Ok(false)
     }
 
-    async fn get_contracts<'a>(&'a self, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
-        trace!("Getting contracts, minimum_topoheight: {}, maximum_topoheight: {}", minimum_topoheight, maximum_topoheight);
+    async fn get_contracts<'a>(&'a self, minimum_topoheight: Option<TopoHeight>, maximum_topoheight: Option<TopoHeight>) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
+        trace!("Getting contracts, minimum_topoheight: {:?}, maximum_topoheight: {:?}", minimum_topoheight, maximum_topoheight);
 
         Ok(Self::iter::<Hash, TopoHeight>(self.snapshot.as_ref(), &self.contracts)
             .map(move |el| {
@@ -117,11 +117,11 @@ impl ContractProvider for SledStorage {
 
                 let mut prev_topo = Some(topoheight);
                 while let Some(topo) = prev_topo {
-                    if topoheight < minimum_topoheight {
+                    if minimum_topoheight.is_some_and(|min| topo < min) {
                         break;
                     }
 
-                    if topo <= maximum_topoheight {
+                    if maximum_topoheight.is_none_or(|max| topo <= max) {
                         return Ok(Some(hash))
                     }
 
@@ -142,20 +142,6 @@ impl ContractProvider for SledStorage {
         }
 
         Ok(())
-    }
-
-    async fn has_contract_pointer(&self, hash: &Hash) -> Result<bool, BlockchainError> {
-        trace!("Checking if contract {} exists", hash);
-        self.contains_data(&self.contracts, hash.as_bytes())
-    }
-
-    async fn has_contract(&self, hash: &Hash) -> Result<bool, BlockchainError> {
-        trace!("Checking if contract {} exists", hash);
-        let Some(pointer) = self.get_last_topoheight_for_contract(hash).await? else {
-            return Ok(false)
-        };
-        
-        self.has_contract_module_at_topoheight(hash, pointer).await
     }
 
     async fn has_contract_module_at_topoheight(&self, hash: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError> {

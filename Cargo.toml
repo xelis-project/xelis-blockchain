@@ -13,7 +13,7 @@ metrics = "0.24.2"
 anyhow = "1"
 thiserror = "2"
 log = "0.4"
-lru = "0.15"
+lru = "0.16"
 hex = "0.4.3"
 async-trait = "0.1.77"
 chrono = "0.4.38"
@@ -33,6 +33,7 @@ strum = { version = "0.27.1", features = ["derive"] }
 cfg-if = "1"
 tokio-tungstenite-wasm = { version = "0.8.1", features = ["rustls-tls-webpki-roots"] }
 schemars = { version = "1.0.4", features = ["indexmap2"] }
+runtime-context = "0.1.1"
 
 # cargo run --profile release-with-lto
 [profile.release-with-lto]

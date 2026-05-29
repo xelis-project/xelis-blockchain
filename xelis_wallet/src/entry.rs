@@ -257,6 +257,9 @@ pub enum EntryData {
     IncomingContract {
         // Transfers received from the contract
         transfers: IndexMap<Hash, u64>,
+    },
+    Blob {
+        data: PlaintextExtraData
     }
 }
 
@@ -424,6 +427,10 @@ impl Serializer for EntryData {
                     asset.write(writer);
                     amount.write(writer);
                 }
+            },
+            Self::Blob { data } => {
+                writer.write_u8(8);
+                data.write(writer);
             }
         }
     }
@@ -459,7 +466,8 @@ impl Serializer for EntryData {
             },
             Self::IncomingContract { transfers } => {
                 2 + transfers.iter().map(|(a, b)| a.size() + b.size()).sum::<usize>()
-            }
+            },
+            Self::Blob { data } => data.size(),
         }
     }
 }
@@ -573,7 +581,10 @@ impl TransactionEntry {
                 EntryData::IncomingContract { transfers } => {
                     let transfers = transfers.into_iter().map(|(asset, amount)| (asset, amount)).collect();
                     RPCEntryType::IncomingContract { transfers }
-                }
+                },
+                EntryData::Blob { data } => {
+                    RPCEntryType::Blob { data }
+                },
             }
         }
     }
@@ -659,6 +670,9 @@ impl TransactionEntry {
                     str.push_str(&format!("Received {} {} ({}) ", format_coin(*amount, data.get_decimals()), data.get_name(), asset));
                 }
                 str
+            },
+            EntryData::Blob { data } => {
+                format!("Blob ({} bytes)", data.size())
             }
         };
 

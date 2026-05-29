@@ -5,7 +5,7 @@ use xelis_common::{
     block::TopoHeight,
     crypto::PublicKey,
     transaction::MultiSigPayload,
-    versioned_type::Versioned
+    versioned::Versioned
 };
 use crate::core::error::BlockchainError;
 
@@ -35,7 +35,7 @@ pub trait MultiSigProvider {
     // Retrieve the last multisig setup for a given account
     async fn get_last_multisig<'a>(&'a self, account: &PublicKey) -> Result<(TopoHeight, VersionedMultiSig<'a>), BlockchainError> {
         let topoheight = self.get_last_topoheight_for_multisig(account).await?
-            .ok_or(BlockchainError::NoMultisig)?;
+            .ok_or(BlockchainError::MultisigNotFound)?;
 
         let state = self.get_multisig_at_topoheight_for(account, topoheight).await?;
 

@@ -1,12 +1,39 @@
 use std::fmt::{Display, Formatter};
 
-#[cfg(feature = "rpc-server")]
-use actix_web::{ResponseError, HttpResponse};
 
 use serde_json::{Value, Error as SerdeError, json};
 use thiserror::Error;
 use anyhow::Error as AnyError;
-use crate::rpc::{Id, JSON_RPC_VERSION};
+use crate::{error::ErrorWithKind, rpc::{Id, JSON_RPC_VERSION}};
+
+#[cfg(feature = "rpc-client")]
+use super::client::JsonRPCError;
+
+#[cfg(feature = "rpc-server")]
+use actix_web::{ResponseError, HttpResponse};
+
+/// Trait for RPC errors that can be converted into an `AnyError` and have a kind string.
+pub trait RPCError: Into<AnyError> {
+    fn kind(&self) -> &'static str;
+}
+
+impl<T: RPCError> From<T> for ErrorWithKind {
+    fn from(value: T) -> Self {
+        Self {
+            kind: value.kind(),
+            error: value.into()
+        }
+    }
+}
+
+impl From<ErrorWithKind> for InternalRpcError {
+    fn from(value: ErrorWithKind) -> Self {
+        Self::Any {
+            kind: value.kind,
+            error: value.error
+        }
+    }
+}
 
 #[derive(Error, Debug)]
 pub enum InternalRpcError {
@@ -34,8 +61,11 @@ pub enum InternalRpcError {
     InvalidVersion,
     #[error("Method '{}' in request was not found", _0)]
     MethodNotFound(String),
-    #[error(transparent)]
-    AnyError(#[from] AnyError),
+    #[error("{error:#}")]
+    Any {
+        kind: &'static str,
+        error: AnyError
+    },
     #[error("Websocket client was not found")]
     ClientNotFound,
     #[error("Event is not subscribed")]
@@ -44,6 +74,15 @@ pub enum InternalRpcError {
     EventAlreadySubscribed,
     #[error("batch limit exceeded")]
     BatchLimitExceeded,
+}
+
+impl From<AnyError> for InternalRpcError {
+    fn from(value: AnyError) -> Self {
+        Self::Any {
+            kind: "UNSPECIFIED",
+            error: value
+        }
+    }
 }
 
 impl InternalRpcError {
@@ -66,10 +105,30 @@ impl InternalRpcError {
             // 32000 to -32099	Server error (Reserved for implementation-defined server-errors)
             Self::InvalidContext => -32001,
             Self::ClientNotFound => -32002,
-            Self::AnyError(_) => -32004,
+            Self::Any { .. } => -32004,
             // Events invalid requests
             Self::EventNotSubscribed => -1,
             Self::EventAlreadySubscribed => -2,
+        }
+    }
+
+    pub const fn get_kind(&self) -> &'static str {
+        match self {
+            Self::ParseBodyError => "BODY_ERROR",
+            Self::InvalidJSONRequest => "INVALID_JSON_REQUEST",
+            Self::InvalidRequestStr(_) => "INVALID_REQUEST",
+            Self::InvalidParams(_) | Self::InvalidJSONParams(_) | Self::InvalidParamsAny(_) => "INVALID_PARAMS",
+            Self::UnexpectedParams => "UNEXPECTED_PARAMS",
+            Self::ExpectedParams => "EXPECTED_PARAMS",
+            Self::InvalidVersion => "INVALID_VERSION",
+            Self::MethodNotFound(_) => "METHOD_NOT_FOUND",
+            Self::InternalError(_) => "INTERNAL_ERROR",
+            Self::InvalidContext => "INVALID_CONTEXT",
+            Self::ClientNotFound => "CLIENT_NOT_FOUND",
+            Self::Any { kind, .. } => kind,
+            Self::EventNotSubscribed => "EVENT_NOT_SUBSCRIBED",
+            Self::EventAlreadySubscribed => "EVENT_ALREADY_SUBSCRIBED",
+            Self::BatchLimitExceeded => "BATCH_LIMIT_EXCEEDED",
         }
     }
 }
@@ -101,6 +160,7 @@ impl RpcResponseError {
             "id": self.get_id(),
             "error": {
                 "code": self.error.get_code(),
+                "kind": self.error.get_kind(),
                 "message": format!("{:#}", self.error)
             }
         })
@@ -120,3 +180,12 @@ impl ResponseError for RpcResponseError {
     }
 }
 
+#[cfg(feature = "rpc-client")]
+impl From<JsonRPCError> for InternalRpcError {
+    fn from(value: JsonRPCError) -> Self {
+        Self::Any {
+            kind: (&value).into(),
+            error: value.into(),
+        }
+    }
+}

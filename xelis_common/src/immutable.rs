@@ -4,11 +4,12 @@ use std::{
     ops::Deref,
     sync::Arc
 };
+use schemars::JsonSchema;
 use serde::{Serialize, Deserialize};
 
 use crate::serializer::*;
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, JsonSchema)]
 #[serde(untagged)]
 pub enum Immutable<T> {
     Owned(T),
@@ -28,6 +29,12 @@ impl<T> Immutable<T> {
             Immutable::Owned(v) => Arc::new(v),
             Immutable::Arc(v) => v
         }
+    }
+}
+
+impl<T: Default> Default for Immutable<T> {
+    fn default() -> Self {
+        Immutable::Owned(T::default())
     }
 }
 

@@ -9,17 +9,17 @@ use log::{trace, debug};
 use schemars::JsonSchema;
 use serde_json::{Value, json};
 use serde::{de::DeserializeOwned, Serialize};
+use runtime_context::{Context, ShareableTid};
 use crate::{
     api::EventResult,
     rpc::{
-        Context,
-        ShareableTid,
         RpcResponseError,
         RPCHandler,
         RpcResponse,
+        Events,
     }
 };
-use super::{WebSocketSessionShared, WebSocketHandler, events::Events};
+use super::{WebSocketSessionShared, WebSocketHandler};
 
 // generic websocket handler supporting event subscriptions 
 pub struct EventWebSocketHandler<T, E>

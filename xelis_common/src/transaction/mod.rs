@@ -8,7 +8,7 @@ use crate::{
         Hashable,
         Signature,
     },
-    serializer::*
+    serializer::*,
 };
 
 use bulletproofs::RangeProof;
@@ -29,8 +29,11 @@ pub use reference::Reference;
 pub use version::TxVersion;
 pub use source_commitment::SourceCommitment;
 
+
+pub mod mock;
+
 #[cfg(test)]
-pub mod tests;
+mod tests;
 
 // Maximum size of extra data per transfer
 pub const EXTRA_DATA_LIMIT_SIZE: usize = 1024;
@@ -39,7 +42,7 @@ pub const EXTRA_DATA_LIMIT_SUM_SIZE: usize = EXTRA_DATA_LIMIT_SIZE * 32;
 // Maximum number of transfers per transaction
 pub const MAX_TRANSFER_COUNT: usize = 255;
 // Maximum number of deposits per Invoke Call
-pub const MAX_DEPOSIT_PER_INVOKE_CALL: usize = 255;
+pub const MAX_DEPOSITS_PER_INVOKE_CALL: usize = 255;
 // Maximum number of participants in a multi signature account
 pub const MAX_MULTISIG_PARTICIPANTS: usize = 255;
 
@@ -62,6 +65,7 @@ pub enum TransactionType {
     MultiSig(MultiSigPayload),
     InvokeContract(InvokeContractPayload),
     DeployContract(DeployContractPayload),
+    Blob(BlobPayload),
 }
 
 // Transaction to be sent over the network
@@ -265,6 +269,10 @@ impl Serializer for TransactionType {
             TransactionType::DeployContract(module) => {
                 writer.write_u8(4);
                 module.write(writer);
+            },
+            TransactionType::Blob(extra_data) => {
+                writer.write_u8(5);
+                extra_data.write(writer);
             }
         };
     }
@@ -290,6 +298,7 @@ impl Serializer for TransactionType {
             2 => TransactionType::MultiSig(MultiSigPayload::read(reader)?),
             3 => TransactionType::InvokeContract(InvokeContractPayload::read(reader)?),
             4 => TransactionType::DeployContract(DeployContractPayload::read(reader)?),
+            5 => TransactionType::Blob(BlobPayload::read(reader)?),
             _ => {
                 return Err(ReaderError::InvalidValue)
             }
@@ -314,6 +323,7 @@ impl Serializer for TransactionType {
             },
             TransactionType::InvokeContract(payload) => payload.size(),
             TransactionType::DeployContract(payload) => payload.size(),
+            TransactionType::Blob(extra_data) => extra_data.size(),
         }
     }
 }

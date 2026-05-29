@@ -40,6 +40,16 @@ fn create_test_tx(hash: &Hash, topoheight: u64) -> TransactionEntry {
     )
 }
 
+// Helper to create a test transaction entry with custom timestamp
+fn create_test_tx_with_timestamp(hash: &Hash, topoheight: u64, timestamp: u64) -> TransactionEntry {
+    TransactionEntry::new(
+        hash.clone(),
+        topoheight,
+        timestamp,
+        EntryData::Coinbase { reward: 1000 },
+    )
+}
+
 // Helper to create a test transaction with custom entry data
 fn create_test_tx_with_entry(hash: &Hash, topoheight: u64, entry: EntryData) -> TransactionEntry {
     TransactionEntry::new(
@@ -394,9 +404,11 @@ fn test_get_filtered_transactions_by_topoheight_range() {
     }
 
     // Test range with both min and max (inclusive)
-    let result = storage.get_filtered_transactions(
-        None, None, Some(30), Some(70), true, true, true, true, None, None, None
-    ).unwrap();
+    let result = storage.get_filtered_transactions(TransactionFilterOptions {
+        min_topoheight: Some(30),
+        max_topoheight: Some(70),
+        ..TransactionFilterOptions::default()
+    }).unwrap();
     assert_eq!(result.len(), 5, "Should return 5 transactions (30, 40, 50, 60, 70)");
     
     // Verify topoheights are correct
@@ -404,15 +416,17 @@ fn test_get_filtered_transactions_by_topoheight_range() {
     assert_eq!(topos, vec![70, 60, 50, 40, 30], "Should return in reverse order");
 
     // Test range with only min
-    let result = storage.get_filtered_transactions(
-        None, None, Some(80), None, true, true, true, true, None, None, None
-    ).unwrap();
+    let result = storage.get_filtered_transactions(TransactionFilterOptions {
+        min_topoheight: Some(80),
+        ..TransactionFilterOptions::default()
+    }).unwrap();
     assert_eq!(result.len(), 3, "Should return 3 transactions (80, 90, 100)");
 
     // Test range with only max
-    let result = storage.get_filtered_transactions(
-        None, None, None, Some(30), true, true, true, true, None, None, None
-    ).unwrap();
+    let result = storage.get_filtered_transactions(TransactionFilterOptions {
+        max_topoheight: Some(30),
+        ..TransactionFilterOptions::default()
+    }).unwrap();
     assert_eq!(result.len(), 3, "Should return 3 transactions (10, 20, 30)");
 }
 
@@ -428,9 +442,10 @@ fn test_get_filtered_transactions_with_limit() {
     }
 
     // Test with limit
-    let result = storage.get_filtered_transactions(
-        None, None, None, None, true, true, true, true, None, Some(5), None
-    ).unwrap();
+    let result = storage.get_filtered_transactions(TransactionFilterOptions {
+        limit: Some(5),
+        ..TransactionFilterOptions::default()
+    }).unwrap();
     assert_eq!(result.len(), 5, "Should return only 5 transactions");
 }
 
@@ -446,13 +461,35 @@ fn test_get_filtered_transactions_with_skip() {
     }
 
     // Test with skip
-    let result = storage.get_filtered_transactions(
-        None, None, None, None, true, true, true, true, None, None, Some(3)
-    ).unwrap();
+    let result = storage.get_filtered_transactions(TransactionFilterOptions {
+        skip: Some(3),
+        ..TransactionFilterOptions::default()
+    }).unwrap();
     assert_eq!(result.len(), 7, "Should skip first 3 and return 7 transactions");
     
     // First transaction should have topoheight 60 (skipping 90, 80, 70)
     assert_eq!(result[0].get_topoheight(), 60, "First result should be at topoheight 60");
+}
+
+#[test]
+fn test_get_filtered_transactions_by_timestamp_range() {
+    let mut storage = create_test_storage().unwrap();
+
+    let timestamps = vec![1000u64, 2000, 3000, 4000, 5000];
+    for (i, ts) in timestamps.iter().enumerate() {
+        let hash = Hash::new([i as u8; 32]);
+        let entry = create_test_tx_with_timestamp(&hash, i as u64, *ts);
+        storage.save_transaction(&hash, &entry).unwrap();
+    }
+
+    let result = storage.get_filtered_transactions(TransactionFilterOptions {
+        min_timestamp: Some(2000),
+        max_timestamp: Some(4000),
+        ..TransactionFilterOptions::default()
+    }).unwrap();
+
+    let got: Vec<u64> = result.iter().map(|t| t.get_timestamp()).collect();
+    assert_eq!(got, vec![4000, 3000, 2000], "Should return timestamp range in reverse order");
 }
 
 #[test]
@@ -503,9 +540,7 @@ fn test_edge_case_empty_storage() {
     assert_eq!(result, None, "Should return None for empty storage");
 
     // Test filtered transactions on empty storage
-    let result = storage.get_filtered_transactions(
-        None, None, None, None, true, true, true, true, None, None, None
-    ).unwrap();
+    let result = storage.get_filtered_transactions(TransactionFilterOptions::default()).unwrap();
     assert_eq!(result.len(), 0, "Should return empty vec for empty storage");
 
     // Test count
@@ -580,14 +615,13 @@ fn test_filter_by_transaction_type_coinbase() {
     }
 
     // Filter only coinbase
-    let result = storage.get_filtered_transactions(
-        None, None, None, None, 
-        false,  // no incoming
-        false,  // no outgoing
-        true,   // yes coinbase
-        false,  // no burn
-        None, None, None
-    ).unwrap();
+    let result = storage.get_filtered_transactions(TransactionFilterOptions {
+        accept_incoming: false,
+        accept_outgoing: false,
+        accept_coinbase: true,
+        accept_burn: false,
+        ..TransactionFilterOptions::default()
+    }).unwrap();
     
     assert_eq!(result.len(), 2, "Should have 2 coinbase transactions");
     assert!(result.iter().all(|t| t.is_coinbase()), "All should be coinbase");
@@ -619,14 +653,13 @@ fn test_filter_by_transaction_type_burn() {
     }
 
     // Filter only burn
-    let result = storage.get_filtered_transactions(
-        None, None, None, None, 
-        false,  // no incoming
-        false,  // no outgoing
-        false,  // no coinbase
-        true,   // yes burn
-        None, None, None
-    ).unwrap();
+    let result = storage.get_filtered_transactions(TransactionFilterOptions {
+        accept_incoming: false,
+        accept_outgoing: false,
+        accept_coinbase: false,
+        accept_burn: true,
+        ..TransactionFilterOptions::default()
+    }).unwrap();
     
     assert_eq!(result.len(), 2, "Should have 2 burn transactions");
 }
@@ -658,14 +691,13 @@ fn test_filter_by_multiple_types() {
     }
 
     // Filter for both coinbase and burn
-    let result = storage.get_filtered_transactions(
-        None, None, None, None, 
-        false,  // no incoming
-        false,  // no outgoing
-        true,   // yes coinbase
-        true,   // yes burn
-        None, None, None
-    ).unwrap();
+    let result = storage.get_filtered_transactions(TransactionFilterOptions {
+        accept_incoming: false,
+        accept_outgoing: false,
+        accept_coinbase: true,
+        accept_burn: true,
+        ..TransactionFilterOptions::default()
+    }).unwrap();
     
     assert_eq!(result.len(), 4, "Should have all 4 transactions (2 coinbase + 2 burn)");
 }
@@ -702,14 +734,15 @@ fn test_filter_by_topoheight_range_with_types() {
     storage.reorder_transactions_indexes(None).unwrap();
 
     // Filter for coinbase in range [15, 35]
-    let result = storage.get_filtered_transactions(
-        None, None, Some(15), Some(35), 
-        false,  // no incoming
-        false,  // no outgoing
-        true,   // yes coinbase
-        false,  // no burn
-        None, None, None
-    ).unwrap();
+    let result = storage.get_filtered_transactions(TransactionFilterOptions {
+        min_topoheight: Some(15),
+        max_topoheight: Some(35),
+        accept_incoming: false,
+        accept_outgoing: false,
+        accept_coinbase: true,
+        accept_burn: false,
+        ..TransactionFilterOptions::default()
+    }).unwrap();
     
     // With reordering, we should find the coinbase transactions: 10 (< 15, shouldn't include), 30 (in range)
     // Actually with inclusive range [15, 35], we should get 30
@@ -717,14 +750,15 @@ fn test_filter_by_topoheight_range_with_types() {
     assert!(!result.iter().any(|t| t.get_topoheight() == 50), "Should not include topo 50");
 
     // Filter for burn in range [15, 35]
-    let result = storage.get_filtered_transactions(
-        None, None, Some(15), Some(35), 
-        false,  // no incoming
-        false,  // no outgoing
-        false,  // no coinbase
-        true,   // yes burn
-        None, None, None
-    ).unwrap();
+    let result = storage.get_filtered_transactions(TransactionFilterOptions {
+        min_topoheight: Some(15),
+        max_topoheight: Some(35),
+        accept_incoming: false,
+        accept_outgoing: false,
+        accept_coinbase: false,
+        accept_burn: true,
+        ..TransactionFilterOptions::default()
+    }).unwrap();
     
     assert_eq!(result.len(), 1, "Should have 1 burn transaction in range");
     assert_eq!(result[0].get_topoheight(), 20, "Should be at topoheight 20");
@@ -745,14 +779,13 @@ fn test_filter_none_transaction_types() {
     }
 
     // Filter with no transaction types enabled
-    let result = storage.get_filtered_transactions(
-        None, None, None, None, 
-        false,  // no incoming
-        false,  // no outgoing
-        false,  // no coinbase
-        false,  // no burn
-        None, None, None
-    ).unwrap();
+    let result = storage.get_filtered_transactions(TransactionFilterOptions {
+        accept_incoming: false,
+        accept_outgoing: false,
+        accept_coinbase: false,
+        accept_burn: false,
+        ..TransactionFilterOptions::default()
+    }).unwrap();
     
     assert_eq!(result.len(), 0, "Should have no transactions when all types are disabled");
 }
@@ -783,10 +816,13 @@ fn test_filter_with_gap_consolidation() {
     storage.reorder_transactions_indexes(None).unwrap();
 
     // Filter all transactions without topoheight filtering to verify consolidation works
-    let result = storage.get_filtered_transactions(
-        None, None, None, None, 
-        false, false, true, false, None, None, None
-    ).unwrap();
+    let result = storage.get_filtered_transactions(TransactionFilterOptions {
+        accept_incoming: false,
+        accept_outgoing: false,
+        accept_coinbase: true,
+        accept_burn: false,
+        ..TransactionFilterOptions::default()
+    }).unwrap();
     
     // Should have all 4 transactions after consolidation
     assert_eq!(result.len(), 4, "Should have 4 coinbase transactions after consolidation");
@@ -815,10 +851,15 @@ fn test_filter_topoheight_boundaries() {
     }
 
     // Test exact boundary - inclusive on both ends
-    let result = storage.get_filtered_transactions(
-        None, None, Some(100), Some(200), 
-        false, false, true, false, None, None, None
-    ).unwrap();
+    let result = storage.get_filtered_transactions(TransactionFilterOptions {
+        min_topoheight: Some(100),
+        max_topoheight: Some(200),
+        accept_incoming: false,
+        accept_outgoing: false,
+        accept_coinbase: true,
+        accept_burn: false,
+        ..TransactionFilterOptions::default()
+    }).unwrap();
     
     assert_eq!(result.len(), 2, "Should include both boundary transactions");
     let topos: Vec<u64> = result.iter().map(|t| t.get_topoheight()).collect();
@@ -846,10 +887,15 @@ fn test_filter_topoheight() {
     storage.reorder_transactions_indexes(None).unwrap();
 
     // Filter for coinbase in range [50, 150] with limit and skip
-    let result = storage.get_filtered_transactions(
-        None, None, Some(50), Some(150), 
-        false, false, true, false, None, None, None,
-    ).unwrap();
+    let result = storage.get_filtered_transactions(TransactionFilterOptions {
+        min_topoheight: Some(50),
+        max_topoheight: Some(150),
+        accept_incoming: false,
+        accept_outgoing: false,
+        accept_coinbase: true,
+        accept_burn: false,
+        ..TransactionFilterOptions::default()
+    }).unwrap();
 
     let mut total = 0;
     for topo in 50..=150 {

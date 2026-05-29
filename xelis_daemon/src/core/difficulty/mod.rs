@@ -17,8 +17,9 @@ use crate::config::{
 };
 use super::hard_fork::get_block_time_target_for_version;
 
-mod v1;
-mod v2;
+pub mod v1;
+pub mod v2;
+pub mod v3;
 
 // Kalman filter with unsigned integers only
 // z: The observed value (latest hashrate calculated on current block time).
@@ -61,7 +62,12 @@ pub fn calculate_difficulty(solve_time: TimestampMillis, previous_difficulty: Di
     let block_time_target = get_block_time_target_for_version(version);
     match version {
         BlockVersion::V0 => v1::calculate_difficulty(solve_time, previous_difficulty, p, minimum_difficulty, block_time_target),
-        _ => v2::calculate_difficulty(solve_time, previous_difficulty, p, minimum_difficulty, block_time_target),
+        BlockVersion::V1 |
+        BlockVersion::V2 |
+        BlockVersion::V3 |
+        BlockVersion::V4 |
+        BlockVersion::V5 => v2::calculate_difficulty(solve_time, previous_difficulty, p, minimum_difficulty, block_time_target),
+        BlockVersion::V6 => panic!("Difficulty calculation for V6 should use hashrate and not solve time"),
     }
 }
 
@@ -70,7 +76,12 @@ pub fn calculate_difficulty(solve_time: TimestampMillis, previous_difficulty: Di
 pub fn get_covariance_p(version: BlockVersion) -> VarUint {
     match version {
         BlockVersion::V0 => v1::P,
-        _ => v2::P
+        BlockVersion::V1 |
+        BlockVersion::V2 |
+        BlockVersion::V3 |
+        BlockVersion::V4 |
+        BlockVersion::V5 => v2::P,
+        BlockVersion::V6 => v3::P,
     }
 }
 

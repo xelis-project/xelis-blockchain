@@ -16,7 +16,15 @@ use xelis_common::{
     async_handler,
     block::TopoHeight,
     config::{VERSION, XELIS_ASSET},
-    crypto::{Address, Hash, Hashable, KeyPair, Signature},
+    crypto::{
+        Address,
+        Hash,
+        Hashable,
+        HumanReadableProof,
+        KeyPair,
+        Signature,
+        proofs::{BalanceProof, OwnershipProof}
+    },
     network::Network,
     rpc::{
         Context,
@@ -34,7 +42,7 @@ use xelis_common::{
 use crate::{
     api::AppStateShared,
     error::WalletError,
-    storage::Balance,
+    storage::{TransactionFilterOptions, Balance},
     transaction_builder::TransactionBuilderState,
     wallet::Wallet
 };
@@ -83,6 +91,10 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     handler.register_method_no_params("network_info", async_handler!(network_info, single));
     handler.register_method_with_params("decrypt_extra_data", async_handler!(decrypt_extra_data));
     handler.register_method_with_params("decrypt_ciphertext", async_handler!(decrypt_ciphertext));
+
+    handler.register_method_with_params("create_ownership_proof", async_handler!(create_ownership_proof));
+    handler.register_method_with_params("create_balance_proof", async_handler!(create_balance_proof));
+    handler.register_method_with_params("verify_human_readable_proof", async_handler!(verify_human_readable_proof));
 
     // These functions allow to have an encrypted DB directly in the wallet storage
     // You can retrieve keys, values, have differents trees, and store values
@@ -391,10 +403,6 @@ async fn build_transaction(context: &Context<'_, '_>, params: BuildTransactionPa
         return Err(WalletError::NotOnlineMode)?
     }
 
-    if !params.broadcast && !params.tx_as_hex {
-        return Err(InternalRpcError::InvalidParams("Invalid params, should either be broadcasted, or returned in hex format"))
-    }
-
     // create the TX
     // The lock is kept until the TX is applied to the storage
     // So even if we have few requests building a TX, they wait for the previous one to be applied
@@ -649,22 +657,25 @@ async fn list_transactions(context: &Context<'_, '_>, params: ListTransactionsPa
 
     let wallet = wallet_from_context(context)?;
     let storage = wallet.get_storage().read().await;
-    let opt_key = params.address.map(|addr| addr.to_public_key());
+    let address = params.address.map(|addr| Cow::Owned(addr.to_public_key()));
     
     let mainnet = wallet.get_network().is_mainnet();
-    let txs = storage.get_filtered_transactions(
-        opt_key.as_ref(),
-        params.asset.as_ref(),
-        params.min_topoheight,
-        params.max_topoheight,
-        params.accept_incoming,
-        params.accept_outgoing,
-        params.accept_coinbase,
-        params.accept_burn,
-        params.query.as_ref(),
-        params.limit,
-        params.skip,
-    )?
+    let filters = TransactionFilterOptions {
+        address,
+        asset: params.asset.map(Cow::Owned),
+        min_topoheight: params.min_topoheight,
+        max_topoheight: params.max_topoheight,
+        min_timestamp: params.min_timestamp,
+        max_timestamp: params.max_timestamp,
+        accept_incoming: params.accept_incoming,
+        accept_outgoing: params.accept_outgoing,
+        accept_coinbase: params.accept_coinbase,
+        accept_burn: params.accept_burn,
+        query: params.query.as_ref(),
+        limit: params.limit,
+        skip: params.skip,
+    };
+    let txs = storage.get_filtered_transactions(filters)?
         .into_iter()
         .map(|tx| tx.serializable(mainnet))
         .collect::<Vec<_>>();
@@ -847,4 +858,115 @@ async fn untrack_asset(context: &Context<'_, '_>, params: TrackAssetParams<'_>) 
     let wallet = wallet_from_context(context)?;
     let untracked = wallet.untrack_asset(params.asset.into_owned()).await?;
     Ok(untracked)
+}
+
+async fn create_ownership_proof(context: &Context<'_, '_>, params: CreateOwnershipProofParams<'_>) -> Result<HumanReadableProof, InternalRpcError> {
+    let wallet = wallet_from_context(context)?;
+    let asset = params.asset.into_owned();
+    let (proof, topoheight) = match params.topoheight {
+        Some(topoheight) => {
+            cfg_if! {
+                if #[cfg(feature = "network_handler")] {
+                    let network_handler = wallet.get_network_handler().lock().await;
+                    if let Some(handler) = network_handler.as_ref() {
+                        let api = handler.get_api();
+                        let ciphertext = api.get_balance_at_topoheight(&wallet.get_address(), &asset, topoheight).await?
+                            .consume()
+                            .0
+                            .take_ciphertext()
+                            .context("Failed to decompress balance ciphertext")?;
+
+                        let balance = wallet.decrypt_ciphertext_of_asset(ciphertext.clone(), &asset).await?
+                            .ok_or(WalletError::CiphertextDecode)?;
+
+                        let proof = OwnershipProof::new(wallet.get_keypair(), balance, params.amount, ciphertext)
+                            .map_err(WalletError::from)?;
+
+                        (proof, topoheight)
+                    } else {
+                        return Err(WalletError::NotOnlineMode.into())
+                    }
+                } else {
+                    return Err(WalletError::Unsupported.into())
+                }
+            }
+        },
+        None => wallet.create_ownership_proof(&asset, params.amount).await?,
+    };
+
+    let proof = HumanReadableProof::Ownership { proof, asset, topoheight };
+    Ok(proof)
+}
+
+async fn create_balance_proof(context: &Context<'_, '_>, params: CreateBalanceProofParams<'_>) -> Result<HumanReadableProof, InternalRpcError> {
+    let wallet = wallet_from_context(context)?;
+    let asset = params.asset.into_owned();
+    let (proof, topoheight) = match params.topoheight {
+        Some(topoheight) => {
+            cfg_if! {
+                if #[cfg(feature = "network_handler")] {
+                    let network_handler = wallet.get_network_handler().lock().await;
+                    if let Some(handler) = network_handler.as_ref() {
+                        let api = handler.get_api();
+                        let ciphertext = api.get_balance_at_topoheight(&wallet.get_address(), &asset, topoheight).await?
+                            .consume()
+                            .0
+                            .take_ciphertext()
+                            .context("Failed to decompress balance ciphertext")?;
+
+                        let balance = wallet.decrypt_ciphertext_of_asset(ciphertext.clone(), &asset).await?
+                            .ok_or(WalletError::CiphertextDecode)?;
+
+                        let proof = BalanceProof::new(wallet.get_keypair(), balance, ciphertext);
+
+                        (proof, topoheight)
+                    } else {
+                        return Err(WalletError::NotOnlineMode.into())
+                    }
+                } else {
+                    return Err(WalletError::Unsupported.into())
+                }
+            }
+        },
+        None => wallet.create_balance_proof(&asset).await?,
+    };
+
+    let proof = HumanReadableProof::Balance { proof, asset, topoheight };
+    Ok(proof)
+}
+
+async fn verify_human_readable_proof(context: &Context<'_, '_>, params: VerifyHumanReadableProofParams<'_>) -> Result<bool, InternalRpcError> {
+    cfg_if! {
+        if #[cfg(feature = "network_handler")] {
+            let wallet = wallet_from_context(&context)?;
+            let proof = params.proof.as_ref();
+            let asset = proof.get_asset();
+            let topoheight = proof.get_topoheight();
+
+            let network_handler = wallet.get_network_handler().lock().await;
+            if let Some(handler) = network_handler.as_ref() {
+                let api = handler.get_api();
+                let ciphertext = api.get_balance_at_topoheight(&params.address, &asset, topoheight).await?
+                    .consume()
+                    .0
+                    .take_ciphertext()
+                    .context("Failed to decompress address balance ciphertext")?;
+
+                let key = params.address.get_public_key()
+                    .decompress()
+                    .context("Error decompressing public key")?;
+
+                match proof {
+                    HumanReadableProof::Ownership { proof, .. } => proof.verify(&key, ciphertext),
+                    HumanReadableProof::Balance { proof, .. } => proof.verify(&key, ciphertext),
+                }.context("Error verifying proof")?;
+
+                Ok(true)
+            } else {
+                Err(WalletError::NotOnlineMode.into())
+            }
+        } else {
+            Err(WalletError::Unsupported.into())
+        }
+    }
 }

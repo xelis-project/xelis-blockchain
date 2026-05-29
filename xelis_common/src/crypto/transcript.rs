@@ -35,6 +35,7 @@ pub trait ProtocolTranscript {
     fn invoke_contract_proof_domain_separator(&mut self);
     fn deploy_contract_proof_domain_separator(&mut self);
     fn invoke_constructor_proof_domain_separator(&mut self);
+    fn blob_proof_domain_separator(&mut self);
     fn ciphertext_validity_proof_domain_separator(&mut self);
     fn balance_proof_domain_separator(&mut self);
     fn ownership_proof_domain_separator(&mut self);
@@ -109,6 +110,7 @@ impl ProtocolTranscript for Transcript {
         self.append_message(b"dom-sep", b"multisig-proof");
     }
 
+
     fn invoke_contract_proof_domain_separator(&mut self) {
         self.append_message(b"dom-sep", b"invoke-contract-proof");
     }
@@ -119,6 +121,10 @@ impl ProtocolTranscript for Transcript {
 
     fn invoke_constructor_proof_domain_separator(&mut self) {
         self.append_message(b"dom-sep", b"invoke-constructor-proof");
+    }
+
+    fn blob_proof_domain_separator(&mut self) {
+        self.append_message(b"dom-sep", b"blob-proof");
     }
 
     fn equality_proof_domain_separator(&mut self) {

@@ -13,9 +13,7 @@ impl CacheProvider for SledStorage {
 
         debug!("reload caches from disk");
         // also load the atomic counters from disk
-        self.load_cache_from_disk();
-
-        Ok(())
+        self.load_cache_from_disk()
     }
 
     async fn chain_cache_mut(&mut self) -> Result<&mut ChainCache, BlockchainError> {

@@ -52,7 +52,7 @@ impl AccountProvider for SledStorage {
     async fn delete_account_for(&mut self, key: &PublicKey) -> Result<(), BlockchainError> {
         trace!("delete account registration topoheight: {}", key.as_address(self.network.is_mainnet()));
 
-        let value = self.load_optional_from_disk::<TopoHeight>(&self.registrations, key.as_bytes())?;
+        let value = self.load_optional_from_disk::<TopoHeight, _>(&self.registrations, key.as_bytes())?;
         if let Some(topo) = value {
             let k = prefixed_db_key(topo, key);
             Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.registrations_prefixed, &k)?;
@@ -64,7 +64,7 @@ impl AccountProvider for SledStorage {
 
     async fn is_account_registered(&self, key: &PublicKey) -> Result<bool, BlockchainError> {
         trace!("is account registered: {}", key.as_address(self.network.is_mainnet()));
-        let value = self.load_optional_from_disk::<TopoHeight>(&self.registrations, key.as_bytes())?;
+        let value = self.load_optional_from_disk::<TopoHeight, _>(&self.registrations, key.as_bytes())?;
         if let Some(topo) = value {
             let k = prefixed_db_key(topo, key);
             return self.contains_data(&self.registrations_prefixed, &k)

@@ -6,7 +6,7 @@ use actix_web::{
     Responder,
     HttpRequest
 };
-use xelis_vm::ShareableTid;
+use runtime_context::ShareableTid;
 
 use super::{RPCHandler, RpcResponseError};
 use self::websocket::{WebSocketServerShared, WebSocketHandler};

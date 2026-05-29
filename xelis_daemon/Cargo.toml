@@ -1,6 +1,6 @@
 [package]
 name = "xelis_daemon"
-version = "1.21.3"
+version = "1.22.0"
 edition = "2021"
 authors = ["Slixe <slixeprivate@gmail.com>"]
 
@@ -21,12 +21,13 @@ x25519-dalek = { version = "2.0.1", features = ["serde", "zeroize", "static_secr
 metrics-exporter-prometheus = "0.17.0"
 semver = "1.0.23"
 itertools = "0.14.0"
-linked-hash-map = "0.5.6"
+linked-hash-table = { version = "0.1.2", features = ["serde"] }
 bytes = "1"
 humantime = "2.1.0"
 human_bytes = "0.4.2"
 tokio-socks = "0.5.2"
 snap = "1.1.1"
+pooled-arc = "0.1"
 
 # Common dependencies
 schemars = { workspace = true }

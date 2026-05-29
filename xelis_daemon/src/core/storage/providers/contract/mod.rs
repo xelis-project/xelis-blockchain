@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use xelis_common::{
     block::TopoHeight,
     crypto::Hash,
-    versioned_type::Versioned,
+    versioned::Versioned,
     contract::{
         ContractProvider as ContractInfoProvider,
         ContractModule,
@@ -28,7 +28,7 @@ pub use event_callback::*;
 pub type VersionedContractModule<'a> = Versioned<Option<Cow<'a, ContractModule>>>;
 
 #[async_trait]
-pub trait ContractProvider: ContractDataProvider + ContractLogsProvider + ContractInfoProvider + ContractBalanceProvider + ContractScheduledExecutionProvider + ContractEventCallbackProvider {
+pub trait ContractProvider: ContractDataProvider + ContractLogsProvider + for<'ty> ContractInfoProvider<'ty> + ContractBalanceProvider + ContractScheduledExecutionProvider + ContractEventCallbackProvider {
     // Deploy a contract
     async fn set_last_contract_to<'a>(&mut self, hash: &Hash, topoheight: TopoHeight, contract: &VersionedContractModule<'a>) -> Result<(), BlockchainError>;
 
@@ -42,17 +42,12 @@ pub trait ContractProvider: ContractDataProvider + ContractLogsProvider + Contra
     async fn get_contract_at_maximum_topoheight_for<'a>(&self, hash: &Hash, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedContractModule<'a>)>, BlockchainError>;
 
     // Retrieve all the contracts hashes
-    async fn get_contracts<'a>(&'a self, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError>;
+    // If minimum_topoheight is provided, it will only return contracts that have a topoheight greater or equal to it
+    // If maximum_topoheight is provided, it will only return contracts that have a topoheight less or equal to it
+    async fn get_contracts<'a>(&'a self, minimum_topoheight: Option<TopoHeight>, maximum_topoheight: Option<TopoHeight>) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError>;
 
     // Delete the last topoheight for a given contract
     async fn delete_last_topoheight_for_contract(&mut self, hash: &Hash) -> Result<(), BlockchainError>;
-
-    // Check if a contract exists
-    // and that it has a Module
-    async fn has_contract(&self, hash: &Hash) -> Result<bool, BlockchainError>;
-
-    // Check if we have the contract
-    async fn has_contract_pointer(&self, hash: &Hash) -> Result<bool, BlockchainError>;
 
     // Check if a contract exists at a given topoheight
     // If the version is None, it returns None

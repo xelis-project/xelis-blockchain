@@ -1,6 +1,7 @@
 use anyhow::Context as _;
 use curve25519_dalek::Scalar;
 use serde::{Deserialize, Serialize};
+use sha3::Sha3_512;
 use xelis_vm::{
     impl_opaque,
     traits::Serializable,
@@ -159,4 +160,15 @@ pub fn scalar_to_bytes(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _:
     let bytes = zelf.0.to_bytes().to_vec();
 
     Ok(SysCallResult::Return(ValueCell::Bytes(bytes).into()))
+}
+
+pub fn scalar_hash_from_bytes(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+    let bytes = params[0]
+        .as_ref()
+        .as_bytes()?;
+
+    context.increase_gas_usage(bytes.len() as u64 * 5)?;
+
+    let scalar = Scalar::hash_from_bytes::<Sha3_512>(&bytes);
+    Ok(SysCallResult::Return(OpaqueScalar(scalar).into()))
 }

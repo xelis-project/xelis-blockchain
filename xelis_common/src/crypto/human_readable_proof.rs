@@ -1,4 +1,4 @@
-use std::fmt::{self, Display, Formatter};
+use std::{borrow::Cow, fmt::{self, Display, Formatter}};
 use anyhow::Error;
 use serde::de::Error as SerdeError;
 
@@ -23,6 +23,7 @@ use super::{
 };
 
 /// A human reable proof that can be shared with other parties as a message.
+#[derive(Clone, Debug)]
 pub enum HumanReadableProof {
     /// Prove the whole asset balance of an account.
     Balance {
@@ -45,6 +46,22 @@ pub enum HumanReadableProof {
 }
 
 impl HumanReadableProof {
+    /// Get the asset of the proof
+    pub fn get_asset(&self) -> &Hash {
+        match self {
+            HumanReadableProof::Balance { asset, .. } => asset,
+            HumanReadableProof::Ownership { asset, .. } => asset,
+        }
+    }
+
+    /// Get the topological height of the proof
+    pub fn get_topoheight(&self) -> u64 {
+        match self {
+            HumanReadableProof::Balance { topoheight, .. } => *topoheight,
+            HumanReadableProof::Ownership { topoheight, .. } => *topoheight,
+        }
+    }
+
     // Transform a shareable proof to a human readable string
     pub fn as_string(&self) -> Result<String, Bech32Error> {
         let bits = convert_bits(&self.to_bytes(), 8, 5, true)?;
@@ -119,6 +136,16 @@ impl Serializer for HumanReadableProof {
         }
 
         size
+    }
+}
+
+impl schemars::JsonSchema for HumanReadableProof {
+    fn schema_name() -> Cow<'static, str> {
+        "HumanReadableProof".into()
+    }
+
+    fn json_schema(gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        gen.subschema_for::<String>()
     }
 }
 

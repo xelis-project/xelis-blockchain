@@ -51,31 +51,33 @@ impl ContractProvider for RocksStorage {
     // Retrieve a contract at maximum topoheight
     async fn get_contract_at_maximum_topoheight_for<'a>(&self, hash: &Hash, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedContractModule<'a>)>, BlockchainError> {
         trace!("get contract at maximum topoheight {} for {}", maximum_topoheight, hash);
-        let Some(contract) = self.get_optional_contract_type(hash)? else {
-            return Ok(None)
-        };
+        self.run_blocking(|| {
+            let Some(contract) = self.get_optional_contract_type(hash)? else {
+                return Ok(None)
+            };
 
-        let Some(pointer) = contract.module_pointer else {
-            return Ok(None)
-        };
+            let Some(pointer) = contract.module_pointer else {
+                return Ok(None)
+            };
 
-        let mut prev_topo = Some(pointer);
-        while let Some(topo) = prev_topo {
-            let versioned_key = Self::get_versioned_contract_key(contract.id, topo);
-            if topo <= maximum_topoheight {
-                let version = self.load_from_disk(Column::VersionedContracts, &versioned_key)?;
-                return Ok(Some((topo, version)))
+            let mut prev_topo = Some(pointer);
+            while let Some(topo) = prev_topo {
+                let versioned_key = Self::get_versioned_contract_key(contract.id, topo);
+                if topo <= maximum_topoheight {
+                    let version = self.load_from_disk(Column::VersionedContracts, &versioned_key)?;
+                    return Ok(Some((topo, version)))
+                }
+
+                prev_topo = self.load_from_disk(Column::VersionedContracts, &versioned_key)?;
             }
 
-            prev_topo = self.load_from_disk(Column::VersionedContracts, &versioned_key)?;
-        }
-
-        Ok(None)
+            Ok(None)
+        })
     }
 
     // Retrieve all the contracts hashes
-    async fn get_contracts<'a>(&'a self, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
-        trace!("get contracts {}-{}", minimum_topoheight, maximum_topoheight);
+    async fn get_contracts<'a>(&'a self, minimum_topoheight: Option<TopoHeight>, maximum_topoheight: Option<TopoHeight>) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError> {
+        trace!("get contracts {:?}-{:?}", minimum_topoheight, maximum_topoheight);
         self.iter::<Hash, Contract>(Column::Contracts, IteratorMode::Start)
             .map(|iter| iter.map(move |res| {
                 let (hash, contract) = res?;
@@ -85,11 +87,11 @@ impl ContractProvider for RocksStorage {
 
                 let mut prev_topo = Some(pointer);
                 while let Some(topo) = prev_topo {
-                    if topo < minimum_topoheight {
+                    if minimum_topoheight.is_some_and(|min| topo < min) {
                         break;
                     }
 
-                    if topo <= maximum_topoheight {
+                    if maximum_topoheight.is_none_or(|max| topo > max) {
                         return Ok(Some(hash))
                     }
 
@@ -111,31 +113,6 @@ impl ContractProvider for RocksStorage {
         } else {
             Ok(())
         }
-    }
-
-    // Check if a contract exists
-    // and that it has a Module
-    async fn has_contract(&self, hash: &Hash) -> Result<bool, BlockchainError> {
-        trace!("has contract {}", hash);
-        let Some(contract) = self.get_optional_contract_type(hash)? else {
-            return Ok(false)
-        };
-
-        let Some(pointer) = contract.module_pointer else {
-            return Ok(false)
-        };
-
-        let key = Self::get_versioned_contract_key(contract.id, pointer);
-        // We can just read the Option as a bool because of how we store the data
-        self.load_from_disk::<_, (Option<TopoHeight>, bool)>(Column::VersionedContracts, &key)
-            .map(|v| v.1)
-    }
-
-    // Check if we have the contract
-    async fn has_contract_pointer(&self, hash: &Hash) -> Result<bool, BlockchainError> {
-        trace!("has contract pointer {}", hash);
-        self.get_optional_contract_type(hash)
-            .map(|res| res.map_or(false, |v| v.module_pointer.is_some()))
     }
 
     // Check if a contract exists at a given topoheight
@@ -161,23 +138,25 @@ impl ContractProvider for RocksStorage {
     // Check if a contract version exists at a maximum given topoheight
     async fn has_contract_at_maximum_topoheight(&self, hash: &Hash, maximum_topoheight: TopoHeight) -> Result<bool, BlockchainError> {
         trace!("has contract {} at maximum topoheight {}", hash, maximum_topoheight);
-        let contract = self.get_contract_type(hash)?;
-        let Some(pointer) = contract.module_pointer else {
-            return Ok(false)
-        };
+        self.run_blocking(|| {
+            let contract = self.get_contract_type(hash)?;
+            let Some(pointer) = contract.module_pointer else {
+                return Ok(false)
+            };
 
-        let mut prev_topo = Some(pointer);
-        while let Some(topo) = prev_topo {
-            let versioned_key = Self::get_versioned_contract_key(contract.id, topo);
-            if topo <= maximum_topoheight {
-                let exists = self.load_from_disk::<_, (Option<TopoHeight>, bool)>(Column::VersionedContracts, &versioned_key)?.1;
-                return Ok(exists)
+            let mut prev_topo = Some(pointer);
+            while let Some(topo) = prev_topo {
+                let versioned_key = Self::get_versioned_contract_key(contract.id, topo);
+                if topo <= maximum_topoheight {
+                    let exists = self.load_from_disk::<_, (Option<TopoHeight>, bool)>(Column::VersionedContracts, &versioned_key)?.1;
+                    return Ok(exists)
+                }
+
+                prev_topo = self.load_from_disk(Column::VersionedContracts, &versioned_key)?;
             }
 
-            prev_topo = self.load_from_disk(Column::VersionedContracts, &versioned_key)?;
-        }
-
-        Ok(false)
+            Ok(false)
+        })
     }
 
     // Count the number of contracts

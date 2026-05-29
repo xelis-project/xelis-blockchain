@@ -16,7 +16,7 @@ async fn contract_event_flow() {
     "#;
 
     let mut chain_state = MockChainState::new();
-    let emitter_hash = create_contract(&mut chain_state, code).expect("create emit event contract");
+    let emitter_hash = create_contract(&mut chain_state, code, ContractVersion::V1).expect("create emit event contract");
 
     let code = r#"
         fn on_contract_event(a: string, b: string) -> u64 {
@@ -36,7 +36,7 @@ async fn contract_event_flow() {
     "#.replace("CONTRACT_HASH", &emitter_hash.to_string());
 
     // Deploy the listener hash
-    let (_, execution) = deploy_contract(&mut chain_state, &code).await
+    let (_, execution) = deploy_contract(&mut chain_state, &code, ContractVersion::V1).await
         .expect("deploy listener contract");
 
     assert!(execution.is_success(), "listener contract deployment failed {:?}", execution);
@@ -52,10 +52,8 @@ async fn contract_event_flow() {
     assert!(execution.is_success(), "emitter contract execution failed {:?}", execution);
 
     let mut executions = 0;
-    for (caller, logs) in chain_state.contract_logs {
-        println!("Logs for contract caller {}:", caller);
+    for (_, logs) in chain_state.contract_logs {
         for log in logs {
-            println!("- {:?}", log);
             match log {
                 ContractLog::ExitCode(Some(0)) => {
                     executions += 1;
@@ -69,4 +67,126 @@ async fn contract_event_flow() {
     // - call_event execution
     // - on_contract_event execution
     assert_eq!(executions, 3);
+}
+
+// get_contract_caller() must return null when the contract is invoked directly
+#[tokio::test]
+async fn get_contract_caller_is_null_for_direct_invocation() {
+    let code = r#"
+        entry main() -> u64 {
+            let caller: optional<Hash> = get_contract_caller();
+            require(caller == null, "expected no contract caller for direct invocation");
+            return 0
+        }
+    "#;
+
+    let mut chain_state = MockChainState::new();
+    let contract = create_contract(&mut chain_state, code, ContractVersion::V1)
+        .expect("create contract");
+
+    let result = invoke_contract(&mut chain_state, &contract, InvokeContract::Entry(0), vec![])
+        .await
+        .expect("invoke contract");
+
+    assert!(result.is_success(), "expected success: {:?}", result);
+}
+
+// get_contract_caller() must return the emitting contract's hash when called
+// from inside an event callback not the TX/system hash.
+#[tokio::test]
+async fn get_contract_caller_returns_emitter_in_event_callback() {
+    let emitter_code = r#"
+        entry emit() -> u64 {
+            emit_event(7, []);
+            return 0
+        }
+    "#;
+
+    let mut chain_state = MockChainState::new();
+    let emitter = create_contract(&mut chain_state, emitter_code, ContractVersion::V1)
+        .expect("create emitter");
+
+    // The listener asserts that get_contract_caller() returns the emitter hash.
+    let listener_code = r#"
+        fn on_event() -> u64 {
+            let caller: optional<Hash> = get_contract_caller();
+            require(caller != null, "expected emitter as caller got null");
+            let expected: Hash = Hash::from_hex("EMITTER_HASH");
+            require(caller.unwrap() == expected, "wrong emitter hash returned by get contract caller");
+            return 0
+        }
+
+        hook constructor() -> u64 {
+            let emitter: Hash = Hash::from_hex("EMITTER_HASH");
+            let contract = Contract::new(emitter).expect("load emitter");
+            contract.listen_event(7, on_event, 10000);
+            return 0
+        }
+    "#.replace("EMITTER_HASH", &emitter.to_string());
+
+    let (_, deploy) = deploy_contract(&mut chain_state, &listener_code, ContractVersion::V1)
+        .await
+        .expect("deploy listener");
+    assert!(deploy.is_success(), "listener deploy failed: {:?}", deploy);
+
+    let result = invoke_contract(&mut chain_state, &emitter, InvokeContract::Entry(0), vec![])
+        .await
+        .expect("invoke emitter");
+    assert!(result.is_success(), "emitter failed: {:?}", result);
+
+    // Find the callback's ExitCode log to confirm it ran and succeeded.
+    let callback_success = chain_state.contract_logs.values()
+        .flat_map(|logs| logs.iter())
+        .filter(|log| matches!(log, ContractLog::ExitCode(Some(0))))
+        .count();
+
+    // constructor + emit() + on_event() = 3 successful exits
+    assert_eq!(callback_success, 3, "event callback did not run or failed");
+}
+
+// get_contract_caller() must return the calling contract's hash when invoked
+// via contract.call() (inter-contract call).
+#[tokio::test]
+async fn get_contract_caller_returns_caller_in_inter_contract_call() {
+    let code_b = r#"
+        pub fn check_caller(expected_caller: Hash) -> u64 {
+            let caller: optional<Hash> = get_contract_caller();
+            require(caller != null, "expected a contract caller got null");
+            require(caller.unwrap() == expected_caller, "wrong contract caller hash");
+            return 0
+        }
+    "#;
+
+    let mut chain_state = MockChainState::new();
+    let hash_b = create_contract(&mut chain_state, code_b, ContractVersion::V1)
+        .expect("create contract B");
+
+    // Contract A: entry calls B (chunk 0) passing A's own hash for B to verify.
+    let code_a = r#"
+        entry run() {
+            let b_hash: Hash = Hash::from_hex("EMITTER_HASH");
+            let b = Contract::new(b_hash).expect("load contract B");
+            let a_hash: Hash = get_contract_hash();
+            let deposits: map<Hash, u64> = {};
+            let res: u64 = b.call(0u16, [a_hash], deposits);
+            require(res == 0, "contract B call failed");
+
+            return 0;
+        }
+    "#.replace("EMITTER_HASH", &hash_b.to_string());
+
+    let hash_a = create_contract(&mut chain_state, &code_a, ContractVersion::V1)
+        .expect("create contract A");
+
+    let result = invoke_contract_with_permission(
+        &mut chain_state,
+        &hash_a,
+        InvokeContract::Entry(0),
+        vec![],
+        InterContractPermission::All,
+    )
+        .await
+        .expect("invoke contract A");
+
+    assert!(result.is_success(), "contract A invocation failed: {:?}", result);
 }

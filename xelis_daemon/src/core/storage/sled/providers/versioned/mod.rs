@@ -13,14 +13,15 @@ use sled::Tree;
 use xelis_common::{
     block::TopoHeight,
     serializer::{RawBytes, Serializer},
-    versioned_type::Versioned
+    versioned::Versioned
 };
 use crate::core::{
     error::{BlockchainError, DiskContext},
     storage::{
         SledStorage,
+        VersionedProvider,
         sled::Snapshot,
-        VersionedProvider
+        types::VersionedKey
     }
 };
 
@@ -40,12 +41,12 @@ impl SledStorage {
 
             // Delete this version from DB
             // We read the previous topoheight to check if we need to delete the balance
-            let prev_topo = Self::remove_from_disk::<Option<TopoHeight>>(snapshot.as_mut(), tree_versioned, &prefixed_key)?
+            let prev_topo = Self::remove_from_disk::<Option<TopoHeight>, _>(snapshot.as_mut(), tree_versioned, &prefixed_key)?
                 .ok_or(BlockchainError::CorruptedData)?;
 
             // Key without the topoheight
             let key = &prefixed_key[8..];
-            if let Some(topo_pointer) = Self::load_optional_from_disk_internal::<TopoHeight>(snapshot.as_ref(), tree_pointer, key)? {
+            if let Some(topo_pointer) = Self::load_optional_from_disk_internal::<TopoHeight, _>(snapshot.as_ref(), tree_pointer, key)? {
                 if topo_pointer >= topoheight {
                     if let Some(prev_topo) = prev_topo {
                         Self::insert_into_disk(snapshot.as_mut(), tree_pointer, key, &prev_topo.to_be_bytes())?;
@@ -79,7 +80,7 @@ impl SledStorage {
 
                 // We fetch the last version to take its previous topoheight
                 // And we loop on it to delete them all until the end of the chained data
-                let mut prev_version = Self::remove_from_disk::<Option<u64>>(snapshot.as_mut(), tree_versioned, &Self::get_versioned_key(&key, topo))?
+                let mut prev_version = Self::remove_from_disk::<Option<u64>, _>(snapshot.as_mut(), tree_versioned, &Self::get_versioned_key(&key, topo))?
                     .ok_or(BlockchainError::NotFoundOnDisk(context))?;
 
                 // While we are above the threshold, we must delete versions to rewrite the correct topoheight
@@ -92,7 +93,7 @@ impl SledStorage {
 
                     trace!("deleting versioned data at topoheight {}", prev_topo);
                     let key = Self::get_versioned_key(&key, prev_topo);
-                    prev_version = Self::remove_from_disk::<Option<u64>>(snapshot.as_mut(), tree_versioned, &key)?
+                    prev_version = Self::remove_from_disk::<Option<u64>, _>(snapshot.as_mut(), tree_versioned, &key)?
                         .ok_or(BlockchainError::NotFoundOnDisk(context))?;
                 }
 
@@ -144,7 +145,7 @@ impl SledStorage {
                         prev_version = Self::load_from_disk_internal(snapshot.as_ref(), tree_versioned, &key, context)?;
 
                         // if we are below it, patch it
-                        if prev_topo < topoheight {
+                        if prev_topo <= topoheight {
                             trace!("Patching versioned data at topoheight {}", topoheight);
                             patched = true;
 
@@ -168,11 +169,9 @@ impl SledStorage {
     }
 
     // Versioned key is a key that starts with the topoheight
-    pub fn get_versioned_key<T: AsRef<[u8]>>(data: T, topoheight: TopoHeight) -> Vec<u8> {
-        let bytes = data.as_ref();
-        let mut buf = Vec::with_capacity(8 + bytes.len());
-        buf.extend(topoheight.to_be_bytes());
-        buf.extend(bytes);
+    pub fn get_versioned_key<T: AsRef<[u8]>>(data: T, topoheight: TopoHeight) -> VersionedKey {
+        let mut buf = VersionedKey::new(topoheight);
+        buf.extend_with(data);
         buf
     }
 }

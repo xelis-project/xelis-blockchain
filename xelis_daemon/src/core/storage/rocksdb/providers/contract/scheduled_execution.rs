@@ -83,8 +83,8 @@ impl ContractScheduledExecutionProvider for RocksStorage {
         let min = minimum_topoheight.to_be_bytes();
         let max = (maximum_topoheight + 1).to_be_bytes();
         let stream = self.iter_keys::<(TopoHeight, ContractId, TopoHeight)>(Column::DelayedExecutionRegistrations, IteratorMode::Range {
-            lower_bound: &min,
-            upper_bound: &max,
+            lower_bound: Some(&min),
+            upper_bound: Some(&max),
             direction: Direction::Reverse
         })?
             .map(move |res| {
