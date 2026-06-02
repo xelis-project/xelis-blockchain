@@ -1811,7 +1811,7 @@ impl<S: Storage> Blockchain<S> {
         // Keep only the MAX_TIPS_IN_CACHE heavier tips in memory
         sorted_tips.truncate(MAX_TIPS_IN_CACHE);
 
-        // Update caches$
+        // Update caches
         // TODO: select more than one tip
         let (difficulty, _) = self.get_difficulty_at_tips(&*storage, sorted_tips.iter().take(1)).await?;
         debug!("New difficulty at tips is {}", format_difficulty(difficulty));
