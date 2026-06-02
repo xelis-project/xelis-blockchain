@@ -173,10 +173,12 @@ pub struct CliConfig {
     /// Sled DB Backend if enabled
     #[cfg(feature = "sled")]
     #[clap(flatten)]
+    #[serde(default)]
     pub sled: SledConfig,
     /// RocksDB Backend if enabled
     #[cfg(feature = "rocksdb")]
     #[clap(flatten)]
+    #[serde(default)]
     pub rocksdb: RocksDBConfig,
     /// Use a different DB backend from the default.
     /// Note that the data will not be migrated from one to another
