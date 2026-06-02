@@ -1,6 +1,6 @@
 use std::{
-    collections::{BTreeSet, HashMap, HashSet, btree_set::IntoIter},
     cmp::Ordering,
+    collections::{BTreeSet, HashMap, HashSet, btree_set::{self, IntoIter}},
 };
 
 use log::debug;
@@ -33,7 +33,7 @@ impl PartialOrd for TipEntry {
 
 /// Iterator over `SortedTips` yielding hashes in descending cumulative-difficulty order.
 pub struct SortedTipsIter<'a> {
-    inner: std::collections::btree_set::Iter<'a, TipEntry>,
+    inner: btree_set::Iter<'a, TipEntry>,
 }
 
 impl<'a> Iterator for SortedTipsIter<'a> {
@@ -213,5 +213,20 @@ mod tests {
         assert_eq!(tips.len(), 2, "updating an existing hash must not duplicate it");
         assert!(tips.contains(&hash));
         assert_eq!(tips.best(), Some(&hash), "updated hash must be re-ordered");
+    }
+
+    #[test]
+    fn test_iter_returns_highest_cumulative_difficulty_first() {
+        let h1 = Hash::new([11; 32]);
+        let h2 = Hash::new([12; 32]);
+        let h3 = Hash::new([13; 32]);
+
+        let mut tips = SortedTips::default();
+        tips.insert(h1.clone(), CumulativeDifficulty::from(25u64));
+        tips.insert(h2.clone(), CumulativeDifficulty::from(75u64));
+        tips.insert(h3.clone(), CumulativeDifficulty::from(50u64));
+
+        let ordered: Vec<Hash> = tips.iter().cloned().collect();
+        assert_eq!(ordered, vec![h2, h3, h1], "tips must be yielded from highest to lowest cumulative difficulty");
     }
 }
