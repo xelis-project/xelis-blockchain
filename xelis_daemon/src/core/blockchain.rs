@@ -980,6 +980,19 @@ impl<S: Storage> Blockchain<S> {
         I: Iterator<Item = &'a Hash> + ExactSizeIterator + Clone + Send + Sync,
     {
         trace!("get difficulty at tips");
+
+        // Check in cache first
+        // We don't hold the lock to ensure concurrency
+        let cache_key = tips.clone().into_iter().cloned().collect::<Vec<_>>();
+        {
+            let cache = provider.chain_cache().await;
+            let mut guard = cache.difficulty_at_tips_cache.lock().await;
+
+            if let Some((difficulty, p)) = guard.get(&cache_key).cloned() {
+                return Ok((difficulty, p));
+            }
+        }
+
         let start = Instant::now();
 
         // Get the height at the tips
@@ -1085,6 +1098,13 @@ impl<S: Storage> Blockchain<S> {
         let elapsed = start.elapsed();
         trace!("Difficulty calculated in {:?}", elapsed);
         histogram!("xelis_difficulty_time_µs").record(elapsed.as_micros() as f64);
+
+        // Store in cache
+        {
+            let cache = provider.chain_cache().await;
+            let mut guard = cache.difficulty_at_tips_cache.lock().await;
+            guard.put(cache_key, (difficulty, p_new));
+        }
 
         Ok((difficulty, p_new))
     }
