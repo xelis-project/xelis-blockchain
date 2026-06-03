@@ -1054,7 +1054,7 @@ impl<S: Storage> Blockchain<S> {
                 .max(observed_count);
             let observed_hashrate = (observed_work * MILLIS_PER_SECOND / time_span).max(VarUint::one());
 
-            info!("Calculated V6 observed hashrate {} from base {} (blocks: {}, work: {}, time: {}ms)", observed_hashrate, base, observed_count, observed_work, time_span);
+            debug!("Calculated V6 observed hashrate {} from base {} (blocks: {}, work: {}, time: {}ms)", observed_hashrate, base, observed_count, observed_work, time_span);
 
             let block_time_target = get_block_time_target_for_version(version);
             difficulty::v3::calculate_difficulty(observed_hashrate, state_difficulty, p, minimum_difficulty, block_time_target, observed_count)
@@ -1789,12 +1789,11 @@ impl<S: Storage> Blockchain<S> {
                 }
 
                 debug!("Tip {} is valid, adding to final Tips list", hash);
-                tips.insert(hash);
             }
+            tips.insert(hash);
         }
-        tips.insert(best_tip);
 
-        debug!("Storing new tips in storage");
+        debug!("Storing new tips ({}) in storage", tips.len());
         // Store the new tips available
         storage.store_tips(&tips).await?;
 

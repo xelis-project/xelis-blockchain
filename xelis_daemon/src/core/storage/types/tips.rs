@@ -229,4 +229,25 @@ mod tests {
         let ordered: Vec<Hash> = tips.iter().cloned().collect();
         assert_eq!(ordered, vec![h2, h3, h1], "tips must be yielded from highest to lowest cumulative difficulty");
     }
+
+    #[test]
+    fn test_truncate_drops_lowest_first() {
+        let low = Hash::new([21; 32]);
+        let mid = Hash::new([22; 32]);
+        let high = Hash::new([23; 32]);
+
+        let mut tips = SortedTips::default();
+        tips.insert(low.clone(), CumulativeDifficulty::from(10u64));
+        tips.insert(mid.clone(), CumulativeDifficulty::from(50u64));
+        tips.insert(high.clone(), CumulativeDifficulty::from(100u64));
+
+        tips.truncate(2);
+        assert_eq!(tips.len(), 2, "truncate must reduce to requested max length");
+        assert!(!tips.contains(&low), "lowest cumulative difficulty tip must be dropped first");
+        assert!(tips.contains(&mid), "higher cumulative difficulty tips should be kept");
+        assert!(tips.contains(&high), "highest cumulative difficulty tip should be kept");
+
+        let ordered: Vec<Hash> = tips.iter().cloned().collect();
+        assert_eq!(ordered, vec![high, mid], "remaining tips must stay sorted from highest to lowest cumulative difficulty");
+    }
 }
