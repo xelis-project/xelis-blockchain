@@ -139,22 +139,25 @@ where
     match tips_len {
         0 => Err(BlockchainError::ExpectedTips),
         _ => {
-            let newest_tip = stream::iter(tips)
+            let Some(newest_tip) = stream::iter(tips)
                 .map(|hash| async move {
                     provider.get_timestamp_for_block_hash(hash).await
                         .map(|timestamp| (hash, timestamp))
                 })
                 .buffer_unordered(provider.concurrency())
                 .boxed()
-                .try_fold(None, |newest, (hash, timestamp)| async move {
+                .try_fold(None, |newest, (hash, timestamp)| ready(
                     Ok::<_, BlockchainError>(Some(match newest {
                         None => (hash, timestamp),
                         Some((_, newest_timestamp)) if timestamp > newest_timestamp => (hash, timestamp),
                         Some(current_newest) => current_newest,
                     }))
-                }).await?;
+                )).await? else {
+                    debug!("Failed to find newest timestamp from tips");
+                    return Err(BlockchainError::HighestTimestampNotFound)
+                };
 
-            newest_tip.ok_or(BlockchainError::ExpectedTips)
+                Ok(newest_tip)
         }
     }
 }
@@ -616,16 +619,14 @@ where
         }
     }
 
-    let best_height = stream::iter(tips.clone().into_iter())
+    let Some(best_height) = stream::iter(tips.clone().into_iter())
         .map(|hash| provider.get_height_for_block_hash(hash))
         .buffer_unordered(provider.concurrency())
         .boxed()
-        .try_fold(None, |current_height, tip_height| ready(match (current_height, tip_height) {
-                (None, tip_height) => Ok(Some(tip_height)),
-                (Some(current), tip_height) if tip_height > current => Ok(Some(tip_height)),
-                (current, _) => Ok(current),
-            })).await?
-        .ok_or(BlockchainError::ExpectedTips)?;
+        .try_fold(None, |current_height, tip_height| ready(Ok(current_height.max(Some(tip_height))))).await? else {
+            debug!("Failed to find best height from tips, tips list: {}", tips.clone().into_iter().map(|h| h.to_string()).collect::<Vec<String>>().join(", "));
+            return Err(BlockchainError::BestHeightNotFound)
+        };
 
     let pruned_topoheight = provider.get_pruned_topoheight().await?.unwrap_or(0);
 
@@ -638,7 +639,7 @@ where
     // check that we have at least one value
     if bases.is_empty() {
         error!("bases list is empty");
-        return Err(BlockchainError::ExpectedTips)
+        return Err(BlockchainError::NoCommonBaseFoundForTips)
     }
 
     // sort it descending by height
@@ -987,7 +988,7 @@ where
 {
     trace!("generate full order with base {} and {} tips", base, hashes.len());
     if hashes.len() == 0 {
-        return Err(BlockchainError::ExpectedTips)
+        return Err(BlockchainError::NoTipsForOrdering)
     }
 
     let base_topo_height = base_topo_height.into();

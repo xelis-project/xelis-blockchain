@@ -1060,7 +1060,7 @@ impl<S: Storage> Blockchain<S> {
                 .boxed()
                 .try_fold(None, |acc, x| ready(Ok(acc.max(Some(x)))))
                 .await?
-                .ok_or(BlockchainError::ExpectedTips)?;
+                .ok_or(BlockchainError::HighestTimestampNotFound)?;
 
             let time_span = newest_timestamp
                 .saturating_sub(first_timestamp)
