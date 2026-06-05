@@ -133,6 +133,10 @@ impl SortedTips {
         }
     }
 
+    pub fn get_cumulative_difficulty(&self, hash: &Hash) -> Option<&CumulativeDifficulty> {
+        self.by_hash.get(hash)
+    }
+
     pub fn contains(&self, hash: &Hash) -> bool {
         self.by_hash.contains_key(hash)
     }

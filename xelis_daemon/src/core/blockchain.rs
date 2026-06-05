@@ -1821,10 +1821,11 @@ impl<S: Storage> Blockchain<S> {
         let mut sorted_tips = SortedTips::default();
 
         for hash in tips.drain() {
-            if !chain_cache.tips.contains(&hash) {
-                let cd = storage.get_cumulative_difficulty_for_block_hash(&hash).await?;
-                sorted_tips.insert(hash, cd);
-            }
+            let cumulative_difficulty = match chain_cache.tips.get_cumulative_difficulty(&hash) {
+                Some(cd) => cd.clone(),
+                None => storage.get_cumulative_difficulty_for_block_hash(&hash).await?,
+            };
+            sorted_tips.insert(hash, cumulative_difficulty);
         }
 
         // Keep only the MAX_TIPS_IN_CACHE heavier tips in memory
