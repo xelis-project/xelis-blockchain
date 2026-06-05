@@ -2,6 +2,7 @@ use std::time::Duration;
 use humantime::Duration as HumanDuration;
 use serde::{Deserialize, Serialize};
 use xelis_common::{
+    config::FEE_PER_KB,
     crypto::Hash,
     prompt::LogLevel,
     utils::detect_available_parallelism
@@ -60,6 +61,10 @@ const fn debug_log_level() -> LogLevel {
 
 const fn default_rpc_batch_limit() -> usize {
     20
+}
+
+const fn default_min_fee_per_kb() -> u64 {
+    FEE_PER_KB
 }
 
 #[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
@@ -468,13 +473,36 @@ impl Default for StorageBackend {
 }
 
 #[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
+pub struct MempoolConfig {
+    // Minimum fee per kB to consider a transaction as valid for the mempool.
+    // This is in atomic units (1e-8 of the currency unit).
+    #[clap(long = "mempool-min-fee-per-kb", default_value_t = default_min_fee_per_kb())]
+    #[serde(default = "default_min_fee_per_kb")]
+    pub min_fee_per_kb: u64,
+}
+
+impl Default for MempoolConfig {
+    fn default() -> Self {
+        Self {
+            min_fee_per_kb: default_min_fee_per_kb(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
 pub struct BlockchainConfig {
     /// RPC configuration
     #[clap(flatten)]
+    #[serde(default)]
     pub rpc: RPCConfig,
     /// P2P configuration
     #[clap(flatten)]
+    #[serde(default)]
     pub p2p: P2pConfig,
+    /// Mempool configuration
+    #[clap(flatten)]
+    #[serde(default)]
+    pub mempool: MempoolConfig,
     /// Set dir path for blockchain storage.
     /// This will be appended by the network name for the database directory.
     /// It must ends with a slash.
@@ -540,20 +568,20 @@ pub struct BlockchainConfig {
     #[clap(long)]
     #[serde(default)]
     pub flush_db_every_n_blocks: Option<u64>,
-    // Disable the TX Cache (ZKP Cache)
-    // ZKP Cache is enabled by default and
-    // prevent to re-verify the same ZK Proofs more than once.
+    /// Disable the TX Cache (ZKP Cache)
+    /// ZKP Cache is enabled by default and
+    /// prevent to re-verify the same ZK Proofs more than once.
     #[clap(long)]
     #[serde(default)]
     pub disable_zkp_cache: bool,
-    // Max concurrency allowed for general tasks
-    // By default, it will use the available parallelism.
+    /// Max concurrency allowed for general tasks
+    /// By default, it will use the available parallelism.
     #[clap(long, default_value_t = detect_available_parallelism())]
     #[serde(default = "detect_available_parallelism")]
     pub concurrency: usize,
-    // Enable snapshot mode during DAG reorganizations.
-    // This will create a snapshot of the current state before applying the reorg and will use
-    // as a memory buffer to apply the reorg and then flush it to the storage at the end of the reorg.
+    /// Enable snapshot mode during DAG reorganizations.
+    /// This will create a snapshot of the current state before applying the reorg and will use
+    /// as a memory buffer to apply the reorg and then flush it to the storage at the end of the reorg.
     #[clap(long)]
     #[serde(default)]
     pub enable_snapshot_on_reorg: bool,
@@ -564,6 +592,7 @@ impl Default for BlockchainConfig {
         Self {
             rpc: RPCConfig::default(),
             p2p: P2pConfig::default(),
+            mempool: MempoolConfig::default(),
             dir_path: None,
             simulator: None,
             skip_pow_verification: false,

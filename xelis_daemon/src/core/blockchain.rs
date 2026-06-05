@@ -236,6 +236,8 @@ pub struct Blockchain<S: Storage> {
     contracts_logging: bool,
     // Enable snapshot mode during DAG reorganizations.
     snapshot_on_reorg: bool,
+    // Minimum fee per kB to consider a transaction as valid for the mempool.
+    min_fee_per_kb: u64,
 }
 
 tid! { impl<'a, S: 'static> TidAble<'a> for Blockchain<S> where S: Storage }
@@ -297,6 +299,11 @@ impl<S: Storage> Blockchain<S> {
                 warn!("{} priority nodes configured while max outgoing peers is set to {}, increasing max outgoing peers", priority_len, config.p2p.max_outgoing_peers);
                 config.p2p.max_outgoing_peers = priority_len;
             }
+
+            if config.mempool.min_fee_per_kb < FEE_PER_KB {
+                error!("Minimum fee per kB must be at least {}", FEE_PER_KB);
+                return Err(BlockchainError::InvalidConfig.into())
+            }
         }
 
         let on_disk = storage.has_blocks().await?;
@@ -327,6 +334,7 @@ impl<S: Storage> Blockchain<S> {
             mining_cache: RwLock::new(None),
             contracts_logging: config.enable_contracts_logging,
             snapshot_on_reorg: config.enable_snapshot_on_reorg,
+            min_fee_per_kb: config.mempool.min_fee_per_kb,
         };
 
         // include genesis block
@@ -622,7 +630,7 @@ impl<S: Storage> Blockchain<S> {
                 FEE_PER_KB
             };
 
-            mempool.clean_up(&*storage, &self.environments, chain_cache.stable_topoheight, chain_cache.topoheight, block_version, tx_base_fee, chain_cache.stable_height, true).await?;
+            mempool.clean_up(&*storage, &self.environments, chain_cache.stable_topoheight, chain_cache.topoheight, block_version, tx_base_fee.max(self.min_fee_per_kb), chain_cache.stable_height, true).await?;
         }
 
         Ok(())
@@ -1243,7 +1251,7 @@ impl<S: Storage> Blockchain<S> {
 
             // NOTE: we do not verify / clean against requested base fee
             // to ensure no TX is orphaned, but only delayed until the chain congestion reduce
-            mempool.add_tx(storage, &self.environments, stable_topoheight, current_topoheight, FEE_PER_KB, stable_height, hash.clone(), tx.clone(), tx_size, version).await?;
+            mempool.add_tx(storage, &self.environments, stable_topoheight, current_topoheight, self.min_fee_per_kb, stable_height, hash.clone(), tx.clone(), tx_size, version).await?;
 
             debug!("TX {} has been added to the mempool", hash);
 
@@ -1580,7 +1588,7 @@ impl<S: Storage> Blockchain<S> {
         let base_fee = if is_v3_enabled {
             self.get_required_base_fee(&*storage, block.get_tips().iter()).await?.0
         } else {
-            FEE_PER_KB
+            self.min_fee_per_kb
         };
 
         // Find the base height for this block
@@ -2989,7 +2997,7 @@ impl<S: Storage> Blockchain<S> {
                 let mut mempool = self.mempool.write().await;
 
                 let start = Instant::now();
-                let orphaned = mempool.try_add_back_txs(&*storage, orphaned_transactions.into_iter(), &self.environments, base_topo_height, highest_topo, version, FEE_PER_KB, base_height).await?;
+                let orphaned = mempool.try_add_back_txs(&*storage, orphaned_transactions.into_iter(), &self.environments, base_topo_height, highest_topo, version, self.min_fee_per_kb, base_height).await?;
                 if !orphan_event_tracked {
                     for (tx_hash, tx) in orphaned {
                         // We couldn't add it back to mempool, let's notify this event
@@ -3016,7 +3024,7 @@ impl<S: Storage> Blockchain<S> {
 
                 let start = Instant::now();
                 // NOTE: we don't remove any under-paid TX, they stay in mempool until fixed
-                let res = mempool.clean_up(&*storage, &self.environments, base_topo_height, highest_topo, version, FEE_PER_KB, base_height, dag_is_overwritten).await?;
+                let res = mempool.clean_up(&*storage, &self.environments, base_topo_height, highest_topo, version, self.min_fee_per_kb, base_height, dag_is_overwritten).await?;
                 debug!("Took {:?} to clean mempool!", start.elapsed());
                 histogram!("xelis_mempool_clean_up_ms").record(start.elapsed().as_millis() as f64);
 
@@ -3378,7 +3386,7 @@ impl<S: Storage> Blockchain<S> {
             let mut mempool = self.mempool.write().await;
             debug!("mempool lock acquired for cleaning old TXs");
 
-            let tmp = mempool.clean_up(storage, &self.environments, chain_cache.stable_topoheight, new_topoheight, version, tx_base_fee, chain_cache.stable_height, true).await?;
+            let tmp = mempool.clean_up(storage, &self.environments, chain_cache.stable_topoheight, new_topoheight, version, tx_base_fee.max(self.min_fee_per_kb), chain_cache.stable_height, true).await?;
             txs.extend(tmp.into_iter().map(|(tx_hash, sorted_tx)| (tx_hash, sorted_tx.consume())));
         }
 
