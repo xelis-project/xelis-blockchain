@@ -210,7 +210,8 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider<'ty>>(
             + (params_size as u64 * FEE_PER_BYTE_IN_CONTRACT_MEMORY),
     };
 
-    let total_cost = max_gas + extra_cost;
+    let total_cost = max_gas.checked_add(extra_cost)
+        .ok_or(EnvironmentError::GasOverflow)?;
     let source = if use_contract_balance {
         // check that we have enough to pay the reserved gas & params fee
         if !has_enough_balance_for_contract(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET, total_cost).await?{
@@ -273,7 +274,7 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider<'ty>>(
         record_burned_asset(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET, burned_part).await?;
 
         // add the part for the miners
-        let fee_part = total_cost - burned_part;
+        let fee_part = extra_cost - burned_part;
         state.changes.extra_gas_fee = fee_part.checked_add(state.changes.extra_gas_fee)
             .ok_or(EnvironmentError::GasOverflow)?;
 
