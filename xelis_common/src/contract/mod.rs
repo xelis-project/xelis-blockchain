@@ -2342,11 +2342,18 @@ pub async fn record_account_balance_credit<'a, 'b>(
 
     // Aggregated transfers for this address
     // this is easier to apply at the end of the execution
-    state.changes.tracker.aggregated_transfers.entry(key.clone())
+    match state.changes.tracker.aggregated_transfers.entry(key.clone())
         .or_insert_with(HashMap::new)
         .entry(asset.clone())
-        .and_modify(|v| *v += amount)
-        .or_insert(amount);
+    {
+        Entry::Occupied(mut entry) => {
+            *entry.get_mut() = entry.get().checked_add(amount)
+                .context("Overflow while aggregating contract transfer")?;
+        },
+        Entry::Vacant(entry) => {
+            entry.insert(amount);
+        }
+    }
 
     // The caller hash (either scheduled execution or TX contract call)
     let caller = state.caller.get_hash()
@@ -2354,13 +2361,20 @@ pub async fn record_account_balance_credit<'a, 'b>(
         .clone();
 
     // Detailed transfers from contract to address for better outputs tracking
-    state.changes.tracker.contracts_transfers.entry((caller, from_contract.clone()))
+    match state.changes.tracker.contracts_transfers.entry((caller, from_contract.clone()))
         .or_insert_with(HashMap::new)
         .entry(key.clone())
         .or_insert_with(HashMap::new)
         .entry(asset.clone())
-        .and_modify(|v| *v += amount)
-        .or_insert(amount);
+    {
+        Entry::Occupied(mut entry) => {
+            *entry.get_mut() = entry.get().checked_add(amount)
+                .context("Overflow while aggregating contract output")?;
+        },
+        Entry::Vacant(entry) => {
+            entry.insert(amount);
+        }
+    }
 
     // Add the output
     state.logs.push(match payload {
@@ -2822,8 +2836,9 @@ async fn increase_gas_limit<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance
     {
         // Ensure that we check against the overall amount
         let mut total_amount = 0;
-        if let Some(amount) = state.injected_gas.get(&Source::Contract(metadata.metadata.contract_executor.clone())) {
-            total_amount += amount;
+        if let Some(amount) = state.injected_gas.get(&Source::Contract(metadata.metadata.contract_executor.clone())).copied() {
+            total_amount = amount.checked_add(total_amount)
+                .context("Overflow while checking injected gas")?;
         }
 
         // We look in the global caches as it is the fixed & valid state before this invoke
@@ -2854,8 +2869,11 @@ async fn increase_gas_limit<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance
     record_balance_charge(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET, amount).await?;
 
     // Track that each contract have injected N gas
-    *state.injected_gas.entry(Source::Contract(metadata.metadata.contract_executor.clone()))
-        .or_insert(0) += amount;
+    let injected = state.injected_gas
+        .entry(Source::Contract(metadata.metadata.contract_executor.clone()))
+        .or_insert(0);
+    *injected = injected.checked_add(amount)
+        .context("Overflow while tracking injected gas")?;
 
     context.increase_gas_limit(amount)?;
 

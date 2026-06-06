@@ -92,6 +92,8 @@ pub enum ContractError {
     VM(#[from] VMError),
     #[error("overflow during gas calculation")]
     GasOverflow,
+    #[error("overflow during balance calculation")]
+    BalanceOverflow,
     #[error("contract cache not found")]
     ContractCache,
     #[error("gas balance not found for contract")]
@@ -513,7 +515,8 @@ pub async fn refund_gas_sources<'a, 'ty, P: for<'x> ContractProvider<'x>, E, B: 
 
                 versioned_state.mark_updated();
 
-                *balance += refund_amount;
+                *balance = balance.checked_add(refund_amount)
+                    .ok_or(ContractError::BalanceOverflow)?;
                 debug!("Refund {} XEL to contract {} for gas fee", refund_amount, contract);
             },
             Source::Account(account) => {
@@ -562,7 +565,8 @@ pub async fn refund_extra_gas_injections<'a, 'ty, P: for<'x> ContractProvider<'x
                     // Refund the smaller of what was injected or what's left
                     let refund = gas.min(gas_refund_left);
                     debug!("Refund {} XEL to contract {} for gas fee", refund, contract);
-                    *balance += refund;
+                    *balance = balance.checked_add(refund)
+                        .ok_or(ContractError::BalanceOverflow)?;
                     state.mark_updated();
 
                     let consumed = gas - refund;

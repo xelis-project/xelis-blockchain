@@ -421,7 +421,8 @@ impl<'a, 'ty> BlockchainContractState<'a, 'ty, MockStorageProvider, anyhow::Erro
                         Entry::Occupied(mut o) => match o.get_mut() {
                             Some((state, balance)) => {
                                 state.mark_updated();
-                                *balance += amount;
+                                *balance = balance.checked_add(*amount)
+                                    .context("Overflow while applying contract deposit")?;
                             }
                             None => {
                                 o.insert(Some((VersionedState::New, *amount)));
