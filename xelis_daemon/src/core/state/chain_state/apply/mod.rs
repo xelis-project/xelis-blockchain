@@ -30,7 +30,7 @@ use xelis_common::{
         ExecutionsManager,
         InterContractPermission,
         Source,
-        vm::{self, ContractCaller, InvokeContract}
+        vm::{self, ContractCaller, ContractError, InvokeContract}
     },
     crypto::{Hash, PublicKey, elgamal::Ciphertext},
     serializer::Serializer,
@@ -303,7 +303,8 @@ impl<'s, 'b, 'ty, P: ApplicableChainStateProvider> BlockchainContractState<'b, '
                         Entry::Occupied(mut o) => match o.get_mut() {
                             Some((mut state, balance)) => {
                                 state.mark_updated();
-                                *balance += amount;
+                                *balance = balance.checked_add(*amount)
+                                    .ok_or(BlockchainError::ContractError(ContractError::BalanceOverflow))?;
                             },
                             None => {
                                 // Balance was already fetched and we didn't had any balance before
@@ -317,7 +318,9 @@ impl<'s, 'b, 'ty, P: ApplicableChainStateProvider> BlockchainContractState<'b, '
                                 .unwrap_or((VersionedState::New, 0));
     
                             state.mark_updated();
-                            e.insert(Some((state, balance + amount)));
+                            let balance = balance.checked_add(*amount)
+                                .ok_or(BlockchainError::ContractError(ContractError::BalanceOverflow))?;
+                            e.insert(Some((state, balance)));
                         }
                     },
                     ContractDeposit::Private { .. } => {
