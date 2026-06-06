@@ -10,6 +10,7 @@ use log::{debug, error, info, trace, warn};
 use rpc::rpc::get_block_response_for_hash;
 use serde::{Deserialize, Serialize};
 use tokio::pin;
+use xelis_assembler::Disassembler;
 use xelis_common::{
     async_handler,
     config::{init, VERSION, XELIS_ASSET, FEE_PER_KB},
@@ -1436,6 +1437,26 @@ async fn inspect_contract<S: Storage>(manager: &CommandManager, mut arguments: A
     }
 
     manager.message(format!("Total storage size: {}", human_bytes(total_size as f64)));
+
+    let disassemble = if arguments.has_argument("disassemble") {
+        true
+    } else {
+        manager.get_prompt()
+            .read_valid_str_value("Disassemble contract? (Y/N): ".to_owned(), &["y", "n"]).await?
+            == "y"
+    };
+
+    if disassemble {
+        let mut disassembler = Disassembler::new(&module.module);
+        let dump = disassembler.disasemble().context("Error while disassembling contract")?;
+
+        for (i, (instructions, access)) in dump.chunks.into_iter().enumerate() {
+            manager.message(format!("Chunk {} #{}:", i, access));
+            for instruction in instructions {
+                manager.message(format!("  - {}", instruction));
+            }
+        }
+    }
 
     Ok(())
 }
