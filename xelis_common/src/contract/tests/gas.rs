@@ -341,3 +341,135 @@ async fn test_refund_gas_sources_empty_sources() {
     // Nothing should have changed
     assert!(state.contract_caches.is_empty());
 }
+
+#[tokio::test]
+async fn test_refund_gas_sources_caps_refund_to_total_input() {
+    use crate::contract::{vm::refund_gas_sources, Source};
+
+    let mut state = MockChainState::new();
+    let contract = Hash::zero();
+
+    {
+        let (_, balance) = state.get_contract_balance_for_gas(&contract).await.unwrap();
+        *balance = 1000;
+    }
+
+    let mut gas_sources = IndexMap::new();
+    gas_sources.insert(Source::Contract(contract.clone()), 100);
+
+    refund_gas_sources(&mut state, gas_sources, 0, 1000).await.unwrap();
+
+    {
+        let (_, balance) = state.get_contract_balance_for_gas(&contract).await.unwrap();
+        assert_eq!(
+            *balance,
+            1100,
+            "refund must be capped by the source input, not tx_max_gas"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_refund_gas_sources_caps_mixed_sources_to_each_input() {
+    use crate::contract::{vm::refund_gas_sources, Source};
+    use crate::crypto::KeyPair;
+
+    let mut state = MockChainState::new();
+    let contract = Hash::zero();
+    let keypair = KeyPair::new();
+    let account = keypair.get_public_key().compress();
+
+    {
+        let (_, balance) = state.get_contract_balance_for_gas(&contract).await.unwrap();
+        *balance = 1000;
+    }
+
+    {
+        let balance_ct = keypair.get_public_key().encrypt(2000u64);
+        state.accounts.insert(account.clone(), MockAccount {
+            balances: [(XELIS_ASSET, balance_ct)].into_iter().collect(),
+            nonce: 0,
+        });
+    }
+
+    let mut gas_sources = IndexMap::new();
+    gas_sources.insert(Source::Contract(contract.clone()), 100);
+    gas_sources.insert(Source::Account(account.clone()), 50);
+
+    refund_gas_sources(&mut state, gas_sources, 0, 1000).await.unwrap();
+
+    {
+        let (_, balance) = state.get_contract_balance_for_gas(&contract).await.unwrap();
+        assert_eq!(*balance, 1100, "contract refund must not exceed its input");
+    }
+
+    let balance_ct = &state.accounts.get(&account).unwrap().balances[&XELIS_ASSET];
+    let balance_point = keypair.decrypt_to_point(balance_ct);
+    assert_eq!(
+        balance_point,
+        Scalar::from(2050u64) * (*G),
+        "account refund must not exceed its input"
+    );
+}
+
+#[tokio::test]
+async fn test_refund_gas_sources_rejects_total_input_overflow_without_outputs() {
+    use crate::contract::{vm::refund_gas_sources, Source};
+
+    let mut state = MockChainState::new();
+    let contract1 = Hash::zero();
+    let contract2 = Hash::new([1u8; 32]);
+
+    {
+        let (_, balance) = state.get_contract_balance_for_gas(&contract1).await.unwrap();
+        *balance = 1000;
+    }
+    {
+        let (_, balance) = state.get_contract_balance_for_gas(&contract2).await.unwrap();
+        *balance = 2000;
+    }
+
+    let mut gas_sources = IndexMap::new();
+    gas_sources.insert(Source::Contract(contract1.clone()), u64::MAX);
+    gas_sources.insert(Source::Contract(contract2.clone()), 1);
+
+    let result = refund_gas_sources(&mut state, gas_sources, 0, u64::MAX).await;
+    assert!(result.is_err(), "overflowing source sum must be rejected");
+
+    {
+        let (_, balance) = state.get_contract_balance_for_gas(&contract1).await.unwrap();
+        assert_eq!(*balance, 1000, "first contract balance must remain unchanged");
+    }
+    {
+        let (_, balance) = state.get_contract_balance_for_gas(&contract2).await.unwrap();
+        assert_eq!(*balance, 2000, "second contract balance must remain unchanged");
+    }
+}
+
+#[tokio::test]
+async fn test_refund_gas_sources_rejects_contract_balance_overflow_without_output() {
+    use crate::contract::{vm::refund_gas_sources, Source};
+
+    let mut state = MockChainState::new();
+    let contract = Hash::zero();
+
+    {
+        let (_, balance) = state.get_contract_balance_for_gas(&contract).await.unwrap();
+        *balance = u64::MAX;
+    }
+
+    let mut gas_sources = IndexMap::new();
+    gas_sources.insert(Source::Contract(contract.clone()), 1);
+
+    let result = refund_gas_sources(&mut state, gas_sources, 0, 1).await;
+    assert!(result.is_err(), "overflowing contract refund must be rejected");
+
+    {
+        let (_, balance) = state.get_contract_balance_for_gas(&contract).await.unwrap();
+        assert_eq!(
+            *balance,
+            u64::MAX,
+            "failed refund must not mutate contract balance"
+        );
+    }
+}
