@@ -2478,16 +2478,6 @@ async fn listen_event_fn<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance
         .as_u64()?;
 
     let (provider, state) = from_context::<P>(context)?;
-    let listeners = state.changes.events_listeners.entry((contract.clone(), event_id))
-        .or_insert_with(Default::default);
-
-    let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.cache_clone_refs);
-
-    // Event is already registered in our cache
-    if !cache.events_listeners.insert((contract.clone(), event_id)) {
-        return Ok(Primitive::Boolean(false).into());
-    }
-
     // check from storage that we're not already registered
     if provider.has_contract_callback_for_event(
         &contract,
@@ -2497,6 +2487,16 @@ async fn listen_event_fn<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance
     ).await? {
         return Ok(Primitive::Boolean(false).into());
     }
+
+    let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.cache_clone_refs);
+
+    // Event is already registered in our cache
+    if !cache.events_listeners.insert((contract.clone(), event_id)) {
+        return Ok(Primitive::Boolean(false).into());
+    }
+
+    let listeners = state.changes.events_listeners.entry((contract.clone(), event_id))
+        .or_insert_with(Default::default);
 
     let callback = EventCallbackRegistration { chunk_id, max_gas };
     listeners.push((metadata.metadata.contract_executor.clone(), callback));
