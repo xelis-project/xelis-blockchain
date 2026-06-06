@@ -3,7 +3,7 @@ use std::{
     collections::{BTreeSet, HashMap, HashSet, btree_set::{self, IntoIter}},
 };
 
-use log::debug;
+use log::{debug, warn};
 use xelis_common::{crypto::Hash, difficulty::CumulativeDifficulty};
 
 // Represents the tips of the chain or of a block
@@ -102,11 +102,22 @@ impl SortedTips {
             .by_hash
             .insert(hash.clone(), cumulative_difficulty.clone());
 
-        if prev.is_none() {
-            self.ordered.insert(TipEntry {
-                hash,
-                cumulative_difficulty,
-            });
+        match prev {
+            Some(prev) => {
+                if prev != cumulative_difficulty {
+                    warn!("updating cumulative difficulty for tip {} from {} to {}", hash, prev, cumulative_difficulty);
+                    // Update the ordered set by removing the old entry and inserting the new one.
+                    self.ordered.remove(&TipEntry {
+                        hash: hash.clone(),
+                        cumulative_difficulty: prev,
+                    });
+                    self.ordered.insert(TipEntry { hash, cumulative_difficulty });
+                }
+            }
+            None => {
+                // New entry, just insert it.
+                self.ordered.insert(TipEntry { hash, cumulative_difficulty });
+            }
         }
 
         prev
@@ -211,7 +222,7 @@ mod tests {
 
         let mut tips = SortedTips::default();
         assert!(tips.insert(hash.clone(), CumulativeDifficulty::from(10u64)).is_none());
-        assert!(tips.insert(hash.clone(), CumulativeDifficulty::from(100u64)).is_none());
+        assert!(tips.insert(hash.clone(), CumulativeDifficulty::from(100u64)).is_some());
         tips.insert(competitor.clone(), CumulativeDifficulty::from(50u64));
 
         assert_eq!(tips.len(), 2, "updating an existing hash must not duplicate it");
