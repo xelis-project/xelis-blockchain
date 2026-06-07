@@ -975,7 +975,10 @@ impl<S: Storage> P2pServer<S> {
 
         // Now sort by cumulative difficulty descending
         // we use unstable sort because we don't care about the order of peers with same cumulative difficulty
-        peers.sort_unstable_by(|a, b| b.2.cmp(&a.2));
+        // then, we sort based on the latency to favor peers with lower latency in case of equal cumulative difficulty
+        peers.sort_unstable_by(|a, b| {
+            b.2.cmp(&a.2).then_with(|| a.0.get_latency_ms().cmp(&b.0.get_latency_ms()))
+        });
 
         // Select the best peer available
         Ok(Some(peers.swap_remove(0).0))
