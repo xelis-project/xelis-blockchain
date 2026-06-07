@@ -667,7 +667,11 @@ impl<S: Storage> P2pServer<S> {
                                 our_previous_topoheight < topoheight && current_cumulative_difficulty < cumulative_difficulty
                             }
                         },
-                        Err(_) => false,
+                        Err(_) => {
+                            peer.increment_fail_count();
+
+                            false
+                        }
                     };
 
                     {
