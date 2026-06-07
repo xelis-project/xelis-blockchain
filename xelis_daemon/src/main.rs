@@ -58,6 +58,7 @@ use core::{
     state::{ChainState, ApplicableChainState},
     blockchain::{
         get_block_reward,
+        get_block_rewards,
         Blockchain,
         BroadcastOption,
         PreVerifyBlock,
@@ -79,6 +80,7 @@ use core::storage::{RocksStorage, RocksDBConfig};
 use core::storage::{SledStorage, SledConfig};
 
 use std::{
+    collections::HashMap,
     fs::File,
     io::Write,
     net::{IpAddr, SocketAddr},
@@ -354,6 +356,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::with_optional_arguments("difficulty_dataset", "Create a dataset for difficulty from chain", vec![Arg::new("output", ArgType::String)], CommandHandler::Async(async_handler!(difficulty_dataset::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("circulating_supply_dataset", "Create a dataset for circulating supply of specific asset from chain", vec![Arg::new("output", ArgType::String), Arg::new("asset", ArgType::Hash)], CommandHandler::Async(async_handler!(circulating_supply_dataset::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("block_size_dataset", "Create a dataset for block size from chain", vec![Arg::new("output", ArgType::String)], CommandHandler::Async(async_handler!(block_size_dataset::<S>))))?;
+    command_manager.add_command(Command::with_arguments("export_miner_rewards", "Export miner rewards sums in CSV for a topoheight range", vec![Arg::new("start", ArgType::Number), Arg::new("end", ArgType::Number)], vec![Arg::new("output", ArgType::String)], CommandHandler::Async(async_handler!(export_miner_rewards::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("mine_block", "Mine a block on testnet", vec![Arg::new("address", ArgType::String), Arg::new("count", ArgType::Number)], CommandHandler::Async(async_handler!(mine_block::<S>))))?;
     command_manager.add_command(Command::with_required_arguments("add_peer", "Connect to a new peer using ip:port format", vec![Arg::new("address", ArgType::String)], CommandHandler::Async(async_handler!(add_peer::<S>))))?;
     command_manager.add_command(Command::new("list_unexecuted_transactions", "List all unexecuted transactions", CommandHandler::Async(async_handler!(list_unexecuted_transactions::<S>))))?;
@@ -1533,6 +1536,65 @@ async fn snapshot_mode<S: Storage>(manager: &CommandManager, _: ArgumentManager)
             .context("Error on commit point")?;
         manager.message("Snapshot mode enabled");
     }
+
+    Ok(())
+}
+
+async fn export_miner_rewards<S: Storage>(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let start: u64 = arguments.get_value("start")?.to_number()?;
+    let end: u64 = arguments.get_value("end")?.to_number()?;
+    if start > end {
+        manager.error("Start topoheight must be <= end topoheight");
+        return Ok(())
+    }
+
+    let output_path = if arguments.has_argument("output") {
+        arguments.get_value("output")?.to_string_value()?
+    } else {
+        format!("miner_rewards_{}_{}.csv", start, end)
+    };
+
+    manager.message(format!("Creating file {}...", output_path));
+    let mut file = File::create(&output_path).context("Error while creating file")?;
+    file.write(b"miner,reward_atomic,reward_xelis\n")
+        .context("Error while writing header to file")?;
+
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let mainnet = blockchain.get_network().is_mainnet();
+    let storage = blockchain.get_storage().read().await;
+    let chain_cache = storage.chain_cache().await;
+
+    if end > chain_cache.topoheight {
+        manager.error(format!("End topoheight {} is above current topoheight {}", end, chain_cache.topoheight));
+        return Ok(())
+    }
+
+    let mut rewards = HashMap::new();
+    for topoheight in start..=end {
+        let (_, header) = storage.get_block_header_at_topoheight(topoheight).await
+            .with_context(|| format!("Error while retrieving block header at topoheight {topoheight}"))?;
+        let metadata = storage.get_metadata_at_topoheight(topoheight).await
+            .with_context(|| format!("Error while retrieving metadata at topoheight {topoheight}"))?;
+
+        let (_, miner_reward) = get_block_rewards(header.get_height(), metadata.block_reward);
+
+        let total = rewards.entry(header.get_miner().clone()).or_insert(0u64);
+        *total = total.checked_add(miner_reward)
+            .context("Miner reward sum overflow")?;
+    }
+
+    let mut rows: Vec<_> = rewards.into_iter().collect();
+    rows.sort_by(|a, b| b.1.cmp(&a.1));
+
+    for (miner, reward) in rows.iter() {
+        file.write(format!("{},{},{}\n", miner.as_address(mainnet), reward, format_xelis(*reward)).as_bytes())
+            .context("Error while writing miner reward row")?;
+    }
+
+    manager.message("Flushing file...");
+    file.flush().context("Error while flushing file")?;
+    manager.message(format!("Exported {} miners rewards from topoheight {} to {} into {}", rows.len(), start, end, output_path));
 
     Ok(())
 }
