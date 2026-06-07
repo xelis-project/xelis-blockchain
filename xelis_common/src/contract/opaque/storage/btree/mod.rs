@@ -128,7 +128,8 @@ impl StorageUsage {
             .ok_or(EnvironmentError::GasOverflow)?;
         let write_cost = self.written_bytes.checked_mul(GAS_PER_BYTE_WRITE)
             .ok_or(EnvironmentError::GasOverflow)?;
-        let cost = (read_cost + write_cost) / GAS_SCALING_FACTOR;
+        let cost = read_cost.checked_add(write_cost)
+            .ok_or(EnvironmentError::GasOverflow)? / GAS_SCALING_FACTOR;
         let total_cost = cost.checked_add(self.extra_gas)
             .ok_or(EnvironmentError::GasOverflow)?;
 
@@ -170,7 +171,7 @@ impl<'ctx, 'ty, P: ContractProvider<'ty>> TreeContext<'ctx, 'ty, P> {
 
     #[inline]
     fn charge_extra_gas(&mut self, gas: u64) -> Result<(), EnvironmentError> {
-        self.usage.extra_gas += self.usage.extra_gas.checked_add(gas)
+        self.usage.extra_gas = self.usage.extra_gas.checked_add(gas)
             .ok_or(EnvironmentError::GasOverflow)?;
         Ok(())
     }

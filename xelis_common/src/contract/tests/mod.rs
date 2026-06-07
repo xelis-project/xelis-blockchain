@@ -8,8 +8,10 @@ use xelis_parser::Parser;
 use xelis_vm::{Module, Primitive, ValueCell};
 
 use crate::{
-    config::TX_GAS_BURN_PERCENT,
+    asset::{AssetData, AssetOwner, MaxSupplyMode},
+    config::{TX_GAS_BURN_PERCENT, XELIS_ASSET},
     contract::{
+        AssetChanges,
         ContractMetadata,
         ContractModule,
         ContractVersion,
@@ -18,7 +20,8 @@ use crate::{
         vm::{self, ContractCaller, ContractStateError, InvokeContract}
     },
     crypto::Hash,
-    transaction::{mock::MockChainState, verify::BlockchainContractState}
+    transaction::{mock::MockChainState, verify::BlockchainContractState},
+    versioned::VersionedState
 };
 
 mod gas;
@@ -48,6 +51,20 @@ pub fn compile_contract(environment: &EnvironmentBuilder<ContractMetadata>, enfo
 
 /// Creates a contract in the given chain state without invoking its constructor
 pub fn create_contract(state: &mut MockChainState, code: &str, version: ContractVersion) -> anyhow::Result<Hash> {
+    state.assets.entry(XELIS_ASSET).or_insert_with(|| Some(AssetChanges {
+        data: (
+            VersionedState::New,
+            AssetData::new(
+                8,
+                "XELIS".to_owned(),
+                "XELIS".to_owned(),
+                MaxSupplyMode::None,
+                AssetOwner::None,
+            )
+        ),
+        circulating_supply: (VersionedState::New, u64::MAX),
+    }));
+
     let module = compile_contract(&state.env_builders[&version], version >= ContractVersion::V1, code)?;
 
     let hash = Hash::new(rand::random());
