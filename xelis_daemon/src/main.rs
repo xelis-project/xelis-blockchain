@@ -973,10 +973,11 @@ async fn temp_ban_address<S: Storage>(manager: &CommandManager, mut args: Argume
         Some(p2p) => {
             let addr: IpAddr = args.get_value("address")?.to_string_value()?.parse().context("Error while parsing socket address")?;
             let duration: HumanDuration = args.get_value("duration")?.to_string_value()?.parse().context("Error while parsing duration")?;
+            let duration = Duration::from(duration);
             let peer_list = p2p.get_peer_list();
 
-            peer_list.temp_ban_address(&addr, duration.as_secs(), true).await.context("Error while banning address")?;
-            manager.message(format!("Address {} has been banned for {}", addr, duration));
+            peer_list.temp_ban_address(&addr, duration, true).await.context("Error while banning address")?;
+            manager.message(format!("Address {} has been banned for {}", addr, format_duration(duration)));
         },
         None => {
             manager.error("P2P is not enabled");

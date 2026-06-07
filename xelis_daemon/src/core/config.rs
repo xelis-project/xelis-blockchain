@@ -337,7 +337,6 @@ pub struct P2pConfig {
     pub stream_concurrency: usize,
     /// P2P Time to set when banning a peer temporarily due to the fail count limit reached.
     /// This is used to configure the time to wait before unbanning the peer.
-    /// By default, it will be set to 15 minutes.
     #[clap(name = "p2p-temp-ban-duration", long, default_value_t = default_p2p_temp_ban_duration())]
     #[serde(
         with = "humantime_serde",

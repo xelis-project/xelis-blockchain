@@ -703,10 +703,10 @@ impl Peer {
     }
 
     // Close the peer connection and remove it from the peer list
-    pub async fn close_and_temp_ban(&self, seconds: u64) -> Result<(), P2pError> {
+    pub async fn close_and_temp_ban(&self, duration: Duration) -> Result<(), P2pError> {
         trace!("temp ban {}", self);
         if !self.is_priority() {
-            self.peer_list.temp_ban_address(&self.get_connection().get_address().ip(), seconds, false).await?;
+            self.peer_list.temp_ban_address(&self.get_connection().get_address().ip(), duration, false).await?;
         } else {
             debug!("{} is a priority peer, closing only", self);
         }

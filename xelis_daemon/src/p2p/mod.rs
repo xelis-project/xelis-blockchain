@@ -168,8 +168,8 @@ pub struct P2pServer<S: Storage> {
     // Current stream concurrency to use
     // This is used to limit the number of concurrency tasks in a stream
     stream_concurrency: usize,
-    // Time in seconds to ban a peer
-    temp_ban_time: u64,
+    // Time to ban a peer
+    temp_ban_time: Duration,
     // Fail count threshold to ban a peer
     fail_count_limit: u8,
     // Sender used to notify the ping loop
@@ -213,7 +213,7 @@ impl<S: Storage> P2pServer<S> {
         dh_keypair: Option<diffie_hellman::DHKeyPair>,
         dh_action: diffie_hellman::KeyVerificationAction,
         stream_concurrency: usize,
-        temp_ban_time: u64,
+        temp_ban_time: Duration,
         fail_count_limit: u8,
         disable_reexecute_blocks_on_sync: bool,
         block_propagation_log_level: log::Level,
@@ -237,7 +237,7 @@ impl<S: Storage> P2pServer<S> {
             return Err(P2pError::InvalidMaxPeers);
         }
 
-        if temp_ban_time == 0 {
+        if temp_ban_time.is_zero() {
             return Err(P2pError::InvalidTempBanTime);
         }
 
