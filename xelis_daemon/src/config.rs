@@ -253,7 +253,7 @@ const HARD_FORKS: [HardFork; 7] = [
         height: 6_199_855,
         version: BlockVersion::V6,
         changelog: "BlockDAG improvements, new smart contracts features",
-        version_requirement: Some(">=1.22.0")
+        version_requirement: Some(">=1.22.1")
     }
 ];
 
