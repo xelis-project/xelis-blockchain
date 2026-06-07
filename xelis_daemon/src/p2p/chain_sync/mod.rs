@@ -808,6 +808,16 @@ impl<S: Storage> P2pServer<S> {
                                     }
 
                                     if let Err(e) = self.blockchain.add_new_block(block, pre_verify, BroadcastOption::All, false).await {
+                                        if matches!(e, BlockchainError::InvalidBlockVersion) {
+                                            debug!("Peer {} sent us an invalid block version during chain sync: {}", peer, e);
+                                            // Peer sent us an invalid block, tempban it
+                                            if let Err(e) = self.peer_list.temp_ban_address(&peer.get_connection().get_address().ip(), self.temp_ban_time, false).await {
+                                                debug!("Couldn't tempban {}: {}", peer, e);
+                                            }
+                                        } else {
+                                            debug!("Mark {} as sync chain failed during block addition: {}", peer, e);
+                                            peer.increment_fail_count();
+                                        }
                                         return Err(e)
                                     }
 
@@ -816,6 +826,7 @@ impl<S: Storage> P2pServer<S> {
                                 ResponseHelper::NotRequested(hash) => {
                                     if let Err(e) = self.try_re_execution_block(hash, StorageHolder::Storage(self.blockchain.get_storage())).await {
                                         warn!("sync chain failed during block re-execution: {}", peer);
+                                        peer.increment_fail_count();
                                         return Err(e)
                                     }
 
