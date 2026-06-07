@@ -516,14 +516,20 @@ impl<S: Storage> P2pServer<S> {
         debug!("Rewinded chain until topoheight {}", topoheight);
         let res = self.handle_blocks_from_chain_validator(peer, chain_validator, snapshot).await;
 
-        if let Err(BlockchainError::P2pError(e)) = &res {
+        if let Err(e) = &res {
             debug!("Mark {} as sync chain from validator failed: {}", peer, e);
             peer.set_sync_chain_failed(true);
 
-            if let P2pError::Disconnected = e {
-                // Peer disconnected while trying to reorg us, tempban it
-                if let Err(e) = self.peer_list.temp_ban_address(&peer.get_connection().get_address().ip(), 60, false).await {
-                    debug!("Couldn't tempban {}: {}", peer, e);
+            match e {
+                BlockchainError::P2pError(_) | BlockchainError::InvalidBlockVersion => {
+                    debug!("Peer {} sent us an invalid chain during validation: {}", peer, e);
+                    // Peer disconnected while trying to reorg us, tempban it
+                    if let Err(e) = self.peer_list.temp_ban_address(&peer.get_connection().get_address().ip(), 60, false).await {
+                        debug!("Couldn't tempban {}: {}", peer, e);
+                    }
+                },
+                _ => {
+                    peer.increment_fail_count();
                 }
             }
         }
