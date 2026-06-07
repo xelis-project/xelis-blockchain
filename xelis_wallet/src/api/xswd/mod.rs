@@ -301,7 +301,7 @@ where
                     },
                     PermissionResult::AlwaysReject => {
                         let mut permissions = app.get_permissions().lock().await;
-                        permissions.insert(request.method.clone(), Permission::Allow);
+                        permissions.insert(request.method.clone(), Permission::Reject);
                         Err(XSWDError::PermissionDenied.into())
                     }   
                 }
