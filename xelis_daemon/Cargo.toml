@@ -1,6 +1,6 @@
 [package]
 name = "xelis_daemon"
-version = "1.22.0"
+version = "1.22.1"
 edition = "2021"
 authors = ["Slixe <slixeprivate@gmail.com>"]
 
@@ -10,6 +10,7 @@ authors = ["Slixe <slixeprivate@gmail.com>"]
 xelis_common = { path = "../xelis_common", features = ["prompt", "clap", "rpc-server", "tokio"] }
 xelis-environment = { git = "https://github.com/xelis-project/xelis-vm", branch = "dev" }
 xelis-vm = { git = "https://github.com/xelis-project/xelis-vm", branch = "dev" }
+xelis-assembler = { git = "https://github.com/xelis-project/xelis-vm", branch = "dev" }
 
 # Database backends
 sled = "0.34.7"

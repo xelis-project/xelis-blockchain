@@ -11,7 +11,8 @@ use xelis_common::{
     block::{BlockHeader, TopoHeight},
     crypto::Hash,
     difficulty::{CumulativeDifficulty, Difficulty},
-    transaction::Transaction
+    transaction::Transaction,
+    varuint::VarUint
 };
 
 use crate::config::{DEFAULT_CACHE_SIZE, GENESIS_BLOCK_DIFFICULTY};
@@ -52,6 +53,8 @@ pub struct ChainCache {
     // this cache is used to avoid to recompute the common base for each block and is mandatory
     // key is (tip hash, tip height) while value is (base hash, base height)
     pub tip_base_cache: Mutex<LruCache<(Hash, u64), (Hash, u64)>>,
+    // this cache is used to avoid to recompute the difficulty at tips for each block and is mandatory
+    pub difficulty_at_tips_cache: Mutex<LruCache<Vec<Hash>, (Difficulty, VarUint)>>,
     // This cache is used to avoid to recompute the common base
     // key is a combined hash of tips
     pub common_base_cache: Mutex<LruCache<Vec<Hash>, (Hash, u64)>>,
@@ -89,6 +92,7 @@ impl ChainCache {
     pub fn clone_mut(&mut self) -> Self {
         Self {
             tip_base_cache: Mutex::new(self.tip_base_cache.get_mut().clone()),
+            difficulty_at_tips_cache: Mutex::new(self.difficulty_at_tips_cache.get_mut().clone()),
             common_base_cache: Mutex::new(self.common_base_cache.get_mut().clone()),
             tip_work_score_cache: Mutex::new(self.tip_work_score_cache.get_mut().clone()),
             dominator_cache: Mutex::new(self.dominator_cache.get_mut().clone()),
@@ -107,6 +111,7 @@ impl Default for ChainCache {
     fn default() -> Self {
         Self {
             tip_base_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).expect("Default cache size for tip base must be above 0"))),
+            difficulty_at_tips_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).expect("Default cache size for difficulty at tips must be above 0"))),
             tip_work_score_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).expect("Default cache size for tip work score must be above 0"))),
             common_base_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).expect("Default cache size for common base must be above 0"))),
             dominator_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).expect("Default cache size for dominator must be above 0"))),

@@ -1,9 +1,9 @@
 use std::{
-    collections::{BTreeSet, HashSet, btree_set::IntoIter},
     cmp::Ordering,
+    collections::{BTreeSet, HashMap, HashSet, btree_set::{self, IntoIter}},
 };
 
-use log::debug;
+use log::{debug, warn};
 use xelis_common::{crypto::Hash, difficulty::CumulativeDifficulty};
 
 // Represents the tips of the chain or of a block
@@ -33,7 +33,7 @@ impl PartialOrd for TipEntry {
 
 /// Iterator over `SortedTips` yielding hashes in descending cumulative-difficulty order.
 pub struct SortedTipsIter<'a> {
-    inner: std::collections::btree_set::Iter<'a, TipEntry>,
+    inner: btree_set::Iter<'a, TipEntry>,
 }
 
 impl<'a> Iterator for SortedTipsIter<'a> {
@@ -80,7 +80,9 @@ impl IntoIterator for SortedTips {
     type IntoIter = SortedTipsIntoIter;
 
     fn into_iter(self) -> SortedTipsIntoIter {
-        SortedTipsIntoIter { inner: self.0.into_iter() }
+        SortedTipsIntoIter {
+            inner: self.ordered.into_iter(),
+        }
     }
 }
 
@@ -88,61 +90,96 @@ impl IntoIterator for SortedTips {
 /// Storing cum-diff alongside each hash avoids repeated async DB lookups in
 /// `sort_tips` when iterating tips for block-template or validation purposes.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct SortedTips(BTreeSet<TipEntry>);
+pub struct SortedTips {
+    ordered: BTreeSet<TipEntry>,
+    by_hash: HashMap<Hash, CumulativeDifficulty>,
+}
 
 impl SortedTips {
     /// Insert a tip. Returns `true` if the hash was not already present.
-    pub fn insert(&mut self, hash: Hash, cumulative_difficulty: CumulativeDifficulty) -> bool {
-        self.remove(&hash);
-        self.0.insert(TipEntry { hash, cumulative_difficulty })
+    pub fn insert(&mut self, hash: Hash, cumulative_difficulty: CumulativeDifficulty) -> Option<CumulativeDifficulty> {
+        let prev = self
+            .by_hash
+            .insert(hash.clone(), cumulative_difficulty.clone());
+
+        match prev {
+            Some(prev) => {
+                if prev != cumulative_difficulty {
+                    warn!("updating cumulative difficulty for tip {} from {} to {}", hash, prev, cumulative_difficulty);
+                    // Update the ordered set by removing the old entry and inserting the new one.
+                    self.ordered.remove(&TipEntry {
+                        hash: hash.clone(),
+                        cumulative_difficulty: prev,
+                    });
+                    self.ordered.insert(TipEntry { hash, cumulative_difficulty });
+                }
+            }
+            None => {
+                // New entry, just insert it.
+                self.ordered.insert(TipEntry { hash, cumulative_difficulty });
+            }
+        }
+
+        prev
     }
 
-    /// Remove by hash. O(n), but tip sets are tiny.
+    /// Remove by hash using O(1) hash lookup + O(log n) ordered-set removal.
     pub fn remove(&mut self, hash: &Hash) -> bool {
-        if let Some(entry) = self.0.iter().find(|e| &e.hash == hash).cloned() {
-            self.0.remove(&entry)
+        if let Some(cumulative_difficulty) = self.by_hash.remove(hash) {
+            self.ordered.remove(&TipEntry {
+                hash: hash.clone(),
+                cumulative_difficulty,
+            })
         } else {
             false
         }
     }
 
     pub fn truncate(&mut self, max_len: usize) {
-        while self.0.len() > max_len {
-            if let Some(last) = self.0.pop_last() {
+        while self.ordered.len() > max_len {
+            if let Some(last) = self.ordered.pop_last() {
+                self.by_hash.remove(&last.hash);
                 debug!("Truncated tip {} with cumulative difficulty {}", last.hash, last.cumulative_difficulty);
             }
         }
     }
 
+    pub fn get_cumulative_difficulty(&self, hash: &Hash) -> Option<&CumulativeDifficulty> {
+        self.by_hash.get(hash)
+    }
+
     pub fn contains(&self, hash: &Hash) -> bool {
-        self.0.iter().any(|e| &e.hash == hash)
+        self.by_hash.contains_key(hash)
     }
 
     /// Iterate hashes in descending cumulative-difficulty order.
     pub fn iter(&self) -> SortedTipsIter<'_> {
-        SortedTipsIter { inner: self.0.iter() }
+        SortedTipsIter {
+            inner: self.ordered.iter(),
+        }
     }
 
     /// Iterate full entries (hash + cumulative difficulty).
     pub fn entries(&self) -> impl Iterator<Item = &TipEntry> {
-        self.0.iter()
+        self.ordered.iter()
     }
 
     pub fn len(&self) -> usize {
-        self.0.len()
+        self.ordered.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.ordered.is_empty()
     }
 
     pub fn clear(&mut self) {
-        self.0.clear()
+        self.ordered.clear();
+        self.by_hash.clear();
     }
 
     /// The best tip (highest cumulative difficulty), if any.
     pub fn best(&self) -> Option<&Hash> {
-        self.0.iter().next().map(|e| &e.hash)
+        self.ordered.iter().next().map(|e| &e.hash)
     }
 }
 
@@ -164,13 +201,68 @@ mod tests {
         let low_hash = Hash::new([1; 32]);
         let high_hash = Hash::new([2; 32]);
         let mid_hash = Hash::new([3; 32]);
+        let dup_hash = Hash::new([4; 32]);
 
         let mut tips = SortedTips::default();
         tips.insert(low_hash.clone(), CumulativeDifficulty::from(10u64));
         tips.insert(high_hash.clone(), CumulativeDifficulty::from(100u64));
         tips.insert(mid_hash.clone(), CumulativeDifficulty::from(50u64));
+        assert!(tips.insert(dup_hash.clone(), CumulativeDifficulty::from(50u64)).is_none());
+
+        assert_eq!(tips.len(), 4, "all unique hashes should be inserted");
 
         let first = tips.iter().next().expect("sorted tips should not be empty");
         assert_eq!(first, &high_hash, "first tip must be the highest cumulative difficulty");
+    }
+
+    #[test]
+    fn test_update_existing_tip() {
+        let hash = Hash::new([9; 32]);
+        let competitor = Hash::new([8; 32]);
+
+        let mut tips = SortedTips::default();
+        assert!(tips.insert(hash.clone(), CumulativeDifficulty::from(10u64)).is_none());
+        assert!(tips.insert(hash.clone(), CumulativeDifficulty::from(100u64)).is_some());
+        tips.insert(competitor.clone(), CumulativeDifficulty::from(50u64));
+
+        assert_eq!(tips.len(), 2, "updating an existing hash must not duplicate it");
+        assert!(tips.contains(&hash));
+        assert_eq!(tips.best(), Some(&hash), "updated hash must be re-ordered");
+    }
+
+    #[test]
+    fn test_iter_returns_highest_cumulative_difficulty_first() {
+        let h1 = Hash::new([11; 32]);
+        let h2 = Hash::new([12; 32]);
+        let h3 = Hash::new([13; 32]);
+
+        let mut tips = SortedTips::default();
+        tips.insert(h1.clone(), CumulativeDifficulty::from(25u64));
+        tips.insert(h2.clone(), CumulativeDifficulty::from(75u64));
+        tips.insert(h3.clone(), CumulativeDifficulty::from(50u64));
+
+        let ordered: Vec<Hash> = tips.iter().cloned().collect();
+        assert_eq!(ordered, vec![h2, h3, h1], "tips must be yielded from highest to lowest cumulative difficulty");
+    }
+
+    #[test]
+    fn test_truncate_drops_lowest_first() {
+        let low = Hash::new([21; 32]);
+        let mid = Hash::new([22; 32]);
+        let high = Hash::new([23; 32]);
+
+        let mut tips = SortedTips::default();
+        tips.insert(low.clone(), CumulativeDifficulty::from(10u64));
+        tips.insert(mid.clone(), CumulativeDifficulty::from(50u64));
+        tips.insert(high.clone(), CumulativeDifficulty::from(100u64));
+
+        tips.truncate(2);
+        assert_eq!(tips.len(), 2, "truncate must reduce to requested max length");
+        assert!(!tips.contains(&low), "lowest cumulative difficulty tip must be dropped first");
+        assert!(tips.contains(&mid), "higher cumulative difficulty tips should be kept");
+        assert!(tips.contains(&high), "highest cumulative difficulty tip should be kept");
+
+        let ordered: Vec<Hash> = tips.iter().cloned().collect();
+        assert_eq!(ordered, vec![high, mid], "remaining tips must stay sorted from highest to lowest cumulative difficulty");
     }
 }

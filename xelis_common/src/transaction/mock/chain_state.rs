@@ -37,6 +37,7 @@ use crate::{
         ExecutionsChanges,
         ExecutionsManager,
         InterContractPermission,
+        Source,
     },
     crypto::{
         elgamal::{Ciphertext, CompressedPublicKey},
@@ -159,7 +160,7 @@ impl MockChainState {
                         Cow::Owned(contract.clone()),
                         None,
                         event.params.iter().map(|p| p.deep_clone()),
-                        Default::default(),
+                        [(Source::Contract(contract.clone()), callback.max_gas)].into_iter().collect(),
                         callback.max_gas,
                         InvokeContract::Chunk(callback.chunk_id, false),
                         Cow::Owned(InterContractPermission::All),
@@ -420,7 +421,8 @@ impl<'a, 'ty> BlockchainContractState<'a, 'ty, MockStorageProvider, anyhow::Erro
                         Entry::Occupied(mut o) => match o.get_mut() {
                             Some((state, balance)) => {
                                 state.mark_updated();
-                                *balance += amount;
+                                *balance = balance.checked_add(*amount)
+                                    .context("Overflow while applying contract deposit")?;
                             }
                             None => {
                                 o.insert(Some((VersionedState::New, *amount)));

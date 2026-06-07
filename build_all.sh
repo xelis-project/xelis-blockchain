@@ -4,7 +4,7 @@ set -euo pipefail
 IMAGE_NAME="xelis-cargo-xwin"
 
 # support: ARM64, ARMv7, x86_64 linux, Windows x86_64 (MSVC)
-targets=("x86_64-pc-windows-msvc")
+targets=("aarch64-unknown-linux-gnu" "armv7-unknown-linux-gnueabihf" "x86_64-unknown-linux-musl" "x86_64-unknown-linux-gnu" "x86_64-pc-windows-msvc")
 binaries=("xelis_daemon" "xelis_miner" "xelis_wallet")
 extra_files=("README.md" "API.md" "CHANGELOG.md" "LICENSE")
 

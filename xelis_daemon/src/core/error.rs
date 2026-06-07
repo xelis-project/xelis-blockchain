@@ -257,6 +257,14 @@ pub enum BlockchainError {
     ConfigSyncMode,
     #[error("Expected at least one tips")]
     ExpectedTips,
+    #[error("Failed to find tips for dag ordering")]
+    NoTipsForOrdering,
+    #[error("Failed to find common base for tips")]
+    NoCommonBaseFoundForTips,
+    #[error("Failed to find best height from tips")]
+    BestHeightNotFound,
+    #[error("Failed to find highest timestamp from tips")]
+    HighestTimestampNotFound,
     #[error("Block {0} has invalid tips count: {1}")]
     InvalidTipsCount(Hash, usize),
     #[error("Block {0} has an invalid tip {1} which is not present in chain")]
