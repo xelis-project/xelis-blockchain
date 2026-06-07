@@ -45,7 +45,7 @@ use xelis_common::{
     },
     rpc::server::WebSocketServerHandler,
     serializer::Serializer,
-    transaction::{verify::NoZKPCache, Transaction},
+    transaction::{verify::NoZKPCache, Transaction, TransactionType},
     utils::{
         format_difficulty,
         format_hashrate,
@@ -80,7 +80,7 @@ use core::storage::{RocksStorage, RocksDBConfig};
 use core::storage::{SledStorage, SledConfig};
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs::File,
     io::Write,
     net::{IpAddr, SocketAddr},
@@ -333,6 +333,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::with_optional_arguments("show_peerlist", "Show the stored peerlist", vec![Arg::new("page", ArgType::Number)], CommandHandler::Async(async_handler!(show_stored_peerlist::<S>))))?;
     command_manager.add_command(Command::new("show_account", "Show account of an address", CommandHandler::Async(async_handler!(show_account::<S>))))?;
     command_manager.add_command(Command::with_arguments("show_balance", "Show balance of an address", vec![], vec![Arg::new("history", ArgType::Number)], CommandHandler::Async(async_handler!(show_balance::<S>))))?;
+    command_manager.add_command(Command::with_optional_arguments("export_account_txs", "Export account transactions as CSV", vec![Arg::new("address", ArgType::String), Arg::new("output", ArgType::String)], CommandHandler::Async(async_handler!(export_account_txs::<S>))))?;
     command_manager.add_command(Command::with_arguments("show_multisig", "Show multisig history of an address", vec![], vec![], CommandHandler::Async(async_handler!(show_multisig::<S>))))?;
     command_manager.add_command(Command::with_required_arguments("print_block", "Print block in json format", vec![Arg::new("hash", ArgType::Hash)], CommandHandler::Async(async_handler!(print_block::<S>))))?;
     command_manager.add_command(Command::with_required_arguments("dump_tx", "Dump TX in hexadecimal format", vec![Arg::new("hash", ArgType::Hash)], CommandHandler::Async(async_handler!(dump_tx::<S>))))?;
@@ -1255,6 +1256,94 @@ async fn show_balance<S: Storage>(manager: &CommandManager, mut arguments: Argum
     }
 
     Ok(())
+}
+
+async fn export_account_txs<S: Storage>(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let prompt = manager.get_prompt();
+    let str_address = if arguments.has_argument("address") {
+        arguments.get_value("address")?.to_string_value()?
+    } else {
+        prompt.read_input(
+            prompt.colorize_string(Color::Green, "Address: "),
+            false
+        ).await.context("Error while reading address")?
+    };
+    let address = Address::from_string(&str_address).context("Invalid address")?;
+
+    let output = if arguments.has_argument("output") {
+        arguments.get_value("output")?.to_string_value()?
+    } else {
+        prompt.read_input("CSV output path: ", false).await
+            .context("Error while reading output path")?
+    };
+
+    let key = address.to_public_key();
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+
+    if !storage.has_nonce(&key).await.context("Error while checking account nonce")? {
+        manager.message("No transaction found for address");
+        return Ok(());
+    }
+
+    let mut rows = Vec::new();
+    let mut seen = HashSet::new();
+    let (mut topoheight, mut nonce) = storage.get_last_nonce(&key).await
+        .context("Error while retrieving last nonce")?;
+
+    loop {
+        let (_, header) = storage.get_block_header_at_topoheight(topoheight).await
+            .context("Error while retrieving block at nonce topoheight")?;
+
+        for tx_hash in header.get_transactions() {
+            if !seen.insert(tx_hash.clone()) {
+                continue;
+            }
+
+            let tx = storage.get_transaction(tx_hash).await
+                .context("Error while retrieving transaction")?;
+            if tx.get_source() == &key {
+                rows.push((topoheight, tx_hash.clone(), transaction_type_name(tx.get_data())));
+            }
+        }
+
+        if let Some(previous) = nonce.get_previous_topoheight() {
+            nonce = storage.get_nonce_at_exact_topoheight(&key, previous).await
+                .context("Error while retrieving nonce history")?;
+            topoheight = previous;
+        } else {
+            break;
+        }
+    }
+
+    rows.sort_by_key(|(topoheight, _, _)| *topoheight);
+
+    let mut file = File::create(&output)
+        .context("Error while creating CSV file")?;
+    file.write_all(b"topoheight,hash,type\n")
+        .context("Error while writing CSV header")?;
+    for (topoheight, hash, tx_type) in rows.iter() {
+        writeln!(file, "{},{},{}", topoheight, hash, tx_type)
+            .context("Error while writing CSV row")?;
+    }
+    file.flush()
+        .context("Error while flushing CSV file")?;
+
+    manager.message(format!("Exported {} transactions to {}", rows.len(), output));
+
+    Ok(())
+}
+
+fn transaction_type_name(tx_type: &TransactionType) -> &'static str {
+    match tx_type {
+        TransactionType::Transfers(_) => "transfers",
+        TransactionType::Burn(_) => "burn",
+        TransactionType::MultiSig(_) => "multisig",
+        TransactionType::InvokeContract(_) => "invoke_contract",
+        TransactionType::DeployContract(_) => "deploy_contract",
+        TransactionType::Blob(_) => "blob",
+    }
 }
 
 async fn show_multisig<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
