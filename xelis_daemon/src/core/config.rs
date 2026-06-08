@@ -5,7 +5,12 @@ use xelis_common::{
     config::FEE_PER_KB,
     crypto::Hash,
     prompt::LogLevel,
-    utils::detect_available_parallelism
+    utils::detect_available_parallelism,
+    rpc::server::websocket::{
+        DEFAULT_MAX_SESSION_CHANNEL_SIZE,
+        DEFAULT_MAX_SESSION_WORK_QUEUE,
+        DEFAULT_MAX_WEBSOCKET_SESSIONS
+    }
 };
 use crate::{
     config::*,
@@ -61,6 +66,18 @@ const fn debug_log_level() -> LogLevel {
 
 const fn default_rpc_batch_limit() -> usize {
     20
+}
+
+const fn default_rpc_max_websocket_sessions() -> usize {
+    DEFAULT_MAX_WEBSOCKET_SESSIONS
+}
+
+const fn default_rpc_websocket_session_channel_size() -> usize {
+    DEFAULT_MAX_SESSION_CHANNEL_SIZE
+}
+
+const fn default_rpc_websocket_session_work_queue_size() -> usize {
+    DEFAULT_MAX_SESSION_WORK_QUEUE
 }
 
 const fn default_min_fee_per_kb() -> u64 {
@@ -160,6 +177,18 @@ pub struct RPCConfig {
     #[clap(name = "rpc-json-rpc-batch-limit", long, default_value_t = default_rpc_batch_limit())]
     #[serde(default = "default_rpc_batch_limit")]
     pub batch_limit: usize,
+    /// Maximum websocket sessions accepted by each RPC websocket server.
+    #[clap(name = "rpc-max-websocket-sessions", long, default_value_t = default_rpc_max_websocket_sessions())]
+    #[serde(default = "default_rpc_max_websocket_sessions")]
+    pub max_websocket_sessions: usize,
+    /// Maximum outbound messages queued per websocket session.
+    #[clap(name = "rpc-websocket-session-channel-size", long, default_value_t = default_rpc_websocket_session_channel_size())]
+    #[serde(default = "default_rpc_websocket_session_channel_size")]
+    pub websocket_session_channel_size: usize,
+    /// Maximum inbound RPC work queued per websocket session.
+    #[clap(name = "rpc-websocket-session-work-queue-size", long, default_value_t = default_rpc_websocket_session_work_queue_size())]
+    #[serde(default = "default_rpc_websocket_session_work_queue_size")]
+    pub websocket_session_work_queue_size: usize,
     /// Configure CORS allowed origins for RPC server.
     /// This will allow any whitelisted origin to access the RPC server.
     #[clap(name = "rpc-cors-allowed-origins", long)]
@@ -189,6 +218,9 @@ impl Default for RPCConfig {
             threads: detect_available_parallelism(),
             notify_events_concurrency: detect_available_parallelism(),
             batch_limit: default_rpc_batch_limit(),
+            max_websocket_sessions: default_rpc_max_websocket_sessions(),
+            websocket_session_channel_size: default_rpc_websocket_session_channel_size(),
+            websocket_session_work_queue_size: default_rpc_websocket_session_work_queue_size(),
             cors_allowed_origins: Vec::new(),
             allow_private_methods: false,
             allow_contract_vm_executions: false,
