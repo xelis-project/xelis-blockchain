@@ -1202,10 +1202,9 @@ async fn btree_cache_prefetch_reads_values() {
     let namespace = b"prefetch".to_vec();
     let root_key = root_storage_key(&namespace);
 
-    provider.data.insert(
-        (contract.clone(), root_key.clone()),
-        (5, Some(ValueCell::from(Primitive::U64(77)))),
-    );
+    provider.contracts.entry(contract.clone())
+        .or_default()
+        .insert(root_key.clone(), (5, Some(Primitive::U64(77).into())));
 
     let root = read_root_id(&provider, &mut state, &contract, &namespace).await.unwrap();
     assert_eq!(root, 77);

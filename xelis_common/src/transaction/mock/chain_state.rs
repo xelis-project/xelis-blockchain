@@ -73,7 +73,7 @@ pub struct MockChainState {
     pub events_listeners: HashMap<(Hash, u64), Vec<(Hash, EventCallbackRegistration)>>,
     pub accounts: HashMap<PublicKey, MockAccount>,
     pub multisig: HashMap<PublicKey, MultiSigPayload>,
-    pub contracts: HashMap<Cow<'static, Hash>, Option<(VersionedState, Option<Cow<'static, ContractModule>>) >>,
+    pub contracts: HashMap<Cow<'static, Hash>, Option<(VersionedState, Option<Cow<'static, ContractModule>>)>>,
     pub contract_logs: HashMap<Hash, Vec<ContractLog>>,
     pub burned_coins: HashMap<Hash, u64>,
     pub gas_fee: u64,

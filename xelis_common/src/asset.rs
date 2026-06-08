@@ -42,7 +42,7 @@ impl AssetOwner {
     // Get the contract that currently owns this asset
     pub fn get_contract(&self) -> Option<&Hash> {
         match self {
-            Self::Creator { contract, .. } | Self::Owner { origin: contract, .. } => Some(contract),
+            Self::Creator { contract, .. } | Self::Owner { owner: contract, .. } => Some(contract),
             Self::None => None
         }
     }
@@ -73,9 +73,9 @@ impl AssetOwner {
     }
 
     // Transfer the ownership of this asset
-    pub fn transfer(&mut self, current: &Hash, new_owner: Hash) -> bool {
+    pub fn transfer(&mut self, caller: &Hash, new_owner: Hash) -> bool {
         match self {
-            Self::Creator { contract, id } if *contract == *current => {
+            Self::Creator { contract, id } if *contract == *caller => {
                 *self = Self::Owner {
                     origin: contract.clone(),
                     origin_id: *id,
@@ -84,7 +84,7 @@ impl AssetOwner {
 
                 true
             },
-            Self::Owner { owner, .. } if *owner == *current => {
+            Self::Owner { owner, .. } if *owner == *caller => {
                 *owner = new_owner;
                 true
             },
