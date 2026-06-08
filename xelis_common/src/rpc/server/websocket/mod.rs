@@ -35,10 +35,12 @@ use crate::{
         Executor,
         select,
         sync::{
+            OwnedSemaphorePermit,
+            Semaphore,
             mpsc::{
-                unbounded_channel,
-                UnboundedReceiver,
-                UnboundedSender
+                channel,
+                Receiver,
+                Sender
             },
             Mutex,
             RwLock
@@ -64,9 +66,13 @@ const MESSAGE_TIME_OUT: Duration = Duration::from_secs(1);
 const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(5);
 // timeout in seconds to receive a pong message
 const KEEP_ALIVE_TIME_OUT: Duration = Duration::from_secs(30);
+// Maximum number of websocket sessions accepted by one common websocket server.
+pub const DEFAULT_MAX_WEBSOCKET_SESSIONS: usize = 1024;
+// Maximum number of outbound messages queued per websocket session.
+pub const DEFAULT_MAX_SESSION_CHANNEL_SIZE: usize = 256;
 // Maximum number of queued RPC messages per websocket session.
 // When reached, the websocket reader applies backpressure until queued work drains.
-const MAX_SESSION_WORK_QUEUE: usize = 64;
+pub const DEFAULT_MAX_SESSION_WORK_QUEUE: usize = 64;
 
 #[derive(Debug, thiserror::Error)]
 pub enum WebSocketError {
@@ -93,7 +99,8 @@ pub struct WebSocketSession<H: WebSocketHandler + 'static> {
     server: WebSocketServerShared<H>,
     inner: Mutex<Option<Session>>,
     // Sender to send messages to the session
-    channel: UnboundedSender<InnerMessage>
+    channel: Sender<InnerMessage>,
+    _session_permit: OwnedSemaphorePermit
 }
 
 tid! { impl<'a, H: 'static> TidAble<'a> for WebSocketSession<H> where H: WebSocketHandler }
@@ -104,7 +111,7 @@ where
 {
     // Send a text message to the session
     pub async fn send_text<S: Into<String>>(self: &Arc<Self>, value: S) -> Result<(), WebSocketError> {
-        self.channel.send(InnerMessage::Text(value.into()))
+        self.channel.send(InnerMessage::Text(value.into())).await
             .map_err(|e| WebSocketError::ChannelClosed(e.to_string()))?;
 
         Ok(())
@@ -143,7 +150,7 @@ where
 
     // Close the session
     pub async fn close(&self, reason: Option<CloseReason>) -> Result<(), WebSocketError> {
-        self.channel.send(InnerMessage::Close(reason))
+        self.channel.send(InnerMessage::Close(reason)).await
             .map_err(|_| WebSocketError::ChannelAlreadyClosed)?;
 
         Ok(())
@@ -220,14 +227,38 @@ pub trait WebSocketHandler: Sized + Sync + Send {
 
 pub struct WebSocketServer<H: WebSocketHandler + 'static + Send + Sync> {
     sessions: RwLock<HashSet<WebSocketSessionShared<H>>>,
+    session_permits: Arc<Semaphore>,
+    session_channel_size: usize,
+    session_work_queue_size: usize,
     id_counter: AtomicU64,
     handler: Immutable<H>
 }
 
 impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static + Send + Sync {
     pub fn new(handler: impl Into<Immutable<H>>) -> WebSocketServerShared<H> {
+        Self::with_limits(
+            handler,
+            DEFAULT_MAX_WEBSOCKET_SESSIONS,
+            DEFAULT_MAX_SESSION_CHANNEL_SIZE,
+            DEFAULT_MAX_SESSION_WORK_QUEUE
+        )
+    }
+
+    pub fn with_limits(
+        handler: impl Into<Immutable<H>>,
+        max_sessions: usize,
+        session_channel_size: usize,
+        session_work_queue_size: usize
+    ) -> WebSocketServerShared<H> {
+        assert!(max_sessions > 0, "max websocket sessions must be greater than 0");
+        assert!(session_channel_size > 0, "websocket session channel size must be greater than 0");
+        assert!(session_work_queue_size > 0, "websocket session work queue size must be greater than 0");
+
         Arc::new(Self {
             sessions: RwLock::new(HashSet::new()),
+            session_permits: Arc::new(Semaphore::new(max_sessions)),
+            session_channel_size,
+            session_work_queue_size,
             id_counter: AtomicU64::new(0),
             handler: handler.into()
         })
@@ -279,17 +310,25 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static + Send + Sync {
     // Handle a new WebSocket connection request, register it and start handling it
     pub async fn handle_connection(self: &Arc<Self>, request: ActixHttpRequest, body: Payload) -> Result<HttpResponse, actix_web::Error> {
         debug!("Handling new WebSocket connection");
+        let permit = match Arc::clone(&self.session_permits).try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => {
+                debug!("Rejecting WebSocket connection, session limit reached");
+                return Ok(HttpResponse::TooManyRequests().finish());
+            }
+        };
 
         let (response, session, stream) = actix_ws::handle(&request, body)?;
         let id = self.next_id();
         let request = HttpRequest::from(request);
-        let (tx, rx) = unbounded_channel();
+        let (tx, rx) = channel(self.session_channel_size);
         let session = Arc::new(WebSocketSession {
             id,
             request,
             server: Arc::clone(&self),
             inner: Mutex::new(Some(session)),
-            channel: tx
+            channel: tx,
+            _session_permit: permit
         });
 
         debug!("Created new WebSocketSession with id {}", id);
@@ -356,7 +395,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static + Send + Sync {
     // Internal function to handle a WebSocket connection
     // This will send a ping every 5 seconds and close the connection if no pong is received within 30 seconds
     // It will also translate all messages to the handler
-    async fn handle_ws_internal(self: Arc<Self>, session: WebSocketSessionShared<H>, mut stream: AggregatedMessageStream, mut rx: UnboundedReceiver<InnerMessage>) {
+    async fn handle_ws_internal(self: Arc<Self>, session: WebSocketSessionShared<H>, mut stream: AggregatedMessageStream, mut rx: Receiver<InnerMessage>) {
         let mut interval = actix_rt::time::interval(KEEP_ALIVE_INTERVAL);
         let mut last_pong_received = Instant::now();
         // executor for handling messages
@@ -406,7 +445,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static + Send + Sync {
                     }
                 },
                 // wait for next message
-                res = stream.next(), if executor.len() < MAX_SESSION_WORK_QUEUE => {
+                res = stream.next(), if executor.len() < self.session_work_queue_size => {
                     trace!("Received stream message for session #{}", session.id);
                     let msg = match res {
                         Some(msg) => match msg {
