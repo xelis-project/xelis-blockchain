@@ -64,6 +64,9 @@ const MESSAGE_TIME_OUT: Duration = Duration::from_secs(1);
 const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(5);
 // timeout in seconds to receive a pong message
 const KEEP_ALIVE_TIME_OUT: Duration = Duration::from_secs(30);
+// Maximum number of queued RPC messages per websocket session.
+// When reached, the websocket reader applies backpressure until queued work drains.
+const MAX_SESSION_WORK_QUEUE: usize = 64;
 
 #[derive(Debug, thiserror::Error)]
 pub enum WebSocketError {
@@ -403,7 +406,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static + Send + Sync {
                     }
                 },
                 // wait for next message
-                res = stream.next() => {
+                res = stream.next(), if executor.len() < MAX_SESSION_WORK_QUEUE => {
                     trace!("Received stream message for session #{}", session.id);
                     let msg = match res {
                         Some(msg) => match msg {
