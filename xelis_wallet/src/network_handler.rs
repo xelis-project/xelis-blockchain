@@ -764,7 +764,7 @@ impl NetworkHandler {
 
     // Helper method to process a single balance update with concurrent block processing
     async fn process_balance_update(&self, address: &Address, asset: Hash, mut balance: CiphertextCache, topoheight: u64, block_response: RPCBlockResponse<'static>, outputs: GetContractsOutputsResult<'static>, balances: bool, highest_version: bool, highest_nonce: Arc<Mutex<Option<u64>>>) -> Result<(), Error> {
-        debug!("Processing topoheight {}, is highest {}", topoheight, highest_version);
+        debug!("Processing topoheight {}, is highest {}, block {}", topoheight, highest_version, block_response.header.hash);
         let timestamp = block_response.timestamp;
         let changes = self.process_block(address, block_response, topoheight, false, true).await?;
 
@@ -856,32 +856,33 @@ impl NetworkHandler {
                 let mut topoheight = topoheight;
                 while let Some(v) = version.take() {
                     let start = Instant::now();
+                    let block_topoheight = topoheight;
                     let (balance, _, _, previous_topoheight) = v.consume();
 
                     let next_topoheight = previous_topoheight.filter(|t| *t > min_topoheight);
                     if {
                         let mut lock = topoheight_processed.lock().await;
-                        lock.insert(topoheight)
+                        lock.insert(block_topoheight)
                     } {
-                        trace!("fetching block with txs at {}", topoheight);
+                        trace!("fetching block with txs at {}", block_topoheight);
                         // Fetch block data, outputs, and next version concurrently
                         let (block_result, outputs_result) = if let Some(next_topo) = next_topoheight {
-                            let (block, outputs, balance) = api.get_block_outputs_and_balance(topoheight, &address, &asset, next_topo).await?;
+                            let (block, outputs, balance) = api.get_block_outputs_and_balance(block_topoheight, &address, &asset, next_topo).await?;
                             topoheight = next_topo;
                             version = Some(balance);
                             (block, outputs)
                         } else {
-                            api.get_block_and_outputs(topoheight, &address).await?
+                            api.get_block_and_outputs(block_topoheight, &address).await?
                         };
 
-                        data_sender.send((balance, topoheight, block_result, outputs_result)).await?;
+                        data_sender.send((balance, block_topoheight, block_result, outputs_result)).await?;
                     } else if let Some(next_topo) = next_topoheight {
                         // Even if we skip this block, still fetch the next version
                         topoheight = next_topo;
                         version = Some(api.get_balance_at_topoheight(&address, &asset, next_topo).await?);
                     }
 
-                    debug!("Fetched balance version at topoheight {} in {:?}", topoheight, start.elapsed());
+                    debug!("Fetched balance version at topoheight {} in {:?}", block_topoheight, start.elapsed());
                 }
 
                 Ok::<_, Error>(())
