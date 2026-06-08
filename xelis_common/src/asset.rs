@@ -283,7 +283,7 @@ impl Serializer for AssetData {
     }
 
     fn size(&self) -> usize {
-        self.decimals.size() + self.name.size() + self.max_supply.size()
+        self.decimals.size() + self.name.size() + self.ticker.size() + self.max_supply.size() + self.owner.size()
     }
 }
 
