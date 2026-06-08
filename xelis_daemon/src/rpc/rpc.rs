@@ -463,7 +463,7 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
 fn chain_from_context<'a, S: Storage>(context: &'a Context<'_, '_>) -> Result<&'a Arc<Blockchain<S>>, InternalRpcError> {
     let handler: &RPCHandler<Arc<Blockchain<S>>> = context.get()
         .context("Error while retrieving blockchain from context")?;
-    Ok(handler.get_data())
+    handler.get_data().ok_or(InternalRpcError::InvalidContext)
 }
 
 async fn version<S: Storage>(_: &Context<'_, '_>) -> Result<&'static str, InternalRpcError> {
