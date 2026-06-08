@@ -124,8 +124,14 @@ where
         })
     }
 
+    // Has method with the given name
     pub fn has_method(&self, method_name: &str) -> bool {
         self.methods.contains_key(method_name)
+    }
+
+    // Get an iterator of all registered methods and their schemas
+    pub fn methods(&self) -> impl Iterator<Item = (&str, &RpcSchema)> {
+        self.methods.iter().map(|(name, handler)| (name.as_ref(), &handler.schema))
     }
 
     // Execute an RPC method from a request
