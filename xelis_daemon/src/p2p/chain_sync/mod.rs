@@ -446,7 +446,7 @@ impl<S: Storage> P2pServer<S> {
                                 .into_block()?
                                 .0;
 
-                            let cache = self.blockchain.pre_verify_block(&block, Some(hash)).await?;
+                            let cache = self.pre_verify_block_for_peer(&block, Some(hash), peer).await?;
                             (block, cache)
                         }
                     };
@@ -524,7 +524,7 @@ impl<S: Storage> P2pServer<S> {
                 BlockchainError::P2pError(_) | BlockchainError::InvalidBlockVersion => {
                     debug!("Peer {} sent us an invalid chain during validation: {}", peer, e);
                     // Peer disconnected while trying to reorg us, tempban it
-                    if let Err(e) = self.peer_list.temp_ban_address(&peer.get_connection().get_address().ip(), self.temp_ban_time, false).await {
+                    if let Err(e) = peer.close_and_temp_ban(self.temp_ban_time).await {
                         debug!("Couldn't tempban {}: {}", peer, e);
                     }
                 },
@@ -752,7 +752,7 @@ impl<S: Storage> P2pServer<S> {
                             .await?
                             .into_block()?;
 
-                        let pre_verify = self.blockchain.pre_verify_block(&block, Some(hash)).await?;
+                        let pre_verify = self.pre_verify_block_for_peer(&block, Some(hash), peer).await?;
                         Ok::<_, BlockchainError>(ResponseHelper::Requested(block, pre_verify))
                     } else {
                         debug!("Block {} is already in chain or being processed, verify if its in DAG", hash);
@@ -811,7 +811,7 @@ impl<S: Storage> P2pServer<S> {
                                         if matches!(e, BlockchainError::InvalidBlockVersion) {
                                             debug!("Peer {} sent us an invalid block version during chain sync: {}", peer, e);
                                             // Peer sent us an invalid block, tempban it
-                                            if let Err(e) = self.peer_list.temp_ban_address(&peer.get_connection().get_address().ip(), self.temp_ban_time, false).await {
+                                            if let Err(e) = peer.close_and_temp_ban(self.temp_ban_time).await {
                                                 debug!("Couldn't tempban {}: {}", peer, e);
                                             }
                                         } else {
@@ -926,5 +926,18 @@ impl<S: Storage> P2pServer<S> {
         warn!("Block {} is not in topological order, forcing its re-execution", hash);
         // Replicate same behavior as above branch
         self.blockchain.add_new_block_with_storage(storage, block, PreVerifyBlock::Hash(hash), BroadcastOption::All, false).await
+    }
+
+    // Pre-verify a block for a peer, and if it fails, tempban the peer
+    async fn pre_verify_block_for_peer(&self, block: &Block, block_hash: Option<Immutable<Hash>>, peer: &Arc<Peer>) -> Result<PreVerifyBlock, BlockchainError> {
+        debug!("Pre-verifying block for peer in normal sync mode");
+        match self.blockchain.pre_verify_block(block, block_hash).await {
+            Ok(pre_verify) => Ok(pre_verify),
+            Err(e) => {
+                debug!("Mark {} as sync chain failed during pre-verification: {}", peer, e);
+                peer.close_and_temp_ban(self.temp_ban_time).await?;
+                Err(e)
+            }
+        }
     }
 }
