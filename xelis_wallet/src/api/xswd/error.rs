@@ -37,6 +37,8 @@ pub enum XSWDError {
     ApplicationPermissionsNotSigned,
     #[error("Invalid signature for application data")]
     InvalidSignatureForApplicationData,
+    #[error("Invalid context: no data available in handler")]
+    InvalidContext
 }
 
 impl From<XSWDError> for InternalRpcError {

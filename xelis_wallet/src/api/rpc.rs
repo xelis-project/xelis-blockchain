@@ -115,7 +115,7 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
 fn wallet_from_context<'a, 'ty, 'r>(context: &'a Context<'ty, 'r>) -> Result<&'a Arc<Wallet>, InternalRpcError> {
     let handler: &RPCHandler<Arc<Wallet>> = context.get()
         .context("Couldn't retrieve wallet from context")?;
-    Ok(handler.get_data())
+    handler.get_data().ok_or(InternalRpcError::InvalidContext)
 }
 
 // Retrieve the version of the wallet
