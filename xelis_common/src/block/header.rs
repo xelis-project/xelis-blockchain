@@ -30,11 +30,18 @@ pub fn serialize_extra_nonce<S: serde::Serializer>(extra_nonce: &[u8; EXTRA_NONC
 
 // Deserialize the extra nonce from a hexadecimal string
 pub fn deserialize_extra_nonce<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<[u8; EXTRA_NONCE_SIZE], D::Error> {
-    let mut extra_nonce = [0u8; EXTRA_NONCE_SIZE];
     let hex = String::deserialize(deserializer)?;
-    let decoded = hex::decode(hex).map_err(serde::de::Error::custom)?;
-    extra_nonce.copy_from_slice(&decoded);
-    Ok(extra_nonce)
+    deserialize_extra_nonce_hex(hex)
+}
+
+pub fn deserialize_extra_nonce_hex<E: serde::de::Error>(hex: String) -> Result<[u8; EXTRA_NONCE_SIZE], E> {
+    let decoded = hex::decode(hex).map_err(E::custom)?;
+    decoded.try_into()
+        .map_err(|decoded: Vec<u8>| E::custom(format!(
+            "invalid extra_nonce length {}, expected {}",
+            decoded.len(),
+            EXTRA_NONCE_SIZE
+        )))
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
@@ -351,8 +358,9 @@ impl Display for BlockHeader {
 #[cfg(test)]
 mod tests {
     use indexmap::IndexSet;
-    use crate::{block::BlockVersion, crypto::{Hash, Hashable, KeyPair}, serializer::Serializer};
-    use super::BlockHeader;
+    use serde::de::IntoDeserializer;
+    use crate::{block::{BlockVersion, EXTRA_NONCE_SIZE}, crypto::{Hash, Hashable, KeyPair}, serializer::Serializer};
+    use super::{BlockHeader, deserialize_extra_nonce};
 
     #[test]
     fn test_block_template() {
@@ -374,5 +382,23 @@ mod tests {
         let serialized = "00000000000000002d0000018f1cbd697000000000000000000eded85557e887b45989a727b6786e1bd250de65042d9381822fa73d01d2c4ff01d3a0154853dbb01dc28c9102e9d94bea355b8ee0d82c3e078ac80841445e86520000d67ad13934337b85c34985491c437386c95de0d97017131088724cfbedebdc55";
         let header = BlockHeader::from_hex(serialized).unwrap();
         assert!(header.to_hex() == serialized);
+    }
+
+    #[test]
+    fn block_header_extra_nonce_deserialize_rejects_invalid_hex() {
+        let result: Result<[u8; EXTRA_NONCE_SIZE], serde::de::value::Error> = deserialize_extra_nonce("not-hex".into_deserializer());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn block_header_extra_nonce_deserialize_rejects_invalid_length() {
+        let short = hex::encode([0u8; EXTRA_NONCE_SIZE - 1]);
+        let long = hex::encode([0u8; EXTRA_NONCE_SIZE + 1]);
+
+        let short_result: Result<[u8; EXTRA_NONCE_SIZE], serde::de::value::Error> = deserialize_extra_nonce(short.into_deserializer());
+        let long_result: Result<[u8; EXTRA_NONCE_SIZE], serde::de::value::Error> = deserialize_extra_nonce(long.into_deserializer());
+
+        assert!(short_result.is_err());
+        assert!(long_result.is_err());
     }
 }

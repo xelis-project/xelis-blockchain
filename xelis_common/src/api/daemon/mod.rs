@@ -12,13 +12,12 @@ use serde::{
     Deserializer,
     Serialize,
     Serializer,
-    de::Error,
     ser::SerializeSeq
 };
 use xelis_vm::ValueCell;
 use crate::{
     account::{CiphertextCache, Nonce, VersionedBalance, VersionedNonce},
-    block::{Algorithm, BlockVersion, TopoHeight, EXTRA_NONCE_SIZE},
+    block::{Algorithm, BlockVersion, TopoHeight, EXTRA_NONCE_SIZE, deserialize_extra_nonce_hex},
     crypto::{elgamal::RISTRETTO_COMPRESSED_SIZE, Address, Hash},
     difficulty::{CumulativeDifficulty, Difficulty},
     network::Network,
@@ -49,13 +48,10 @@ pub fn serialize_extra_nonce<S: Serializer>(extra_nonce: &Cow<'_, [u8; EXTRA_NON
 
 // Deserialize the extra nonce from a hexadecimal string
 pub fn deserialize_extra_nonce<'de, 'a, D: Deserializer<'de>>(deserializer: D) -> Result<Cow<'a, [u8; EXTRA_NONCE_SIZE]>, D::Error> {
-    let mut extra_nonce = [0u8; EXTRA_NONCE_SIZE];
     let hex = String::deserialize(deserializer)?;
-    let decoded = hex::decode(hex).map_err(Error::custom)?;
-    extra_nonce.copy_from_slice(&decoded);
-    Ok(Cow::Owned(extra_nonce))
+    deserialize_extra_nonce_hex::<D::Error>(hex)
+        .map(Cow::Owned)
 }
-
 
 #[derive(Serialize, Deserialize)]
 struct KV<K, V> {
@@ -1284,4 +1280,30 @@ pub struct ContractDeployEvent<'a> {
     pub contract: Cow<'a, Hash>,
     pub block_hash: Cow<'a, Hash>,
     pub topoheight: TopoHeight,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::borrow::Cow;
+    use serde::de::IntoDeserializer;
+    use crate::block::EXTRA_NONCE_SIZE;
+    use super::deserialize_extra_nonce;
+
+    #[test]
+    fn rpc_extra_nonce_deserialize_rejects_invalid_hex() {
+        let result: Result<Cow<'static, [u8; EXTRA_NONCE_SIZE]>, serde::de::value::Error> = deserialize_extra_nonce("not-hex".into_deserializer());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rpc_extra_nonce_deserialize_rejects_invalid_length() {
+        let short = hex::encode([0u8; EXTRA_NONCE_SIZE - 1]);
+        let long = hex::encode([0u8; EXTRA_NONCE_SIZE + 1]);
+
+        let short_result: Result<Cow<'static, [u8; EXTRA_NONCE_SIZE]>, serde::de::value::Error> = deserialize_extra_nonce(short.into_deserializer());
+        let long_result: Result<Cow<'static, [u8; EXTRA_NONCE_SIZE]>, serde::de::value::Error> = deserialize_extra_nonce(long.into_deserializer());
+
+        assert!(short_result.is_err());
+        assert!(long_result.is_err());
+    }
 }
