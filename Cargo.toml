@@ -34,6 +34,7 @@ cfg-if = "1"
 tokio-tungstenite-wasm = { version = "0.8.1", features = ["rustls-tls-webpki-roots"] }
 schemars = { version = "1.0.4", features = ["indexmap2"] }
 runtime-context = "0.1.1"
+linked-hash-table = { version = "0.1.2", features = ["serde"] }
 
 # cargo run --profile release-with-lto
 [profile.release-with-lto]
