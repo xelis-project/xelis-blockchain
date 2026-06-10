@@ -1595,8 +1595,9 @@ impl<S: Storage> Blockchain<S> {
         let (base, base_height) = blockdag::find_common_base(&*storage, block.get_tips(), block.get_version()).await?;
         let base_topoheight = storage.get_topo_height_for_hash(&base).await?;
         let nearest_base_topoheight = blockdag::find_nearest_base_topoheight(&*storage, block.get_tips().iter().cloned(), base_topoheight, &base).await?;
+        let expected_topoheight = blockdag::find_expected_topoheight(&*storage, block.get_tips().iter().cloned(), &base, base_topoheight).await?;
 
-        let mut chain_state = ChainState::new(storage, &self.environments, base_topoheight, nearest_base_topoheight, block.get_version(), base_fee, base_height);
+        let mut chain_state = ChainState::new(storage, &self.environments, base_topoheight, nearest_base_topoheight, expected_topoheight, block.get_version(), base_fee, base_height);
 
         if !tx_selector.is_empty() {
             let tx_cache = TxCache::new(storage, &mempool, self.disable_zkp_cache);
@@ -2080,21 +2081,22 @@ impl<S: Storage> Blockchain<S> {
 
         // find the common base block from tips
         // We retrieve it to pass it as a param below for p2p broadcast
-        let (base, base_height, base_topoheight, nearest_base_topoheight) = if tips_count == 0 {
-            (None, 0, 0, 0)
+        let (base, base_height, base_topoheight, nearest_base_topoheight, expected_topoheight) = if tips_count == 0 {
+            (None, 0, 0, 0, 0)
         } else {
             debug!("Computing cumulative difficulty for block {}", block_hash);
             let (base, base_height) = blockdag::find_common_base(&*storage, block.get_tips(), version).await?;
 
-            let (base_topoheight, nearest_base_topoheight) = if is_v6_enabled {
+            let (base_topoheight, nearest_base_topoheight, expected_topoheight) = if is_v6_enabled {
                 let base_topoheight = storage.get_topo_height_for_hash(&base).await?;
                 let nearest_base_topoheight = blockdag::find_nearest_base_topoheight(&*storage, block.get_tips().iter().cloned(), base_topoheight, &base).await?;
-                (base_topoheight, nearest_base_topoheight)
+                let expected_topoheight = blockdag::find_expected_topoheight(&*storage, block.get_tips().iter().cloned(), &base, base_topoheight).await?;
+                (base_topoheight, nearest_base_topoheight, expected_topoheight)
             } else {
-                (stable_topoheight, current_topoheight)
+                (stable_topoheight, current_topoheight, current_topoheight)
             };
 
-            (Some(base), base_height, base_topoheight, nearest_base_topoheight)
+            (Some(base), base_height, base_topoheight, nearest_base_topoheight, expected_topoheight)
         };
 
         debug!("base height: {}, base topoheight: {}, nearest base topoheight: {}", base_height, base_topoheight, nearest_base_topoheight);
@@ -2283,12 +2285,12 @@ impl<S: Storage> Blockchain<S> {
                     // it will be multi-threaded by N threads
                     stream::iter(batches.into_iter().map(Ok))
                         .try_for_each_concurrent(self.txs_verification_threads_count, async |txs| {
-                            let mut chain_state = ChainState::new(storage, environments, base_topoheight, nearest_base_topoheight, version, base_fee, base_height);
+                            let mut chain_state = ChainState::new(storage, environments, base_topoheight, nearest_base_topoheight, expected_topoheight, version, base_fee, base_height);
                             Transaction::verify_batch(txs.iter().map(|(hash, tx)| (tx, hash.as_ref())), &mut chain_state, cache).await
                         }).await
                 } else {
                     // Verify all valid transactions in one batch
-                    let mut chain_state = ChainState::new(&*storage, &self.environments, base_topoheight, nearest_base_topoheight, version, base_fee, base_height);
+                    let mut chain_state = ChainState::new(&*storage, &self.environments, base_topoheight, nearest_base_topoheight, expected_topoheight, version, base_fee, base_height);
                     let iter = txs_grouped.values()
                         .flatten()
                         .map(|(hash, tx)| (tx, hash.as_ref()));

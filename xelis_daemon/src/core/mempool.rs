@@ -167,7 +167,7 @@ impl Mempool {
             mempool: self,
             storage
         };
-        let mut state = ChainState::new(&provider, environments, stable_topoheight, topoheight, block_version, tx_base_fee, base_height);
+        let mut state = ChainState::new(&provider, environments, stable_topoheight, topoheight, topoheight, block_version, tx_base_fee, base_height);
         let tx_cache = TxCache::new(storage, self, self.disable_zkp_cache);
         tx.verify(&hash, &mut state, &tx_cache).await?;
 
@@ -197,7 +197,7 @@ impl Mempool {
             mempool: self,
             storage
         };
-        let mut state = ChainState::new(&provider, environments, stable_topoheight, topoheight, block_version, tx_base_fee, base_height);
+        let mut state = ChainState::new(&provider, environments, stable_topoheight, topoheight, topoheight, block_version, tx_base_fee, base_height);
         tx.verify(&hash, &mut state, &TrustedZKPCache).await?;
 
         let (balances, multisig) = state.get_sender_cache(tx.get_source())
@@ -581,7 +581,7 @@ impl Mempool {
                             mempool: self,
                             storage
                         };
-                        let mut state = ChainState::new(&provider, environments, stable_topoheight, topoheight, block_version, tx_base_fee, base_height);
+                        let mut state = ChainState::new(&provider, environments, stable_topoheight, topoheight, topoheight, block_version, tx_base_fee, base_height);
                         if let Err(e) = Transaction::verify(next_tx.get_tx(), &tx_hash, &mut state, &tx_cache).await {
                             warn!("Error while verifying TXs for source {}: {}", key.as_address(self.mainnet), e);
 

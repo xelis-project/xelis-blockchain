@@ -705,6 +705,20 @@ where
     Ok(highest_topo)
 }
 
+/// Find the expected topoheight function using the generate_full_dag_order between the given base and the tips.
+/// The block for the provided tip will be expected to be the given topoheight result.
+pub async fn find_expected_topoheight<P, I>(provider: &P, tips: I, base: &Hash, base_topoheight: TopoHeight) -> Result<TopoHeight, BlockchainError>
+where
+    P: DifficultyProvider + DagOrderProvider + ConcurrencyProvider,
+    I: Iterator<Item = Hash> + ExactSizeIterator + Send + Sync,
+{
+    let order = generate_full_order::<_, _, LinkedHashSet<_>>(provider, tips, base, Some(base_topoheight)).await?;
+    debug_assert!(order.front() == Some(base));
+    let expected_topo = base_topoheight + order.len() as u64;
+
+    Ok(expected_topo)
+}
+
 pub async fn build_reachability<P: DifficultyProvider>(provider: &P, hash: Hash, block_version: BlockVersion) -> Result<HashSet<Hash>, BlockchainError> {
     let mut set = HashSet::new();
     let mut stack: VecDeque<(Hash, u64)> = VecDeque::new();
@@ -1556,6 +1570,50 @@ mod tests {
         assert!(find_nearest_base_topoheight(&storage, Vec::<Hash>::new().into_iter(), 0, &g)
             .await
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn test_find_expected_topoheight_for_ordered_tips_after_base() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+        let base = h(74);
+        let tip_98 = h(75);
+        let tip_99 = h(76);
+
+        add_block(&mut storage, base.clone(), 97, 0, vec![], 1, 1, BlockVersion::V6, Some(97)).await;
+        add_block(&mut storage, tip_98.clone(), 98, 1, vec![base.clone()], 1, 2, BlockVersion::V6, Some(98)).await;
+        add_block(&mut storage, tip_99.clone(), 98, 2, vec![base.clone()], 1, 3, BlockVersion::V6, Some(99)).await;
+
+        let expected_topoheight = find_expected_topoheight(
+            &storage,
+            vec![tip_99, tip_98].into_iter(),
+            &base,
+            97
+        ).await.unwrap();
+
+        assert_eq!(expected_topoheight, 100);
+    }
+
+    #[tokio::test]
+    async fn test_find_expected_topoheight_counts_shared_ancestors_once() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+        let base = h(77);
+        let shared = h(78);
+        let left = h(79);
+        let right = h(80);
+
+        add_block(&mut storage, base.clone(), 10, 0, vec![], 1, 1, BlockVersion::V6, Some(10)).await;
+        add_block(&mut storage, shared.clone(), 11, 1, vec![base.clone()], 1, 2, BlockVersion::V6, Some(11)).await;
+        add_block(&mut storage, left.clone(), 12, 2, vec![shared.clone()], 1, 3, BlockVersion::V6, None).await;
+        add_block(&mut storage, right.clone(), 12, 3, vec![shared.clone()], 1, 4, BlockVersion::V6, None).await;
+
+        let expected_topoheight = find_expected_topoheight(
+            &storage,
+            vec![left, right].into_iter(),
+            &base,
+            10
+        ).await.unwrap();
+
+        assert_eq!(expected_topoheight, 14);
     }
 
     #[tokio::test]

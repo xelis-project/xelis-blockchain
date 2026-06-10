@@ -120,7 +120,7 @@ async fn is_referencing_previous_output<S: TxVerificationProvider>(storage: &S, 
 
 // Verify a transaction before adding it to mempool/chain state
 // We only verify the reference and the required fees
-pub(super) async fn pre_verify_tx(tx: &Transaction, topoheight: TopoHeight, block_version: BlockVersion) -> Result<(), BlockchainError> {
+pub(super) async fn pre_verify_tx(tx: &Transaction, topoheight: TopoHeight, expected_topoheight: TopoHeight, block_version: BlockVersion) -> Result<(), BlockchainError> {
     debug!("Pre-verify TX at topoheight {}", topoheight);
     if !hard_fork::is_tx_version_allowed_in_block_version(tx.get_version(), block_version) {
         debug!("Invalid version {} in block {}", tx.get_version(), block_version);
@@ -136,9 +136,9 @@ pub(super) async fn pre_verify_tx(tx: &Transaction, topoheight: TopoHeight, bloc
 
     let reference = tx.get_reference();
     // Verify that it is not a fake topoheight
-    if topoheight < reference.topoheight {
-        debug!("Invalid reference: topoheight {} is higher than chain {}", reference.topoheight, topoheight);
-        return Err(BlockchainError::InvalidReferenceTopoheight(reference.topoheight, topoheight));
+    if expected_topoheight < reference.topoheight {
+        debug!("Invalid reference: topoheight {} is higher than chain {}", reference.topoheight, expected_topoheight);
+        return Err(BlockchainError::InvalidReferenceTopoheight(reference.topoheight, expected_topoheight));
     }
 
     Ok(())

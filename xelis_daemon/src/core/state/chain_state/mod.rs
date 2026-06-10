@@ -123,6 +123,8 @@ pub struct ChainState<'s, 'b, P: ChainStateProvider> {
     stable_topoheight: TopoHeight,
     // Current topoheight of the snapshot
     topoheight: TopoHeight,
+    // Expected topoheight of the block being verified
+    expected_topoheight: TopoHeight,
     tx_base_fee: u64,
     // All contracts updated
     contracts: HashMap<Cow<'b, Hash>, Option<(VersionedState, Option<Cow<'b, ContractModule>>)>>,
@@ -143,6 +145,7 @@ impl<'s, 'b, P: ChainStateProvider> Clone for ChainState<'s, 'b, P> {
             accounts: self.accounts.clone(),
             stable_topoheight: self.stable_topoheight,
             topoheight: self.topoheight,
+            expected_topoheight: self.expected_topoheight,
             tx_base_fee: self.tx_base_fee,
             contracts: self.contracts.clone(),
             block_version: self.block_version,
@@ -158,6 +161,7 @@ impl<'s, 'b, P: ChainStateProvider> ChainState<'s, 'b, P> {
         environments: &'s ContractEnvironments,
         stable_topoheight: TopoHeight,
         topoheight: TopoHeight,
+        expected_topoheight: TopoHeight,
         block_version: BlockVersion,
         tx_base_fee: u64,
         base_height: u64,
@@ -169,6 +173,7 @@ impl<'s, 'b, P: ChainStateProvider> ChainState<'s, 'b, P> {
             accounts: HashMap::new(),
             stable_topoheight,
             topoheight,
+            expected_topoheight,
             tx_base_fee,
             contracts: HashMap::new(),
             block_version,
@@ -328,7 +333,7 @@ impl<'s, 'b, P: ChainStateProvider> BlockchainVerificationState<'b, BlockchainEr
         &'c mut self,
         tx: &Transaction,
     ) -> Result<(), BlockchainError> {
-        super::pre_verify_tx(tx, self.topoheight, self.block_version).await
+        super::pre_verify_tx(tx, self.topoheight, self.expected_topoheight, self.block_version).await
     }
 
     async fn pre_verify_tx_dynamic<'c>(

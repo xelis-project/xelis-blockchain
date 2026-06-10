@@ -549,6 +549,7 @@ impl<'s, 'b, P: ApplicableChainStateProvider> ApplicableChainState<'s, 'b, P> {
                 environments,
                 stable_topoheight,
                 topoheight,
+                topoheight,
                 block_version,
                 tx_base_fee,
                 base_height,
