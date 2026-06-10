@@ -1,11 +1,24 @@
-use std::{collections::{HashMap, HashSet}, ops::{Deref, DerefMut}};
+use std::{borrow::Cow, collections::{HashMap, HashSet}, ops::{Deref, DerefMut}};
+use futures::future::ready;
 use log::{debug, trace};
 use xelis_common::{
     account::CiphertextCache,
-    crypto::{elgamal::Ciphertext, Hash, Hashable, PublicKey},
-    transaction::{builder::{AccountState, FeeHelper}, Reference, Transaction}
+    api::RPCTransaction,
+    crypto::{Hash, Hashable, PublicKey, elgamal::Ciphertext},
+    serializer::Serializer,
+    time::get_current_time_in_millis,
+    transaction::{
+        Reference,
+        Transaction,
+        builder::{AccountState, FeeHelper},
+    }
 };
-use crate::{error::WalletError, storage::{Balance, EncryptedStorage, TxCache}};
+use crate::{
+    decoder,
+    error::WalletError,
+    storage::{Balance, EncryptedStorage, PendingTransaction, TxCache},
+    wallet::Wallet
+};
 
 // State used to estimate fees for a transaction
 // Because fees can be higher if a destination account is not registered
@@ -62,8 +75,6 @@ pub struct TransactionBuilderState {
     reference: Reference,
     // Nonce of the transaction
     nonce: u64,
-    // The hash of the transaction that has been built
-    tx_hash_built: Option<Hash>,
     // The stable topoheight detected during the TX building
     // This is used to update the last coinbase reward topoheight
     stable_topoheight: Option<u64>,
@@ -80,7 +91,6 @@ impl TransactionBuilderState {
             reference,
             nonce,
             fee_limit,
-            tx_hash_built: None,
             stable_topoheight: None,
         }
     }
@@ -102,7 +112,13 @@ impl TransactionBuilderState {
     }
 
     pub async fn from_tx(storage: &EncryptedStorage, transaction: &Transaction, mainnet: bool) -> Result<Self, WalletError> {
-        let mut state = Self::new(mainnet, transaction.get_reference().clone(), transaction.get_nonce(), Some(transaction.get_fee_limit()));
+        let mut state = Self::new(
+            mainnet,
+            transaction.get_reference().clone(),
+            transaction.get_nonce(),
+            Some(transaction.get_fee_limit()),
+        );
+
         let ciphertexts = transaction.get_expected_sender_outputs()?;
 
         for (asset, ct) in ciphertexts {
@@ -112,8 +128,6 @@ impl TransactionBuilderState {
             *balance_ct -= ct;
             state.add_balance(asset.clone(), balance);
         }
-
-        state.set_tx_hash_built(transaction.hash());
 
         Ok(state)
     }
@@ -134,26 +148,34 @@ impl TransactionBuilderState {
         self.inner.registered_keys.insert(key);
     }
 
-    // This must be called once the TX has been built
-    pub fn set_tx_hash_built(&mut self, tx_hash: Hash) {
-        self.tx_hash_built = Some(tx_hash);
-    }
-
     // Set the stable topoheight detected during the TX building
     pub fn set_stable_topoheight(&mut self, stable_topoheight: u64) {
         self.stable_topoheight = Some(stable_topoheight);
     }
 
     // Apply the changes to the storage
-    pub async fn apply_changes(&mut self, storage: &mut EncryptedStorage) -> Result<(), WalletError> {
+    pub async fn apply_changes(&mut self, storage: &mut EncryptedStorage, wallet: &Wallet, tx: impl Into<Option<&Transaction>>) -> Result<(), WalletError> {
         trace!("Applying changes to storage");
 
-        storage.set_tx_cache(TxCache {
-            reference: self.reference.clone(),
-            nonce: self.nonce,
-            last_tx_hash_created: self.tx_hash_built.take(),
-            assets: self.balances.keys().cloned().collect(),
-        });
+        if let Some(tx) = tx.into() {
+            let tx_hash = tx.hash();
+            let rpc_tx = RPCTransaction::from_tx(tx, Cow::Borrowed(&tx_hash), tx.size(), None, self.mainnet);
+            let entry = decoder::decode_transaction(wallet, &wallet.get_address(), &rpc_tx, wallet.get_history_scan(), |_| ready(Ok(()))).await?
+                .ok_or(WalletError::NotTransactionSigner)?;
+
+            storage.set_tx_cache(TxCache {
+                reference: self.reference.clone(),
+                nonce: self.nonce,
+                last_tx_hash_created: Some(tx_hash),
+                assets: self.balances.keys().cloned().collect(),
+            });
+
+            storage.track_pending_tx(PendingTransaction {
+                hash: tx.hash(),
+                timestamp: get_current_time_in_millis(),
+                entry,
+            }).await;
+        }
 
         for (asset, balance) in self.balances.drain() {
             debug!("Setting balance for asset {} to {} ({})", asset, balance.amount, balance.ciphertext);

@@ -11,8 +11,11 @@ use xelis_common::{
         Serializer,
         Writer
     },
+    time::TimestampMillis,
     transaction::{MultiSigPayload, Reference}
 };
+
+use crate::entry::EntryData;
 
 
 #[derive(Debug, Clone)]
@@ -86,4 +89,14 @@ impl Serializer for MultiSig {
             topoheight
         })
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct PendingTransaction {
+    // Transaction hash
+    pub hash: Hash,
+    // At which time the transaction was created
+    pub timestamp: TimestampMillis,
+    // Entry data of the transaction
+    pub entry: EntryData,
 }

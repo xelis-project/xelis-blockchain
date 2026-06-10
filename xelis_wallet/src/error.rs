@@ -4,6 +4,7 @@ use chacha20poly1305::Error as CryptoError;
 use xelis_common::{
     crypto::{Hash, elgamal::DecompressionError, proofs::ProofGenerationError},
     error::ErrorWithKind,
+    tokio::sync::AcquireError,
     transaction::{builder::{GenerationError, GenerationStateError},
     extra_data::CipherFormatError},
     utils::{format_coin, format_xelis}
@@ -109,6 +110,10 @@ pub enum WalletError {
     ProofGenerationError(#[from] ProofGenerationError),
     #[error(transparent)]
     DecompressionError(#[from] DecompressionError),
+    #[error("Provided transaction is not signed by the wallet")]
+    NotTransactionSigner,
+    #[error("Semaphore error: {}", _0)]
+    SemaphoreError(#[from] AcquireError),
 }
 
 impl From<GenerationStateError<Self>> for WalletError {

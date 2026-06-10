@@ -9,6 +9,7 @@ use std::{
 };
 use indexmap::IndexMap;
 use itertools::Either;
+use linked_hash_table::LinkedHashMap;
 use lru::LruCache;
 use xelis_common::{
     api::{
@@ -37,7 +38,9 @@ use xelis_common::{
         Skip,
     },
     tokio::sync::Mutex,
-    transaction::TxVersion
+    transaction::{
+        TxVersion
+    }
 };
 use anyhow::{
     Context,
@@ -162,6 +165,8 @@ pub struct EncryptedStorage {
     // so we can build several txs without having to wait for the confirmation
     // We store it in a VecDeque so for each TX we have an entry and can just retrieve it
     unconfirmed_balances_cache: Mutex<HashMap<Hash, VecDeque<Balance>>>,
+    // Pending transactions created locally and not confirmed yet.
+    pending_txs: LinkedHashMap<Hash, PendingTransaction>,
     // Temporary TX Cache used to build ordered TXs
     tx_cache: Option<TxCache>,
     // Cache for the assets with their decimals
@@ -196,6 +201,7 @@ impl EncryptedStorage {
             inner,
             balances_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap())),
             unconfirmed_balances_cache: Mutex::new(HashMap::new()),
+            pending_txs: LinkedHashMap::new(),
             tx_cache: None,
             assets_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap())),
             synced_topoheight: None,
@@ -923,6 +929,26 @@ impl EncryptedStorage {
         Ok(())
     }
 
+    // Track a pending transaction created locally and not confirmed yet.
+    pub async fn track_pending_tx(&mut self, tx: PendingTransaction) {
+        self.pending_txs.insert(tx.hash.clone(), tx);
+    }
+
+    // Remove a pending transaction from the tracked list.
+    pub fn remove_pending_tx(&mut self, hash: &Hash) -> bool {
+        self.pending_txs.remove(hash).is_some()
+    }
+
+    // Get all pending transactions created locally and not confirmed yet.
+    pub async fn get_pending_txs(&self) -> &LinkedHashMap<Hash, PendingTransaction> {
+        &self.pending_txs
+    }
+
+    // Clear all pending transactions created locally and not confirmed yet.
+    pub fn clear_pending_txs(&mut self) {
+        self.pending_txs.clear();
+    }
+
     // Determine if we have any balance stored
     pub async fn has_any_balance(&self) -> Result<bool> {
         trace!("has any balance");
@@ -1526,6 +1552,9 @@ impl EncryptedStorage {
     // with no access to the decrypted master key
     pub fn save_transaction(&mut self, hash: &Hash, transaction: &TransactionEntry) -> Result<()> {
         trace!("save transaction {}", hash);
+
+        // We remove the pending TX if it exists as we are now saving it as a real transaction
+        self.remove_pending_tx(hash);
 
         let id = self.get_next_transaction_id()?;
         let key = self.cipher.hash_key(hash.as_bytes());

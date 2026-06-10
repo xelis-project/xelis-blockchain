@@ -74,6 +74,7 @@ use xelis_common::{
 };
 use xelis_wallet::{
     config::{Config, LogProgressTableGenerationReportFunction, DIR_PATH},
+    entry::TransactionEntry,
     precomputed_tables,
     storage::TransactionFilterOptions,
     wallet::{
@@ -522,6 +523,12 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
         CommandHandler::Async(async_handler!(history))
     ))?;
     command_manager.add_command(Command::with_optional_arguments(
+        "pending_txs",
+        "Show transactions submitted by this wallet and not confirmed yet",
+        vec![Arg::new("page", ArgType::Number)],
+        CommandHandler::Async(async_handler!(pending_txs))
+    ))?;
+    command_manager.add_command(Command::with_optional_arguments(
         "transaction",
         "Show a specific transaction",
         vec![Arg::new("hash", ArgType::Hash)],
@@ -756,6 +763,12 @@ async fn prompt_message_builder(prompt: &Prompt, command_manager: Option<&Comman
                 prompt.colorize_string(Color::Yellow, "Balance"),
                 prompt.colorize_string(Color::Green, &format_xelis(storage.get_plaintext_balance_for(&XELIS_ASSET).await.unwrap_or(0))),
             );
+            let pending_count = storage.get_pending_txs().await.len();
+            let pending_str = if pending_count > 0 {
+                format!(" {} ", prompt.colorize_string(Color::Yellow, &format!("({} TXs)", pending_count)))
+            } else {
+                String::new()
+            };
             let status = if wallet.is_online().await {
                 prompt.colorize_string(Color::Green, "Online")
             } else {
@@ -770,11 +783,12 @@ async fn prompt_message_builder(prompt: &Prompt, command_manager: Option<&Comman
     
             return Ok(
                 format!(
-                    "{} | {} | {} | {} | {} {}{} ",
+                    "{} | {} | {} | {}{}| {} {}{} ",
                     prompt.colorize_string(Color::Blue, "XELIS Wallet"),
                     addr_str,
                     topoheight_str,
                     balance,
+                    pending_str,
                     status,
                     network_str,
                     prompt.colorize_string(Color::BrightBlack, ">>")
@@ -1213,7 +1227,7 @@ async fn create_transaction_with_multisig(manager: &CommandManager, prompt: &Pro
         let mut state = wallet.create_transaction_state_with_storage(&storage, &tx_type, Default::default(), Default::default(), None, None).await
             .context("Error while creating transaction state")?;
     
-        let mut unsigned = wallet.create_unsigned_transaction(&mut state, Some(payload.threshold), tx_type, Default::default(), storage.get_tx_version().await?)
+        let mut unsigned = wallet.create_unsigned_transaction(&mut state, Some(payload.threshold), tx_type.clone(), Default::default(), storage.get_tx_version().await?)
             .context("Error while building unsigned transaction")?;
     
         let mut multisig = MultiSig::new();
@@ -1264,9 +1278,8 @@ async fn create_transaction_with_multisig(manager: &CommandManager, prompt: &Pro
         unsigned.set_multisig(multisig);
     
         let tx = unsigned.finalize(wallet.get_keypair());
-        state.set_tx_hash_built(tx.hash());
     
-        state.apply_changes(&mut storage).await
+        state.apply_changes(&mut storage, wallet, &tx).await
             .context("Error while applying changes")?;
 
         tx
@@ -1274,7 +1287,7 @@ async fn create_transaction_with_multisig(manager: &CommandManager, prompt: &Pro
         let (tx, mut state) = wallet.create_transaction_with_storage(&storage, tx_type, Default::default(), Default::default(), None).await
             .context("Error while building TX")?;
 
-        state.apply_changes(&mut storage).await
+        state.apply_changes(&mut storage, wallet, &tx).await
             .context("Error while applying changes")?;
 
         tx
@@ -1699,6 +1712,43 @@ async fn history(manager: &CommandManager, mut arguments: ArgumentManager) -> Re
     manager.message(format!("{} Transactions (total {}) page {}/{}:", transactions.len(), txs_len, page, max_pages));
     for tx in transactions {
         manager.message(format!("- {}", tx.summary(wallet.get_network().is_mainnet(), &*storage).await?));
+    }
+
+    Ok(())
+}
+
+async fn pending_txs(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let page = get_page(&mut arguments)?;
+
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+
+    let storage = wallet.get_storage().read().await;
+    let pending = storage.get_pending_txs().await;
+    let count = pending.len();
+    if count == 0 {
+        manager.message("No pending transactions");
+        return Ok(())
+    }
+
+    let mut max_pages = count / ELEMENTS_PER_PAGE;
+    if count % ELEMENTS_PER_PAGE != 0 {
+        max_pages += 1;
+    }
+
+    if page > max_pages {
+        return Err(CommandError::InvalidArgument(format!("Page must be less than maximum pages ({})", max_pages)));
+    }
+
+    manager.message(format!("Pending transactions (total {}) page {}/{}:", count, page, max_pages));
+    for tx in pending.values().skip((page - 1) * ELEMENTS_PER_PAGE).take(ELEMENTS_PER_PAGE) {
+        let entry = TransactionEntry::new(
+            tx.hash.clone(),
+            0,
+            tx.timestamp,
+            tx.entry.clone()
+        );
+        manager.message(format!("- {}", entry.summary(wallet.get_network().is_mainnet(), &*storage).await?));
     }
 
     Ok(())

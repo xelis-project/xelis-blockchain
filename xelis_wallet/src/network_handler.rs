@@ -22,11 +22,9 @@ use xelis_common::{
             ContractTransfersEntryKey
         },
         wallet::BalanceChanged,
-        RPCTransactionType,
     },
     config::XELIS_ASSET,
     crypto::{
-        elgamal::Ciphertext,
         Address,
         Hash
     },
@@ -38,24 +36,18 @@ use xelis_common::{
         task::{JoinError, JoinHandle},
         time::sleep,
     },
-    transaction::{
-        extra_data::{PlaintextExtraData, PlaintextFlag},
-        ContractDeposit,
-        MultiSigPayload,
-        Role
-    },
+    transaction::MultiSigPayload,
     utils::sanitize_ws_address
 };
 use crate::{
     config::AUTO_RECONNECT_INTERVAL,
     daemon_api::DaemonAPI,
+    decoder,
     entry::{
-        DeployInvoke,
         EntryData,
         TransactionEntry,
-        TransferIn,
-        TransferOut
     },
+    error::WalletError,
     storage::{Balance, MultiSig},
     wallet::{Event, Wallet}
 };
@@ -334,7 +326,7 @@ impl NetworkHandler {
                     assets_changed.insert(XELIS_ASSET);
 
                     // Check that we haven't already processed it
-                    if self.has_tx_stored(&tx.hash).await? {
+                    if self.wallet.has_tx_stored(&tx.hash).await? {
                         debug!("Transaction {} was already stored, skipping it", tx.hash);
                         return Ok((None, Some(tx.nonce), assets_changed));
                     }
@@ -346,219 +338,10 @@ impl NetworkHandler {
 
                 // if we don't want to scan the history by decoding txs and such
                 // it will simply returns none
-                let entry: Option<EntryData> = match tx.data {
-                    RPCTransactionType::Burn(payload) => {
-                        if is_owner {
-                            let payload = payload.into_owned();
-                            assets_changed.insert(payload.asset.clone());
-                            self.fetch_if_asset_not_found(&payload.asset, &shared_semaphores).await?;
-    
-                            Some(EntryData::Burn { asset: payload.asset, amount: payload.amount, fee: tx.fee, nonce: tx.nonce })
-                        } else {
-                            None
-                        }
-                    },
-                    RPCTransactionType::Transfers(txs) => {
-                        let mut transfers_in: Vec<TransferIn> = Vec::new();
-                        let mut transfers_out: Vec<TransferOut> = Vec::new();
-
-                        // Used to check only once if we have processed this TX already
-                        let mut checked = is_owner;
-                        for (i, transfer) in txs.into_iter().enumerate() {
-                            let destination = transfer.destination.to_public_key();
-                            if is_owner || destination == *address.get_public_key() {
-                                let asset = transfer.asset.into_owned();
-                                assets_changed.insert(asset.clone());
-
-                                if !scan_mode.all() {
-                                    continue;
-                                }
-
-                                // Check only once if we have processed this TX already
-                                if !checked {
-                                    // Check if we already stored this TX
-                                    if self.has_tx_stored(&tx.hash).await? {
-                                        debug!("Transaction {} was already stored, skipping it", tx.hash);
-                                        return Ok((None, tx_nonce, assets_changed));
-                                    }
-                                    checked = true;
-                                }
-
-                                // Get the right handle
-                                let (role, handle) = if is_owner {
-                                    (Role::Sender, transfer.sender_handle)
-                                } else {
-                                    (Role::Receiver, transfer.receiver_handle)
-                                };
-    
-                                // Decompress commitment it if possible
-                                let commitment = transfer.commitment.decompress()?;
-    
-                                // Same for handle
-                                let handle = handle.decompress()?;
-    
-                                let extra_data = if let Some(cipher) = transfer.extra_data.into_owned() {
-                                    match self.wallet.decrypt_extra_data(cipher,  Some(&handle), role, tx.version) {
-                                        Ok(e) => Some(e),
-                                        Err(e) => {
-                                            warn!("Error while decrypting extra data of TX {}: {}", tx.hash, e);
-                                            Some(PlaintextExtraData::new(None, None, PlaintextFlag::Failed))
-                                        }
-                                    }
-                                } else {
-                                    None
-                                };
-
-                                self.fetch_if_asset_not_found(&asset, &shared_semaphores).await?;
-
-                                debug!("Decrypting amount from TX {} of asset {}", tx.hash, asset);
-                                let ciphertext = Ciphertext::new(commitment, handle);
-                                let amount = match self.wallet.decrypt_ciphertext_of_asset(ciphertext, &asset).await? {
-                                    Some(v) => v,
-                                    None => {
-                                        warn!("Couldn't decrypt the ciphertext of transfer #{} for asset {} in TX {}. Skipping it", i, asset, tx.hash);
-                                        continue;
-                                    }
-                                };
-    
-                                if is_owner {
-                                    let transfer = TransferOut::new(destination, asset, amount, extra_data);
-                                    transfers_out.push(transfer);
-                                } else {
-                                    let transfer = TransferIn::new(asset, amount, extra_data);
-                                    transfers_in.push(transfer);
-                                }
-                            }
-                        }
-
-                        if is_owner && !transfers_out.is_empty() { // check that we are owner of this TX
-                            Some(EntryData::Outgoing { transfers: transfers_out, fee: tx.fee, nonce: tx.nonce })
-                        } else if !transfers_in.is_empty() { // otherwise, check that we received one or few transfers from it
-                            Some(EntryData::Incoming { from: tx.source.to_public_key(), transfers: transfers_in })
-                        } else { // this TX has nothing to do with us, nothing to save
-                            None
-                        }
-                    },
-                    RPCTransactionType::MultiSig(payload) => {
-                        if is_owner {
-                            let payload = payload.into_owned();
-
-                            Some(EntryData::MultiSig { participants: payload.participants, threshold: payload.threshold, fee: tx.fee, nonce: tx.nonce })
-                        } else {
-                            None
-                        }
-                    },
-                    RPCTransactionType::InvokeContract(payload) => {
-                        if is_owner {
-                            let payload = payload.into_owned();
-                            let mut deposits = IndexMap::new();
-
-                            for (asset, deposit) in payload.deposits.0 {
-                                assets_changed.insert(asset.clone());
-
-                                if !scan_mode.all() {
-                                    continue;
-                                }
-
-                                self.fetch_if_asset_not_found(&asset, &shared_semaphores).await?;
-
-                                match deposit {
-                                    ContractDeposit::Public(amount) => {
-                                        deposits.insert(asset, amount);
-                                    },
-                                    ContractDeposit::Private { commitment, sender_handle, ..} => {
-                                        let commitment = commitment.decompress()?;
-                                        let handle = sender_handle.decompress()?;
-                                        let ciphertext = Ciphertext::new(commitment, handle);
-                                        let amount = match self.wallet.decrypt_ciphertext_of_asset(ciphertext, &asset).await? {
-                                            Some(v) => v,
-                                            None => {
-                                                warn!("Couldn't decrypt deposit ciphertext for asset {}. Fallback to zero", asset);
-                                                0
-                                            }
-                                        };
-                                        deposits.insert(asset, amount);
-                                    }
-                                }
-                            }
-
-                            Some(EntryData::InvokeContract { contract: payload.contract, deposits, received: IndexMap::new(), entry_id: payload.entry_id, fee: tx.fee, max_gas: payload.max_gas, nonce: tx.nonce })
-                        } else {
-                            None
-                        }
-                    },
-                    RPCTransactionType::DeployContract(payload) => {
-                        if is_owner {
-                            let payload = payload.into_owned();
-                            let invoke = if let Some(invoke) = payload.invoke {
-                                let max_gas = invoke.max_gas;
-                                let mut deposits = IndexMap::new();
-                                for (asset, deposit) in invoke.deposits.0 {
-                                    assets_changed.insert(asset.clone());
-
-                                    if !scan_mode.all() {
-                                        continue;
-                                    }
-
-                                    self.fetch_if_asset_not_found(&asset, &shared_semaphores).await?;
-
-                                    match deposit {
-                                        ContractDeposit::Public(amount) => {
-                                            deposits.insert(asset, amount);
-                                        },
-                                        ContractDeposit::Private { commitment, sender_handle, ..} => {
-                                            let commitment = commitment.decompress()?;
-                                            let handle = sender_handle.decompress()?;
-                                            let ciphertext = Ciphertext::new(commitment, handle);
-                                            let amount = match self.wallet.decrypt_ciphertext_of_asset(ciphertext, &asset).await? {
-                                                Some(v) => v,
-                                                None => {
-                                                    warn!("Couldn't decrypt deposit ciphertext for asset {}. Skipping it", asset);
-                                                    continue;
-                                                }
-                                            };
-                                            deposits.insert(asset, amount);
-                                        }
-                                    }
-                                }
-
-                                Some(DeployInvoke {
-                                    max_gas,
-                                    deposits,
-                                })
-                            } else {
-                                None
-                            };
-
-                            Some(EntryData::DeployContract { fee: tx.fee, nonce: tx.nonce, invoke })
-                        } else {
-                            None
-                        }
-                    },
-                    RPCTransactionType::Blob(payload) => {
-                        let role = if is_owner {
-                            Some(Role::Sender)
-                        } else if payload.destinations.contains(address) {
-                            Some(Role::Receiver)
-                        } else {
-                            None
-                        };
-
-                        if let Some(role) = role {
-                            let data = payload.data.into_owned();
-                            let decrypted = match self.wallet.decrypt_extra_data(data,  None, role, tx.version) {
-                                Ok(e) => e,
-                                Err(e) => {
-                                    warn!("Error while decrypting extra data of TX {}: {}", tx.hash, e);
-                                    PlaintextExtraData::new(None, None, PlaintextFlag::Failed)
-                                }
-                            };
-                            Some(EntryData::Blob { data: decrypted })
-                        } else {
-                            None
-                        }
-                    }
-                };
+                let entry = decoder::decode_transaction(&self.wallet, &address, &tx, scan_mode, |asset| {
+                    assets_changed.insert(asset.clone());
+                    self.fetch_if_asset_not_found(asset, shared_semaphores)
+                }).await?;
 
                 let entry = if let Some(entry) = entry.filter(|_| scan_mode.all()) {
                     // Transaction found at which topoheight it was executed
@@ -682,13 +465,6 @@ impl NetworkHandler {
         }
     }
 
-    // Check if a transaction is stored in the wallet
-    #[inline]
-    async fn has_tx_stored(&self, hash: &Hash) -> Result<bool, Error> {
-        let storage = self.wallet.get_storage().read().await;
-        storage.has_transaction(hash)
-    }
-
     async fn handle_contracts_outputs(&self, outputs: HashMap<ContractTransfersEntryKey<'_>, ContractTransfersEntry<'_>>, topoheight: u64, timestamp: TimestampMillis, is_rescan: bool) -> Result<HashSet<Hash>, Error> {
         debug!("Handling contracts outputs at topoheight {}", topoheight);
         // Aggregate all transfers per transaction caller
@@ -718,7 +494,7 @@ impl NetworkHandler {
 
     // Ensure that an asset is present in storage, otherwise fetch it from daemon and store it
     // semaphores is used to prevent multiple simultaneous fetches for the same asset
-    async fn fetch_if_asset_not_found<'a>(&self, asset: &'a Hash, sempahores: &Mutex<HashMap<Hash, Arc<Semaphore>>>) -> Result<(), Error> {
+    async fn fetch_if_asset_not_found<'a>(&self, asset: &'a Hash, sempahores: &Mutex<HashMap<Hash, Arc<Semaphore>>>) -> Result<(), WalletError> {
         trace!("Verifying asset {} pressence in storage", asset);
 
         // First check in case we already have it

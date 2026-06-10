@@ -432,10 +432,7 @@ async fn build_transaction(context: &Context<'_, '_>, params: BuildTransactionPa
             unsigned.sign_multisig(&keypair, signer.id);
         }
 
-        let tx = unsigned.finalize(wallet.get_keypair());
-        state.set_tx_hash_built(tx.hash());
-
-        tx
+        unsigned.finalize(wallet.get_keypair())
     };
 
     // if requested, broadcast the TX ourself
@@ -449,7 +446,7 @@ async fn build_transaction(context: &Context<'_, '_>, params: BuildTransactionPa
         }
     }
 
-    state.apply_changes(&mut storage).await
+    state.apply_changes(&mut storage, wallet, &tx).await
         .context("Error while applying state changes")?;
 
     // returns the created TX and its hash
@@ -510,10 +507,7 @@ async fn build_transaction_offline(context: &Context<'_, '_>, params: BuildTrans
             unsigned.sign_multisig(&keypair, signer.id);
         }
 
-        let tx = unsigned.finalize(wallet.get_keypair());
-        state.set_tx_hash_built(tx.hash());
-
-        tx
+        unsigned.finalize(wallet.get_keypair())
     };
 
     Ok(TransactionResponse {
@@ -547,7 +541,7 @@ async fn build_unsigned_transaction(context: &Context<'_, '_>, params: BuildUnsi
     let unsigned = builder.build_unsigned(&mut state, wallet.get_keypair())
         .context("Error while building unsigned transaction")?;
 
-    state.apply_changes(&mut storage).await
+    state.apply_changes(&mut storage, wallet, None).await
         .context("Error while applying state changes")?;
 
     // returns the created TX and its hash
@@ -589,7 +583,7 @@ async fn finalize_unsigned_transaction(context: &Context<'_, '_>, params: Finali
     }
 
     let tx = unsigned.0.finalize(keypair);
-    
+
     let mut storage = wallet.get_storage().write().await;
     let mut state = TransactionBuilderState::from_tx(&storage, &tx, wallet.get_network().is_mainnet()).await?;
 
@@ -603,7 +597,7 @@ async fn finalize_unsigned_transaction(context: &Context<'_, '_>, params: Finali
         }
     }
 
-    state.apply_changes(&mut storage).await
+    state.apply_changes(&mut storage, wallet, &tx).await
         .context("Error while applying state changes")?;
 
     Ok(TransactionResponse {

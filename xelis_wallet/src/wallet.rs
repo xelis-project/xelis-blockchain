@@ -902,7 +902,7 @@ impl Wallet {
         trace!("create transaction");
         let mut storage = self.storage.write().await;
         let (tx, mut state) = self.create_transaction_with_storage(&storage, transaction_type, fee, base_fee, max_fee).await?;
-        state.apply_changes(&mut storage).await?;
+        state.apply_changes(&mut storage, self, &tx).await?;
 
         Ok(tx)
     }
@@ -952,7 +952,7 @@ impl Wallet {
             self.network.is_mainnet(),
             reference,
             nonce,
-            max_fee
+            max_fee,
         );
 
         #[cfg(feature = "network_handler")]
@@ -1148,7 +1148,6 @@ impl Wallet {
 
         let tx_hash = transaction.hash();
         debug!("Transaction created: {} with nonce {} and reference {}", tx_hash, transaction.get_nonce(), transaction.get_reference());
-        state.set_tx_hash_built(tx_hash);
 
         Ok(transaction)
     }
@@ -1529,6 +1528,13 @@ impl Wallet {
     // Network that the wallet is using
     pub fn get_network(&self) -> &Network {
         &self.network
+    }
+
+    // Check if a transaction is stored in the wallet
+    #[inline]
+    pub async fn has_tx_stored(&self, hash: &Hash) -> Result<bool, Error> {
+        let storage = self.storage.read().await;
+        storage.has_transaction(hash)
     }
 }
 
