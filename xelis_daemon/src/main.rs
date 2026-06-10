@@ -1,13 +1,8 @@
-pub mod rpc;
-pub mod p2p;
-pub mod core;
-pub mod config;
-
 use futures::StreamExt;
 use human_bytes::human_bytes;
 use humantime::{format_duration, Duration as HumanDuration};
 use log::{debug, error, info, trace, warn};
-use rpc::rpc::get_block_response_for_hash;
+use xelis_daemon::rpc::rpc::get_block_response_for_hash;
 use serde::{Deserialize, Serialize};
 use tokio::pin;
 use xelis_assembler::Disassembler;
@@ -53,8 +48,8 @@ use xelis_common::{
     }
 };
 use xelis_vm::Access;
-use crate::config::{DEV_PUBLIC_KEY, MILLIS_PER_SECOND, get_stable_limit};
-use core::{
+use xelis_daemon::config::{DEV_PUBLIC_KEY, MILLIS_PER_SECOND, get_stable_limit};
+use xelis_daemon::core::{
     state::{ChainState, ApplicableChainState},
     blockchain::{
         get_block_reward,
@@ -74,10 +69,10 @@ use core::{
 };
 
 #[cfg(feature = "rocksdb")]
-use core::storage::{RocksStorage, RocksDBConfig};
+use xelis_daemon::core::storage::{RocksStorage, RocksDBConfig};
 
 #[cfg(feature = "sled")]
-use core::storage::{SledStorage, SledConfig};
+use xelis_daemon::core::storage::{SledStorage, SledConfig};
 
 use std::{
     collections::{HashMap, HashSet},

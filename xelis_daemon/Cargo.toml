@@ -57,5 +57,12 @@ default = ["sled", "rocksdb"]
 rocksdb = ["dep:rocksdb"]
 sled = []
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "xelis_daemon"
+path = "src/main.rs"
+
 [dev-dependencies]
 tempdir = "*"
