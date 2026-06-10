@@ -241,6 +241,8 @@ pub enum BlockchainError {
     NotEnoughBlocks,
     #[error("Gas overflow during calculation")]
     GasOverflow,
+    #[error("Consensus arithmetic overflow")]
+    ConsensusOverflow,
     #[error("Unknown data store error")]
     Unknown,
     #[error("No linked blocks found for transaction")]

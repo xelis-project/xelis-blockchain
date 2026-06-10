@@ -2620,7 +2620,8 @@ impl<S: Storage> Blockchain<S> {
     
                     // Increase the circulating supply with the block reward
                     let changes = chain_state.get_asset_changes_for(&XELIS_ASSET, true).await?;
-                    changes.circulating_supply.1 += block_reward;
+                    changes.circulating_supply.1 = changes.circulating_supply.1.checked_add(block_reward)
+                        .ok_or(BlockchainError::ConsensusOverflow)?;
                     changes.circulating_supply.0.mark_updated();
     
                     total_txs_executed += block.get_txs_count();
@@ -2666,7 +2667,8 @@ impl<S: Storage> Blockchain<S> {
                             // Calculate the new nonce
                             // This has to be done in case of side blocks where TX B would be before TX A
                             let expected_next_nonce = nonce_checker.get_new_nonce(tx.get_source(), self.network.is_mainnet())?;
-                            let next_nonce = tx.get_nonce() + 1;
+                            let next_nonce = tx.get_nonce().checked_add(1)
+                                .ok_or(BlockchainError::ConsensusOverflow)?;
                             if expected_next_nonce != next_nonce {
                                 warn!("TX {} has a nonce {}, but the next nonce is {}, forcing it...", tx_hash, next_nonce, expected_next_nonce);
                                 chain_state.as_mut().update_account_nonce(tx.get_source(), expected_next_nonce).await?;
@@ -2752,7 +2754,10 @@ impl<S: Storage> Blockchain<S> {
                     // Miner gets the block reward + total fees + gas fee
                     let gas_fee = chain_state.get_gas_fee();
                     let total_fees = chain_state.get_total_fees();
-                    chain_state.reward_miner(block.get_miner(), miner_reward + total_fees + gas_fee).await?;
+                    let miner_total = miner_reward.checked_add(total_fees)
+                        .and_then(|v| v.checked_add(gas_fee))
+                        .ok_or(BlockchainError::ConsensusOverflow)?;
+                    chain_state.reward_miner(block.get_miner(), miner_total).await?;
     
                     // Fire all the contract events
                     {
@@ -3684,7 +3689,9 @@ pub const fn tx_kb_size_rounded(bytes: usize) -> usize {
 // This returns one final (total) fee required for a TX
 pub async fn estimate_required_tx_fees<P: FeeProvider>(provider: &P, current_topoheight: TopoHeight, tx: &Transaction, tx_size: usize, base_fee: u64, block_version: BlockVersion) -> Result<u64, BlockchainError> {
     let fee_extra = estimate_required_tx_fee_extra(provider, current_topoheight, tx, block_version).await?;
-    Ok(calculate_tx_fee_per_kb(base_fee, tx_size) + fee_extra)
+    calculate_tx_fee_per_kb(base_fee, tx_size)
+        .checked_add(fee_extra)
+        .ok_or(BlockchainError::ConsensusOverflow)
 }
 
 // Get the block reward for a side block based on how many side blocks exists at same height
