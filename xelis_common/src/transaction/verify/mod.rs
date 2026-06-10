@@ -565,8 +565,10 @@ impl Transaction {
         }
 
         // Nonce is valid, update it for next transactions if any
+        let next_nonce = self.nonce.checked_add(1)
+            .ok_or(VerificationError::InvalidFormat)?;
         state
-            .update_account_nonce(&self.source, self.nonce + 1).await
+            .update_account_nonce(&self.source, next_nonce).await
             .map_err(VerificationStateError::State)?;
 
         match &self.data {
@@ -1186,7 +1188,9 @@ impl Transaction {
             .map_err(VerificationStateError::State)?;
 
         // Update nonce
-        state.update_account_nonce(self.get_source(), self.nonce + 1).await
+        let next_nonce = self.nonce.checked_add(1)
+            .ok_or(VerificationError::InvalidFormat)?;
+        state.update_account_nonce(self.get_source(), next_nonce).await
             .map_err(VerificationStateError::State)?;
 
         // Apply receiver balances
