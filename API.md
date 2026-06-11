@@ -75,6 +75,28 @@ When a new block has been accepted and included in the chain by the daemon.
 }
 ```
 
+#### New Block Template
+
+When a new mining block template is available.
+
+##### Name `new_block_template`
+
+##### On Event
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "event": "new_block_template",
+        "template": "...",
+        "algorithm": "xel/v2",
+        "height": 106174,
+        "topoheight": 107220,
+        "difficulty": "85713090000"
+    }
+}
+```
+
 #### New TopoHeight
 
 When a new topoheight has been detected by the daemon.
@@ -282,11 +304,13 @@ When a transaction has been executed by the DAG order.
 }
 ```
 
-#### Invoke Contract
+#### Contract Invoke
 
 When the contract has been invoked and executed by the DAG order.
 
-##### Name `invoke_contract`
+##### Name `contract_invoke`
+
+Subscribe with `{"contract_invoke":{"contract":"<contract hash>"}}`.
 
 ##### On Event
 ```json
@@ -294,7 +318,11 @@ When the contract has been invoked and executed by the DAG order.
     "id": 1,
     "jsonrpc": "2.0",
     "result": {
-        "event": "invoke_contract",
+        "event": {
+            "contract_invoke": {
+                "contract": "d4f7e8c3b2a1e6f5c4b3a2d1e0f9f8e7d6c5b4a3a2b1c0d9e8f7e6d5c4b3a2b1"
+            }
+        },
         "tx_hash": "d4f7e8c3b2a1e6f5c4b3a2d1e0f9f8e7d6c5b4a3a2b1c0d9e8f7e6d5c4b3a2b1",
         "block_hash": "a1b2c3d4e5f60718273645566778899aabbccddeeff00112233445566778899",
         "topoheight": 642000,
@@ -309,13 +337,19 @@ When a contract has transfered any asset to the receiver address, it is aggregat
 
 ##### Name `contract_transfers`
 
+Subscribe with `{"contract_transfers":{"address":"<address>"}}`.
+
 ##### On Event
 ```json
 {
     "id": 1,
     "jsonrpc": "2.0",
     "result": {
-        "event": "contract_transfers",
+        "event": {
+            "contract_transfers": {
+                "address": "xel:qcd39a5u8cscztamjuyr7hdj6hh2wh9nrmhp86ljx2sz6t99ndjqqm7wxj8"
+            }
+        },
         "executions": [
             {
                 "key": {
@@ -331,8 +365,7 @@ When a contract has transfered any asset to the receiver address, it is aggregat
         ],
         "block_timestamp": 1723503200,
         "block_hash": "a1b2c3d4e5f60718273645566778899aabbccddeeff00112233445566778899",
-        "topoheight": 642000,
-        "contract_logs": [...]
+        "topoheight": 642000
     }
 }
 ```
@@ -343,13 +376,21 @@ When a contract fire an event.
 
 ##### Name `contract_event`
 
+Subscribe with `{"contract_event":{"contract":"<contract hash>","id":42}}`.
+Set `id` to `null` to receive all events from this contract.
+
 ##### On Event
 ```json
 {
     "id": 1,
     "jsonrpc": "2.0",
     "result": {
-        "event": "contract_event",
+        "event": {
+            "contract_event": {
+                "contract": "d4f7e8c3b2a1e6f5c4b3a2d1e0f9f8e7d6c5b4a3a2b1c0d9e8f7e6d5c4b3a2b1",
+                "id": 42
+            }
+        },
         "event_id": 42,
         "data": {
             "type": "primitive",
@@ -359,7 +400,7 @@ When a contract fire an event.
             }
         },
         "block_hash": "a1b2c3d4e5f60718273645566778899aabbccddeeff00112233445566778899",
-        "topoheight": 642000,
+        "topoheight": 642000
     }
 }
 ```
@@ -3677,27 +3718,26 @@ Decrypt the extra data from a transaction.
 ```
 
 #### Get Contracts Outputs
-Retrieve the contract outputs that have occurred in the requested transaction hash.
-
-It contains, the refunded gas amount, exit code and transfers.
+Retrieve contract transfers made to an address at a specific topoheight.
 
 ##### Method `get_contracts_outputs`
 
 ##### Parameters
 
-|    Name    |     Type    | Required |                         Note                         |
-|:----------:|:-----------:|:--------:|:----------------------------------------------------:|
-| shared_key | Hexadecimal | Required | Shared Key in hexadecimal format used for decryption |
-| extra_data |  Byte Array | Required |    Byte array containing the encrypted extra data    |
+|    Name    |   Type  | Required |                    Note                    |
+|:----------:|:-------:|:--------:|:------------------------------------------:|
+|  address   | Address | Required | Address receiving contract transfers       |
+| topoheight | Integer | Required | Topoheight to inspect                      |
 
 ##### Request
 ```json
 {
     "jsonrpc": "2.0",
-    "method": "get_contract_outputs",
+    "method": "get_contracts_outputs",
     "id": 1,
     "params": {
-        "transaction": "8a354baac1d53d02249aadee92c5a3e0585b126439947cb4a3c3aa9baaea5f17"
+        "address": "xel:qcd39a5u8cscztamjuyr7hdj6hh2wh9nrmhp86ljx2sz6t99ndjqqm7wxj8",
+        "topoheight": 642000
     }
 }
 ```
@@ -3707,16 +3747,21 @@ It contains, the refunded gas amount, exit code and transfers.
 {
     "id": 1,
     "jsonrpc": "2.0",
-    "result": [
-        {
-            "exit_code": 0
-        },
-        {
-            "refund_gas": {
-                "amount": 99593
+    "result": {
+        "executions": [
+            {
+                "key": {
+                    "contract": "d4f7e8c3b2a1e6f5c4b3a2d1e0f9f8e7d6c5b4a3a2b1c0d9e8f7e6d5c4b3a2b1",
+                    "caller": "4951a4d10b8921c8e08d3c380993305a1e4706cbba606e2e79ffdfc06c54eb5f"
+                },
+                "value": {
+                    "transfers": {
+                        "0000000000000000000000000000000000000000000000000000000000000000": 1000
+                    }
+                }
             }
-        }
-    ]
+        ]
+    }
 }
 ```
 
@@ -3763,7 +3808,7 @@ Retrieve the contract data with the requested key.
 
 |    Name    |     Type    | Required |                         Note                         |
 |:----------:|:-----------:|:--------:|:----------------------------------------------------:|
-|  contract  |   Address   | Required |       Contract address to search for the key         |
+|  contract  |    Hash     | Required |       Contract hash to search for the key            |
 |     key    |  ValueCell  | Required |           ValueCell representing the key             |
 
 ##### Request
@@ -3812,7 +3857,7 @@ Retrieve the contract data with the requested key at a specific topoheight.
 ##### Parameters
 |    Name    |     Type    | Required |                         Note                         |
 |:----------:|:-----------:|:--------:|:----------------------------------------------------:|
-|  contract  |   Address   | Required |       Contract address to search for the key         |
+|  contract  |    Hash     | Required |       Contract hash to search for the key            |
 |     key    |   ValueCell | Required |           ValueCell representing the key             |
 | topoheight |   Integer   | Required |           Topoheight to retrieve the data            |
 
@@ -3862,8 +3907,8 @@ Retrieve the contract balance
 ##### Parameters
 |    Name    |     Type    | Required |                         Note                         |
 |:----------:|:-----------:|:--------:|:----------------------------------------------------:|
-|  contract  |   Address   | Required |       Contract address to search for the key         |
-|    asset   |  ValueCell  | Required |   The asset ID to determine which balance to fetch   |
+|  contract  |    Hash     | Required |       Contract hash to search for the balance        |
+|    asset   |    Hash     | Required |   The asset ID to determine which balance to fetch   |
 
 ##### Request
 ```json
@@ -3899,7 +3944,7 @@ Retrieve the contract balance at a specific topoheight.
 ##### Parameters
 |    Name    |     Type    | Required |                         Note                         |
 |:----------:|:-----------:|:--------:|:----------------------------------------------------:|
-|  contract  |   Address   | Required |       Contract address to search for the key         |
+|  contract  |    Hash     | Required |       Contract hash to search for the balance        |
 |    asset   |     Hash    | Required |   The asset ID to determine which balance to fetch   |
 | topoheight |   Integer   | Required |           Topoheight to retrieve the data            |
 
@@ -3907,7 +3952,7 @@ Retrieve the contract balance at a specific topoheight.
 ```json
 {
     "jsonrpc": "2.0",
-    "method": "get_contract_balance",
+    "method": "get_contract_balance_at_topoheight",
     "id": 1,
     "params": {
         "contract": "b756566452b2c7bfea785f1b87b90d7bf075cb45a0dc33fb524e5e25f7e85fb4",
@@ -4198,6 +4243,63 @@ Retrieve multiple data entries from a contract's storage with optional paginatio
 }
 ```
 
+#### Simulate Contract Invoke
+Simulate a contract invocation without writing chain state.
+
+This method is only registered when the daemon is started with `--rpc-allow-contract-vm-executions`.
+
+##### Method `simulate_contract_invoke`
+
+##### Parameters
+|     Name     |          Type           | Required |                         Note                         |
+|:------------:|:-----------------------:|:--------:|:----------------------------------------------------:|
+|    source    |         Address         | Required | Caller address used for simulation                   |
+|   contract   |          Hash           | Required | Contract hash to invoke                              |
+|   deposits   |        Deposits         | Required | Assets deposited with the simulated call             |
+|   entry_id   |         Integer         | Required | Contract entry id to call                            |
+|  parameters  |       ValueCell[]       | Required | Parameters passed to the contract                    |
+|  permission  | InterContractPermission | Optional | Inter-contract permission, defaults to `none`        |
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "simulate_contract_invoke",
+    "id": 1,
+    "params": {
+        "source": "xel:qcd39a5u8cscztamjuyr7hdj6hh2wh9nrmhp86ljx2sz6t99ndjqqm7wxj8",
+        "contract": "740e2f94ba264464551787ddd6fa5e3222da464c6c659848f6e9a9d0730ac288",
+        "deposits": {},
+        "entry_id": 0,
+        "parameters": [],
+        "permission": "none"
+    }
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "base_fee": 25000,
+        "result": {
+            "used_gas": 1200,
+            "burned_gas": 600,
+            "fee_gas": 600,
+            "vm_max_gas": 1200,
+            "exit_value": {
+                "type": "ExitCode",
+                "value": 0
+            }
+        },
+        "block_hash": "1914802b64b28386adc37927081beb6ac4677b6f85ee2149f7a143339c99d309",
+        "topoheight": 761761
+    }
+}
+```
+
 ## Wallet
 
 ### Events
@@ -4229,7 +4331,7 @@ This returns the following response:
 }
 ```
 
-If its true, that means the daemon accepted the subscription to the requested event.
+If its true, that means the wallet accepted the subscription to the requested event.
 If its returning false, that may means you are already subscribed to this event.
 
 To unsubscribe from an event, replace the method name `subscribe` by `unsubscribe`.
@@ -4307,6 +4409,37 @@ When a new transaction is detected by the wallet.
 }
 ```
 
+#### New Pending Transaction
+
+When a locally-created transaction is added to the wallet pending set.
+
+##### Name `new_pending_transaction`
+
+##### On Event
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "event": "new_pending_transaction",
+        "hash": "b84adead7fe1c0499f92826c08f4f67f8e5133981465b7b9cf0b34649e11f1e0",
+        "timestamp": 1723503200000,
+        "outgoing": {
+            "fee": 125000,
+            "nonce": 3530,
+            "transfers": [
+                {
+                    "amount": 100000000,
+                    "asset": "0000000000000000000000000000000000000000000000000000000000000000",
+                    "destination": "xet:6elhr5zvx5wl2ljjl82l6yxxxqkxjvcr38kcq9qef3nurm2r2arsq89z4ll",
+                    "extra_data": null
+                }
+            ]
+        }
+    }
+}
+```
+
 #### Balance Changed
 
 When an asset balance has been updated.
@@ -4347,6 +4480,24 @@ The event response contains the topoheight until which the wallet rescanned and 
 }
 ```
 
+#### History Synced
+
+When the wallet history sync is complete.
+
+##### Name `history_synced`
+
+##### On Event
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "event": "history_synced",
+        "topoheight": 107853
+    }
+}
+```
+
 #### Online
 
 When the wallet is in online mode (connected to a daemon).
@@ -4377,6 +4528,60 @@ When the wallet is in offline mode (not connected to any daemon).
     "jsonrpc": "2.0",
     "result": {
         "event": "offline"
+    }
+}
+```
+
+#### Sync Error
+
+When the wallet sync loop reports an error.
+
+##### Name `sync_error`
+
+##### On Event
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "event": "sync_error",
+        "message": "connection closed"
+    }
+}
+```
+
+#### Track Asset
+
+When an asset is tracked by the wallet.
+
+##### Name `track_asset`
+
+##### On Event
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "event": "track_asset",
+        "asset": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+}
+```
+
+#### Untrack Asset
+
+When an asset is untracked by the wallet.
+
+##### Name `untrack_asset`
+
+##### On Event
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+        "event": "untrack_asset",
+        "asset": "0000000000000000000000000000000000000000000000000000000000000000"
     }
 }
 ```
@@ -5762,6 +5967,49 @@ This is useful in case you are a part of the multisig of another wallet and you 
 ```
 
 **NOTE**: The response is the signature of the hash provided. You can use this `SignatureId` returned to finalize the transaction by adding it to the Unsigned Transaction multisig.
+
+#### Get Pending Transactions
+Retrieve locally-created transactions that are not confirmed yet.
+
+##### Method `get_pending_transactions`
+
+##### Parameters
+No parameters
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_pending_transactions",
+    "id": 1
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": [
+        {
+            "hash": "b84adead7fe1c0499f92826c08f4f67f8e5133981465b7b9cf0b34649e11f1e0",
+            "timestamp": 1723503200000,
+            "outgoing": {
+                "fee": 125000,
+                "nonce": 3530,
+                "transfers": [
+                    {
+                        "amount": 100000000,
+                        "asset": "0000000000000000000000000000000000000000000000000000000000000000",
+                        "destination": "xet:6elhr5zvx5wl2ljjl82l6yxxxqkxjvcr38kcq9qef3nurm2r2arsq89z4ll",
+                        "extra_data": null
+                    }
+                ]
+            }
+        }
+    ]
+}
+```
 
 #### Clear TX Cache
 In case of a failure while broadcasting a TX from this wallet by yourself, you can erase the TX cache stored in the wallet.
