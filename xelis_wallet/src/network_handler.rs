@@ -338,7 +338,7 @@ impl NetworkHandler {
 
                 // if we don't want to scan the history by decoding txs and such
                 // it will simply returns none
-                let entry = decoder::decode_transaction(&self.wallet, &address, &tx, scan_mode, |asset| {
+                let entry = decoder::decode_transaction(self.wallet.as_ref(), &address, &tx, scan_mode, |asset| {
                     assets_changed.insert(asset.clone());
                     self.fetch_if_asset_not_found(asset, shared_semaphores)
                 }).await?;

@@ -1,32 +1,98 @@
 use std::future::Future;
 
+use async_trait::async_trait;
 use indexmap::IndexMap;
 use log::{debug, warn};
 use xelis_common::{
     api::{RPCTransaction, RPCTransactionType},
-    crypto::{Address, Hash, elgamal::Ciphertext},
+    crypto::{Address, Hash, elgamal::{Ciphertext, DecryptHandle}},
     transaction::{
         ContractDeposit,
         Role,
-        extra_data::{PlaintextExtraData, PlaintextFlag}
+        TxVersion,
+        extra_data::{PlaintextExtraData, PlaintextFlag, UnknownExtraDataFormat}
     }
 };
 use crate::{
     entry::{DeployInvoke, EntryData, TransferIn, TransferOut},
     error::WalletError,
+    storage::EncryptedStorage,
     wallet::{HistoryScanMode, Wallet}
 };
 
+// This module is responsible for decoding transactions in which we may be involved
+#[async_trait]
+pub trait DecoderProvider: Sync {
+    // Check if we already stored this transaction in our database, to avoid doing heavy decryption work for nothing
+    async fn has_tx_stored(&self, hash: &Hash) -> Result<bool, WalletError>;
+
+    // Decrypt a ciphertext of an asset, and return the amount if we are able to decrypt it
+    async fn decrypt_ciphertext_of_asset(&self, ciphertext: Ciphertext, asset: &Hash) -> Result<Option<u64>, WalletError>;
+
+    // Decrypt extra data of a transaction, and return the plaintext if we are able to decrypt it
+    fn decrypt_extra_data(&self, cipher: UnknownExtraDataFormat, handle: Option<&DecryptHandle>, role: Role, version: TxVersion) -> Result<PlaintextExtraData, WalletError>;
+}
+
+#[async_trait]
+impl DecoderProvider for Wallet {
+    #[inline(always)]
+    async fn has_tx_stored(&self, hash: &Hash) -> Result<bool, WalletError> {
+        Wallet::has_tx_stored(self, hash).await.map_err(Into::into)
+    }
+
+    #[inline(always)]
+    async fn decrypt_ciphertext_of_asset(&self, ciphertext: Ciphertext, asset: &Hash) -> Result<Option<u64>, WalletError> {
+        Wallet::decrypt_ciphertext_of_asset(self, ciphertext, asset).await
+    }
+
+    #[inline(always)]
+    fn decrypt_extra_data(&self, cipher: UnknownExtraDataFormat, handle: Option<&DecryptHandle>, role: Role, version: TxVersion) -> Result<PlaintextExtraData, WalletError> {
+        Wallet::decrypt_extra_data(self, cipher, handle, role, version)
+    }
+}
+
+pub struct StorageDecoderProvider<'a> {
+    wallet: &'a Wallet,
+    storage: &'a EncryptedStorage,
+}
+
+impl<'a> StorageDecoderProvider<'a> {
+    pub fn new(wallet: &'a Wallet, storage: &'a EncryptedStorage) -> Self {
+        Self {
+            wallet,
+            storage,
+        }
+    }
+}
+
+#[async_trait]
+impl DecoderProvider for StorageDecoderProvider<'_> {
+    async fn has_tx_stored(&self, hash: &Hash) -> Result<bool, WalletError> {
+        self.storage.has_transaction(hash).map_err(Into::into)
+    }
+
+    async fn decrypt_ciphertext_of_asset(&self, ciphertext: Ciphertext, asset: &Hash) -> Result<Option<u64>, WalletError> {
+        let max_supply = self.storage.get_asset(asset).await?
+            .get_max_supply();
+        self.wallet.decrypt_ciphertext_with(ciphertext, max_supply.get_max()).await
+    }
+
+    fn decrypt_extra_data(&self, cipher: UnknownExtraDataFormat, handle: Option<&DecryptHandle>, role: Role, version: TxVersion) -> Result<PlaintextExtraData, WalletError> {
+        self.wallet.decrypt_extra_data(cipher, handle, role, version)
+    }
+}
+
 // Decode a transaction in which we may be part
 // returns None if we are not part of it
-pub async fn decode_transaction<'a, F, Fut>(
-    wallet: &Wallet,
+pub async fn decode_transaction<'a, P, F, Fut>(
+    provider: &P,
     address: &Address,
     tx: &'a RPCTransaction<'_>,
     scan_mode: HistoryScanMode,
     mut on_asset_detected: F,
 ) -> Result<Option<EntryData>, WalletError>
 where
+    P: DecoderProvider,
     F: FnMut(&'a Hash) -> Fut,
     Fut: Future<Output = Result<(), WalletError>> + 'a,
 {
@@ -62,7 +128,7 @@ where
                     // Check only once if we have processed this TX already
                     if !checked {
                         // Check if we already stored this TX
-                        if wallet.has_tx_stored(&tx.hash).await? {
+                        if provider.has_tx_stored(&tx.hash).await? {
                             debug!("Transaction {} was already stored, skipping it", tx.hash);
                             return Ok(None);
                         }
@@ -83,7 +149,7 @@ where
                     let handle = handle.decompress()?;
 
                     let extra_data = if let Some(cipher) = transfer.extra_data.as_ref().clone() {
-                        match wallet.decrypt_extra_data(cipher,  Some(&handle), role, tx.version) {
+                        match provider.decrypt_extra_data(cipher,  Some(&handle), role, tx.version) {
                             Ok(e) => Some(e),
                             Err(e) => {
                                 warn!("Error while decrypting extra data of TX {}: {}", tx.hash, e);
@@ -96,7 +162,7 @@ where
 
                     debug!("Decrypting amount from TX {} of asset {}", tx.hash, asset);
                     let ciphertext = Ciphertext::new(commitment, handle);
-                    let amount = match wallet.decrypt_ciphertext_of_asset(ciphertext, asset).await? {
+                    let amount = match provider.decrypt_ciphertext_of_asset(ciphertext, asset).await? {
                         Some(v) => v,
                         None => {
                             warn!("Couldn't decrypt the ciphertext of transfer #{} for asset {} in TX {}. Skipping it", i, asset, tx.hash);
@@ -151,7 +217,7 @@ where
                             let commitment = commitment.decompress()?;
                             let handle = sender_handle.decompress()?;
                             let ciphertext = Ciphertext::new(commitment, handle);
-                            let amount = match wallet.decrypt_ciphertext_of_asset(ciphertext, asset).await? {
+                            let amount = match provider.decrypt_ciphertext_of_asset(ciphertext, asset).await? {
                                 Some(v) => v,
                                 None => {
                                     warn!("Couldn't decrypt deposit ciphertext for asset {}. Fallback to zero", asset);
@@ -190,7 +256,7 @@ where
                                 let commitment = commitment.decompress()?;
                                 let handle = sender_handle.decompress()?;
                                 let ciphertext = Ciphertext::new(commitment, handle);
-                                let amount = match wallet.decrypt_ciphertext_of_asset(ciphertext, asset).await? {
+                                let amount = match provider.decrypt_ciphertext_of_asset(ciphertext, asset).await? {
                                     Some(v) => v,
                                     None => {
                                         warn!("Couldn't decrypt deposit ciphertext for asset {}. Skipping it", asset);
@@ -226,7 +292,7 @@ where
 
             if let Some(role) = role {
                 let data = payload.data.as_ref().clone();
-                let decrypted = match wallet.decrypt_extra_data(data,  None, role, tx.version) {
+                let decrypted = match provider.decrypt_extra_data(data,  None, role, tx.version) {
                     Ok(e) => e,
                     Err(e) => {
                         warn!("Error while decrypting extra data of TX {}: {}", tx.hash, e);

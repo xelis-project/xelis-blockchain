@@ -160,7 +160,8 @@ impl TransactionBuilderState {
         if let Some(tx) = tx.into() {
             let tx_hash = tx.hash();
             let rpc_tx = RPCTransaction::from_tx(tx, Cow::Borrowed(&tx_hash), tx.size(), None, self.mainnet);
-            let entry = decoder::decode_transaction(wallet, &wallet.get_address(), &rpc_tx, wallet.get_history_scan(), |_| ready(Ok(()))).await?
+            let provider = decoder::StorageDecoderProvider::new(wallet, storage);
+            let entry = decoder::decode_transaction(&provider, &wallet.get_address(), &rpc_tx, wallet.get_history_scan(), |_| ready(Ok(()))).await?
                 .ok_or(WalletError::NotTransactionSigner)?;
 
             storage.set_tx_cache(TxCache {

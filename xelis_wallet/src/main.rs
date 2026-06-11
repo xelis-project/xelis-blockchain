@@ -765,7 +765,7 @@ async fn prompt_message_builder(prompt: &Prompt, command_manager: Option<&Comman
             );
             let pending_count = storage.get_pending_txs().len();
             let pending_str = if pending_count > 0 {
-                format!(" {} ", prompt.colorize_string(Color::Yellow, &format!("({} TXs)", pending_count)))
+                format!(" {}", prompt.colorize_string(Color::Yellow, &format!("({} TXs)", pending_count)))
             } else {
                 String::new()
             };
@@ -783,7 +783,7 @@ async fn prompt_message_builder(prompt: &Prompt, command_manager: Option<&Comman
     
             return Ok(
                 format!(
-                    "{} | {} | {} | {}{}| {} {}{} ",
+                    "{} | {} | {} | {}{} | {} {}{} ",
                     prompt.colorize_string(Color::Blue, "XELIS Wallet"),
                     addr_str,
                     topoheight_str,
