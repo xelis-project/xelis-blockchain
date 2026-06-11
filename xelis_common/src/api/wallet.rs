@@ -462,8 +462,13 @@ pub enum NotifyEvent {
     Offline,
     // Error occuring while syncing
     SyncError,
+    // When an asset is tracked in wallet
     TrackAsset,
+    // When an asset is untracked from wallet
     UntrackAsset,
+    // When a new pending transaction is added to wallet
+    // Contains TransactionPending struct as value
+    NewPendingTransaction,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
