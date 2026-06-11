@@ -17,7 +17,7 @@ use crate::{
     decoder,
     error::WalletError,
     storage::{Balance, EncryptedStorage, TransactionPending, TxCache},
-    wallet::Wallet
+    wallet::{Event, Wallet}
 };
 
 // State used to estimate fees for a transaction
@@ -171,11 +171,14 @@ impl TransactionBuilderState {
                 assets: self.balances.keys().cloned().collect(),
             });
 
-            storage.track_pending_tx(TransactionPending {
+            let pending = TransactionPending {
                 hash: tx.hash(),
                 timestamp: get_current_time_in_millis(),
                 entry,
-            });
+            };
+
+            storage.track_pending_tx(pending.clone());
+            wallet.propagate_event(Event::NewPendingTransaction(pending.serializable(self.mainnet))).await;
         }
 
         for (asset, balance) in self.balances.drain() {

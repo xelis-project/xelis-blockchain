@@ -164,6 +164,7 @@ pub enum RecoverOption<'a> {
 pub enum Event {
     // When a TX is detected from daemon and is added in wallet storage
     NewTransaction(TransactionEntry<'static>),
+    NewPendingTransaction(TransactionPending<'static>),
     // When a new block is detected from daemon
     // NOTE: Same topoheight can be broadcasted several times if DAG reorg it
     // And some topoheight can be skipped because of DAG reorg
@@ -205,6 +206,7 @@ impl Event {
     pub fn kind(&self) -> NotifyEvent {
         match self {
             Event::NewTransaction(_) => NotifyEvent::NewTransaction,
+            Event::NewPendingTransaction(_) => NotifyEvent::NewPendingTransaction,
             Event::NewTopoHeight { .. } => NotifyEvent::NewTopoHeight,
             Event::BalanceChanged(_) => NotifyEvent::BalanceChanged,
             Event::NewAsset(_) => NotifyEvent::NewAsset,
