@@ -163,7 +163,7 @@ pub enum RecoverOption<'a> {
 #[serde(untagged)]
 pub enum Event {
     // When a TX is detected from daemon and is added in wallet storage
-    NewTransaction(TransactionEntry),
+    NewTransaction(TransactionEntry<'static>),
     // When a new block is detected from daemon
     // NOTE: Same topoheight can be broadcasted several times if DAG reorg it
     // And some topoheight can be skipped because of DAG reorg

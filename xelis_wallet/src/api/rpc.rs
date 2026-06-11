@@ -42,7 +42,7 @@ use xelis_common::{
 use crate::{
     api::AppStateShared,
     error::WalletError,
-    storage::{TransactionFilterOptions, Balance},
+    storage::{Balance, TransactionFilterOptions},
     transaction_builder::TransactionBuilderState,
     wallet::Wallet
 };
@@ -78,6 +78,7 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     handler.register_method_with_params("build_unsigned_transaction", async_handler!(build_unsigned_transaction));
     handler.register_method_with_params("finalize_unsigned_transaction", async_handler!(finalize_unsigned_transaction));
     handler.register_method_with_params("sign_unsigned_transaction", async_handler!(sign_unsigned_transaction));
+    handler.register_method_no_params("get_pending_transactions", async_handler!(get_pending_transactions, single));
 
     handler.register_method_no_params("clear_tx_cache", async_handler!(clear_tx_cache, single));
     handler.register_method_with_params("list_transactions", async_handler!(list_transactions));
@@ -348,7 +349,7 @@ async fn get_asset(context: &Context<'_, '_>, params: GetAssetPrecisionParams<'_
 }
 
 // Retrieve a transaction from the wallet storage using its hash
-async fn get_transaction(context: &Context<'_, '_>, params: GetTransactionParams) -> Result<TransactionEntry, InternalRpcError> {
+async fn get_transaction(context: &Context<'_, '_>, params: GetTransactionParams) -> Result<TransactionEntry<'static>, InternalRpcError> {
     let wallet = wallet_from_context(context)?;
     let storage = wallet.get_storage().read().await;
     if !storage.has_transaction(&params.hash)? {
@@ -361,7 +362,7 @@ async fn get_transaction(context: &Context<'_, '_>, params: GetTransactionParams
 }
 
 // Debug rpc method to perform a search across all entries for a transaction from the wallet storage using its hash
-async fn search_transaction(context: &Context<'_, '_>, params: SearchTransactionParams<'_>) -> Result<SearchTransactionResult, InternalRpcError> {
+async fn search_transaction(context: &Context<'_, '_>, params: SearchTransactionParams<'_>) -> Result<SearchTransactionResult<'static>, InternalRpcError> {
     let wallet = wallet_from_context(context)?;
     let storage = wallet.get_storage().read().await;
 
@@ -523,6 +524,20 @@ async fn build_transaction_offline(context: &Context<'_, '_>, params: BuildTrans
     })
 }
 
+// Get pending transactions from the wallet storage
+async fn get_pending_transactions(context: &Context<'_, '_>) -> Result<Vec<TransactionPending<'static>>, InternalRpcError> {
+    let wallet = wallet_from_context(context)?;
+    let mainnet = wallet.get_network().is_mainnet();
+    let storage = wallet.get_storage().read().await;
+    let pending_txs = storage.get_pending_txs()
+        .iter()
+        .cloned()
+        .map(|tx| tx.serializable(mainnet))
+        .collect();
+
+    Ok(pending_txs)
+}
+
 async fn build_unsigned_transaction(context: &Context<'_, '_>, params: BuildUnsignedTransactionParams) -> Result<UnsignedTransactionResponse, InternalRpcError> {
     let wallet = wallet_from_context(context)?;
 
@@ -642,7 +657,7 @@ async fn estimate_fees(context: &Context<'_, '_>, params: EstimateFeesParams) ->
 }
 
 // List transactions from the wallet storage
-async fn list_transactions(context: &Context<'_, '_>, params: ListTransactionsParams) -> Result<Vec<TransactionEntry>, InternalRpcError> {
+async fn list_transactions(context: &Context<'_, '_>, params: ListTransactionsParams) -> Result<Vec<TransactionEntry<'static>>, InternalRpcError> {
     if let Some(addr) = &params.address {
         if !addr.is_normal() {
             return Err(InternalRpcError::InvalidParams("Address should be in normal format (not integrated address)"))

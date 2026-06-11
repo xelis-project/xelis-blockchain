@@ -9,7 +9,7 @@ use std::{
 };
 use indexmap::IndexMap;
 use itertools::Either;
-use linked_hash_table::LinkedHashMap;
+use linked_hash_table::LinkedHashSet;
 use lru::LruCache;
 use xelis_common::{
     api::{
@@ -166,7 +166,7 @@ pub struct EncryptedStorage {
     // We store it in a VecDeque so for each TX we have an entry and can just retrieve it
     unconfirmed_balances_cache: Mutex<HashMap<Hash, VecDeque<Balance>>>,
     // Pending transactions created locally and not confirmed yet.
-    pending_txs: LinkedHashMap<Hash, PendingTransaction>,
+    pending_txs: LinkedHashSet<TransactionPending>,
     // Temporary TX Cache used to build ordered TXs
     tx_cache: Option<TxCache>,
     // Cache for the assets with their decimals
@@ -201,7 +201,7 @@ impl EncryptedStorage {
             inner,
             balances_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap())),
             unconfirmed_balances_cache: Mutex::new(HashMap::new()),
-            pending_txs: LinkedHashMap::new(),
+            pending_txs: LinkedHashSet::new(),
             tx_cache: None,
             assets_cache: Mutex::new(LruCache::new(NonZeroUsize::new(DEFAULT_CACHE_SIZE).unwrap())),
             synced_topoheight: None,
@@ -930,17 +930,17 @@ impl EncryptedStorage {
     }
 
     // Track a pending transaction created locally and not confirmed yet.
-    pub async fn track_pending_tx(&mut self, tx: PendingTransaction) {
-        self.pending_txs.insert(tx.hash.clone(), tx);
+    pub fn track_pending_tx(&mut self, tx: TransactionPending) {
+        self.pending_txs.insert(tx);
     }
 
     // Remove a pending transaction from the tracked list.
-    pub fn remove_pending_tx(&mut self, hash: &Hash) -> bool {
-        self.pending_txs.remove(hash).is_some()
+    pub fn remove_pending_tx(&mut self, tx: &Hash) -> bool {
+        self.pending_txs.remove(tx)
     }
 
     // Get all pending transactions created locally and not confirmed yet.
-    pub async fn get_pending_txs(&self) -> &LinkedHashMap<Hash, PendingTransaction> {
+    pub fn get_pending_txs(&self) -> &LinkedHashSet<TransactionPending> {
         &self.pending_txs
     }
 

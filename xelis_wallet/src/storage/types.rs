@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::{borrow::{Borrow, Cow}, collections::HashSet, hash};
 
 use serde::{Deserialize, Serialize};
 use xelis_common::{
@@ -11,6 +11,7 @@ use xelis_common::{
         Serializer,
         Writer
     },
+    api::wallet::TransactionPending as RPCTransactionPending,
     time::TimestampMillis,
     transaction::{MultiSigPayload, Reference}
 };
@@ -92,11 +93,41 @@ impl Serializer for MultiSig {
 }
 
 #[derive(Clone, Debug)]
-pub struct PendingTransaction {
+pub struct TransactionPending {
     // Transaction hash
     pub hash: Hash,
     // At which time the transaction was created
     pub timestamp: TimestampMillis,
     // Entry data of the transaction
     pub entry: EntryData,
+}
+
+impl hash::Hash for TransactionPending {
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
+        self.hash.hash(state);
+    }
+}
+
+impl PartialEq for TransactionPending {
+    fn eq(&self, other: &Self) -> bool {
+        self.hash == other.hash
+    }
+}
+
+impl Eq for TransactionPending {}
+
+impl Borrow<Hash> for TransactionPending {
+    fn borrow(&self) -> &Hash {
+        &self.hash
+    }
+}
+
+impl TransactionPending {
+    pub fn serializable(self, mainnet: bool) -> RPCTransactionPending<'static> {
+        RPCTransactionPending {
+            hash: Cow::Owned(self.hash),
+            entry: self.entry.serializable(mainnet),
+            timestamp: self.timestamp,
+        }
+    }
 }

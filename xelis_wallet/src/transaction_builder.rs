@@ -16,7 +16,7 @@ use xelis_common::{
 use crate::{
     decoder,
     error::WalletError,
-    storage::{Balance, EncryptedStorage, PendingTransaction, TxCache},
+    storage::{Balance, EncryptedStorage, TransactionPending, TxCache},
     wallet::Wallet
 };
 
@@ -170,11 +170,11 @@ impl TransactionBuilderState {
                 assets: self.balances.keys().cloned().collect(),
             });
 
-            storage.track_pending_tx(PendingTransaction {
+            storage.track_pending_tx(TransactionPending {
                 hash: tx.hash(),
                 timestamp: get_current_time_in_millis(),
                 entry,
-            }).await;
+            });
         }
 
         for (asset, balance) in self.balances.drain() {

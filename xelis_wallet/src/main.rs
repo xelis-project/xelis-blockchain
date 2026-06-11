@@ -763,7 +763,7 @@ async fn prompt_message_builder(prompt: &Prompt, command_manager: Option<&Comman
                 prompt.colorize_string(Color::Yellow, "Balance"),
                 prompt.colorize_string(Color::Green, &format_xelis(storage.get_plaintext_balance_for(&XELIS_ASSET).await.unwrap_or(0))),
             );
-            let pending_count = storage.get_pending_txs().await.len();
+            let pending_count = storage.get_pending_txs().len();
             let pending_str = if pending_count > 0 {
                 format!(" {} ", prompt.colorize_string(Color::Yellow, &format!("({} TXs)", pending_count)))
             } else {
@@ -1724,7 +1724,7 @@ async fn pending_txs(manager: &CommandManager, mut arguments: ArgumentManager) -
     let wallet: &Arc<Wallet> = context.get()?;
 
     let storage = wallet.get_storage().read().await;
-    let pending = storage.get_pending_txs().await;
+    let pending = storage.get_pending_txs();
     let count = pending.len();
     if count == 0 {
         manager.message("No pending transactions");
@@ -1741,7 +1741,7 @@ async fn pending_txs(manager: &CommandManager, mut arguments: ArgumentManager) -
     }
 
     manager.message(format!("Pending transactions (total {}) page {}/{}:", count, page, max_pages));
-    for tx in pending.values().skip((page - 1) * ELEMENTS_PER_PAGE).take(ELEMENTS_PER_PAGE) {
+    for tx in pending.iter().skip((page - 1) * ELEMENTS_PER_PAGE).take(ELEMENTS_PER_PAGE) {
         let entry = TransactionEntry::new(
             tx.hash.clone(),
             0,

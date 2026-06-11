@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use indexmap::{IndexMap, IndexSet};
 use xelis_common::{
     api::wallet::{
@@ -260,6 +262,53 @@ pub enum EntryData {
     },
     Blob {
         data: PlaintextExtraData
+    }
+}
+
+impl EntryData {
+    pub fn serializable(self, mainnet: bool) -> RPCEntryType<'static> {
+        match self {
+            EntryData::Coinbase { reward } => RPCEntryType::Coinbase { reward },
+            EntryData::Burn { asset, amount, fee, nonce } => RPCEntryType::Burn { asset: Cow::Owned(asset), amount, fee, nonce },
+            EntryData::Incoming { from, transfers } => {
+                let transfers = transfers.into_iter().map(|t| RPCTransferIn {
+                    asset: Cow::Owned(t.asset),
+                    amount: t.amount,
+                    extra_data: Cow::Owned(t.extra_data)
+                }).collect();
+                RPCEntryType::Incoming { from: Cow::Owned(from.to_address(mainnet)), transfers }
+            },
+            EntryData::Outgoing { transfers, fee, nonce } => {
+                let transfers = transfers.into_iter().map(|t| RPCTransferOut {
+                    destination: Cow::Owned(t.destination.to_address(mainnet)),
+                    asset: Cow::Owned(t.asset),
+                    amount: t.amount,
+                    extra_data: Cow::Owned(t.extra_data)
+                }).collect();
+                RPCEntryType::Outgoing { transfers, fee, nonce }
+            },
+            EntryData::MultiSig { participants, threshold, fee, nonce } => {
+                let participants = participants.into_iter().map(|p| p.to_address(mainnet)).collect();
+                RPCEntryType::MultiSig { participants: Cow::Owned(participants), threshold, fee, nonce }
+            },
+            EntryData::InvokeContract { contract, deposits, received, entry_id: chunk_id, fee, max_gas, nonce } => {
+                RPCEntryType::InvokeContract { contract: Cow::Owned(contract), deposits: Cow::Owned(deposits), received: Cow::Owned(received), chunk_id, fee, max_gas, nonce }
+            },
+            EntryData::DeployContract { fee, nonce, invoke } => {
+                let invoke = invoke.map(|v| RPCDeployInvoke {
+                    max_gas: v.max_gas,
+                    deposits: v.deposits.clone()
+                });
+                RPCEntryType::DeployContract { fee, nonce, invoke: invoke.map(Cow::Owned) }
+            },
+            EntryData::IncomingContract { transfers } => {
+                let transfers = transfers.into_iter().map(|(asset, amount)| (asset, amount)).collect();
+                RPCEntryType::IncomingContract { transfers: Cow::Owned(transfers) }
+            },
+            EntryData::Blob { data } => {
+                RPCEntryType::Blob { data: Cow::Owned(data) }
+            },
+        }
     }
 }
 
@@ -539,53 +588,12 @@ impl TransactionEntry {
 
     // Convert to RPC Transaction Entry
     // This is a necessary step to serialize correctly the public key into an address
-    pub fn serializable(self, mainnet: bool) -> RPCTransactionEntry {
+    pub fn serializable(self, mainnet: bool) -> RPCTransactionEntry<'static> {
         RPCTransactionEntry {
-            hash: self.hash,
+            hash: Cow::Owned(self.hash),
             topoheight: self.topoheight,
             timestamp: self.timestamp,
-            entry: match self.entry {
-                EntryData::Coinbase { reward } => RPCEntryType::Coinbase { reward },
-                EntryData::Burn { asset, amount, fee, nonce } => RPCEntryType::Burn { asset, amount, fee, nonce },
-                EntryData::Incoming { from, transfers } => {
-                    let transfers = transfers.into_iter().map(|t| RPCTransferIn {
-                        asset: t.asset,
-                        amount: t.amount,
-                        extra_data: t.extra_data
-                    }).collect();
-                    RPCEntryType::Incoming { from: from.to_address(mainnet), transfers }
-                },
-                EntryData::Outgoing { transfers, fee, nonce } => {
-                    let transfers = transfers.into_iter().map(|t| RPCTransferOut {
-                        destination: t.destination.to_address(mainnet),
-                        asset: t.asset,
-                        amount: t.amount,
-                        extra_data: t.extra_data
-                    }).collect();
-                    RPCEntryType::Outgoing { transfers, fee, nonce }
-                },
-                EntryData::MultiSig { participants, threshold, fee, nonce } => {
-                    let participants = participants.into_iter().map(|p| p.to_address(mainnet)).collect();
-                    RPCEntryType::MultiSig { participants, threshold, fee, nonce }
-                },
-                EntryData::InvokeContract { contract, deposits, received, entry_id: chunk_id, fee, max_gas, nonce } => {
-                    RPCEntryType::InvokeContract { contract, deposits, received, chunk_id, fee, max_gas, nonce }
-                },
-                EntryData::DeployContract { fee, nonce, invoke } => {
-                    let invoke = invoke.map(|v| RPCDeployInvoke {
-                        max_gas: v.max_gas,
-                        deposits: v.deposits.clone()
-                    });
-                    RPCEntryType::DeployContract { fee, nonce, invoke }
-                },
-                EntryData::IncomingContract { transfers } => {
-                    let transfers = transfers.into_iter().map(|(asset, amount)| (asset, amount)).collect();
-                    RPCEntryType::IncomingContract { transfers }
-                },
-                EntryData::Blob { data } => {
-                    RPCEntryType::Blob { data }
-                },
-            }
+            entry: self.entry.serializable(mainnet)
         }
     }
 
