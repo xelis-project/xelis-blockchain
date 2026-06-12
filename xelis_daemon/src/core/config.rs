@@ -1,6 +1,7 @@
 use std::time::Duration;
+use human_bytes::human_bytes;
 use humantime::Duration as HumanDuration;
-use serde::{Deserialize, Serialize};
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use xelis_common::{
     config::FEE_PER_KB,
     crypto::Hash,
@@ -82,6 +83,120 @@ const fn default_rpc_websocket_session_work_queue_size() -> usize {
 
 const fn default_min_fee_per_kb() -> u64 {
     FEE_PER_KB
+}
+
+// Default transaction expiration time in the mempool (24 hours).
+fn default_mempool_tx_expiration_time() -> HumanDuration {
+    HumanDuration::from(Duration::from_secs(24 * 3600))
+}
+
+// Default maximum mempool memory usage (800 MB).
+const fn default_mempool_max_memory_usage() -> u64 {
+    800 * 1000 * 1000
+}
+
+fn parse_human_bytes(value: &str) -> Result<u64, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err("byte value cannot be empty".to_owned());
+    }
+
+    let unit_start = value
+        .find(|c: char| !c.is_ascii_digit() && c != '.')
+        .unwrap_or(value.len());
+    let (amount, unit) = value.split_at(unit_start);
+
+    if amount.is_empty() {
+        return Err(format!("missing byte amount in '{value}'"));
+    }
+
+    let amount = amount
+        .parse::<f64>()
+        .map_err(|e| format!("invalid byte amount '{amount}': {e}"))?;
+
+    if !amount.is_finite() || amount < 0.0 {
+        return Err("byte amount must be a finite positive number".to_owned());
+    }
+
+    let multiplier = match unit.trim().to_ascii_lowercase().as_str() {
+        "" | "b" | "byte" | "bytes" => 1_f64,
+        "k" | "kb" => 1000_f64,
+        "m" | "mb" => 1000_f64.powi(2),
+        "g" | "gb" => 1000_f64.powi(3),
+        "t" | "tb" => 1000_f64.powi(4),
+        "p" | "pb" => 1000_f64.powi(5),
+        "e" | "eb" => 1000_f64.powi(6),
+        "ki" | "kib" => 1024_f64,
+        "mi" | "mib" => 1024_f64.powi(2),
+        "gi" | "gib" => 1024_f64.powi(3),
+        "ti" | "tib" => 1024_f64.powi(4),
+        "pi" | "pib" => 1024_f64.powi(5),
+        "ei" | "eib" => 1024_f64.powi(6),
+        unit => return Err(format!("unsupported byte unit '{unit}'")),
+    };
+
+    let bytes = amount * multiplier;
+    if bytes > u64::MAX as f64 {
+        return Err(format!("byte value '{value}' exceeds u64::MAX"));
+    }
+
+    Ok(bytes.round() as u64)
+}
+
+mod human_bytes_serde {
+    use super::*;
+
+    pub fn serialize<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&human_bytes(*value as f64))
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<u64, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(HumanBytesVisitor)
+    }
+
+    struct HumanBytesVisitor;
+
+    impl<'de> de::Visitor<'de> for HumanBytesVisitor {
+        type Value = u64;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a byte count or a human-readable byte string")
+        }
+
+        fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(value)
+        }
+
+        fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            u64::try_from(value).map_err(E::custom)
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            parse_human_bytes(value).map_err(E::custom)
+        }
+
+        fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            self.visit_str(&value)
+        }
+    }
 }
 
 #[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
@@ -505,17 +620,34 @@ impl Default for StorageBackend {
 
 #[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
 pub struct MempoolConfig {
-    // Minimum fee per kB to consider a transaction as valid for the mempool.
-    // This is in atomic units (1e-8 of the currency unit).
+    /// Minimum fee per kB to consider a transaction as valid for the mempool.
+    /// This is in atomic units (1e-8 of the currency unit).
     #[clap(long = "mempool-min-fee-per-kb", default_value_t = default_min_fee_per_kb())]
     #[serde(default = "default_min_fee_per_kb")]
     pub min_fee_per_kb: u64,
+    /// Maximum time a transaction can stay in the mempool before being considered as expired and removed.
+    #[clap(long = "mempool-tx-expiration-time", default_value_t = default_mempool_tx_expiration_time())]
+    #[serde(
+        with = "humantime_serde",
+        default = "default_mempool_tx_expiration_time"
+    )]
+    pub tx_expiration_time: HumanDuration,
+    /// Maximum mempool memory usage before starting to evict transactions.
+    #[clap(long = "mempool-max-memory-usage", value_parser = parse_human_bytes, default_value_t = default_mempool_max_memory_usage())]
+    #[serde(
+        default = "default_mempool_max_memory_usage",
+        serialize_with = "human_bytes_serde::serialize",
+        deserialize_with = "human_bytes_serde::deserialize"
+    )]
+    pub max_memory_usage: u64,
 }
 
 impl Default for MempoolConfig {
     fn default() -> Self {
         Self {
             min_fee_per_kb: default_min_fee_per_kb(),
+            tx_expiration_time: default_mempool_tx_expiration_time(),
+            max_memory_usage: default_mempool_max_memory_usage(),
         }
     }
 }
@@ -661,5 +793,59 @@ mod humantime_serde {
     {
         let s = String::deserialize(deserializer)?;
         s.parse::<HumanDuration>().map_err(serde::de::Error::custom)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct MempoolConfigCli {
+        #[clap(flatten)]
+        mempool: MempoolConfig,
+    }
+
+    #[test]
+    fn parse_mempool_max_memory_usage_human_bytes() {
+        assert_eq!(parse_human_bytes("1024").unwrap(), 1024);
+        assert_eq!(parse_human_bytes("1 KiB").unwrap(), 1024);
+        assert_eq!(parse_human_bytes("1.5 MiB").unwrap(), 1_572_864);
+        assert_eq!(parse_human_bytes("2GB").unwrap(), 2_000_000_000);
+        assert!(parse_human_bytes("12 XB").is_err());
+    }
+
+    #[test]
+    fn clap_mempool_max_memory_usage_human_bytes() {
+        let cli = MempoolConfigCli::parse_from(["test"]);
+        assert_eq!(cli.mempool.max_memory_usage, default_mempool_max_memory_usage());
+
+        let cli = MempoolConfigCli::parse_from([
+            "test",
+            "--mempool-max-memory-usage",
+            "1MiB"
+        ]);
+
+        assert_eq!(cli.mempool.max_memory_usage, 1_048_576);
+    }
+
+    #[test]
+    fn serde_mempool_max_memory_usage_human_bytes() {
+        let config: MempoolConfig = serde_json::from_str(r#"{"max_memory_usage":"1.5 MiB"}"#).unwrap();
+        assert_eq!(config.max_memory_usage, 1_572_864);
+
+        let config: MempoolConfig = serde_json::from_str(r#"{"max_memory_usage":1024}"#).unwrap();
+        assert_eq!(config.max_memory_usage, 1024);
+
+        let config: MempoolConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(config.max_memory_usage, default_mempool_max_memory_usage());
+
+        let json = serde_json::to_string(&MempoolConfig {
+            max_memory_usage: 10 * 1024 * 1024,
+            ..MempoolConfig::default()
+        })
+        .unwrap();
+        assert!(json.contains(r#""max_memory_usage":"10 MiB""#));
     }
 }

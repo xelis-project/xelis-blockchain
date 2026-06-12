@@ -221,6 +221,8 @@ pub enum BlockchainError {
     TxNotFound(Hash),
     #[error("Tx {} already in mempool", _0)]
     TxAlreadyInMempool(Hash),
+    #[error("Transaction rejected: mempool memory limit reached")]
+    MempoolMemoryLimit,
     #[error("Transaction has an invalid reference: topoheight {0} is higher than our topoheight {1}")]
     InvalidReferenceTopoheight(u64, u64),
     #[error("No previous balance found")]

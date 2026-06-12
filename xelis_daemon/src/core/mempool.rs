@@ -6,7 +6,8 @@ use super::{
     blockchain::{ContractEnvironments, estimate_tx_fee_per_kb},
 };
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
+    cmp::Ordering,
     sync::Arc,
     mem,
 };
@@ -68,6 +69,34 @@ pub struct AccountCache {
     multisig: Option<MultiSigPayload>
 }
 
+// Entry in the fee index: sorted ascending by (fee_per_kb, hash) so that
+// the front of the BTreeSet is always the cheapest TX in the mempool.
+struct TxFeeEntry {
+    fee_per_kb: u64,
+    hash: Arc<Hash>,
+}
+
+impl PartialEq for TxFeeEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.fee_per_kb == other.fee_per_kb && self.hash == other.hash
+    }
+}
+
+impl Eq for TxFeeEntry {}
+
+impl PartialOrd for TxFeeEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for TxFeeEntry {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.fee_per_kb.cmp(&other.fee_per_kb)
+            .then_with(|| self.hash.cmp(&other.hash))
+    }
+}
+
 // Mempool is used to store all TXs waiting to be included in a block
 // All TXs must be verified before adding them to the mempool
 // Caches are used to store the nonce/order cache for each sender and their encrypted balances
@@ -82,17 +111,30 @@ pub struct Mempool {
     txs: LinkedHashMap<Arc<Hash>, SortedTx>,
     // store all sender's nonce for faster finding
     caches: HashMap<PublicKey, AccountCache>,
+    // Whether to disable ZKP cache when verifying TXs in mempool
     disable_zkp_cache: bool,
+    // Maximum time in seconds a TX can stay in the mempool (0 = no expiration)
+    tx_expiration_time: u64,
+    // Maximum total memory usage in bytes before evicting low-fee TXs
+    max_memory_usage: u64,
+    // Running total of all TX sizes in bytes
+    memory_usage: usize,
+    // Fee-ordered index for O(log n) eviction: front is the cheapest TX
+    ordered_by_fee: BTreeSet<TxFeeEntry>,
 }
 
 impl Mempool {
     // Create a new empty mempool
-    pub fn new(network: Network, disable_zkp_cache: bool) -> Self {
+    pub fn new(network: Network, disable_zkp_cache: bool, tx_expiration_time: u64, max_memory_usage: u64) -> Self {
         Mempool {
             mainnet: network.is_mainnet(),
             txs: LinkedHashMap::new(),
             caches: HashMap::new(),
             disable_zkp_cache,
+            tx_expiration_time,
+            max_memory_usage,
+            memory_usage: 0,
+            ordered_by_fee: BTreeSet::new(),
         }
     }
 
@@ -255,9 +297,70 @@ impl Mempool {
         };
 
         // insert in map
-        self.txs.insert(hash, sorted_tx);
+        self.txs.insert(hash.clone(), sorted_tx);
+        self.memory_usage += size;
+        self.ordered_by_fee.insert(TxFeeEntry { fee_per_kb, hash: hash.clone() });
+
+        let evicted = self.evict_for_memory_limit()?;
+
+        // TX Hash got evicted because of memory limit, we need to remove it from mempool and return an error
+        if !evicted.is_empty() && !self.txs.contains_key(&hash) {
+            return Err(BlockchainError::MempoolMemoryLimit)
+        }
 
         Ok(())
+    }
+
+    // Evict accounts containing the lowest-fee TXs until total memory usage is within
+    // the configured limit. TXs of the same account are chained, so deleting one
+    // without recomputing cache state would invalidate the rest.
+    fn evict_for_memory_limit(&mut self) -> Result<Vec<(Arc<Hash>, SortedTx)>, BlockchainError> {
+        let mut evicted = Vec::new();
+        while self.memory_usage as u64 > self.max_memory_usage {
+            // O(log n): the BTreeSet front is always the cheapest TX in the mempool
+            let lowest_hash = match self.ordered_by_fee.first() {
+                Some(e) => Arc::clone(&e.hash),
+                None => break,
+            };
+
+            // Find the account that owns this TX
+            let source = match self.txs.get(&lowest_hash) {
+                Some(tx) => tx.get_tx().get_source().clone(),
+                None => {
+                    warn!("TX {} not found in mempool while evicting for memory limit, skipping", lowest_hash);
+                    // Shouldn't happen; clean up the orphaned index entry and continue
+                    self.ordered_by_fee.pop_first();
+                    continue;
+                }
+            };
+
+            let mut deleted_txs_hashes = IndexSet::new();
+            if let Some(cache) = self.caches.remove(&source) {
+                deleted_txs_hashes.extend(cache.txs);
+            } else {
+                warn!("No cache found for owner {} while evicting TX {}", source.as_address(self.mainnet), lowest_hash);
+                deleted_txs_hashes.insert(lowest_hash);
+            }
+
+            if deleted_txs_hashes.is_empty() {
+                warn!("No TX selected while evicting for memory limit, stopping eviction");
+                break;
+            }
+
+            for hash in deleted_txs_hashes {
+                if let Some(sorted_tx) = self.txs.remove(&hash) {
+                    self.memory_usage = self.memory_usage.saturating_sub(sorted_tx.size);
+                    self.ordered_by_fee.remove(&TxFeeEntry { fee_per_kb: sorted_tx.fee_per_kb, hash: Arc::clone(&hash) });
+                    debug!("Evicted TX {} for memory limit with fee per kB {}", hash, sorted_tx.fee_per_kb);
+                    evicted.push((hash, sorted_tx));
+                } else {
+                    warn!("TX {} not found while finalizing memory-limit eviction", hash);
+                    self.ordered_by_fee.retain(|entry| entry.hash != hash);
+                }
+            }
+        }
+
+        Ok(evicted)
     }
 
     // Remove a TX using its hash from mempool
@@ -265,6 +368,8 @@ impl Mempool {
     pub fn remove_tx(&mut self, hash: &Hash) -> Result<(), BlockchainError> {
         let tx = self.txs.remove(hash)
             .ok_or_else(|| BlockchainError::TxNotFound(hash.clone()))?;
+        self.memory_usage -= tx.size;
+        self.ordered_by_fee.remove(&TxFeeEntry { fee_per_kb: tx.fee_per_kb, hash: Arc::new(hash.clone()) });
         // remove the tx hash from sorted txs
         let key = tx.get_tx()
             .get_source();
@@ -366,10 +471,22 @@ impl Mempool {
         self.txs.len()
     }
 
+    // Get memory usage in bytes of mempool
+    pub fn memory_usage(&self) -> usize {
+        self.memory_usage
+    }
+
+    // Get the configured memory usage limit in bytes of mempool
+    pub fn get_max_memory_usage(&self) -> u64 {
+        self.max_memory_usage
+    }
+
     // Clear all txs and caches in mempool
     pub fn clear(&mut self) {
         self.txs.clear();
         self.caches.clear();
+        self.memory_usage = 0;
+        self.ordered_by_fee.clear();
     }
 
     // Drain all txs from mempool
@@ -380,6 +497,8 @@ impl Mempool {
         }
 
         self.caches.clear();
+        self.memory_usage = 0;
+        self.ordered_by_fee.clear();
 
         txs
     }
@@ -417,7 +536,8 @@ impl Mempool {
                 for hash in cache.txs.into_iter() {
                     let tx = self.txs.remove(&hash)
                         .ok_or_else(|| BlockchainError::TxNotFound(hash.as_ref().clone()))?;
-
+                    self.memory_usage -= tx.size;
+                    self.ordered_by_fee.remove(&TxFeeEntry { fee_per_kb: tx.fee_per_kb, hash: Arc::clone(&hash) });
                     txs.push((hash, tx.size, tx.tx));
                 }
             }
@@ -479,7 +599,8 @@ impl Mempool {
                     for tx in cache.txs {
                         let sorted_tx = self.txs.remove(&tx)
                             .ok_or_else(|| BlockchainError::TxNotFound(tx.as_ref().clone()))?;
-
+                        self.memory_usage -= sorted_tx.size;
+                        self.ordered_by_fee.remove(&TxFeeEntry { fee_per_kb: sorted_tx.fee_per_kb, hash: Arc::clone(&tx) });
                         deleted_transactions.push((tx, sorted_tx));
                     }
 
@@ -500,7 +621,8 @@ impl Mempool {
                 for tx in cache.txs.drain() {
                     let sorted_tx = self.txs.remove(&tx)
                         .ok_or_else(|| BlockchainError::TxNotFound(tx.as_ref().clone()))?;
-
+                    self.memory_usage -= sorted_tx.size;
+                    self.ordered_by_fee.remove(&TxFeeEntry { fee_per_kb: sorted_tx.fee_per_kb, hash: Arc::clone(&tx) });
                     deleted_transactions.push((tx, sorted_tx));
                 }
 
@@ -514,47 +636,7 @@ impl Mempool {
                 // txs hashes to delete
                 let mut deleted_txs_hashes = IndexSet::with_capacity(cache.txs.len());
                 if nonce > cache.get_min() {
-                    // filter all txs hashes which are not found
-                    // or where its nonce is smaller than the new nonce
-                    // TODO when drain_filter is stable, use it (allow to get all hashes deleted)
-                    let mut max: Option<u64> = None;
-                    let mut min: Option<u64> = None;
-    
-                    cache.txs.retain(|hash| {
-                        // Delete by default
-                        let mut delete = true;
-                        if let Some(tx) = self.txs.get(hash) {
-                            let tx_nonce = tx.get_tx().get_nonce();
-                            // If TX is still compatible with new nonce, update bounds
-                            if tx_nonce >= nonce {
-                                // Update cache highest bounds
-                                if max.is_none_or(|v| v < tx_nonce) {
-                                    max = Some(tx_nonce);
-                                }
-    
-                                if min.is_none_or(|v| v > tx_nonce) {
-                                    min = Some(tx_nonce);
-                                }
-                                delete = false;
-                            }
-                        }
-    
-                        // Add hash in list if we delete it
-                        if delete {
-                            deleted_txs_hashes.insert(Arc::clone(hash));
-                        }
-                        !delete
-                    });
-    
-                    // Update cache bounds
-                    if let (Some(min), Some(max)) = (min, max) {
-                        debug!("Update cache bounds: [{}-{}]", min, max);
-                        cache.min = min;
-                        cache.max = max;
-                    } else {
-                        debug!("no min/max found, deleting cache");
-                        delete_cache = true;
-                    }
+                    delete_cache = cache.clean_cache(&self.txs, nonce, &mut deleted_txs_hashes);
                 }
 
                 // Cache is not empty yet, but we deleted some TXs from it, balances may be out-dated, verify TXs left
@@ -608,6 +690,10 @@ impl Mempool {
                 for tx in deleted_txs_hashes {
                     let sorted_tx = self.txs.remove(&tx)
                         .ok_or_else(|| BlockchainError::TxNotFound(tx.as_ref().clone()))?;
+
+                    self.memory_usage -= sorted_tx.size;
+                    self.ordered_by_fee.remove(&TxFeeEntry { fee_per_kb: sorted_tx.fee_per_kb, hash: Arc::clone(&tx) });
+
                     debug!("Deleted TX {} for source {} with nonce {}, txs left: {}", tx, key.as_address(self.mainnet), sorted_tx.get_tx().get_nonce(), cache.txs.len());
 
                     deleted_transactions.push((tx, sorted_tx));
@@ -617,11 +703,37 @@ impl Mempool {
                 delete_cache |= cache.txs.is_empty();
             }
 
+            // Check for TX expiration: if the oldest TX (lowest nonce) in this account
+            // has exceeded the expiration time, evict all TXs for this account.
+            // The first TX in the cache is always the oldest since TXs are added in nonce order.
+            if !delete_cache && self.tx_expiration_time > 0 {
+                let now = get_current_time_in_seconds();
+                if let Some(first_hash) = cache.txs.front() {
+                    if let Some(first_tx) = self.txs.get(first_hash) {
+                        let age = now.saturating_sub(first_tx.first_seen);
+                        if age >= self.tx_expiration_time {
+                            debug!("evicting expired TXs for {} (oldest TX age: {}s >= expiration: {}s)", key.as_address(self.mainnet), age, self.tx_expiration_time);
+                            for hash in cache.txs.drain() {
+                                if let Some(sorted_tx) = self.txs.remove(&hash) {
+                                    self.memory_usage -= sorted_tx.size;
+                                    self.ordered_by_fee.remove(&TxFeeEntry { fee_per_kb: sorted_tx.fee_per_kb, hash: Arc::clone(&hash) });
+                                    deleted_transactions.push((hash, sorted_tx));
+                                }
+                            }
+                            delete_cache = true;
+                        }
+                    }
+                }
+            }
+
             if !delete_cache {
                 debug!("Re-injecting nonce cache for owner {}", key.as_address(self.mainnet));
                 self.caches.insert(key, cache);
             }
         }
+
+        // Re-enforce memory limit after nonce/expiration cleanup
+        deleted_transactions.extend(self.evict_for_memory_limit()?);
 
         Ok(deleted_transactions)
     }
@@ -747,11 +859,70 @@ impl AccountCache {
         let index = ((nonce - self.min) % (self.max + 1 - self.min)) as usize;
         index < self.txs.len()
     }
+
+    pub fn get_index_for_nonce(&self, nonce: Nonce) -> Option<usize> {
+        if nonce < self.min || nonce > self.max || self.txs.is_empty() {
+            return None;
+        }
+
+        let index = ((nonce - self.min) % (self.max + 1 - self.min)) as usize;
+        if index < self.txs.len() {
+            Some(index)
+        } else {
+            None
+        }
+    }
+
+    // Returns true if it should be deleted, false if it should be kept
+    fn clean_cache(&mut self, txs: &LinkedHashMap<Arc<Hash>, SortedTx>, new_nonce: Nonce, deleted_txs_hashes: &mut IndexSet<Arc<Hash>>) -> bool {
+        // filter all txs hashes which are not found
+        // or where its nonce is smaller than the new nonce
+        // TODO when drain_filter is stable, use it (allow to get all hashes deleted)
+        let mut max: Option<u64> = None;
+        let mut min: Option<u64> = None;
+
+        self.txs.retain(|hash| {
+            // Delete by default
+            let mut delete = true;
+            if let Some(tx) = txs.get(hash) {
+                let tx_nonce = tx.get_tx().get_nonce();
+                // If TX is still compatible with new nonce, update bounds
+                if tx_nonce >= new_nonce {
+                    // Update cache highest bounds
+                    if max.is_none_or(|v| v < tx_nonce) {
+                        max = Some(tx_nonce);
+                    }
+
+                    if min.is_none_or(|v| v > tx_nonce) {
+                        min = Some(tx_nonce);
+                    }
+                    delete = false;
+                }
+            }
+
+            // Add hash in list if we delete it
+            if delete {
+                deleted_txs_hashes.insert(Arc::clone(hash));
+            }
+            !delete
+        });
+
+        // Update cache bounds
+        if let (Some(min), Some(max)) = (min, max) {
+            debug!("Update cache bounds: [{}-{}]", min, max);
+            self.min = min;
+            self.max = max;
+            false
+        } else {
+            debug!("no min/max found, deleting cache");
+            true
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{borrow::Cow, sync::Arc};
+    use std::{borrow::Cow, collections::HashMap, sync::Arc};
     use xelis_common::{
         account::{CiphertextCache, VersionedBalance, VersionedNonce},
         config::{COIN_VALUE, FEE_PER_KB, XELIS_ASSET},
@@ -822,7 +993,7 @@ mod tests {
             make_reference(),
         ).expect("failed to create transfer tx");
 
-        let mut mempool = Mempool::new(Network::Devnet, false);
+        let mut mempool = Mempool::new(Network::Devnet, false, 0, u64::MAX);
         add_tx_to_mempool(&mut mempool, &storage, Arc::new(tx)).await
             .expect("add_tx should succeed for a valid TX");
 
@@ -838,7 +1009,7 @@ mod tests {
         setup_account(&mut storage, &alice).await;
 
         let bob = TrackedAccount::new();
-        let mut mempool = Mempool::new(Network::Devnet, false);
+        let mut mempool = Mempool::new(Network::Devnet, false, 0, u64::MAX);
 
         for _ in 0..3 {
             let tx = create_transfer_tx_for_account(
@@ -870,7 +1041,7 @@ mod tests {
         setup_account(&mut storage, &bob).await;
 
         let carol = TrackedAccount::new();
-        let mut mempool = Mempool::new(Network::Devnet, false);
+        let mut mempool = Mempool::new(Network::Devnet, false, 0, u64::MAX);
 
         let tx_a = create_transfer_tx_for_account(
             &mut alice,
@@ -917,7 +1088,7 @@ mod tests {
         ).expect("failed to create transfer tx");
 
         let tx = Arc::new(tx);
-        let mut mempool = Mempool::new(Network::Devnet, false);
+        let mut mempool = Mempool::new(Network::Devnet, false, 0, u64::MAX);
 
         // First add succeeds
         add_tx_to_mempool(&mut mempool, &storage, tx.clone()).await
@@ -1031,11 +1202,521 @@ mod tests {
         mempool.add_tx(storage, &environments, 0, 0, FEE_PER_KB, 0, hash, tx, size, BlockVersion::V6).await
     }
 
+    async fn add_tx_to_mempool_internal_with_size(
+        mempool: &mut Mempool,
+        storage: &MemoryStorage,
+        tx: Arc<Transaction>,
+        size: usize,
+    ) -> Result<(), BlockchainError> {
+        let hash = Arc::new(tx.hash());
+        mempool.add_tx_internal(storage, 0, hash, tx, size, BlockVersion::V6, HashMap::new(), None).await
+    }
+
+    async fn cleanup_mempool(
+        mempool: &mut Mempool,
+        storage: &MemoryStorage,
+    ) -> Result<Vec<(Arc<Hash>, SortedTx)>, BlockchainError> {
+        let environments = ContractEnvironments::default();
+        mempool.clean_up(storage, &environments, 0, 0, BlockVersion::V6, FEE_PER_KB, 0, false).await
+    }
+
+    #[tokio::test]
+    async fn test_mempool_memory_limit_large_limit_keeps_all_txs() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+
+        let mut alice = TrackedAccount::new();
+        alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+        setup_account(&mut storage, &alice).await;
+
+        let mut bob = TrackedAccount::new();
+        bob.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+        setup_account(&mut storage, &bob).await;
+
+        let carol = TrackedAccount::new();
+        let tx_a = Arc::new(create_transfer_tx_for_account(
+            &mut alice,
+            carol.address(),
+            COIN_VALUE,
+            None,
+            TxVersion::V2,
+            make_reference(),
+        ).expect("alice tx failed"));
+        let tx_b = Arc::new(create_transfer_tx_for_account(
+            &mut bob,
+            carol.address(),
+            COIN_VALUE,
+            None,
+            TxVersion::V2,
+            make_reference(),
+        ).expect("bob tx failed"));
+        let expected_memory = tx_a.size() + tx_b.size();
+
+        let mut mempool = Mempool::new(Network::Devnet, false, 0, u64::MAX);
+        add_tx_to_mempool(&mut mempool, &storage, tx_a).await.unwrap();
+        add_tx_to_mempool(&mut mempool, &storage, tx_b).await.unwrap();
+
+        assert_eq!(mempool.size(), 2);
+        assert_eq!(mempool.memory_usage(), expected_memory);
+    }
+
+    #[tokio::test]
+    async fn test_mempool_memory_limit_below_single_tx_rejects_added_tx() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+
+        let mut alice = TrackedAccount::new();
+        alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+        setup_account(&mut storage, &alice).await;
+
+        let bob = TrackedAccount::new();
+        let tx = Arc::new(create_transfer_tx_for_account(
+            &mut alice,
+            bob.address(),
+            COIN_VALUE,
+            None,
+            TxVersion::V2,
+            make_reference(),
+        ).expect("transfer tx failed"));
+        let hash = tx.hash();
+
+        let mut mempool = Mempool::new(Network::Devnet, false, 0, 0);
+        let err = add_tx_to_mempool(&mut mempool, &storage, tx).await
+            .expect_err("tx should be rejected when limit cannot keep it");
+
+        assert!(matches!(err, BlockchainError::MempoolMemoryLimit));
+        assert_eq!(mempool.size(), 0);
+        assert_eq!(mempool.memory_usage(), 0);
+        assert!(!mempool.contains_tx(&hash));
+        assert!(mempool.get_cache_for(&alice.get_public_key()).is_none());
+        assert!(mempool.ordered_by_fee.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_mempool_memory_limit_exact_limit_keeps_txs() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+
+        let mut alice = TrackedAccount::new();
+        alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+        setup_account(&mut storage, &alice).await;
+
+        let mut bob = TrackedAccount::new();
+        bob.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+        setup_account(&mut storage, &bob).await;
+
+        let carol = TrackedAccount::new();
+        let tx_a = Arc::new(create_transfer_tx_for_account(
+            &mut alice,
+            carol.address(),
+            COIN_VALUE,
+            None,
+            TxVersion::V2,
+            make_reference(),
+        ).expect("alice tx failed"));
+        let tx_b = Arc::new(create_transfer_tx_for_account(
+            &mut bob,
+            carol.address(),
+            COIN_VALUE,
+            None,
+            TxVersion::V2,
+            make_reference(),
+        ).expect("bob tx failed"));
+        let tx_a_size = tx_a.size();
+        let tx_b_size = tx_b.size();
+
+        let mut mempool = Mempool::new(Network::Devnet, false, 0, (tx_a_size + tx_b_size) as u64);
+        add_tx_to_mempool(&mut mempool, &storage, tx_a).await.unwrap();
+        add_tx_to_mempool(&mut mempool, &storage, tx_b).await.unwrap();
+
+        assert_eq!(mempool.size(), 2);
+        assert_eq!(mempool.memory_usage(), tx_a_size + tx_b_size);
+    }
+
+    #[tokio::test]
+    async fn test_mempool_memory_limit_evicts_lowest_fee_rate_first() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+
+        let mut alice = TrackedAccount::new();
+        alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+        setup_account(&mut storage, &alice).await;
+
+        let mut bob = TrackedAccount::new();
+        bob.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+        setup_account(&mut storage, &bob).await;
+
+        let carol = TrackedAccount::new();
+        let low_fee_tx = Arc::new(create_transfer_tx_for_account(
+            &mut alice,
+            carol.address(),
+            COIN_VALUE,
+            None,
+            TxVersion::V2,
+            make_reference(),
+        ).expect("low fee tx failed"));
+        let high_fee_tx = Arc::new(create_transfer_tx_for_account(
+            &mut bob,
+            carol.address(),
+            COIN_VALUE,
+            None,
+            TxVersion::V2,
+            make_reference(),
+        ).expect("high fee tx failed"));
+        let low_hash = low_fee_tx.hash();
+        let high_hash = high_fee_tx.hash();
+        let low_size = low_fee_tx.size() + 2048;
+        let high_size = high_fee_tx.size();
+
+        let mut mempool = Mempool::new(Network::Devnet, false, 0, low_size as u64);
+        add_tx_to_mempool_internal_with_size(&mut mempool, &storage, low_fee_tx, low_size).await.unwrap();
+        add_tx_to_mempool_internal_with_size(&mut mempool, &storage, high_fee_tx, high_size).await.unwrap();
+
+        assert_eq!(mempool.size(), 1);
+        assert_eq!(mempool.memory_usage(), high_size);
+        assert!(!mempool.contains_tx(&low_hash));
+        assert!(mempool.contains_tx(&high_hash));
+        assert!(mempool.get_cache_for(&alice.get_public_key()).is_none());
+        assert!(mempool.get_cache_for(&bob.get_public_key()).is_some());
+    }
+
+    #[tokio::test]
+    async fn test_mempool_memory_limit_rejects_new_low_fee_tx_and_keeps_existing() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+
+        let mut alice = TrackedAccount::new();
+        alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+        setup_account(&mut storage, &alice).await;
+
+        let mut bob = TrackedAccount::new();
+        bob.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+        setup_account(&mut storage, &bob).await;
+
+        let carol = TrackedAccount::new();
+        let existing_tx = Arc::new(create_transfer_tx_for_account(
+            &mut alice,
+            carol.address(),
+            COIN_VALUE,
+            None,
+            TxVersion::V2,
+            make_reference(),
+        ).expect("existing tx failed"));
+        let new_low_fee_tx = Arc::new(create_transfer_tx_for_account(
+            &mut bob,
+            carol.address(),
+            COIN_VALUE,
+            None,
+            TxVersion::V2,
+            make_reference(),
+        ).expect("new low fee tx failed"));
+        let existing_hash = existing_tx.hash();
+        let new_hash = new_low_fee_tx.hash();
+        let existing_size = existing_tx.size();
+        let new_low_fee_size = new_low_fee_tx.size() + 4096;
+
+        let mut mempool = Mempool::new(Network::Devnet, false, 0, existing_size as u64);
+        add_tx_to_mempool_internal_with_size(&mut mempool, &storage, existing_tx, existing_size).await.unwrap();
+        let err = add_tx_to_mempool_internal_with_size(&mut mempool, &storage, new_low_fee_tx, new_low_fee_size).await
+            .expect_err("new low-fee TX should be evicted and rejected");
+
+        assert!(matches!(err, BlockchainError::MempoolMemoryLimit));
+        assert_eq!(mempool.size(), 1);
+        assert_eq!(mempool.memory_usage(), existing_size);
+        assert!(mempool.contains_tx(&existing_hash));
+        assert!(!mempool.contains_tx(&new_hash));
+        assert!(mempool.get_cache_for(&alice.get_public_key()).is_some());
+        assert!(mempool.get_cache_for(&bob.get_public_key()).is_none());
+    }
+
+    #[tokio::test]
+    async fn test_mempool_memory_limit_evicts_multiple_low_fee_accounts() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+
+        let mut alice = TrackedAccount::new();
+        alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+        setup_account(&mut storage, &alice).await;
+
+        let mut bob = TrackedAccount::new();
+        bob.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+        setup_account(&mut storage, &bob).await;
+
+        let mut carol = TrackedAccount::new();
+        carol.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+        setup_account(&mut storage, &carol).await;
+
+        let destination = TrackedAccount::new();
+        let low_fee_tx_a = Arc::new(create_transfer_tx_for_account(
+            &mut alice,
+            destination.address(),
+            COIN_VALUE,
+            None,
+            TxVersion::V2,
+            make_reference(),
+        ).expect("first low fee tx failed"));
+        let low_fee_tx_b = Arc::new(create_transfer_tx_for_account(
+            &mut bob,
+            destination.address(),
+            COIN_VALUE,
+            None,
+            TxVersion::V2,
+            make_reference(),
+        ).expect("second low fee tx failed"));
+        let high_fee_tx = Arc::new(create_transfer_tx_for_account(
+            &mut carol,
+            destination.address(),
+            COIN_VALUE,
+            None,
+            TxVersion::V2,
+            make_reference(),
+        ).expect("high fee tx failed"));
+
+        let low_hash_a = low_fee_tx_a.hash();
+        let low_hash_b = low_fee_tx_b.hash();
+        let high_hash = high_fee_tx.hash();
+        let low_size_a = low_fee_tx_a.size() + 4096;
+        let low_size_b = low_fee_tx_b.size() + 4096;
+        let high_size = high_fee_tx.size();
+
+        let mut mempool = Mempool::new(Network::Devnet, false, 0, high_size as u64);
+        add_tx_to_mempool_internal_with_size(&mut mempool, &storage, low_fee_tx_a.clone(), low_size_a).await
+            .expect_err("first oversized low-fee TX should not fit by itself");
+
+        // Use a fresh pool so we can verify multi-eviction after two low-fee accounts are already present.
+        let mut mempool = Mempool::new(Network::Devnet, false, 0, (low_size_a + low_size_b + high_size) as u64);
+        add_tx_to_mempool_internal_with_size(&mut mempool, &storage, low_fee_tx_b.clone(), low_size_b).await.unwrap();
+        add_tx_to_mempool_internal_with_size(&mut mempool, &storage, low_fee_tx_a.clone(), low_size_a).await.unwrap();
+        mempool.max_memory_usage = high_size as u64;
+        add_tx_to_mempool_internal_with_size(&mut mempool, &storage, high_fee_tx, high_size).await.unwrap();
+
+        assert_eq!(mempool.size(), 1);
+        assert_eq!(mempool.memory_usage(), high_size);
+        assert!(!mempool.contains_tx(&low_hash_a));
+        assert!(!mempool.contains_tx(&low_hash_b));
+        assert!(mempool.contains_tx(&high_hash));
+        assert!(mempool.get_cache_for(&alice.get_public_key()).is_none());
+        assert!(mempool.get_cache_for(&bob.get_public_key()).is_none());
+        assert!(mempool.get_cache_for(&carol.get_public_key()).is_some());
+    }
+
+    #[tokio::test]
+    async fn test_mempool_memory_limit_evicts_whole_nonce_chain() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+
+        let mut alice = TrackedAccount::new();
+        alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+        setup_account(&mut storage, &alice).await;
+
+        let mut bob = TrackedAccount::new();
+        bob.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+        setup_account(&mut storage, &bob).await;
+
+        let carol = TrackedAccount::new();
+        let alice_first_tx = Arc::new(create_transfer_tx_for_account(
+            &mut alice,
+            carol.address(),
+            COIN_VALUE,
+            None,
+            TxVersion::V2,
+            make_reference(),
+        ).expect("alice first tx failed"));
+        let alice_second_tx = Arc::new(create_transfer_tx_for_account(
+            &mut alice,
+            carol.address(),
+            COIN_VALUE,
+            None,
+            TxVersion::V2,
+            make_reference(),
+        ).expect("alice second tx failed"));
+        let bob_tx = Arc::new(create_transfer_tx_for_account(
+            &mut bob,
+            carol.address(),
+            COIN_VALUE,
+            None,
+            TxVersion::V2,
+            make_reference(),
+        ).expect("bob tx failed"));
+
+        let alice_first_hash = alice_first_tx.hash();
+        let alice_second_hash = alice_second_tx.hash();
+        let bob_hash = bob_tx.hash();
+
+        let alice_first_size = alice_first_tx.size() + 4096;
+        let alice_second_size = alice_second_tx.size() + 4096;
+        let bob_size = bob_tx.size();
+
+        let mut mempool = Mempool::new(Network::Devnet, false, 0, (alice_first_size + alice_second_size) as u64);
+        add_tx_to_mempool_internal_with_size(&mut mempool, &storage, alice_first_tx, alice_first_size).await.unwrap();
+        add_tx_to_mempool_internal_with_size(&mut mempool, &storage, alice_second_tx, alice_second_size).await.unwrap();
+        add_tx_to_mempool_internal_with_size(&mut mempool, &storage, bob_tx, bob_size).await.unwrap();
+
+        assert_eq!(mempool.size(), 1);
+        assert_eq!(mempool.memory_usage(), bob_size);
+        assert!(!mempool.contains_tx(&alice_first_hash));
+        assert!(!mempool.contains_tx(&alice_second_hash));
+        assert!(mempool.contains_tx(&bob_hash));
+        assert!(mempool.get_cache_for(&alice.get_public_key()).is_none());
+        assert!(mempool.get_cache_for(&bob.get_public_key()).is_some());
+    }
+
+    #[tokio::test]
+    async fn test_mempool_expiration_disabled_keeps_old_tx() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+
+        let mut alice = TrackedAccount::new();
+        alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+        setup_account(&mut storage, &alice).await;
+
+        let bob = TrackedAccount::new();
+        let tx = Arc::new(create_transfer_tx_for_account(
+            &mut alice,
+            bob.address(),
+            COIN_VALUE,
+            None,
+            TxVersion::V2,
+            make_reference(),
+        ).expect("transfer tx failed"));
+        let hash = Arc::new(tx.hash());
+
+        let mut mempool = Mempool::new(Network::Devnet, false, 0, u64::MAX);
+        add_tx_to_mempool(&mut mempool, &storage, tx).await.unwrap();
+        mempool.txs.get_mut(&hash).unwrap().first_seen = get_current_time_in_seconds().saturating_sub(3600);
+
+        let deleted = cleanup_mempool(&mut mempool, &storage).await.unwrap();
+
+        assert!(deleted.is_empty());
+        assert_eq!(mempool.size(), 1);
+        assert!(mempool.contains_tx(&hash));
+    }
+
+    #[tokio::test]
+    async fn test_mempool_expiration_removes_expired_tx() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+
+        let mut alice = TrackedAccount::new();
+        alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+        setup_account(&mut storage, &alice).await;
+
+        let bob = TrackedAccount::new();
+        let tx = Arc::new(create_transfer_tx_for_account(
+            &mut alice,
+            bob.address(),
+            COIN_VALUE,
+            None,
+            TxVersion::V2,
+            make_reference(),
+        ).expect("transfer tx failed"));
+        let hash = Arc::new(tx.hash());
+
+        let mut mempool = Mempool::new(Network::Devnet, false, 1, u64::MAX);
+        add_tx_to_mempool(&mut mempool, &storage, tx).await.unwrap();
+        mempool.txs.get_mut(&hash).unwrap().first_seen = get_current_time_in_seconds().saturating_sub(2);
+
+        let deleted = cleanup_mempool(&mut mempool, &storage).await.unwrap();
+
+        assert_eq!(deleted.len(), 1);
+        assert_eq!(deleted[0].0, hash);
+        assert_eq!(mempool.size(), 0);
+        assert_eq!(mempool.memory_usage(), 0);
+        assert!(!mempool.contains_tx(&hash));
+        assert!(mempool.ordered_by_fee.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_mempool_expiration_keeps_fresh_account() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+
+        let mut alice = TrackedAccount::new();
+        alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+        setup_account(&mut storage, &alice).await;
+
+        let mut bob = TrackedAccount::new();
+        bob.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+        setup_account(&mut storage, &bob).await;
+
+        let carol = TrackedAccount::new();
+        let expired_tx = Arc::new(create_transfer_tx_for_account(
+            &mut alice,
+            carol.address(),
+            COIN_VALUE,
+            None,
+            TxVersion::V2,
+            make_reference(),
+        ).expect("expired tx failed"));
+        let fresh_tx = Arc::new(create_transfer_tx_for_account(
+            &mut bob,
+            carol.address(),
+            COIN_VALUE,
+            None,
+            TxVersion::V2,
+            make_reference(),
+        ).expect("fresh tx failed"));
+        let expired_hash = Arc::new(expired_tx.hash());
+        let fresh_hash = Arc::new(fresh_tx.hash());
+        let fresh_size = fresh_tx.size();
+
+        let mut mempool = Mempool::new(Network::Devnet, false, 10, u64::MAX);
+        add_tx_to_mempool(&mut mempool, &storage, expired_tx).await.unwrap();
+        add_tx_to_mempool(&mut mempool, &storage, fresh_tx).await.unwrap();
+        mempool.txs.get_mut(&expired_hash).unwrap().first_seen = get_current_time_in_seconds().saturating_sub(10);
+
+        let deleted = cleanup_mempool(&mut mempool, &storage).await.unwrap();
+
+        assert_eq!(deleted.len(), 1);
+        assert_eq!(deleted[0].0, expired_hash);
+        assert_eq!(mempool.size(), 1);
+        assert_eq!(mempool.memory_usage(), fresh_size);
+        assert!(!mempool.contains_tx(&expired_hash));
+        assert!(mempool.contains_tx(&fresh_hash));
+    }
+
+    #[tokio::test]
+    async fn test_mempool_expiration_removes_nonce_chain_after_expired_head() {
+        let mut storage = MemoryStorage::new(Network::Devnet, 1);
+
+        let mut alice = TrackedAccount::new();
+        alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+        setup_account(&mut storage, &alice).await;
+
+        let bob = TrackedAccount::new();
+        let first_tx = Arc::new(create_transfer_tx_for_account(
+            &mut alice,
+            bob.address(),
+            COIN_VALUE,
+            None,
+            TxVersion::V2,
+            make_reference(),
+        ).expect("first tx failed"));
+        let second_tx = Arc::new(create_transfer_tx_for_account(
+            &mut alice,
+            bob.address(),
+            COIN_VALUE,
+            None,
+            TxVersion::V2,
+            make_reference(),
+        ).expect("second tx failed"));
+        let first_hash = Arc::new(first_tx.hash());
+        let second_hash = Arc::new(second_tx.hash());
+
+        let mut mempool = Mempool::new(Network::Devnet, false, 10, u64::MAX);
+        add_tx_to_mempool(&mut mempool, &storage, first_tx).await.unwrap();
+        add_tx_to_mempool(&mut mempool, &storage, second_tx).await.unwrap();
+        mempool.txs.get_mut(&first_hash).unwrap().first_seen = get_current_time_in_seconds().saturating_sub(10);
+
+        let deleted = cleanup_mempool(&mut mempool, &storage).await.unwrap();
+        let deleted_hashes: IndexSet<_> = deleted.into_iter()
+            .map(|(hash, _)| hash)
+            .collect();
+
+        assert_eq!(deleted_hashes.len(), 2);
+        assert!(deleted_hashes.contains(&first_hash));
+        assert!(deleted_hashes.contains(&second_hash));
+        assert_eq!(mempool.size(), 0);
+        assert_eq!(mempool.memory_usage(), 0);
+        assert!(mempool.get_cache_for(&alice.get_public_key()).is_none());
+        assert!(mempool.ordered_by_fee.is_empty());
+    }
+
     /// A MultiSig setup TX (configuring multisig on `alice`) should be accepted by the mempool.
     #[tokio::test]
     async fn test_multisig_setup_tx() {
         let mut storage = MemoryStorage::new(Network::Devnet, 1);
-        let mut mempool = Mempool::new(Network::Devnet, false);
+        let mut mempool = Mempool::new(Network::Devnet, false, 0, u64::MAX);
 
         let mut alice = TrackedAccount::new();
         alice.set_balance(XELIS_ASSET, COIN_VALUE * 100);
@@ -1055,7 +1736,7 @@ mod tests {
     #[tokio::test]
     async fn test_transfer_with_valid_multisig() {
         let mut storage = MemoryStorage::new(Network::Devnet, 1);
-        let mut mempool = Mempool::new(Network::Devnet, false);
+        let mut mempool = Mempool::new(Network::Devnet, false, 0, u64::MAX);
 
         let mut alice = TrackedAccount::new();
         alice.set_balance(XELIS_ASSET, COIN_VALUE * 100);
@@ -1082,7 +1763,7 @@ mod tests {
     #[tokio::test]
     async fn test_transfer_without_multisig_fails() {
         let mut storage = MemoryStorage::new(Network::Devnet, 1);
-        let mut mempool = Mempool::new(Network::Devnet, false);
+        let mut mempool = Mempool::new(Network::Devnet, false, 0, u64::MAX);
 
         let mut alice = TrackedAccount::new();
         alice.set_balance(XELIS_ASSET, COIN_VALUE * 100);
@@ -1114,7 +1795,7 @@ mod tests {
     #[tokio::test]
     async fn test_transfer_with_wrong_sig_count_fails() {
         let mut storage = MemoryStorage::new(Network::Devnet, 1);
-        let mut mempool = Mempool::new(Network::Devnet, false);
+        let mut mempool = Mempool::new(Network::Devnet, false, 0, u64::MAX);
 
         let mut alice = TrackedAccount::new();
         alice.set_balance(XELIS_ASSET, COIN_VALUE * 100);
@@ -1144,7 +1825,7 @@ mod tests {
     #[tokio::test]
     async fn test_tx_with_multisig_but_not_configured_fails() {
         let mut storage = MemoryStorage::new(Network::Devnet, 1);
-        let mut mempool = Mempool::new(Network::Devnet, false);
+        let mut mempool = Mempool::new(Network::Devnet, false, 0, u64::MAX);
 
         let mut alice = TrackedAccount::new();
         alice.set_balance(XELIS_ASSET, COIN_VALUE * 100);
@@ -1167,7 +1848,7 @@ mod tests {
     #[tokio::test]
     async fn test_multisig_delete_tx() {
         let mut storage = MemoryStorage::new(Network::Devnet, 1);
-        let mut mempool = Mempool::new(Network::Devnet, false);
+        let mut mempool = Mempool::new(Network::Devnet, false, 0, u64::MAX);
 
         let mut alice = TrackedAccount::new();
         alice.set_balance(XELIS_ASSET, COIN_VALUE * 100);
@@ -1193,7 +1874,7 @@ mod tests {
     #[tokio::test]
     async fn test_multisig_delete_without_config_fails() {
         let mut storage = MemoryStorage::new(Network::Devnet, 1);
-        let mut mempool = Mempool::new(Network::Devnet, false);
+        let mut mempool = Mempool::new(Network::Devnet, false, 0, u64::MAX);
 
         let mut alice = TrackedAccount::new();
         alice.set_balance(XELIS_ASSET, COIN_VALUE * 100);
@@ -1213,7 +1894,7 @@ mod tests {
     #[tokio::test]
     async fn test_multisig_setup_then_delete_allows_normal_transfer() {
         let mut storage = MemoryStorage::new(Network::Devnet, 1);
-        let mut mempool = Mempool::new(Network::Devnet, false);
+        let mut mempool = Mempool::new(Network::Devnet, false, 0, u64::MAX);
 
         let mut alice = TrackedAccount::new();
         alice.set_balance(XELIS_ASSET, COIN_VALUE * 100);

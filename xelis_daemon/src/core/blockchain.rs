@@ -314,7 +314,7 @@ impl<S: Storage> Blockchain<S> {
 
         info!("Initializing chain...");
         let blockchain = Self {
-            mempool: RwLock::new(Mempool::new(network, config.disable_zkp_cache)),
+            mempool: RwLock::new(Mempool::new(network, config.disable_zkp_cache, config.mempool.tx_expiration_time.as_secs(), config.mempool.max_memory_usage)),
             storage: RwLock::new(storage),
             storage_semaphore: Semaphore::new(1),
             pre_verify_block_semaphore: Semaphore::new(config.pre_verify_block_threads_count),

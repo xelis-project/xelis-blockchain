@@ -367,7 +367,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::new("request_peers_inventory", "Request peers inventory", CommandHandler::Async(async_handler!(request_peers_inventory::<S>))))?;
     command_manager.add_command(Command::new("snapshot_mode", "Force to be in snapshot mode (memory only)", CommandHandler::Async(async_handler!(snapshot_mode::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("inspect_contract", "Inspect a smart contract by its hash", vec![Arg::new("contract", ArgType::Hash), Arg::new("show-storage", ArgType::Bool)], CommandHandler::Async(async_handler!(inspect_contract::<S>))))?;
-    command_manager.add_command(Command::new("show_mempool", "Show all transactions in mempool", CommandHandler::Async(async_handler!(show_mempool::<S>))))?;
+    command_manager.add_command(Command::with_optional_arguments("show_mempool", "Show information about the mempool", vec![Arg::new("show_transactions", ArgType::Bool)], CommandHandler::Async(async_handler!(show_mempool::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("import_block", "Import a block in hexadecimal format", vec![Arg::new("hex", ArgType::String)], CommandHandler::Async(async_handler!(import_block::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("import_tx", "Import a TX in hexadecimal format", vec![Arg::new("hex", ArgType::String)], CommandHandler::Async(async_handler!(import_tx::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("show_emitted_supply_at_topoheight", "Show emitted supply at a specific topoheight", vec![Arg::new("topoheight", ArgType::Number)], CommandHandler::Async(async_handler!(show_emitted_supply_at_topoheight::<S>))))?;
@@ -808,14 +808,21 @@ async fn export_json_config<S: Storage>(manager: &CommandManager, mut args: Argu
     Ok(())
 }
 
-async fn show_mempool<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+async fn show_mempool<S: Storage>(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
     let context = manager.get_context().lock()?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let mempool = blockchain.get_mempool().read().await;
 
-    manager.message(format!("Mempool: {} transactions", mempool.get_txs().iter().len()));
-    for (hash, tx) in mempool.get_txs() {
-        manager.message(format!("- {}: {} XEL fee for {}", hash, format_xelis(tx.get_fee()), human_bytes(tx.get_size() as f64)));
+    manager.message("Mempool:");
+    manager.message(format!("- Transactions: {}", mempool.get_txs().iter().len()));
+    manager.message(format!("- Sources: {}", mempool.get_caches().len()));
+    manager.message(format!("- Memory usage: {}", human_bytes(mempool.memory_usage() as f64)));
+    manager.message(format!("- Max memory usage: {}", human_bytes(mempool.get_max_memory_usage() as f64)));
+
+    if args.get_flag("show_transactions")? {
+        for (hash, tx) in mempool.get_txs() {
+            manager.message(format!("   - {}: {} XEL per kB ({})", hash, format_xelis(tx.get_fee_per_kb()), human_bytes(tx.get_size() as f64)));
+        }
     }
 
     Ok(())
