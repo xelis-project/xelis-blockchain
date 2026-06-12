@@ -108,6 +108,9 @@ use {
     anyhow::Error,
 };
 
+#[cfg(feature = "api_server")]
+use xelis_wallet::api::APIServer;
+
 const ELEMENTS_PER_PAGE: usize = 10;
 
 #[tokio::main]
@@ -2085,7 +2088,7 @@ async fn list_xswd_applications(manager: &CommandManager, _: ArgumentManager) ->
     #[cfg(feature = "api_server")]
     {
         let api_server = wallet.get_api_server().lock().await;
-        if let Some(xelis_wallet::api::APIServer::XSWD(xswd)) = api_server.as_ref() {
+        if let Some(APIServer::XSWD(xswd)) = api_server.as_ref() {
             let applications = xswd.get_handler().get_applications().read().await;
             if !applications.is_empty() {
                 manager.message("XSWD server applications:");
@@ -2107,8 +2110,9 @@ async fn list_xswd_applications(manager: &CommandManager, _: ArgumentManager) ->
             let applications = xswd.applications().read().await;
             if !applications.is_empty() {
                 manager.message("XSWD relayer applications:");
-                for app in applications.keys() {
+                for (app, client) in applications.iter() {
                     print_xswd_application(manager, app).await;
+                    manager.message(format!("  Connected: {}", client.is_connected()));
                     total_apps += 1;
                 }
             }
