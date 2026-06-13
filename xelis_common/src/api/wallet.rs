@@ -223,6 +223,8 @@ pub struct ListTransactionsParams {
     pub accept_coinbase: bool,
     #[serde(default = "default_true_value")]
     pub accept_burn: bool,
+    #[serde(default = "default_true_value")]
+    pub accept_blob: bool,
     // Filter by extra data
     pub query: Option<Query>,
     // Limit the number of entries returned
