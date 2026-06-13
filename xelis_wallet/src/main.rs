@@ -11,6 +11,7 @@ use indexmap::{IndexMap, IndexSet};
 use log::{error, debug, info};
 use clap::Parser;
 use xelis_common::{
+    api::DataElement,
     async_handler,
     asset::AssetData,
     config::{
@@ -57,6 +58,7 @@ use xelis_common::{
             MultiSigBuilder,
             TransactionTypeBuilder,
             TransferBuilder,
+            BlobPayloadBuilder,
             DeployContractBuilder,
             DeployContractInvokeBuilder,
             ContractDepositBuilder,
@@ -480,6 +482,17 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
             Arg::new("confirm", ArgType::Bool)
         ],
         CommandHandler::Async(async_handler!(transfer_all))
+    ))?;
+    command_manager.add_command(Command::with_optional_arguments(
+        "blob",
+        "Create a blob transaction to one or more recipients",
+        vec![
+            Arg::new("data", ArgType::String),
+            Arg::new("addresses", ArgType::Array(Box::new(ArgType::String))),
+            Arg::new("encrypt", ArgType::Bool),
+            Arg::new("confirm", ArgType::Bool)
+        ],
+        CommandHandler::Async(async_handler!(blob))
     ))?;
     command_manager.add_command(Command::with_optional_arguments(
         "burn",
@@ -1342,6 +1355,65 @@ async fn read_asset_amount(prompt: &Prompt, wallet: &Wallet, asset: &Hash) -> Re
     Ok((amount, asset))
 }
 
+fn parse_blob_data(data: &str) -> Result<DataElement, CommandError> {
+    serde_json::from_str(data)
+        .context("Invalid blob data JSON")
+        .map_err(CommandError::from)
+}
+
+fn parse_address(value: &str) -> Result<Address, CommandError> {
+    Address::from_string(&value)
+        .context("Invalid address")
+        .map_err(CommandError::from)
+}
+
+async fn read_blob_destinations(prompt: &Prompt, args: &mut ArgumentManager) -> Result<Vec<Address>, CommandError> {
+    let addresses = if args.has_argument("addresses") {
+        args.get_value("addresses")?
+            .to_vec()?
+            .into_iter()
+            .map(|value| value.to_string_value()
+                .map_err(CommandError::from)
+                .and_then(|s| parse_address(&s))
+            )
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        let input = prompt.read_input(
+            prompt.colorize_string(Color::Green, "Address(es), comma separated: "),
+            false
+        ).await.context("Error while reading address")?;
+
+        input.split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| parse_address(value))
+            .collect::<Result<Vec<_>, _>>()?
+    };
+
+    if addresses.is_empty() {
+        return Err(CommandError::InvalidArgument("At least one destination address is required".to_string()));
+    }
+
+    Ok(addresses)
+}
+
+async fn read_blob_encrypt(prompt: &Prompt) -> Result<bool, CommandError> {
+    let mut message = prompt.colorize_string(Color::Green, "Encrypt blob data? (Y/n, encrypted requires exactly one recipient): ");
+
+    loop {
+        let value = prompt.read_input(message, false)
+            .await
+            .context("Error while reading encryption mode")?
+            .to_lowercase();
+
+        match value.as_str() {
+            "" | "y" | "yes" => return Ok(true),
+            "n" | "no" => return Ok(false),
+            _ => message = prompt.colorize_string(Color::Red, "Encrypt blob data? (Y/n, encrypted requires exactly one recipient): ")
+        }
+    }
+}
+
 // Create a new transfer to a specified address
 async fn transfer(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
     let prompt = manager.get_prompt();
@@ -1390,6 +1462,65 @@ async fn transfer(manager: &CommandManager, mut args: ArgumentManager) -> Result
         encrypt_extra_data: true
     };
     let tx_type = TransactionTypeBuilder::Transfers(vec![transfer]);
+    let estimated_fee = wallet.estimate_fees(tx_type.clone(), Default::default(), Default::default()).await
+        .context("Error while estimating TX fee")?;
+
+    manager.message(format!("Estimated TX fee is {} XELIS", format_xelis(estimated_fee)));
+    if !args.get_flag("confirm")? && !prompt.ask_confirmation().await.context("Error while confirming action")? {
+        manager.message("Transaction has been aborted");
+        return Ok(())
+    }
+
+    manager.message("Building transaction...");
+    let tx = create_transaction_with_multisig(manager, prompt, wallet, tx_type).await?;
+
+    broadcast_tx(wallet, manager, tx).await;
+    Ok(())
+}
+
+// Create a blob transaction to one or more recipients.
+async fn blob(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
+    let prompt = manager.get_prompt();
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+
+    let data = if args.has_argument("data") {
+        let data = args.get_value("data")?.to_string_value()?;
+        parse_blob_data(&data)?
+    } else {
+        let data = prompt.read_input(
+            prompt.colorize_string(Color::Green, "ExtraData JSON: "),
+            false
+        ).await.context("Error while reading blob data")?;
+        parse_blob_data(&data)?
+    };
+
+    let destinations = read_blob_destinations(prompt, &mut args).await?;
+    let encrypt = if args.has_argument("encrypt") {
+        args.get_value("encrypt")?.to_bool()?
+    } else {
+        read_blob_encrypt(prompt).await?
+    };
+
+    if encrypt && destinations.len() != 1 {
+        return Err(CommandError::InvalidArgument("Encrypted blob data requires exactly one recipient".to_string()));
+    }
+
+    manager.message(format!(
+        "Creating {} blob transaction with {} recipient{}",
+        if encrypt { "encrypted" } else { "public" },
+        destinations.len(),
+        if destinations.len() == 1 { "" } else { "s" }
+    ));
+    for destination in destinations.iter() {
+        manager.message(format!("- {}", destination));
+    }
+
+    let tx_type = TransactionTypeBuilder::Blob(BlobPayloadBuilder {
+        data,
+        encrypt,
+        destinations
+    });
     let estimated_fee = wallet.estimate_fees(tx_type.clone(), Default::default(), Default::default()).await
         .context("Error while estimating TX fee")?;
 
