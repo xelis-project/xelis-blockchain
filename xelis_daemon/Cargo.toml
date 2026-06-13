@@ -7,7 +7,7 @@ authors = ["Slixe <slixeprivate@gmail.com>"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-xelis_common = { path = "../xelis_common", features = ["prompt", "clap", "rpc-server", "tokio"] }
+xelis_common = { path = "../xelis_common", features = ["rpc-server", "tokio"] }
 xelis-environment = { git = "https://github.com/xelis-project/xelis-vm", branch = "dev" }
 xelis-vm = { git = "https://github.com/xelis-project/xelis-vm", branch = "dev" }
 xelis-assembler = { git = "https://github.com/xelis-project/xelis-vm", branch = "dev" }
@@ -34,7 +34,7 @@ schemars = { workspace = true }
 actix-web = { workspace = true }
 actix-cors = { workspace = true }
 strum = { workspace = true }
-clap = { workspace = true }
+clap = { workspace = true, optional = true }
 lru = { workspace = true }
 async-trait = { workspace = true }
 lazy_static = { workspace = true }
@@ -53,7 +53,8 @@ futures = { workspace = true }
 linked-hash-table = { workspace = true }
 
 [features]
-default = ["sled", "rocksdb"]
+default = ["cli", "sled", "rocksdb"]
+cli = ["dep:clap", "xelis_common/prompt"]
 rocksdb = ["dep:rocksdb"]
 sled = []
 
@@ -63,6 +64,7 @@ crate-type = ["cdylib", "rlib"]
 [[bin]]
 name = "xelis_daemon"
 path = "src/main.rs"
+required-features = ["cli"]
 
 [dev-dependencies]
 tempdir = "*"

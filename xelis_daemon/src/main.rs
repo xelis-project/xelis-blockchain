@@ -3,7 +3,6 @@ use human_bytes::human_bytes;
 use humantime::{format_duration, Duration as HumanDuration};
 use log::{debug, error, info, trace, warn};
 use xelis_daemon::rpc::rpc::get_block_response_for_hash;
-use serde::{Deserialize, Serialize};
 use tokio::pin;
 use xelis_assembler::Disassembler;
 use xelis_common::{
@@ -31,12 +30,9 @@ use xelis_common::{
             CommandManager
         },
         Color,
-        LogLevel,
-        ModuleConfig,
         Prompt,
         PromptError,
         ShareablePrompt,
-        default_logs_datetime_format
     },
     rpc::server::WebSocketServerHandler,
     serializer::Serializer,
@@ -59,7 +55,7 @@ use xelis_daemon::core::{
         PreVerifyBlock,
     },
     blockdag,
-    config::{BlockchainConfig as InnerConfig, StorageBackend},
+    config::StorageBackend,
     hard_fork::{
         get_block_time_target_for_version,
         get_pow_algorithm_for_version,
@@ -69,10 +65,10 @@ use xelis_daemon::core::{
 };
 
 #[cfg(feature = "rocksdb")]
-use xelis_daemon::core::storage::{RocksStorage, RocksDBConfig};
+use xelis_daemon::core::storage::RocksStorage;
 
 #[cfg(feature = "sled")]
-use xelis_daemon::core::storage::{SledStorage, SledConfig};
+use xelis_daemon::core::storage::SledStorage;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -84,124 +80,11 @@ use std::{
     time::{Duration, Instant}
 };
 use clap::Parser;
+use xelis_daemon::cli_config::CliConfig;
 use anyhow::{
     Result,
     Context as AnyContext
 };
-
-// Functions helpers for serde default values
-fn default_filename_log() -> String {
-    "xelis-daemon.log".to_owned()
-}
-
-fn default_logs_path() -> String {
-    "logs/".to_owned()
-}
-
-#[derive(Debug, Clone, Parser, Serialize, Deserialize)]
-pub struct LogConfig {
-    /// Set log level
-    #[clap(long, value_enum, default_value_t = LogLevel::Info)]
-    #[serde(default)]
-    log_level: LogLevel,
-    /// Set file log level
-    /// By default, it will be the same as log level
-    #[clap(long, value_enum)]
-    file_log_level: Option<LogLevel>,
-    /// Disable the log file
-    #[clap(long)]
-    #[serde(default)]
-    disable_file_logging: bool,
-    /// Disable the log filename date based
-    /// If disabled, the log file will be named xelis-daemon.log instead of YYYY-MM-DD.xelis-daemon.log
-    #[clap(long)]
-    #[serde(default)]
-    disable_file_log_date_based: bool,
-    /// Disable the usage of colors in log
-    #[clap(long)]
-    #[serde(default)]
-    disable_log_color: bool,
-    /// Disable terminal interactive mode
-    /// You will not be able to write CLI commands in it or to have an updated prompt
-    #[clap(long)]
-    #[serde(default)]
-    disable_interactive_mode: bool,
-    /// Enable the log file auto compression
-    /// If enabled, the log file will be compressed every day
-    /// This will only work if the log file is enabled
-    #[clap(long)]
-    #[serde(default)]
-    auto_compress_logs: bool,
-    /// Log filename
-    /// 
-    /// By default filename is xelis-daemon.log.
-    /// File will be stored in logs directory, this is only the filename, not the full path.
-    /// Log file is rotated every day and has the format YYYY-MM-DD.xelis-daemon.log.
-    #[clap(long, default_value_t = default_filename_log())]
-    #[serde(default = "default_filename_log")]
-    filename_log: String,
-    /// Logs directory
-    /// 
-    /// By default it will be logs/ of the current directory.
-    /// It must end with a / to be a valid folder.
-    #[clap(long, default_value_t = default_logs_path())]
-    #[serde(default = "default_logs_path")]
-    logs_path: String,
-    /// Module configuration for logs
-    #[clap(long)]
-    #[serde(default)]
-    logs_modules: Vec<ModuleConfig>,
-    /// Disable the ascii art at startup
-    #[clap(long)]
-    #[serde(default)]
-    disable_ascii_art: bool,
-    /// Change the datetime format used by the logger
-    #[clap(long, default_value_t = default_logs_datetime_format())]
-    #[serde(default = "default_logs_datetime_format")]
-    datetime_format: String, 
-}
-
-#[derive(Parser, Serialize, Deserialize)]
-#[clap(version = VERSION, about = "XELIS is an innovative cryptocurrency built from scratch with BlockDAG, Homomorphic Encryption, Zero-Knowledge Proofs, and Smart Contracts.")]
-#[command(styles = xelis_common::get_cli_styles())]
-pub struct CliConfig {
-    /// Blockchain core configuration
-    #[structopt(flatten)]
-    core: InnerConfig,
-    /// Sled DB Backend if enabled
-    #[cfg(feature = "sled")]
-    #[clap(flatten)]
-    #[serde(default)]
-    pub sled: SledConfig,
-    /// RocksDB Backend if enabled
-    #[cfg(feature = "rocksdb")]
-    #[clap(flatten)]
-    #[serde(default)]
-    pub rocksdb: RocksDBConfig,
-    /// Use a different DB backend from the default.
-    /// Note that the data will not be migrated from one to another
-    /// and you may lose your data.
-    #[clap(long, value_enum, default_value_t)]
-    #[serde(default)]
-    pub use_db_backend: StorageBackend,
-    /// Log configuration
-    #[structopt(flatten)]
-    log: LogConfig,
-    /// Network selected for chain
-    #[clap(long, value_enum, default_value_t = Network::Mainnet)]
-    #[serde(default)]
-    network: Network,
-    /// JSON File to load the configuration from
-    #[clap(long)]
-    #[serde(skip)]
-    #[serde(default)]
-    config_file: Option<String>,
-    /// Generate the template at the `config_file` path
-    #[clap(long)]
-    #[serde(skip)]
-    #[serde(default)]
-    generate_config_template: bool,
-}
 
 #[tokio::main]
 async fn main() -> Result<()> {
