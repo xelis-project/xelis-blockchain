@@ -27,103 +27,106 @@ fn default_logs_path() -> String {
 
 #[derive(Debug, Clone, clap::Parser, Serialize, Deserialize)]
 pub struct LogConfig {
-    /// Set log level
+    /// Minimum log level printed to the terminal.
     #[clap(long, value_enum, default_value_t = LogLevel::Info)]
     #[serde(default)]
     pub log_level: LogLevel,
-    /// Set file log level
-    /// By default, it will be the same as log level
+    /// Minimum log level written to the log file.
+    ///
+    /// Defaults to the terminal log level.
     #[clap(long, value_enum)]
     pub file_log_level: Option<LogLevel>,
-    /// Disable the log file
+    /// Disable writing logs to a file.
     #[clap(long)]
     #[serde(default)]
     pub disable_file_logging: bool,
-    /// Disable the log filename date based
-    /// If disabled, the log file will be named xelis-daemon.log instead of YYYY-MM-DD.xelis-daemon.log
+    /// Disable date-based log filenames.
+    ///
+    /// When enabled, the log file is named `xelis-daemon.log` instead of
+    /// `YYYY-MM-DD.xelis-daemon.log`.
     #[clap(long)]
     #[serde(default)]
     pub disable_file_log_date_based: bool,
-    /// Disable the usage of colors in log
+    /// Disable colors in terminal logs.
     #[clap(long)]
     #[serde(default)]
     pub disable_log_color: bool,
-    /// Disable terminal interactive mode
-    /// You will not be able to write CLI commands in it or to have an updated prompt
+    /// Disable the interactive terminal prompt.
+    ///
+    /// CLI commands and live prompt updates are unavailable in this mode.
     #[clap(long)]
     #[serde(default)]
     pub disable_interactive_mode: bool,
-    /// Enable the log file auto compression
-    /// If enabled, the log file will be compressed every day
-    /// This will only work if the log file is enabled
+    /// Compress rotated log files automatically.
+    ///
+    /// This only applies when file logging is enabled.
     #[clap(long)]
     #[serde(default)]
     pub auto_compress_logs: bool,
-    /// Log filename
+    /// Log filename stored inside `logs_path`.
     ///
-    /// By default filename is xelis-daemon.log.
-    /// File will be stored in logs directory, this is only the filename, not the full path.
-    /// Log file is rotated every day and has the format YYYY-MM-DD.xelis-daemon.log.
+    /// Defaults to `xelis-daemon.log`. Unless date-based filenames are disabled,
+    /// daily log files are named `YYYY-MM-DD.xelis-daemon.log`.
     #[clap(long, default_value_t = default_filename_log())]
     #[serde(default = "default_filename_log")]
     pub filename_log: String,
-    /// Logs directory
+    /// Directory where log files are written.
     ///
-    /// By default it will be logs/ of the current directory.
-    /// It must end with a / to be a valid folder.
+    /// Defaults to `logs/`. The path must end with `/` or `\`.
     #[clap(long, default_value_t = default_logs_path())]
     #[serde(default = "default_logs_path")]
     pub logs_path: String,
-    /// Module configuration for logs
+    /// Per-module log filters.
     #[clap(long)]
     #[serde(default)]
     pub logs_modules: Vec<ModuleConfig>,
-    /// Disable the ascii art at startup
+    /// Disable the ASCII art shown at startup.
     #[clap(long)]
     #[serde(default)]
     pub disable_ascii_art: bool,
-    /// Change the datetime format used by the logger
+    /// Datetime format used in log entries.
     #[clap(long, default_value_t = default_logs_datetime_format())]
     #[serde(default = "default_logs_datetime_format")]
     pub datetime_format: String,
 }
 
 #[derive(clap::Parser, Serialize, Deserialize)]
-#[clap(version = VERSION, about = "XELIS is an innovative cryptocurrency built from scratch with BlockDAG, Homomorphic Encryption, Zero-Knowledge Proofs, and Smart Contracts.")]
+#[clap(version = VERSION, about = "XELIS daemon node. Synchronizes and validates the blockchain, participates in the P2P network, and serves RPC and mining work.")]
 #[command(styles = xelis_common::get_cli_styles())]
 pub struct CliConfig {
-    /// Blockchain core configuration
+    /// Core blockchain, P2P, RPC, mempool, and simulator settings.
     #[structopt(flatten)]
     pub core: InnerConfig,
-    /// Sled DB Backend if enabled
+    /// Sled storage backend settings.
     #[cfg(feature = "sled")]
     #[clap(flatten)]
     #[serde(default)]
     pub sled: SledConfig,
-    /// RocksDB Backend if enabled
+    /// RocksDB storage backend settings.
     #[cfg(feature = "rocksdb")]
     #[clap(flatten)]
     #[serde(default)]
     pub rocksdb: RocksDBConfig,
-    /// Use a different DB backend from the default.
-    /// Note that the data will not be migrated from one to another
-    /// and you may lose your data.
+    /// Storage backend used by the daemon.
+    ///
+    /// Existing data is not migrated when switching backends. Select the backend
+    /// that matches the data directory you intend to use.
     #[clap(long, value_enum, default_value_t)]
     #[serde(default)]
     pub use_db_backend: StorageBackend,
-    /// Log configuration
+    /// Log output configuration.
     #[structopt(flatten)]
     pub log: LogConfig,
-    /// Network selected for chain
+    /// Network to run and validate.
     #[clap(long, value_enum, default_value_t = Network::Mainnet)]
     #[serde(default)]
     pub network: Network,
-    /// JSON File to load the configuration from
+    /// JSON configuration file to load.
     #[clap(long)]
     #[serde(skip)]
     #[serde(default)]
     pub config_file: Option<String>,
-    /// Generate the template at the `config_file` path
+    /// Generate a configuration template at `config_file`.
     #[clap(long)]
     #[serde(skip)]
     #[serde(default)]
