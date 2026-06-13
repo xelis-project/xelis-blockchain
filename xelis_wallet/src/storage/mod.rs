@@ -74,6 +74,7 @@ pub struct TransactionFilterOptions<'a> {
     pub accept_incoming: bool,
     pub accept_outgoing: bool,
     pub accept_coinbase: bool,
+    pub accept_blob: bool,
     pub accept_burn: bool,
     pub query: Option<&'a Query>,
     pub limit: Option<usize>,
@@ -92,6 +93,7 @@ impl<'a> Default for TransactionFilterOptions<'a> {
             accept_incoming: true,
             accept_outgoing: true,
             accept_coinbase: true,
+            accept_blob: true,
             accept_burn: true,
             query: None,
             limit: None,
@@ -1257,6 +1259,7 @@ impl EncryptedStorage {
             accept_outgoing,
             accept_coinbase,
             accept_burn,
+            accept_blob,
             query,
             limit,
             skip,
@@ -1392,6 +1395,7 @@ impl EncryptedStorage {
                     }
                 },
                 EntryData::DeployContract { .. } if accept_outgoing => {},
+                EntryData::Blob { data } if accept_blob => {},
                 _ => continue,
             };
 

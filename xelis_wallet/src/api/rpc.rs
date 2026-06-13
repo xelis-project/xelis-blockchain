@@ -680,6 +680,7 @@ async fn list_transactions(context: &Context<'_, '_>, params: ListTransactionsPa
         accept_outgoing: params.accept_outgoing,
         accept_coinbase: params.accept_coinbase,
         accept_burn: params.accept_burn,
+        accept_blob: params.accept_blob,
         query: params.query.as_ref(),
         limit: params.limit,
         skip: params.skip,
