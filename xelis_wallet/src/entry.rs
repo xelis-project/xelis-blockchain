@@ -397,6 +397,10 @@ impl Serializer for EntryData {
                 }
                 Self::IncomingContract { transfers }
             }
+            8 => {
+                let data = PlaintextExtraData::read(reader)?;
+                Self::Blob { data }
+            }
             _ => return Err(ReaderError::InvalidValue),
         })
     }
