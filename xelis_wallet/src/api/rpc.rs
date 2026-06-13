@@ -5,11 +5,11 @@ use itertools::Itertools;
 use xelis_common::{
     api::{
         DataElement,
-        DataHash,
         DataValue,
         SplitAddressParams,
         SplitAddressResult,
         query::QueryResult,
+        RPCTransaction,
         wallet::*
     },
     asset::AssetData,
@@ -450,6 +450,8 @@ async fn build_transaction(context: &Context<'_, '_>, params: BuildTransactionPa
     state.apply_changes(&mut storage, wallet, &tx).await
         .context("Error while applying state changes")?;
 
+    let tx_hash = tx.hash();
+    let size = tx.size();
     // returns the created TX and its hash
     Ok(TransactionResponse {
         tx_as_hex: if params.tx_as_hex {
@@ -457,10 +459,7 @@ async fn build_transaction(context: &Context<'_, '_>, params: BuildTransactionPa
         } else {
             None
         },
-        inner: DataHash {
-            hash: Cow::Owned(tx.hash()),
-            data: Cow::Owned(tx)
-        }
+        inner: RPCTransaction::from_tx_owned(tx, tx_hash, size, None, wallet.get_network().is_mainnet())
     })
 }
 
@@ -511,16 +510,15 @@ async fn build_transaction_offline(context: &Context<'_, '_>, params: BuildTrans
         unsigned.finalize(wallet.get_keypair())
     };
 
+    let tx_hash = tx.hash();
+    let size = tx.size();
     Ok(TransactionResponse {
         tx_as_hex: if params.tx_as_hex {
             Some(hex::encode(tx.to_bytes()))
         } else {
             None
         },
-        inner: DataHash {
-            hash: Cow::Owned(tx.hash()),
-            data: Cow::Owned(tx)
-        }
+        inner: RPCTransaction::from_tx_owned(tx, tx_hash, size, None, wallet.get_network().is_mainnet())
     })
 }
 
@@ -615,16 +613,15 @@ async fn finalize_unsigned_transaction(context: &Context<'_, '_>, params: Finali
     state.apply_changes(&mut storage, wallet, &tx).await
         .context("Error while applying state changes")?;
 
+    let tx_hash = tx.hash();
+    let size = tx.size();
     Ok(TransactionResponse {
         tx_as_hex: if params.tx_as_hex {
             Some(hex::encode(tx.to_bytes()))
         } else {
             None
         },
-        inner: DataHash {
-            hash: Cow::Owned(tx.hash()),
-            data: Cow::Owned(tx)
-        }
+        inner: RPCTransaction::from_tx_owned(tx, tx_hash, size, None, wallet.get_network().is_mainnet())
     })
 }
 
