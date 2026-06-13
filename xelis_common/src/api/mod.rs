@@ -136,6 +136,34 @@ impl<'a> RPCTransactionType<'a> {
             })
         }
     }
+
+    pub fn from_owned(data: TransactionType, mainnet: bool) -> RPCTransactionType<'static> {
+        match data {
+            TransactionType::Transfers(transfers) => {
+                let mut rpc_transfers = Vec::new();
+                for transfer in transfers {
+                    rpc_transfers.push(RPCTransferPayload {
+                        asset: Cow::Owned(transfer.get_asset().clone()),
+                        destination: transfer.get_destination().as_address(mainnet),
+                        extra_data: Cow::Owned(transfer.get_extra_data().clone()),
+                        commitment: Cow::Owned(transfer.get_commitment().clone()),
+                        sender_handle: Cow::Owned(transfer.get_sender_handle().clone()),
+                        receiver_handle: Cow::Owned(transfer.get_receiver_handle().clone()),
+                        ct_validity_proof: Cow::Owned(transfer.get_proof().clone()),
+                    });
+                }
+                RPCTransactionType::Transfers(rpc_transfers)
+            },
+            TransactionType::Burn(burn) => RPCTransactionType::Burn(Cow::Owned(burn)),
+            TransactionType::MultiSig(payload) => RPCTransactionType::MultiSig(Cow::Owned(payload)),
+            TransactionType::InvokeContract(payload) => RPCTransactionType::InvokeContract(Cow::Owned(payload)),
+            TransactionType::DeployContract(payload) => RPCTransactionType::DeployContract(Cow::Owned(payload)),
+            TransactionType::Blob(blob) => RPCTransactionType::Blob(RPCBlobPayload {
+                data: Cow::Owned(blob.data),
+                destinations: Cow::Owned(blob.destinations.into_iter().map(|pk| pk.as_address(mainnet)).collect())
+            })
+        }
+    }
 }
 
 impl From<RPCTransactionType<'_>> for TransactionType {
@@ -219,6 +247,39 @@ impl<'a> RPCTransaction<'a> {
             reference: Cow::Borrowed(tx.get_reference()),
             multisig: Cow::Borrowed(tx.get_multisig()),
             signature: Cow::Borrowed(tx.get_signature()),
+            size
+        }
+    }
+
+    pub fn from_tx_owned(tx: Transaction, hash: Hash, size: usize, fee_usage: Option<(u64, u64)>, mainnet: bool) -> RPCTransaction<'static> {
+        let version = tx.get_version();
+        let fee = tx.get_fee();
+        let fee_limit = tx.get_fee_limit();
+        let nonce = tx.get_nonce();
+        let source_commitments = tx.get_source_commitments().clone();
+        let range_proof = tx.get_range_proof().clone();
+        let reference = tx.get_reference().clone();
+        let multisig = tx.get_multisig().clone();
+        let signature = tx.get_signature().clone();
+        let (source, data) = tx.consume();
+
+        RPCTransaction {
+            hash: Cow::Owned(hash),
+            version,
+            source: source.as_address(mainnet),
+            data: RPCTransactionType::from_owned(data, mainnet),
+            fee,
+            fee_limit,
+            fee_usage: fee_usage.map(|(fee_paid, fee_refund)| FeeUsage {
+                fee_paid,
+                fee_refund
+            }),
+            nonce,
+            source_commitments: Cow::Owned(source_commitments),
+            range_proof: Cow::Owned(range_proof),
+            reference: Cow::Owned(reference),
+            multisig: Cow::Owned(multisig),
+            signature: Cow::Owned(signature),
             size
         }
     }
