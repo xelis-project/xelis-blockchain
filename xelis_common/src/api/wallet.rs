@@ -22,12 +22,11 @@ use crate::{
         multisig::SignatureId,
         Reference,
         Role,
-        Transaction,
         TxVersion
     }
 };
 use super::{
-    DataHash,
+    RPCTransaction,
     DataElement,
     DataValue,
     query::Query,
@@ -290,7 +289,7 @@ pub struct GetAssetsEntry {
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct TransactionResponse<'a> {
     #[serde(flatten)]
-    pub inner: DataHash<'a, Transaction>,
+    pub inner: RPCTransaction<'a>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tx_as_hex: Option<String>
 }
