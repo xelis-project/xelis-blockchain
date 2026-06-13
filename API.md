@@ -5591,7 +5591,9 @@ Replace `<transaction type>` by one of the transaction type explained above.
             }
         },
         "fee": 25000,
+        "fee_limit": 30000,
         "hash": "f8bd7c15e3a94085f8130cc67e1fefd89192cdd208b68b10e1cc6e1a83afe5d6",
+        "multisig": null,
         "nonce": 1463,
         "range_proof": [...],
         "reference": {
@@ -5599,7 +5601,8 @@ Replace `<transaction type>` by one of the transaction type explained above.
             "topoheight": 25770
         },
         "signature": "6731b973cb5c06c7e4e6fa9135acf4ea7c1b2e2bd0a63e41110aad3b39174204067bf7de87f3c3e2042cbcf6899a307e480d80e7c7f96638eabbf1fe6cfded09",
-        "source": [...],
+        "size": 1517,
+        "source": "xet:dn3x9yspqtuzhm874m267a3g9fkdztr3uztyx534wdx3p9rkdspqqhpss5d",
         "source_commitments": [
             {
                 "asset": "0000000000000000000000000000000000000000000000000000000000000000",
@@ -5712,7 +5715,7 @@ where `id` is the index of the signer in the multisig setup.
                         "z_r": [...],
                         "z_x": [...]
                     },
-                    "destination": [...],
+                    "destination": "xet:t23w8pp90zsj04sp5r3r9sjpz3vq7rxcwhydf5ztlk6efhnusersqvf8sny",
                     "extra_data": null,
                     "receiver_handle": [...],
                     "sender_handle": [...]
@@ -5720,7 +5723,9 @@ where `id` is the index of the signer in the multisig setup.
             ]
         },
         "fee": 25000,
+        "fee_limit": 30000,
         "hash": "f8bd7c15e3a94085f8130cc67e1fefd89192cdd208b68b10e1cc6e1a83afe5d6",
+        "multisig": null,
         "nonce": 1463,
         "range_proof": [...],
         "reference": {
@@ -5728,7 +5733,8 @@ where `id` is the index of the signer in the multisig setup.
             "topoheight": 25770
         },
         "signature": "6731b973cb5c06c7e4e6fa9135acf4ea7c1b2e2bd0a63e41110aad3b39174204067bf7de87f3c3e2042cbcf6899a307e480d80e7c7f96638eabbf1fe6cfded09",
-        "source": [...],
+        "size": 1517,
+        "source": "xet:dn3x9yspqtuzhm874m267a3g9fkdztr3uztyx534wdx3p9rkdspqqhpss5d",
         "source_commitments": [
             {
                 "asset": "0000000000000000000000000000000000000000000000000000000000000000",
@@ -5887,7 +5893,7 @@ Once signed, the transaction can be broadcasted to the network.
                         "z_r": [...],
                         "z_x": [...]
                     },
-                    "destination": [...],
+                    "destination": "xet:t23w8pp90zsj04sp5r3r9sjpz3vq7rxcwhydf5ztlk6efhnusersqvf8sny",
                     "extra_data": null,
                     "receiver_handle": [...],
                     "sender_handle": [...]
@@ -5895,14 +5901,18 @@ Once signed, the transaction can be broadcasted to the network.
             ]
         },
         "fee": 25000,
+        "fee_limit": 30000,
         "hash": "f8bd7c15e3a94085f8130cc67e1fefd89192cdd208b68b10e1cc6e1a83afe5d6",
+        "multisig": null,
         "nonce": 1463,
         "range_proof": [...],
         "reference": {
             "hash": "000000000c1845717b0820bd32b57d1928af1b4ae80bdec71b73ab8d60f9eb74",
             "topoheight": 25770
         },
-        "source": [...],
+        "signature": "6731b973cb5c06c7e4e6fa9135acf4ea7c1b2e2bd0a63e41110aad3b39174204067bf7de87f3c3e2042cbcf6899a307e480d80e7c7f96638eabbf1fe6cfded09",
+        "size": 1517,
+        "source": "xet:dn3x9yspqtuzhm874m267a3g9fkdztr3uztyx534wdx3p9rkdspqqhpss5d",
         "source_commitments": [
             {
                 "asset": "0000000000000000000000000000000000000000000000000000000000000000",
@@ -5917,7 +5927,6 @@ Once signed, the transaction can be broadcasted to the network.
                 }
             }
         ],
-        "multisig": null,
         "tx_as_hex": "<hexadecimal transaction>",
         "version": 0
     }
