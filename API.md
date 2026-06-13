@@ -6061,6 +6061,7 @@ Meaning if you set max_topoheight at 10 and you have a TX at 10 its returned.
 | accept_outgoing | Boolean | Optional |                        Filter outgoing                        |
 | accept_coinbase | Boolean | Optional |                        Filter coinbase                        |
 |   accept_burn   | Boolean | Optional |                          Filter burn                          |
+|   accept_blob   | Boolean | Optional |                          Filter blob                          |
 |      query      |  Query  | Optional |                 Allow to filter on extra data                 |
 
 ##### Request
