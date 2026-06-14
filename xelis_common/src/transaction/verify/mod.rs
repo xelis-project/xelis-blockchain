@@ -811,7 +811,10 @@ impl Transaction {
                 }
             },
             TransactionType::Blob(payload) => {
-                if payload.destinations.len() > MAX_TRANSFER_COUNT || payload.destinations.contains(self.get_source()) {
+                if payload.destinations.is_empty()
+                    || payload.destinations.len() > MAX_TRANSFER_COUNT
+                    || payload.destinations.contains(self.get_source())
+                {
                     return Err(VerificationError::InvalidFormat.into());
                 }
 

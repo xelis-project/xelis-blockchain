@@ -822,6 +822,24 @@ impl TransactionBuilder {
                 }
             },
             TransactionTypeBuilder::Blob(payload) => {
+                if payload.destinations.is_empty() {
+                    return Err(GenerationError::BlobMissingDestination.into());
+                }
+
+                if payload.destinations.len() > MAX_TRANSFER_COUNT {
+                    return Err(GenerationError::MaxTransferCountReached.into());
+                }
+
+                for destination in payload.destinations.iter() {
+                    if *destination.get_public_key() == self.source {
+                        return Err(GenerationError::SenderIsReceiver.into());
+                    }
+
+                    if state.is_mainnet() != destination.is_mainnet() {
+                        return Err(GenerationError::InvalidNetwork.into());
+                    }
+                }
+
                 if payload.encrypt && payload.destinations.len() != 1 {
                     return Err(GenerationError::ExpectedOneDestinationForBlob(payload.destinations.len()).into());
                 }
