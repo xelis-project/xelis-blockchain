@@ -528,8 +528,17 @@ impl Serializer for EntryData {
                     amount.write(writer);
                 }
             },
-            Self::OutgoingBlob { destinations, fee, nonce, data } => {
+            Self::IncomingBlob { from, destinations, data } => {
                 writer.write_u8(8);
+                from.write(writer);
+                writer.write_u8(destinations.len() as u8);
+                for destination in destinations {
+                    destination.write(writer);
+                }
+                data.write(writer);
+            },
+            Self::OutgoingBlob { destinations, fee, nonce, data } => {
+                writer.write_u8(9);
                 writer.write_u8(destinations.len() as u8);
                 for destination in destinations {
                     destination.write(writer);
@@ -538,15 +547,6 @@ impl Serializer for EntryData {
                 writer.write_u64(*nonce);
                 data.write(writer);
             },
-            Self::IncomingBlob { from, destinations, data } => {
-                writer.write_u8(9);
-                from.write(writer);
-                writer.write_u8(destinations.len() as u8);
-                for destination in destinations {
-                    destination.write(writer);
-                }
-                data.write(writer);
-            }
         }
     }
 
