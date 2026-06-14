@@ -299,7 +299,24 @@ where
                         PlaintextExtraData::new(None, None, PlaintextFlag::Failed)
                     }
                 };
-                Some(EntryData::Blob { data: decrypted })
+                let destinations = payload.destinations
+                    .iter()
+                    .map(|address| address.clone().to_public_key())
+                    .collect();
+                Some(if is_owner {
+                    EntryData::OutgoingBlob {
+                        destinations,
+                        fee: tx.fee,
+                        nonce: tx.nonce,
+                        data: decrypted
+                    }
+                } else {
+                    EntryData::IncomingBlob {
+                        from: tx.source.get_public_key().clone(),
+                        destinations,
+                        data: decrypted
+                    }
+                })
             } else {
                 None
             }

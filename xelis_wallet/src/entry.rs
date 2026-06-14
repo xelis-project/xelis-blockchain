@@ -21,7 +21,7 @@ use xelis_common::{
         Writer
     },
     time::TimestampMillis,
-    transaction::extra_data::PlaintextExtraData,
+    transaction::extra_data::{PlaintextExtraData, PlaintextFlag},
     utils::{
         format_coin,
         format_xelis
@@ -260,7 +260,15 @@ pub enum EntryData {
         // Transfers received from the contract
         transfers: IndexMap<Hash, u64>,
     },
-    Blob {
+    OutgoingBlob {
+        destinations: IndexSet<PublicKey>,
+        fee: u64,
+        nonce: u64,
+        data: PlaintextExtraData
+    },
+    IncomingBlob {
+        from: PublicKey,
+        destinations: IndexSet<PublicKey>,
         data: PlaintextExtraData
     }
 }
@@ -305,8 +313,20 @@ impl EntryData {
                 let transfers = transfers.into_iter().map(|(asset, amount)| (asset, amount)).collect();
                 RPCEntryType::IncomingContract { transfers: Cow::Owned(transfers) }
             },
-            EntryData::Blob { data } => {
-                RPCEntryType::Blob { data: Cow::Owned(data) }
+            EntryData::OutgoingBlob { destinations, fee, nonce, data } => {
+                RPCEntryType::OutgoingBlob {
+                    destinations: Cow::Owned(destinations.into_iter().map(|key| key.to_address(mainnet)).collect()),
+                    fee,
+                    nonce,
+                    data: Cow::Owned(data)
+                }
+            },
+            EntryData::IncomingBlob { from, destinations, data } => {
+                RPCEntryType::IncomingBlob {
+                    from: Cow::Owned(from.to_address(mainnet)),
+                    destinations: Cow::Owned(destinations.into_iter().map(|key| key.to_address(mainnet)).collect()),
+                    data: Cow::Owned(data)
+                }
             },
         }
     }
@@ -398,8 +418,35 @@ impl Serializer for EntryData {
                 Self::IncomingContract { transfers }
             }
             8 => {
+                let from = PublicKey::read(reader)?;
+                let size = reader.read_u8()? as usize;
+                let mut destinations = IndexSet::new();
+                for _ in 0..size {
+                    let key = PublicKey::read(reader)?;
+                    destinations.insert(key);
+                }
                 let data = PlaintextExtraData::read(reader)?;
-                Self::Blob { data }
+                Self::IncomingBlob {
+                    from,
+                    destinations,
+                    data
+                }
+            }
+            9 => {
+                let size = reader.read_u8()? as usize;
+                let mut destinations = IndexSet::new();
+                for _ in 0..size {
+                    destinations.insert(PublicKey::read(reader)?);
+                }
+                let fee = reader.read_u64()?;
+                let nonce = reader.read_u64()?;
+                let data = PlaintextExtraData::read(reader)?;
+                Self::OutgoingBlob {
+                    destinations,
+                    fee,
+                    nonce,
+                    data
+                }
             }
             _ => return Err(ReaderError::InvalidValue),
         })
@@ -481,8 +528,23 @@ impl Serializer for EntryData {
                     amount.write(writer);
                 }
             },
-            Self::Blob { data } => {
+            Self::OutgoingBlob { destinations, fee, nonce, data } => {
                 writer.write_u8(8);
+                writer.write_u8(destinations.len() as u8);
+                for destination in destinations {
+                    destination.write(writer);
+                }
+                writer.write_u64(*fee);
+                writer.write_u64(*nonce);
+                data.write(writer);
+            },
+            Self::IncomingBlob { from, destinations, data } => {
+                writer.write_u8(9);
+                from.write(writer);
+                writer.write_u8(destinations.len() as u8);
+                for destination in destinations {
+                    destination.write(writer);
+                }
                 data.write(writer);
             }
         }
@@ -520,8 +582,39 @@ impl Serializer for EntryData {
             Self::IncomingContract { transfers } => {
                 2 + transfers.iter().map(|(a, b)| a.size() + b.size()).sum::<usize>()
             },
-            Self::Blob { data } => data.size(),
+            Self::OutgoingBlob { destinations, fee, nonce, data } => {
+                1
+                + destinations.iter().map(|key| key.size()).sum::<usize>()
+                + fee.size()
+                + nonce.size()
+                + data.size()
+            },
+            Self::IncomingBlob { from, destinations, data } => {
+                from.size()
+                + 1
+                + destinations.iter().map(|key| key.size()).sum::<usize>()
+                + data.size()
+            },
         }
+    }
+}
+
+pub(crate) fn format_blob_data(data: &PlaintextExtraData) -> String {
+    let kind = match data.flag() {
+        PlaintextFlag::Private => "private",
+        PlaintextFlag::Public => "public",
+        PlaintextFlag::Proprietary => "proprietary",
+        PlaintextFlag::Failed => "failed",
+    };
+
+    let payload = data.data()
+        .and_then(|element| serde_json::to_string(element).ok())
+        .unwrap_or_else(|| "unavailable".to_owned());
+
+    if matches!(data.flag(), PlaintextFlag::Failed) {
+        format!("Blob {} ({} bytes, decode failed)", kind, data.size())
+    } else {
+        format!("Blob {} ({} bytes): {}", kind, data.size(), payload)
     }
 }
 
@@ -581,6 +674,7 @@ impl TransactionEntry {
             EntryData::MultiSig { .. } => true,
             EntryData::DeployContract { .. } => true,
             EntryData::InvokeContract { .. } => true,
+            EntryData::OutgoingBlob { .. } => true,
             _ => false,
         }
     }
@@ -683,8 +777,35 @@ impl TransactionEntry {
                 }
                 str
             },
-            EntryData::Blob { data } => {
-                format!("Blob ({} bytes)", data.size())
+            EntryData::OutgoingBlob { destinations, fee, nonce, data } => {
+                let mut details = vec![format!("Fee: {}, Nonce: {}", format_xelis(*fee), nonce)];
+                if !destinations.is_empty() {
+                    let recipients = destinations
+                        .iter()
+                        .map(|key| key.as_address(mainnet).to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    details.push(format!("To [{}]", recipients));
+                }
+
+                details.push(format_blob_data(data));
+                format!("Outgoing {}", details.join(" "))
+            },
+            EntryData::IncomingBlob { from, destinations, data } => {
+                let mut details = Vec::new();
+                details.push(format!("From {}", from.as_address(mainnet)));
+
+                if !destinations.is_empty() {
+                    let recipients = destinations
+                        .iter()
+                        .map(|key| key.as_address(mainnet).to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    details.push(format!("To [{}]", recipients));
+                }
+
+                details.push(format_blob_data(data));
+                format!("Incoming {}", details.join(" "))
             }
         };
 

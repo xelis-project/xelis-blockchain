@@ -1337,6 +1337,7 @@ impl EncryptedStorage {
             }
 
             let mut transfers: Option<Vec<Transfer>> = None;
+            let mut blob_matches_query = false;
             match entry.get_mut_entry() {
                 EntryData::Coinbase { .. } if accept_coinbase && (asset.as_ref().map(|a| *a.as_ref() == XELIS_ASSET).unwrap_or(true)) => {},
                 EntryData::Burn { asset: burn_asset, .. } if accept_burn => {
@@ -1395,7 +1396,48 @@ impl EncryptedStorage {
                     }
                 },
                 EntryData::DeployContract { .. } if accept_outgoing => {},
-                EntryData::Blob { data } if accept_blob => {},
+                EntryData::OutgoingBlob { destinations, data, .. } if accept_blob => {
+                    if asset.is_some() {
+                        continue;
+                    }
+
+                    if let Some(filter_key) = address.as_ref() {
+                        let key = filter_key.as_ref();
+                        if !destinations.contains(key) {
+                            continue;
+                        }
+                    }
+
+                    if let Some(query) = query {
+                        blob_matches_query = data.data()
+                            .map(|element| query.verify_element(element))
+                            .unwrap_or(false);
+                        if !blob_matches_query {
+                            continue;
+                        }
+                    }
+                },
+                EntryData::IncomingBlob { from, destinations, data } if accept_blob => {
+                    if asset.is_some() {
+                        continue;
+                    }
+
+                    if let Some(filter_key) = address.as_ref() {
+                        let key = filter_key.as_ref();
+                        if from != key && !destinations.contains(key) {
+                            continue;
+                        }
+                    }
+
+                    if let Some(query) = query {
+                        blob_matches_query = data.data()
+                            .map(|element| query.verify_element(element))
+                            .unwrap_or(false);
+                        if !blob_matches_query {
+                            continue;
+                        }
+                    }
+                },
                 _ => continue,
             };
 
@@ -1409,7 +1451,7 @@ impl EncryptedStorage {
                             false
                         }
                     });
-                } else {
+                } else if !blob_matches_query {
                     // Coinbase, burn, etc will be discarded always with such filter
                     trace!("entry has no extra data, discarding");
                     continue;

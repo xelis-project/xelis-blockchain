@@ -77,7 +77,7 @@ use crate::{
         PASSWORD_HASH_SIZE,
         SALT_SIZE
     },
-    entry::{EntryData, TransactionEntry as InnerTransactionEntry},
+    entry::{format_blob_data, EntryData, TransactionEntry as InnerTransactionEntry},
     error::WalletError,
     mnemonics,
     precomputed_tables::PrecomputedTablesShared,
@@ -1340,8 +1340,28 @@ impl Wallet {
 
                     writeln!(w, "{},{},{},{},{},-,-,-,-", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "IncomingContract", assets.join("|")).context("Error while writing csv line")?;
                 },
-                EntryData::Blob { .. } => {
-                    writeln!(w, "{},{},{},{},-,-,-,-,-", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "Blob").context("Error while writing csv line")?;
+                EntryData::OutgoingBlob { destinations, fee, nonce, data } => {
+                    let mut participants = Vec::new();
+                    let recipients = destinations
+                        .iter()
+                        .map(|key| key.as_address(self.get_network().is_mainnet()).to_string())
+                        .collect::<Vec<_>>()
+                        .join("|");
+                    participants.push(format!("To [{}]", recipients));
+
+                    writeln!(w, "{},{},{},{},{},Blob,{},{},{}", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "OutgoingBlob", escape_csv_field(participants.join("|")), escape_csv_field(format_blob_data(data)), format_xelis(*fee), nonce).context("Error while writing csv line")?;
+                },
+                EntryData::IncomingBlob { from, destinations, data } => {
+                    let mut participants = Vec::new();
+                    participants.push(format!("From {}", from.as_address(self.get_network().is_mainnet())));
+
+                    let recipients = destinations
+                        .iter()
+                        .map(|key| key.as_address(self.get_network().is_mainnet()).to_string())
+                        .collect::<Vec<_>>()
+                        .join("|");
+                    participants.push(format!("To [{}]", recipients));
+                    writeln!(w, "{},{},{},{},{},Blob,{},-,-", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "IncomingBlob", escape_csv_field(participants.join("|")), escape_csv_field(format_blob_data(data))).context("Error while writing csv line")?;
                 }
             }
         }
@@ -1537,6 +1557,15 @@ impl Wallet {
     pub async fn has_tx_stored(&self, hash: &Hash) -> Result<bool, Error> {
         let storage = self.storage.read().await;
         storage.has_transaction(hash)
+    }
+}
+
+fn escape_csv_field(value: impl AsRef<str>) -> String {
+    let value = value.as_ref();
+    if value.chars().any(|c| matches!(c, ',' | '"' | '\n' | '\r')) {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_owned()
     }
 }
 
