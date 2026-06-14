@@ -1,5 +1,3 @@
-pub mod config;
-
 use std::{
     fs::File,
     io::Write,
@@ -16,7 +14,7 @@ use std::{
     thread,
     time::Duration
 };
-use crate::config::DEFAULT_DAEMON_ADDRESS;
+use clap::Parser;
 use futures_util::{StreamExt, SinkExt};
 use serde::{Serialize, Deserialize};
 use tokio::{
@@ -52,7 +50,6 @@ use xelis_common::{
         MinerWork,
         Worker
     },
-    config::VERSION,
     crypto::{
         Address,
         Hash,
@@ -66,11 +63,8 @@ use xelis_common::{
     prompt::{
         command::CommandManager,
         Color,
-        LogLevel,
-        ModuleConfig,
         Prompt,
         ShareablePrompt,
-        default_logs_datetime_format
     },
     serializer::Serializer,
     time::get_current_time_in_millis,
@@ -81,7 +75,6 @@ use xelis_common::{
         sanitize_ws_address
     }
 };
-use clap::Parser;
 use log::{
     trace,
     debug,
@@ -95,142 +88,7 @@ use anyhow::{
     Context
 };
 use lazy_static::lazy_static;
-
-// Functions helpers
-fn default_daemon_address() -> String {
-    DEFAULT_DAEMON_ADDRESS.to_owned()
-}
-
-fn default_iterations() -> usize {
-    100
-}
-
-fn default_log_filename() -> String {
-    "xelis-miner.log".to_owned()
-}
-
-fn default_logs_path() -> String {
-    "logs/".to_owned()
-}
-
-fn default_worker_name() -> String {
-    "default".to_owned()
-}
-
-#[derive(Parser, Serialize, Deserialize)]
-pub struct LogConfig {
-    /// Set log level
-    #[clap(long, value_enum, default_value_t = LogLevel::Info)]
-    #[serde(default)]
-    log_level: LogLevel,
-    /// Set file log level
-    /// By default, it will be the same as log level
-    #[clap(long, value_enum)]
-    file_log_level: Option<LogLevel>,
-    /// Disable the log file
-    #[clap(long)]
-    #[serde(default)]
-    disable_file_logging: bool,
-    /// Disable the log filename date based
-    /// If disabled, the log file will be named xelis-miner.log instead of YYYY-MM-DD.xelis-miner.log
-    #[clap(long)]
-    #[serde(default)]
-    disable_file_log_date_based: bool,
-    /// Enable the log file auto compression
-    /// If enabled, the log file will be compressed every day
-    /// This will only work if the log file is enabled
-    #[clap(long)]
-    #[serde(default)]
-    auto_compress_logs: bool,
-    /// Disable the usage of colors in log
-    #[clap(long)]
-    #[serde(default)]
-    disable_log_color: bool,
-    /// Disable terminal interactive mode
-    /// You will not be able to write CLI commands in it or to have an updated prompt
-    #[clap(long)]
-    #[serde(default)]
-    disable_interactive_mode: bool,
-    /// Log filename
-    /// 
-    /// By default filename is xelis-miner.log.
-    /// File will be stored in logs directory, this is only the filename, not the full path.
-    /// Log file is rotated every day and has the format YYYY-MM-DD.xelis-miner.log.
-    #[clap(default_value_t = String::from("xelis-miner.log"))]
-    #[serde(default = "default_log_filename")]
-    filename_log: String,
-    /// Logs directory
-    /// 
-    /// By default it will be logs/ of the current directory.
-    /// It must end with a / to be a valid folder.
-    #[clap(long, default_value_t = String::from("logs/"))]
-    #[serde(default = "default_logs_path")]
-    logs_path: String,
-    /// Module configuration for logs
-    #[clap(long)]
-    #[serde(default)]
-    logs_modules: Vec<ModuleConfig>,
-    /// Disable the ascii art at startup
-    #[clap(long)]
-    #[serde(default)]
-    disable_ascii_art: bool,
-    /// Change the datetime format used by the logger
-    #[clap(long, default_value_t = default_logs_datetime_format())]
-    #[serde(default = "default_logs_datetime_format")]
-    datetime_format: String, 
-}
-
-#[derive(Parser, Serialize, Deserialize)]
-pub struct BenchmarkConfig {
-    /// Enable the benchmark mode with the specified algorithm
-    #[clap(long)]
-    benchmark: Option<Algorithm>,
-    /// Iterations to run the benchmark
-    #[clap(long, default_value_t = 100)]
-    #[serde(default = "default_iterations")]
-    iterations: usize,
-}
-
-#[derive(Parser, Serialize, Deserialize)]
-#[clap(version = VERSION, about = "XELIS is an innovative cryptocurrency built from scratch with BlockDAG, Homomorphic Encryption, Zero-Knowledge Proofs, and Smart Contracts.")]
-#[command(styles = xelis_common::get_cli_styles())]
-pub struct Config {
-    /// Log configuration
-    #[clap(flatten)]
-    log: LogConfig,
-    /// Benchmark configuration
-    #[clap(flatten)]
-    benchmark: BenchmarkConfig,
-    /// Wallet address to mine and receive block rewards on
-    #[clap(short, long)]
-    miner_address: Option<Address>,
-    /// Daemon address to connect to for mining
-    #[clap(long, default_value_t = String::from(DEFAULT_DAEMON_ADDRESS))]
-    #[serde(default = "default_daemon_address")]
-    daemon_address: String,
-    /// Bind address for stats API
-    #[cfg(feature = "api_stats")]
-    #[clap(long)]
-    api_bind_address: Option<String>,
-    /// Numbers of threads to use (at least 1, max: 65535)
-    /// By default, this will try to detect the number of threads available on your CPU.
-    #[clap(short, long)]
-    num_threads: Option<u16>,
-    /// Worker name to be displayed on daemon side
-    #[clap(short, long, default_value_t = String::from("default"))]
-    #[serde(default = "default_worker_name")]
-    worker: String,
-    /// JSON File to load the configuration from
-    #[clap(long)]
-    #[serde(skip)]
-    #[serde(default)]
-    config_file: Option<String>,
-    /// Generate the template at the `config_file` path
-    #[clap(long)]
-    #[serde(skip)]
-    #[serde(default)]
-    generate_config_template: bool
-}
+use xelis_miner::Config;
 
 #[derive(Clone)]
 enum ThreadNotification<'a> {
