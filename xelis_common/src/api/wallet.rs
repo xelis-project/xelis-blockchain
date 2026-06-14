@@ -567,8 +567,16 @@ pub enum EntryType<'a> {
         // Transfers received from the contract
         transfers: Cow<'a, IndexMap<Hash, u64>>,
     },
-    Blob {
-        data: Cow<'a, PlaintextExtraData>
+    OutgoingBlob {
+        destinations: Cow<'a, IndexSet<Address>>,
+        fee: u64,
+        nonce: u64,
+        data: Cow<'a, PlaintextExtraData>,
+    },
+    IncomingBlob {
+        from: Cow<'a, Address>,
+        destinations: Cow<'a, IndexSet<Address>>,
+        data: Cow<'a, PlaintextExtraData>,
     }
 }
 
