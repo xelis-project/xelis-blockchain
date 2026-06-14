@@ -686,6 +686,7 @@ pub struct BlockchainConfig {
     pub genesis_block_hex: Option<String>,
     /// Block hash checkpoints that prevent rewinding below known states.
     #[serde(default)]
+    #[clap(long)]
     pub checkpoints: Vec<Hash>,
     /// Number of threads used for transaction verification.
     ///
