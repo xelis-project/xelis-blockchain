@@ -65,8 +65,7 @@ pub struct LogConfig {
     pub auto_compress_logs: bool,
     /// Log filename stored inside `logs_path`.
     ///
-    /// Defaults to `xelis-daemon.log`. Unless date-based filenames are disabled,
-    /// daily log files are named `YYYY-MM-DD.xelis-daemon.log`.
+    /// Unless date-based filenames are disabled, daily log files are named `YYYY-MM-DD.xelis-daemon.log`.
     #[clap(long, default_value_t = default_filename_log())]
     #[serde(default = "default_filename_log")]
     pub filename_log: String,
