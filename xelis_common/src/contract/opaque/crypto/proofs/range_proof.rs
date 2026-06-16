@@ -1,6 +1,5 @@
 use std::hash::Hasher;
 
-use anyhow::Context as _;
 use bulletproofs::RangeProof;
 use serde::{Deserialize, Serialize};
 use xelis_vm::{
@@ -71,8 +70,11 @@ pub fn range_proof_verify_single(zelf: FnInstance, mut params: FnParams, _: &Mod
         return Err(EnvironmentError::Static("proof size must be between 1 and 64"));
     }
 
-    let [left, right] = params.get_disjoint_mut([0, 1])
-        .context("disjoint mut")?;
+    // support pre-1.86 rustc, which doesn't support get_disjoint_mut([0, 1])
+    let (left, right) = {
+        let (left, right) = params.split_at_mut(1);
+        (&mut left[0], &mut right[0])
+    };
 
     let commitment = {
             let commitment: &mut OpaqueRistrettoPoint = left

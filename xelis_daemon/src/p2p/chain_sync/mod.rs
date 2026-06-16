@@ -446,7 +446,7 @@ impl<S: Storage> P2pServer<S> {
                                 .into_block()?
                                 .0;
 
-                            let cache = self.blockchain.pre_verify_block(&block, Some(hash)).await?;
+                            let cache = self.pre_verify_block_for_peer(&block, Some(hash), peer).await?;
                             (block, cache)
                         }
                     };
@@ -516,14 +516,20 @@ impl<S: Storage> P2pServer<S> {
         debug!("Rewinded chain until topoheight {}", topoheight);
         let res = self.handle_blocks_from_chain_validator(peer, chain_validator, snapshot).await;
 
-        if let Err(BlockchainError::P2pError(e)) = &res {
+        if let Err(e) = &res {
             debug!("Mark {} as sync chain from validator failed: {}", peer, e);
             peer.set_sync_chain_failed(true);
 
-            if let P2pError::Disconnected = e {
-                // Peer disconnected while trying to reorg us, tempban it
-                if let Err(e) = self.peer_list.temp_ban_address(&peer.get_connection().get_address().ip(), 60, false).await {
-                    debug!("Couldn't tempban {}: {}", peer, e);
+            match e {
+                BlockchainError::P2pError(_) | BlockchainError::InvalidBlockVersion => {
+                    debug!("Peer {} sent us an invalid chain during validation: {}", peer, e);
+                    // Peer disconnected while trying to reorg us, tempban it
+                    if let Err(e) = peer.close_and_temp_ban(self.temp_ban_time).await {
+                        debug!("Couldn't tempban {}: {}", peer, e);
+                    }
+                },
+                _ => {
+                    peer.increment_fail_count();
                 }
             }
         }
@@ -667,7 +673,11 @@ impl<S: Storage> P2pServer<S> {
                                 our_previous_topoheight < topoheight && current_cumulative_difficulty < cumulative_difficulty
                             }
                         },
-                        Err(_) => false,
+                        Err(_) => {
+                            peer.increment_fail_count();
+
+                            false
+                        }
                     };
 
                     {
@@ -742,7 +752,7 @@ impl<S: Storage> P2pServer<S> {
                             .await?
                             .into_block()?;
 
-                        let pre_verify = self.blockchain.pre_verify_block(&block, Some(hash)).await?;
+                        let pre_verify = self.pre_verify_block_for_peer(&block, Some(hash), peer).await?;
                         Ok::<_, BlockchainError>(ResponseHelper::Requested(block, pre_verify))
                     } else {
                         debug!("Block {} is already in chain or being processed, verify if its in DAG", hash);
@@ -798,6 +808,16 @@ impl<S: Storage> P2pServer<S> {
                                     }
 
                                     if let Err(e) = self.blockchain.add_new_block(block, pre_verify, BroadcastOption::All, false).await {
+                                        if matches!(e, BlockchainError::InvalidBlockVersion) {
+                                            debug!("Peer {} sent us an invalid block version during chain sync: {}", peer, e);
+                                            // Peer sent us an invalid block, tempban it
+                                            if let Err(e) = peer.close_and_temp_ban(self.temp_ban_time).await {
+                                                debug!("Couldn't tempban {}: {}", peer, e);
+                                            }
+                                        } else {
+                                            debug!("Mark {} as sync chain failed during block addition: {}", peer, e);
+                                            peer.increment_fail_count();
+                                        }
                                         return Err(e)
                                     }
 
@@ -806,6 +826,7 @@ impl<S: Storage> P2pServer<S> {
                                 ResponseHelper::NotRequested(hash) => {
                                     if let Err(e) = self.try_re_execution_block(hash, StorageHolder::Storage(self.blockchain.get_storage())).await {
                                         warn!("sync chain failed during block re-execution: {}", peer);
+                                        peer.increment_fail_count();
                                         return Err(e)
                                     }
 
@@ -905,5 +926,18 @@ impl<S: Storage> P2pServer<S> {
         warn!("Block {} is not in topological order, forcing its re-execution", hash);
         // Replicate same behavior as above branch
         self.blockchain.add_new_block_with_storage(storage, block, PreVerifyBlock::Hash(hash), BroadcastOption::All, false).await
+    }
+
+    // Pre-verify a block for a peer, and if it fails, tempban the peer
+    async fn pre_verify_block_for_peer(&self, block: &Block, block_hash: Option<Immutable<Hash>>, peer: &Arc<Peer>) -> Result<PreVerifyBlock, BlockchainError> {
+        debug!("Pre-verifying block for peer in normal sync mode");
+        match self.blockchain.pre_verify_block(block, block_hash).await {
+            Ok(pre_verify) => Ok(pre_verify),
+            Err(e) => {
+                debug!("Mark {} as sync chain failed during pre-verification: {}", peer, e);
+                peer.close_and_temp_ban(self.temp_ban_time).await?;
+                Err(e)
+            }
+        }
     }
 }

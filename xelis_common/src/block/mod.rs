@@ -3,7 +3,7 @@ mod block;
 mod miner;
 mod version;
 
-pub use header::BlockHeader;
+pub use header::{BlockHeader, deserialize_extra_nonce, deserialize_extra_nonce_hex, serialize_extra_nonce};
 pub use block::Block;
 pub use miner::{MinerWork, Worker, Algorithm};
 pub use version::BlockVersion;

@@ -30,6 +30,7 @@ mod storage;
 mod btree;
 mod permission;
 mod inter_calls;
+mod asset;
 
 /// Compiles the given contract code into a Module
 #[track_caller]

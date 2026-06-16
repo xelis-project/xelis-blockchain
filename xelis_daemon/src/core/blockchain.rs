@@ -314,7 +314,7 @@ impl<S: Storage> Blockchain<S> {
 
         info!("Initializing chain...");
         let blockchain = Self {
-            mempool: RwLock::new(Mempool::new(network, config.disable_zkp_cache)),
+            mempool: RwLock::new(Mempool::new(network, config.disable_zkp_cache, config.mempool.tx_expiration_time.as_secs(), config.mempool.max_memory_usage)),
             storage: RwLock::new(storage),
             storage_semaphore: Semaphore::new(1),
             pre_verify_block_semaphore: Semaphore::new(config.pre_verify_block_threads_count),
@@ -437,7 +437,7 @@ impl<S: Storage> Blockchain<S> {
                 config.dh_private_key.map(|v| v.into()),
                 config.on_dh_key_change,
                 config.stream_concurrency,
-                config.temp_ban_duration.as_secs(),
+                config.temp_ban_duration.into(),
                 config.fail_count_limit,
                 config.disable_reexecute_blocks_on_sync,
                 config.block_propagation_log_level.into(),
@@ -1595,8 +1595,9 @@ impl<S: Storage> Blockchain<S> {
         let (base, base_height) = blockdag::find_common_base(&*storage, block.get_tips(), block.get_version()).await?;
         let base_topoheight = storage.get_topo_height_for_hash(&base).await?;
         let nearest_base_topoheight = blockdag::find_nearest_base_topoheight(&*storage, block.get_tips().iter().cloned(), base_topoheight, &base).await?;
+        let expected_topoheight = blockdag::find_expected_topoheight(&*storage, block.get_tips().iter().cloned(), &base, base_topoheight).await?;
 
-        let mut chain_state = ChainState::new(storage, &self.environments, base_topoheight, nearest_base_topoheight, block.get_version(), base_fee, base_height);
+        let mut chain_state = ChainState::new(storage, &self.environments, base_topoheight, nearest_base_topoheight, expected_topoheight, block.get_version(), base_fee, base_height);
 
         if !tx_selector.is_empty() {
             let tx_cache = TxCache::new(storage, &mempool, self.disable_zkp_cache);
@@ -2080,21 +2081,22 @@ impl<S: Storage> Blockchain<S> {
 
         // find the common base block from tips
         // We retrieve it to pass it as a param below for p2p broadcast
-        let (base, base_height, base_topoheight, nearest_base_topoheight) = if tips_count == 0 {
-            (None, 0, 0, 0)
+        let (base, base_height, base_topoheight, nearest_base_topoheight, expected_topoheight) = if tips_count == 0 {
+            (None, 0, 0, 0, 0)
         } else {
             debug!("Computing cumulative difficulty for block {}", block_hash);
             let (base, base_height) = blockdag::find_common_base(&*storage, block.get_tips(), version).await?;
 
-            let (base_topoheight, nearest_base_topoheight) = if is_v6_enabled {
+            let (base_topoheight, nearest_base_topoheight, expected_topoheight) = if is_v6_enabled {
                 let base_topoheight = storage.get_topo_height_for_hash(&base).await?;
                 let nearest_base_topoheight = blockdag::find_nearest_base_topoheight(&*storage, block.get_tips().iter().cloned(), base_topoheight, &base).await?;
-                (base_topoheight, nearest_base_topoheight)
+                let expected_topoheight = blockdag::find_expected_topoheight(&*storage, block.get_tips().iter().cloned(), &base, base_topoheight).await?;
+                (base_topoheight, nearest_base_topoheight, expected_topoheight)
             } else {
-                (stable_topoheight, current_topoheight)
+                (stable_topoheight, current_topoheight, current_topoheight)
             };
 
-            (Some(base), base_height, base_topoheight, nearest_base_topoheight)
+            (Some(base), base_height, base_topoheight, nearest_base_topoheight, expected_topoheight)
         };
 
         debug!("base height: {}, base topoheight: {}, nearest base topoheight: {}", base_height, base_topoheight, nearest_base_topoheight);
@@ -2283,12 +2285,12 @@ impl<S: Storage> Blockchain<S> {
                     // it will be multi-threaded by N threads
                     stream::iter(batches.into_iter().map(Ok))
                         .try_for_each_concurrent(self.txs_verification_threads_count, async |txs| {
-                            let mut chain_state = ChainState::new(storage, environments, base_topoheight, nearest_base_topoheight, version, base_fee, base_height);
+                            let mut chain_state = ChainState::new(storage, environments, base_topoheight, nearest_base_topoheight, expected_topoheight, version, base_fee, base_height);
                             Transaction::verify_batch(txs.iter().map(|(hash, tx)| (tx, hash.as_ref())), &mut chain_state, cache).await
                         }).await
                 } else {
                     // Verify all valid transactions in one batch
-                    let mut chain_state = ChainState::new(&*storage, &self.environments, base_topoheight, nearest_base_topoheight, version, base_fee, base_height);
+                    let mut chain_state = ChainState::new(&*storage, &self.environments, base_topoheight, nearest_base_topoheight, expected_topoheight, version, base_fee, base_height);
                     let iter = txs_grouped.values()
                         .flatten()
                         .map(|(hash, tx)| (tx, hash.as_ref()));
@@ -2620,7 +2622,8 @@ impl<S: Storage> Blockchain<S> {
     
                     // Increase the circulating supply with the block reward
                     let changes = chain_state.get_asset_changes_for(&XELIS_ASSET, true).await?;
-                    changes.circulating_supply.1 += block_reward;
+                    changes.circulating_supply.1 = changes.circulating_supply.1.checked_add(block_reward)
+                        .ok_or(BlockchainError::ConsensusOverflow)?;
                     changes.circulating_supply.0.mark_updated();
     
                     total_txs_executed += block.get_txs_count();
@@ -2666,7 +2669,8 @@ impl<S: Storage> Blockchain<S> {
                             // Calculate the new nonce
                             // This has to be done in case of side blocks where TX B would be before TX A
                             let expected_next_nonce = nonce_checker.get_new_nonce(tx.get_source(), self.network.is_mainnet())?;
-                            let next_nonce = tx.get_nonce() + 1;
+                            let next_nonce = tx.get_nonce().checked_add(1)
+                                .ok_or(BlockchainError::ConsensusOverflow)?;
                             if expected_next_nonce != next_nonce {
                                 warn!("TX {} has a nonce {}, but the next nonce is {}, forcing it...", tx_hash, next_nonce, expected_next_nonce);
                                 chain_state.as_mut().update_account_nonce(tx.get_source(), expected_next_nonce).await?;
@@ -2752,7 +2756,10 @@ impl<S: Storage> Blockchain<S> {
                     // Miner gets the block reward + total fees + gas fee
                     let gas_fee = chain_state.get_gas_fee();
                     let total_fees = chain_state.get_total_fees();
-                    chain_state.reward_miner(block.get_miner(), miner_reward + total_fees + gas_fee).await?;
+                    let miner_total = miner_reward.checked_add(total_fees)
+                        .and_then(|v| v.checked_add(gas_fee))
+                        .ok_or(BlockchainError::ConsensusOverflow)?;
+                    chain_state.reward_miner(block.get_miner(), miner_total).await?;
     
                     // Fire all the contract events
                     {
@@ -3684,7 +3691,9 @@ pub const fn tx_kb_size_rounded(bytes: usize) -> usize {
 // This returns one final (total) fee required for a TX
 pub async fn estimate_required_tx_fees<P: FeeProvider>(provider: &P, current_topoheight: TopoHeight, tx: &Transaction, tx_size: usize, base_fee: u64, block_version: BlockVersion) -> Result<u64, BlockchainError> {
     let fee_extra = estimate_required_tx_fee_extra(provider, current_topoheight, tx, block_version).await?;
-    Ok(calculate_tx_fee_per_kb(base_fee, tx_size) + fee_extra)
+    calculate_tx_fee_per_kb(base_fee, tx_size)
+        .checked_add(fee_extra)
+        .ok_or(BlockchainError::ConsensusOverflow)
 }
 
 // Get the block reward for a side block based on how many side blocks exists at same height

@@ -5,11 +5,11 @@ use itertools::Itertools;
 use xelis_common::{
     api::{
         DataElement,
-        DataHash,
         DataValue,
         SplitAddressParams,
         SplitAddressResult,
         query::QueryResult,
+        RPCTransaction,
         wallet::*
     },
     asset::AssetData,
@@ -42,7 +42,7 @@ use xelis_common::{
 use crate::{
     api::AppStateShared,
     error::WalletError,
-    storage::{TransactionFilterOptions, Balance},
+    storage::{Balance, TransactionFilterOptions},
     transaction_builder::TransactionBuilderState,
     wallet::Wallet
 };
@@ -78,6 +78,7 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
     handler.register_method_with_params("build_unsigned_transaction", async_handler!(build_unsigned_transaction));
     handler.register_method_with_params("finalize_unsigned_transaction", async_handler!(finalize_unsigned_transaction));
     handler.register_method_with_params("sign_unsigned_transaction", async_handler!(sign_unsigned_transaction));
+    handler.register_method_no_params("get_pending_transactions", async_handler!(get_pending_transactions, single));
 
     handler.register_method_no_params("clear_tx_cache", async_handler!(clear_tx_cache, single));
     handler.register_method_with_params("list_transactions", async_handler!(list_transactions));
@@ -115,7 +116,7 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
 fn wallet_from_context<'a, 'ty, 'r>(context: &'a Context<'ty, 'r>) -> Result<&'a Arc<Wallet>, InternalRpcError> {
     let handler: &RPCHandler<Arc<Wallet>> = context.get()
         .context("Couldn't retrieve wallet from context")?;
-    Ok(handler.get_data())
+    handler.get_data().ok_or(InternalRpcError::InvalidContext)
 }
 
 // Retrieve the version of the wallet
@@ -348,7 +349,7 @@ async fn get_asset(context: &Context<'_, '_>, params: GetAssetPrecisionParams<'_
 }
 
 // Retrieve a transaction from the wallet storage using its hash
-async fn get_transaction(context: &Context<'_, '_>, params: GetTransactionParams) -> Result<TransactionEntry, InternalRpcError> {
+async fn get_transaction(context: &Context<'_, '_>, params: GetTransactionParams) -> Result<TransactionEntry<'static>, InternalRpcError> {
     let wallet = wallet_from_context(context)?;
     let storage = wallet.get_storage().read().await;
     if !storage.has_transaction(&params.hash)? {
@@ -361,7 +362,7 @@ async fn get_transaction(context: &Context<'_, '_>, params: GetTransactionParams
 }
 
 // Debug rpc method to perform a search across all entries for a transaction from the wallet storage using its hash
-async fn search_transaction(context: &Context<'_, '_>, params: SearchTransactionParams<'_>) -> Result<SearchTransactionResult, InternalRpcError> {
+async fn search_transaction(context: &Context<'_, '_>, params: SearchTransactionParams<'_>) -> Result<SearchTransactionResult<'static>, InternalRpcError> {
     let wallet = wallet_from_context(context)?;
     let storage = wallet.get_storage().read().await;
 
@@ -432,10 +433,7 @@ async fn build_transaction(context: &Context<'_, '_>, params: BuildTransactionPa
             unsigned.sign_multisig(&keypair, signer.id);
         }
 
-        let tx = unsigned.finalize(wallet.get_keypair());
-        state.set_tx_hash_built(tx.hash());
-
-        tx
+        unsigned.finalize(wallet.get_keypair())
     };
 
     // if requested, broadcast the TX ourself
@@ -449,9 +447,11 @@ async fn build_transaction(context: &Context<'_, '_>, params: BuildTransactionPa
         }
     }
 
-    state.apply_changes(&mut storage).await
+    state.apply_changes(&mut storage, wallet, &tx).await
         .context("Error while applying state changes")?;
 
+    let tx_hash = tx.hash();
+    let size = tx.size();
     // returns the created TX and its hash
     Ok(TransactionResponse {
         tx_as_hex: if params.tx_as_hex {
@@ -459,10 +459,7 @@ async fn build_transaction(context: &Context<'_, '_>, params: BuildTransactionPa
         } else {
             None
         },
-        inner: DataHash {
-            hash: Cow::Owned(tx.hash()),
-            data: Cow::Owned(tx)
-        }
+        inner: RPCTransaction::from_tx_owned(tx, tx_hash, size, None, wallet.get_network().is_mainnet())
     })
 }
 
@@ -510,23 +507,33 @@ async fn build_transaction_offline(context: &Context<'_, '_>, params: BuildTrans
             unsigned.sign_multisig(&keypair, signer.id);
         }
 
-        let tx = unsigned.finalize(wallet.get_keypair());
-        state.set_tx_hash_built(tx.hash());
-
-        tx
+        unsigned.finalize(wallet.get_keypair())
     };
 
+    let tx_hash = tx.hash();
+    let size = tx.size();
     Ok(TransactionResponse {
         tx_as_hex: if params.tx_as_hex {
             Some(hex::encode(tx.to_bytes()))
         } else {
             None
         },
-        inner: DataHash {
-            hash: Cow::Owned(tx.hash()),
-            data: Cow::Owned(tx)
-        }
+        inner: RPCTransaction::from_tx_owned(tx, tx_hash, size, None, wallet.get_network().is_mainnet())
     })
+}
+
+// Get pending transactions from the wallet storage
+async fn get_pending_transactions(context: &Context<'_, '_>) -> Result<Vec<TransactionPending<'static>>, InternalRpcError> {
+    let wallet = wallet_from_context(context)?;
+    let mainnet = wallet.get_network().is_mainnet();
+    let storage = wallet.get_storage().read().await;
+    let pending_txs = storage.get_pending_txs()
+        .iter()
+        .cloned()
+        .map(|tx| tx.serializable(mainnet))
+        .collect();
+
+    Ok(pending_txs)
 }
 
 async fn build_unsigned_transaction(context: &Context<'_, '_>, params: BuildUnsignedTransactionParams) -> Result<UnsignedTransactionResponse, InternalRpcError> {
@@ -547,7 +554,7 @@ async fn build_unsigned_transaction(context: &Context<'_, '_>, params: BuildUnsi
     let unsigned = builder.build_unsigned(&mut state, wallet.get_keypair())
         .context("Error while building unsigned transaction")?;
 
-    state.apply_changes(&mut storage).await
+    state.apply_changes(&mut storage, wallet, None).await
         .context("Error while applying state changes")?;
 
     // returns the created TX and its hash
@@ -589,7 +596,7 @@ async fn finalize_unsigned_transaction(context: &Context<'_, '_>, params: Finali
     }
 
     let tx = unsigned.0.finalize(keypair);
-    
+
     let mut storage = wallet.get_storage().write().await;
     let mut state = TransactionBuilderState::from_tx(&storage, &tx, wallet.get_network().is_mainnet()).await?;
 
@@ -603,19 +610,18 @@ async fn finalize_unsigned_transaction(context: &Context<'_, '_>, params: Finali
         }
     }
 
-    state.apply_changes(&mut storage).await
+    state.apply_changes(&mut storage, wallet, &tx).await
         .context("Error while applying state changes")?;
 
+    let tx_hash = tx.hash();
+    let size = tx.size();
     Ok(TransactionResponse {
         tx_as_hex: if params.tx_as_hex {
             Some(hex::encode(tx.to_bytes()))
         } else {
             None
         },
-        inner: DataHash {
-            hash: Cow::Owned(tx.hash()),
-            data: Cow::Owned(tx)
-        }
+        inner: RPCTransaction::from_tx_owned(tx, tx_hash, size, None, wallet.get_network().is_mainnet())
     })
 }
 
@@ -648,7 +654,7 @@ async fn estimate_fees(context: &Context<'_, '_>, params: EstimateFeesParams) ->
 }
 
 // List transactions from the wallet storage
-async fn list_transactions(context: &Context<'_, '_>, params: ListTransactionsParams) -> Result<Vec<TransactionEntry>, InternalRpcError> {
+async fn list_transactions(context: &Context<'_, '_>, params: ListTransactionsParams) -> Result<Vec<TransactionEntry<'static>>, InternalRpcError> {
     if let Some(addr) = &params.address {
         if !addr.is_normal() {
             return Err(InternalRpcError::InvalidParams("Address should be in normal format (not integrated address)"))
@@ -671,6 +677,7 @@ async fn list_transactions(context: &Context<'_, '_>, params: ListTransactionsPa
         accept_outgoing: params.accept_outgoing,
         accept_coinbase: params.accept_coinbase,
         accept_burn: params.accept_burn,
+        accept_blob: params.accept_blob,
         query: params.query.as_ref(),
         limit: params.limit,
         skip: params.skip,

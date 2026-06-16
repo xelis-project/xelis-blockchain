@@ -86,11 +86,16 @@ impl<S: Storage> DaemonRpcServer<S> {
     ) -> Result<SharedDaemonRpcServer<S>, BlockchainError> {
         let getwork = if !config.getwork.disable {
             info!("Creating GetWork server...");
-            Some(WebSocketServer::new(GetWorkServer::new(
-                blockchain.clone(),
-                config.getwork.rate_limit_ms,
-                config.getwork.notify_job_concurrency
-            )))
+            Some(WebSocketServer::with_limits(
+                GetWorkServer::new(
+                    blockchain.clone(),
+                    config.getwork.rate_limit_ms,
+                    config.getwork.notify_job_concurrency
+                ),
+                config.max_websocket_sessions,
+                config.websocket_session_channel_size,
+                config.websocket_session_work_queue_size
+            ))
         } else {
             None
         };
@@ -100,7 +105,12 @@ impl<S: Storage> DaemonRpcServer<S> {
         rpc::register_methods(&mut rpc_handler, !config.getwork.disable, config.allow_private_methods, config.allow_contract_vm_executions);
 
         // create the default websocket server (support event & rpc methods)
-        let ws = WebSocketServer::new(EventWebSocketHandler::new(rpc_handler, config.notify_events_concurrency));
+        let ws = WebSocketServer::with_limits(
+            EventWebSocketHandler::new(rpc_handler, config.notify_events_concurrency),
+            config.max_websocket_sessions,
+            config.websocket_session_channel_size,
+            config.websocket_session_work_queue_size
+        );
 
         let server = Arc::new(Self {
             handle: Mutex::new(None),

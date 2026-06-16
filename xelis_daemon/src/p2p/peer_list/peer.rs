@@ -4,7 +4,7 @@ use crate::{
         PEER_TX_CACHE_SIZE, PEER_TIMEOUT_BOOTSTRAP_STEP,
         PEER_TIMEOUT_REQUEST_OBJECT, CHAIN_SYNC_TIMEOUT_SECS,
         PEER_PACKET_CHANNEL_SIZE, PEER_PEERS_CACHE_SIZE,
-        PEER_OBJECTS_CONCURRENCY, MILLIS_PER_SECOND
+        PEER_OBJECTS_CONCURRENCY, PEER_LATENCY_AVG_WINDOW, MILLIS_PER_SECOND
     },
     p2p::packet::PacketWrapper
 };
@@ -22,6 +22,7 @@ use xelis_common::{
     difficulty::CumulativeDifficulty,
     serializer::Serializer,
     time::{
+        get_current_time_in_millis,
         get_current_time_in_seconds,
         TimestampSeconds,
         TimestampMillis
@@ -42,7 +43,7 @@ use std::{
     hash::{Hash as StdHash, Hasher},
     net::{IpAddr, SocketAddr},
     sync::{
-        atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering},
         Arc
     },
     time::Duration
@@ -120,6 +121,10 @@ pub struct Peer {
     last_ping: AtomicU64,
     // last time we sent a ping packet to this peer
     last_ping_sent: AtomicU64,
+    // Last N request/response latency samples in milliseconds
+    latency_samples: [AtomicU64; PEER_LATENCY_AVG_WINDOW],
+    // Next latency sample index
+    latency_sample_index: AtomicUsize,
     // cumulative difficulty of peer chain
     cumulative_difficulty: Mutex<CumulativeDifficulty>,
     // All transactions propagated from/to this peer
@@ -209,6 +214,8 @@ impl Peer {
             last_peer_list: AtomicU64::new(0),
             last_ping: AtomicU64::new(0),
             last_ping_sent: AtomicU64::new(0),
+            latency_samples: std::array::from_fn(|_| AtomicU64::new(0)),
+            latency_sample_index: AtomicUsize::new(0),
             cumulative_difficulty: Mutex::new(cumulative_difficulty),
             txs_cache: Mutex::new(LruCache::new(NonZeroUsize::new(PEER_TX_CACHE_SIZE).expect("PEER_TX_CACHE_SIZE must be non-zero"))),
             blocks_propagation: Mutex::new(LruCache::new(NonZeroUsize::new(PEER_BLOCK_CACHE_SIZE).expect("PEER_BLOCK_CACHE_SIZE must be non-zero"))),
@@ -480,6 +487,37 @@ impl Peer {
         self.last_chain_sync_out.store(time, Ordering::SeqCst);
     }
 
+    // Get the average measured latency in milliseconds
+    pub fn get_latency_ms(&self) -> Option<u64> {
+        let mut sum = 0;
+        let mut count = 0;
+        for sample in self.latency_samples.iter() {
+            let sample = sample.load(Ordering::SeqCst);
+            if sample != 0 {
+                sum += sample;
+                count += 1;
+            }
+        }
+
+        match count {
+            0 => None,
+            _ => Some(sum / count)
+        }
+    }
+
+    // Track a measured latency in milliseconds
+    pub fn set_latency_ms(&self, latency: u64) {
+        let latency = latency.max(1);
+        let index = self.latency_sample_index.fetch_add(1, Ordering::SeqCst) % PEER_LATENCY_AVG_WINDOW;
+        self.latency_samples[index].store(latency, Ordering::SeqCst);
+    }
+
+    // Track latency from a request start timestamp
+    pub fn track_latency_since(&self, start: TimestampMillis) {
+        let now = get_current_time_in_millis();
+        self.set_latency_ms(now.saturating_sub(start));
+    }
+
     // Get all objects requested from this peer
     pub async fn clear_objects_requested(&self) {
         let mut objects = self.objects_requested.lock().await;
@@ -499,12 +537,14 @@ impl Peer {
         debug!("requesting {}", request);
         counter!("xelis_p2p_objects_requests", "peer" => self.get_id().to_string()).increment(1u64);
 
+        let mut sent_at = None;
         let mut receiver = {
             let mut objects = self.objects_requested.lock().await;
             if let Some(sender) = objects.get(&request) {
                 debug!("{} was already sent to {}, subscribing to the same channel", request, self);
                 sender.subscribe()
             } else {
+                sent_at = Some(get_current_time_in_millis());
                 self.send_packet(Packet::ObjectRequest(Cow::Borrowed(&request))).await?;
                 let (sender, receiver) = broadcast::channel(1);
                 // clone is necessary in case timeout has occured
@@ -530,6 +570,9 @@ impl Peer {
             }
         };
         debug!("received response for request {}", request);
+        if let Some(start) = sent_at {
+            self.track_latency_since(start);
+        }
 
         // Verify that the object is the one we requested
         let object_hash = object.get_hash();
@@ -562,6 +605,7 @@ impl Peer {
             senders.put(id, sender);
         }
 
+        let start = get_current_time_in_millis();
         self.send_packet(Packet::BootstrapChainRequest(BootstrapChainRequest::new(id, step))).await?;
 
         let mut exit_channel = self.get_exit_receiver();
@@ -581,6 +625,7 @@ impl Peer {
                 }
             }
         };
+        self.track_latency_since(start);
 
         // check that the response is what we asked for
         let response_kind = response.kind();
@@ -601,6 +646,7 @@ impl Peer {
         }
 
         trace!("sending chain request packet");
+        let start = get_current_time_in_millis();
         self.send_packet(Packet::ChainRequest(request)).await?;
 
         trace!("waiting for chain response");
@@ -617,6 +663,7 @@ impl Peer {
                 }
             }
         };
+        self.track_latency_since(start);
 
         Ok(response)
     }
@@ -673,7 +720,7 @@ impl Peer {
 
     // Track the last time we sent a ping packet to this peer
     pub fn set_last_ping_sent(&self, value: TimestampSeconds) {
-        self.last_ping.store(value, Ordering::SeqCst)
+        self.last_ping_sent.store(value, Ordering::SeqCst)
     }
 
     // Get the last time a inventory has been requested
@@ -703,10 +750,10 @@ impl Peer {
     }
 
     // Close the peer connection and remove it from the peer list
-    pub async fn close_and_temp_ban(&self, seconds: u64) -> Result<(), P2pError> {
+    pub async fn close_and_temp_ban(&self, duration: Duration) -> Result<(), P2pError> {
         trace!("temp ban {}", self);
         if !self.is_priority() {
-            self.peer_list.temp_ban_address(&self.get_connection().get_address().ip(), seconds, false).await?;
+            self.peer_list.temp_ban_address(&self.get_connection().get_address().ip(), duration, false).await?;
         } else {
             debug!("{} is a priority peer, closing only", self);
         }

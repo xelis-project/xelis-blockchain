@@ -1,13 +1,13 @@
 [package]
 name = "xelis_daemon"
-version = "1.22.1"
+version = "1.22.2"
 edition = "2021"
 authors = ["Slixe <slixeprivate@gmail.com>"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-xelis_common = { path = "../xelis_common", features = ["prompt", "clap", "rpc-server", "tokio"] }
+xelis_common = { path = "../xelis_common", features = ["rpc-server", "tokio"] }
 xelis-environment = { git = "https://github.com/xelis-project/xelis-vm", branch = "dev" }
 xelis-vm = { git = "https://github.com/xelis-project/xelis-vm", branch = "dev" }
 xelis-assembler = { git = "https://github.com/xelis-project/xelis-vm", branch = "dev" }
@@ -22,7 +22,6 @@ x25519-dalek = { version = "2.0.1", features = ["serde", "zeroize", "static_secr
 metrics-exporter-prometheus = "0.17.0"
 semver = "1.0.23"
 itertools = "0.14.0"
-linked-hash-table = { version = "0.1.2", features = ["serde"] }
 bytes = "1"
 humantime = "2.1.0"
 human_bytes = "0.4.2"
@@ -35,7 +34,7 @@ schemars = { workspace = true }
 actix-web = { workspace = true }
 actix-cors = { workspace = true }
 strum = { workspace = true }
-clap = { workspace = true }
+clap = { workspace = true, optional = true }
 lru = { workspace = true }
 async-trait = { workspace = true }
 lazy_static = { workspace = true }
@@ -51,11 +50,21 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 indexmap = { workspace = true }
 futures = { workspace = true }
+linked-hash-table = { workspace = true }
 
 [features]
-default = ["sled", "rocksdb"]
+default = ["cli", "sled", "rocksdb"]
+cli = ["dep:clap", "xelis_common/prompt"]
 rocksdb = ["dep:rocksdb"]
 sled = []
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "xelis_daemon"
+path = "src/main.rs"
+required-features = ["cli"]
 
 [dev-dependencies]
 tempdir = "*"

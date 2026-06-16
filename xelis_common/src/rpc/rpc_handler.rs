@@ -60,7 +60,8 @@ pub struct MethodHandler {
 pub struct RPCHandler<T: ShareableTid<'static>> {
     // all RPC methods registered
     methods: HashMap<Cow<'static, str>, MethodHandler>,
-    data: T,
+    // Optional data to be easily mocked in tests
+    data: Option<T>,
     batch_limit: Option<usize>
 }
 
@@ -71,10 +72,10 @@ where
     T: ShareableTid<'static>
 {
     // Create a new RPC handler with optional batch limit
-    pub fn new(data: T, limit: impl Into<Option<usize>>) -> Self {
+    pub fn new(data: impl Into<Option<T>>, limit: impl Into<Option<usize>>) -> Self {
         let mut handler = Self {
             methods: HashMap::new(),
-            data,
+            data: data.into(),
             batch_limit: limit.into()
         };
 
@@ -124,8 +125,14 @@ where
         })
     }
 
+    // Has method with the given name
     pub fn has_method(&self, method_name: &str) -> bool {
         self.methods.contains_key(method_name)
+    }
+
+    // Get an iterator of all registered methods and their schemas
+    pub fn methods(&self) -> impl Iterator<Item = (&str, &RpcSchema)> {
+        self.methods.iter().map(|(name, handler)| (name.as_ref(), &handler.schema))
     }
 
     // Execute an RPC method from a request
@@ -293,8 +300,8 @@ where
 
     // Get a reference to the data associated with the RPC handler
     #[inline]
-    pub fn get_data(&self) -> &T {
-        &self.data
+    pub fn get_data(&self) -> Option<&T> {
+        self.data.as_ref()
     }
 }
 

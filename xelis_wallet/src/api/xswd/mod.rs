@@ -170,7 +170,8 @@ where
 
         debug!("Requesting permission for application {}", state.get_name());
 
-        let wallet = self.handler.get_data();
+        let wallet = self.handler.get_data()
+            .ok_or(XSWDError::InvalidContext)?;
         state.set_requesting(true);
         let permission = match wallet.request_permission(&state, PermissionRequest::Application).await {
             Ok(v) => v,
@@ -206,7 +207,10 @@ where
         if request.method.starts_with("node.") {
             // Remove the 5 first chars (node.)
             request.method = request.method[5..].into();
-            return self.handler.get_data().call_node_with(app, request).await
+            let wallet = self.handler.get_data()
+                .ok_or_else(|| RpcResponseError::new(request.id.clone(), InternalRpcError::InvalidContext))?;
+
+            return wallet.call_node_with(app, request).await
         }
 
         // Verify that the method start with "wallet."
@@ -234,13 +238,17 @@ where
         info!("Application {} has disconnected", app.get_name());
         if app.is_requesting() {
             debug!("Application {} is requesting a permission, aborting...", app.get_name());
-            self.handler.get_data().cancel_request_permission(&app).await?;
+            self.handler.get_data()
+                .ok_or(InternalRpcError::InvalidContext)?
+                .cancel_request_permission(&app).await?;
             debug!("Permission request for application {} has been cancelled", app.get_name());
         }
 
         self.events.on_close(&app).await;
 
-        self.handler.get_data().on_app_disconnect(app).await
+        self.handler.get_data()
+            .ok_or(InternalRpcError::InvalidContext)?
+            .on_app_disconnect(app).await
     }
 
     pub async fn execute_method(&self, app: &AppStateShared, request: RpcRequest) -> Option<Value> {
@@ -287,6 +295,7 @@ where
             // Request permission from user
             Some(Permission::Ask) => {
                 let result = self.handler.get_data()
+                    .ok_or(InternalRpcError::InvalidContext)?
                     .request_permission(app, PermissionRequest::Request(request)).await?;
 
                 debug!("Permission request result for method '{}' is '{:?}'", request.method, result);
@@ -301,7 +310,7 @@ where
                     },
                     PermissionResult::AlwaysReject => {
                         let mut permissions = app.get_permissions().lock().await;
-                        permissions.insert(request.method.clone(), Permission::Allow);
+                        permissions.insert(request.method.clone(), Permission::Reject);
                         Err(XSWDError::PermissionDenied.into())
                     }   
                 }
@@ -340,7 +349,8 @@ pub async fn prefetch_permissions<W: ShareableTid<'static> + XSWDHandler>(contex
         }
     }
 
-    let wallet = handler.get_data();
+    let wallet = handler.get_data()
+            .ok_or(InternalRpcError::InvalidContext)?;
 
     app.set_requesting(true);
     let res = wallet.on_prefetch_permissions_request(app, params).await?;

@@ -25,6 +25,7 @@ use std::{
     io,
     net::{IpAddr, SocketAddr},
     num::NonZeroUsize,
+    cmp::Ordering as CmpOrdering,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc
@@ -168,8 +169,8 @@ pub struct P2pServer<S: Storage> {
     // Current stream concurrency to use
     // This is used to limit the number of concurrency tasks in a stream
     stream_concurrency: usize,
-    // Time in seconds to ban a peer
-    temp_ban_time: u64,
+    // Time to ban a peer
+    temp_ban_time: Duration,
     // Fail count threshold to ban a peer
     fail_count_limit: u8,
     // Sender used to notify the ping loop
@@ -213,7 +214,7 @@ impl<S: Storage> P2pServer<S> {
         dh_keypair: Option<diffie_hellman::DHKeyPair>,
         dh_action: diffie_hellman::KeyVerificationAction,
         stream_concurrency: usize,
-        temp_ban_time: u64,
+        temp_ban_time: Duration,
         fail_count_limit: u8,
         disable_reexecute_blocks_on_sync: bool,
         block_propagation_log_level: log::Level,
@@ -237,7 +238,7 @@ impl<S: Storage> P2pServer<S> {
             return Err(P2pError::InvalidMaxPeers);
         }
 
-        if temp_ban_time == 0 {
+        if temp_ban_time.is_zero() {
             return Err(P2pError::InvalidTempBanTime);
         }
 
@@ -973,9 +974,21 @@ impl<S: Storage> P2pServer<S> {
             peers = priority_peers;
         }
 
-        // Now sort by cumulative difficulty descending
-        // we use unstable sort because we don't care about the order of peers with same cumulative difficulty
-        peers.sort_unstable_by(|a, b| b.2.cmp(&a.2));
+        // Now sort by cumulative difficulty descending.
+        // We use unstable sort because we don't care about the order of peers with the same
+        // cumulative difficulty and latency state.
+        // Then, favor peers without latency data to give untested peers a chance.
+        // Finally, sort by latency to favor peers with lower latency.
+        peers.sort_unstable_by(|a, b| {
+            b.2.cmp(&a.2).then_with(|| {
+                match (a.0.get_latency_ms(), b.0.get_latency_ms()) {
+                    (None, None) => CmpOrdering::Equal,
+                    (None, Some(_)) => CmpOrdering::Less,
+                    (Some(_), None) => CmpOrdering::Greater,
+                    (Some(a_latency), Some(b_latency)) => a_latency.cmp(&b_latency)
+                }
+            })
+        });
 
         // Select the best peer available
         Ok(Some(peers.swap_remove(0).0))

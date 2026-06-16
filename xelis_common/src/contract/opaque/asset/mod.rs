@@ -226,8 +226,8 @@ pub async fn asset_transfer_ownership<'a, 'ty, 'r, P: ContractProvider<'ty>>(zel
     let asset: &OpaqueAsset = zelf.as_opaque_type()?;
     let (provider, state) = from_context::<P>(context)?;
 
-    // Ensure that the contract hash is a valid one
-    if !provider.has_contract(&asset.hash, state.topoheight).await? {
+    // Ensure that the new owner contract hash is a valid one
+    if !provider.has_contract(&param, state.topoheight).await? {
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()))
     }
 

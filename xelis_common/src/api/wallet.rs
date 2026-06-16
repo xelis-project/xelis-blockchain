@@ -22,12 +22,11 @@ use crate::{
         multisig::SignatureId,
         Reference,
         Role,
-        Transaction,
         TxVersion
     }
 };
 use super::{
-    DataHash,
+    RPCTransaction,
     DataElement,
     DataValue,
     query::Query,
@@ -223,6 +222,8 @@ pub struct ListTransactionsParams {
     pub accept_coinbase: bool,
     #[serde(default = "default_true_value")]
     pub accept_burn: bool,
+    #[serde(default = "default_true_value")]
+    pub accept_blob: bool,
     // Filter by extra data
     pub query: Option<Query>,
     // Limit the number of entries returned
@@ -288,7 +289,7 @@ pub struct GetAssetsEntry {
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct TransactionResponse<'a> {
     #[serde(flatten)]
-    pub inner: DataHash<'a, Transaction>,
+    pub inner: RPCTransaction<'a>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tx_as_hex: Option<String>
 }
@@ -342,8 +343,8 @@ pub struct SearchTransactionParams<'a> {
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
-pub struct SearchTransactionResult {
-    pub transaction: Option<TransactionEntry>,
+pub struct SearchTransactionResult<'a> {
+    pub transaction: Option<TransactionEntry<'a>>,
     pub index: Option<u64>,
     pub is_raw_search: bool
 }
@@ -462,30 +463,35 @@ pub enum NotifyEvent {
     Offline,
     // Error occuring while syncing
     SyncError,
+    // When an asset is tracked in wallet
     TrackAsset,
+    // When an asset is untracked from wallet
     UntrackAsset,
+    // When a new pending transaction is added to wallet
+    // Contains TransactionPending struct as value
+    NewPendingTransaction,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TransferOut {
+pub struct TransferOut<'a> {
     // Destination address
-    pub destination: Address,
+    pub destination: Cow<'a, Address>,
     // Asset spent
-    pub asset: Hash,
+    pub asset: Cow<'a, Hash>,
     // Plaintext amount
     pub amount: u64,
     // extra data
-    pub extra_data: Option<PlaintextExtraData>
+    pub extra_data: Cow<'a, Option<PlaintextExtraData>>
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TransferIn {
+pub struct TransferIn<'a> {
     // Asset spent
-    pub asset: Hash,
+    pub asset: Cow<'a, Hash>,
     // Plaintext amount
     pub amount: u64,
     // extra data
-    pub extra_data: Option<PlaintextExtraData>
+    pub extra_data: Cow<'a, Option<PlaintextExtraData>>
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -501,23 +507,23 @@ pub struct DeployInvoke {
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum EntryType {
+pub enum EntryType<'a> {
     // Coinbase is only XELIS_ASSET
     Coinbase {
         reward: u64
     },
     Burn {
-        asset: Hash,
+        asset: Cow<'a, Hash>,
         amount: u64,
         fee: u64,
         nonce: u64
     },
     Incoming {
-        from: Address,
-        transfers: Vec<TransferIn>
+        from: Cow<'a, Address>,
+        transfers: Vec<TransferIn<'a>>
     },
     Outgoing {
-        transfers: Vec<TransferOut>,
+        transfers: Vec<TransferOut<'a>>,
         // Fee paid
         fee: u64,
         // Nonce used
@@ -525,7 +531,7 @@ pub enum EntryType {
     },
     MultiSig {
         // List of participants
-        participants: Vec<Address>,
+        participants: Cow<'a, Vec<Address>>,
         // Number of signatures required
         threshold: u8,
         // Fee paid
@@ -535,11 +541,11 @@ pub enum EntryType {
     },
     InvokeContract {
         // Contract address
-        contract: Hash,
+        contract: Cow<'a, Hash>,
         // Deposits made
-        deposits: IndexMap<Hash, u64>,
+        deposits: Cow<'a, IndexMap<Hash, u64>>,
         // Received assets from that call
-        received: IndexMap<Hash, u64>,
+        received: Cow<'a, IndexMap<Hash, u64>>,
         // Chunk id invoked
         chunk_id: u16,
         // Fee paid
@@ -555,41 +561,61 @@ pub enum EntryType {
         // Nonce used
         nonce: u64,
         // constructor invoke
-        invoke: Option<DeployInvoke>
+        invoke: Option<Cow<'a, DeployInvoke>>
     },
     IncomingContract {
         // Transfers received from the contract
-        transfers: IndexMap<Hash, u64>,
+        transfers: Cow<'a, IndexMap<Hash, u64>>,
     },
-    Blob {
-        data: PlaintextExtraData
+    OutgoingBlob {
+        destinations: Cow<'a, IndexSet<Address>>,
+        fee: u64,
+        nonce: u64,
+        data: Cow<'a, PlaintextExtraData>,
+    },
+    IncomingBlob {
+        from: Cow<'a, Address>,
+        destinations: Cow<'a, IndexSet<Address>>,
+        data: Cow<'a, PlaintextExtraData>,
     }
 }
 
 // This struct is used to represent a transaction entry like in wallet
 // But we replace every PublicKey to use Address instead
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct TransactionEntry {
-    pub hash: Hash,
+pub struct TransactionEntry<'a> {
+    pub hash: Cow<'a, Hash>,
     pub topoheight: TopoHeight,
-    pub timestamp: u64,
+    pub timestamp: TimestampMillis,
     #[serde(flatten)]
-    pub entry: EntryType,
+    pub entry: EntryType<'a>,
 }
 
-impl std::hash::Hash for TransactionEntry {
+impl std::hash::Hash for TransactionEntry<'_> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.hash.hash(state);
     }
 }
 
-impl std::cmp::PartialEq for TransactionEntry {
+impl std::cmp::PartialEq for TransactionEntry<'_> {
     fn eq(&self, other: &Self) -> bool {
         self.hash == other.hash
     }
 }
 
-impl std::cmp::Eq for TransactionEntry {}
+impl std::cmp::Eq for TransactionEntry<'_> {}
+
+// Pending transaction struct used in wallet to represent a transaction that is not yet confirmed
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TransactionPending<'a> {
+    // Transaction hash
+    pub hash: Cow<'a, Hash>,
+    // At which time the transaction was created
+    pub timestamp: TimestampMillis,
+    // Entry data of the transaction
+    #[serde(flatten)]
+    pub entry: EntryType<'a>,
+}
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct EstimateExtraDataSizeParams {

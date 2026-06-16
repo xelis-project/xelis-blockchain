@@ -17,7 +17,7 @@ use crate::{
 
 #[derive(Debug, Default, Clone)]
 pub struct MockStorageProvider {
-    pub data: HashMap<(Hash, ValueCell), (TopoHeight, Option<ValueCell>)>,
+    pub contracts: HashMap<Hash, HashMap<ValueCell, (TopoHeight, Option<ValueCell>)>>,
 }
 
 tid!(MockStorageProvider);
@@ -30,7 +30,7 @@ impl ContractStorage for MockStorageProvider {
         key: &ValueCell,
         _: TopoHeight,
     ) -> Result<Option<(TopoHeight, Option<ValueCell>)>, anyhow::Error> {
-        Ok(self.data.get(&(contract.clone(), key.clone())).cloned())
+        Ok(self.contracts.get(contract).and_then(|c| c.get(key).cloned()))
     }
 
     async fn load_data_latest_topoheight(
@@ -40,13 +40,14 @@ impl ContractStorage for MockStorageProvider {
         _: TopoHeight,
     ) -> Result<Option<TopoHeight>, anyhow::Error> {
         Ok(self
-            .data
-            .get(&(contract.clone(), key.clone()))
+            .contracts
+            .get(contract)
+            .and_then(|c| c.get(key))
             .map(|(topo, _)| *topo))
     }
 
     async fn has_contract(&self, contract: &Hash, _: TopoHeight) -> Result<bool, anyhow::Error> {
-        Ok(self.data.keys().any(|(c, _)| c == contract))
+        Ok(self.contracts.contains_key(contract))
     }
 }
 

@@ -88,13 +88,16 @@ impl<'s, 'b, P: ApplicableChainStateProvider> BlockchainVerificationState<'b, Bl
         // Starting V3: burn a % of the extra base fee
         if self.block_version >= BlockVersion::V3 {
             // The extra base fee is (TX FEE PER KB - MIN. FEE PER KB)
-            let extra_base_fee = self.tx_base_fee - FEE_PER_KB;
-            let tx_extra_base_fee = extra_base_fee * tx_kb_size_rounded(tx.size()) as u64;
+            let extra_base_fee = self.tx_base_fee.checked_sub(FEE_PER_KB)
+                .ok_or(BlockchainError::ConsensusOverflow)?;
+            let tx_extra_base_fee = extra_base_fee.checked_mul(tx_kb_size_rounded(tx.size()) as u64)
+                .ok_or(BlockchainError::ConsensusOverflow)?;
             // The burned part is computed above the extra base fee
             let burned_part = tx_extra_base_fee * EXTRA_BASE_FEE_BURN_PERCENT / 100;
 
             // Remove the burned part from fee
-            fees_paid -= burned_part;
+            fees_paid = fees_paid.checked_sub(burned_part)
+                .ok_or(BlockchainError::ConsensusOverflow)?;
 
             debug!(
                 "TX {} fees: {}, fees paid: {} XEL, computed TX base fee: {} XEL, extra base fee: {} XEL, burned part: {} XEL",
@@ -107,10 +110,12 @@ impl<'s, 'b, P: ApplicableChainStateProvider> BlockchainVerificationState<'b, Bl
             );
 
             // Burn a part of the fee
-            self.total_fees_burned += burned_part;
+            self.total_fees_burned = self.total_fees_burned.checked_add(burned_part)
+                .ok_or(BlockchainError::ConsensusOverflow)?;
         }
 
-        self.total_fees += fees_paid;
+        self.total_fees = self.total_fees.checked_add(fees_paid)
+            .ok_or(BlockchainError::ConsensusOverflow)?;
 
         Ok(refund)
     }
@@ -246,7 +251,8 @@ impl<'s, 'b, 'ty, P: ApplicableChainStateProvider> BlockchainApplyState<'b, 'ty,
 
     /// Add burned XELIS fee
     async fn add_burned_fee(&mut self, amount: u64) -> Result<(), BlockchainError> {
-        self.total_fees_burned += amount;
+        self.total_fees_burned = self.total_fees_burned.checked_add(amount)
+            .ok_or(BlockchainError::ConsensusOverflow)?;
         Ok(())
     }
 
@@ -543,6 +549,7 @@ impl<'s, 'b, P: ApplicableChainStateProvider> ApplicableChainState<'s, 'b, P> {
                 environments,
                 stable_topoheight,
                 topoheight,
+                topoheight,
                 block_version,
                 tx_base_fee,
                 base_height,
@@ -838,7 +845,8 @@ impl<'s, 'b, P: ApplicableChainStateProvider> ApplicableChainState<'s, 'b, P> {
             block_hash: self.block_hash,
             is_side_block: self.is_side_block,
             contract_manager: self.contract_manager,
-            total_fees: self.total_fees + self.inner.gas_fee,
+            total_fees: self.total_fees.checked_add(self.inner.gas_fee)
+                .ok_or(BlockchainError::ConsensusOverflow)?,
             total_fees_burned: self.total_fees_burned,
             transactions_links: self.transactions_links,
             receiver_balances: self.inner.receiver_balances,

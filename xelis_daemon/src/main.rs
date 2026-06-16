@@ -1,14 +1,8 @@
-pub mod rpc;
-pub mod p2p;
-pub mod core;
-pub mod config;
-
 use futures::StreamExt;
 use human_bytes::human_bytes;
 use humantime::{format_duration, Duration as HumanDuration};
 use log::{debug, error, info, trace, warn};
-use rpc::rpc::get_block_response_for_hash;
-use serde::{Deserialize, Serialize};
+use xelis_daemon::rpc::rpc::get_block_response_for_hash;
 use tokio::pin;
 use xelis_assembler::Disassembler;
 use xelis_common::{
@@ -36,16 +30,13 @@ use xelis_common::{
             CommandManager
         },
         Color,
-        LogLevel,
-        ModuleConfig,
         Prompt,
         PromptError,
         ShareablePrompt,
-        default_logs_datetime_format
     },
     rpc::server::WebSocketServerHandler,
     serializer::Serializer,
-    transaction::{verify::NoZKPCache, Transaction},
+    transaction::{verify::NoZKPCache, Transaction, TransactionType},
     utils::{
         format_difficulty,
         format_hashrate,
@@ -53,8 +44,8 @@ use xelis_common::{
     }
 };
 use xelis_vm::Access;
-use crate::config::{DEV_PUBLIC_KEY, MILLIS_PER_SECOND, get_stable_limit};
-use core::{
+use xelis_daemon::config::{DEV_PUBLIC_KEY, MILLIS_PER_SECOND, get_stable_limit};
+use xelis_daemon::core::{
     state::{ChainState, ApplicableChainState},
     blockchain::{
         get_block_reward,
@@ -64,7 +55,7 @@ use core::{
         PreVerifyBlock,
     },
     blockdag,
-    config::{BlockchainConfig as InnerConfig, StorageBackend},
+    config::StorageBackend,
     hard_fork::{
         get_block_time_target_for_version,
         get_pow_algorithm_for_version,
@@ -74,13 +65,13 @@ use core::{
 };
 
 #[cfg(feature = "rocksdb")]
-use core::storage::{RocksStorage, RocksDBConfig};
+use xelis_daemon::core::storage::RocksStorage;
 
 #[cfg(feature = "sled")]
-use core::storage::{SledStorage, SledConfig};
+use xelis_daemon::core::storage::SledStorage;
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs::File,
     io::Write,
     net::{IpAddr, SocketAddr},
@@ -89,124 +80,11 @@ use std::{
     time::{Duration, Instant}
 };
 use clap::Parser;
+use xelis_daemon::cli_config::CliConfig;
 use anyhow::{
     Result,
     Context as AnyContext
 };
-
-// Functions helpers for serde default values
-fn default_filename_log() -> String {
-    "xelis-daemon.log".to_owned()
-}
-
-fn default_logs_path() -> String {
-    "logs/".to_owned()
-}
-
-#[derive(Debug, Clone, Parser, Serialize, Deserialize)]
-pub struct LogConfig {
-    /// Set log level
-    #[clap(long, value_enum, default_value_t = LogLevel::Info)]
-    #[serde(default)]
-    log_level: LogLevel,
-    /// Set file log level
-    /// By default, it will be the same as log level
-    #[clap(long, value_enum)]
-    file_log_level: Option<LogLevel>,
-    /// Disable the log file
-    #[clap(long)]
-    #[serde(default)]
-    disable_file_logging: bool,
-    /// Disable the log filename date based
-    /// If disabled, the log file will be named xelis-daemon.log instead of YYYY-MM-DD.xelis-daemon.log
-    #[clap(long)]
-    #[serde(default)]
-    disable_file_log_date_based: bool,
-    /// Disable the usage of colors in log
-    #[clap(long)]
-    #[serde(default)]
-    disable_log_color: bool,
-    /// Disable terminal interactive mode
-    /// You will not be able to write CLI commands in it or to have an updated prompt
-    #[clap(long)]
-    #[serde(default)]
-    disable_interactive_mode: bool,
-    /// Enable the log file auto compression
-    /// If enabled, the log file will be compressed every day
-    /// This will only work if the log file is enabled
-    #[clap(long)]
-    #[serde(default)]
-    auto_compress_logs: bool,
-    /// Log filename
-    /// 
-    /// By default filename is xelis-daemon.log.
-    /// File will be stored in logs directory, this is only the filename, not the full path.
-    /// Log file is rotated every day and has the format YYYY-MM-DD.xelis-daemon.log.
-    #[clap(long, default_value_t = default_filename_log())]
-    #[serde(default = "default_filename_log")]
-    filename_log: String,
-    /// Logs directory
-    /// 
-    /// By default it will be logs/ of the current directory.
-    /// It must end with a / to be a valid folder.
-    #[clap(long, default_value_t = default_logs_path())]
-    #[serde(default = "default_logs_path")]
-    logs_path: String,
-    /// Module configuration for logs
-    #[clap(long)]
-    #[serde(default)]
-    logs_modules: Vec<ModuleConfig>,
-    /// Disable the ascii art at startup
-    #[clap(long)]
-    #[serde(default)]
-    disable_ascii_art: bool,
-    /// Change the datetime format used by the logger
-    #[clap(long, default_value_t = default_logs_datetime_format())]
-    #[serde(default = "default_logs_datetime_format")]
-    datetime_format: String, 
-}
-
-#[derive(Parser, Serialize, Deserialize)]
-#[clap(version = VERSION, about = "XELIS is an innovative cryptocurrency built from scratch with BlockDAG, Homomorphic Encryption, Zero-Knowledge Proofs, and Smart Contracts.")]
-#[command(styles = xelis_common::get_cli_styles())]
-pub struct CliConfig {
-    /// Blockchain core configuration
-    #[structopt(flatten)]
-    core: InnerConfig,
-    /// Sled DB Backend if enabled
-    #[cfg(feature = "sled")]
-    #[clap(flatten)]
-    #[serde(default)]
-    pub sled: SledConfig,
-    /// RocksDB Backend if enabled
-    #[cfg(feature = "rocksdb")]
-    #[clap(flatten)]
-    #[serde(default)]
-    pub rocksdb: RocksDBConfig,
-    /// Use a different DB backend from the default.
-    /// Note that the data will not be migrated from one to another
-    /// and you may lose your data.
-    #[clap(long, value_enum, default_value_t)]
-    #[serde(default)]
-    pub use_db_backend: StorageBackend,
-    /// Log configuration
-    #[structopt(flatten)]
-    log: LogConfig,
-    /// Network selected for chain
-    #[clap(long, value_enum, default_value_t = Network::Mainnet)]
-    #[serde(default)]
-    network: Network,
-    /// JSON File to load the configuration from
-    #[clap(long)]
-    #[serde(skip)]
-    #[serde(default)]
-    config_file: Option<String>,
-    /// Generate the template at the `config_file` path
-    #[clap(long)]
-    #[serde(skip)]
-    #[serde(default)]
-    generate_config_template: bool,
-}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -333,6 +211,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::with_optional_arguments("show_peerlist", "Show the stored peerlist", vec![Arg::new("page", ArgType::Number)], CommandHandler::Async(async_handler!(show_stored_peerlist::<S>))))?;
     command_manager.add_command(Command::new("show_account", "Show account of an address", CommandHandler::Async(async_handler!(show_account::<S>))))?;
     command_manager.add_command(Command::with_arguments("show_balance", "Show balance of an address", vec![], vec![Arg::new("history", ArgType::Number)], CommandHandler::Async(async_handler!(show_balance::<S>))))?;
+    command_manager.add_command(Command::with_optional_arguments("export_account_txs", "Export account transactions as CSV", vec![Arg::new("address", ArgType::String), Arg::new("output", ArgType::String)], CommandHandler::Async(async_handler!(export_account_txs::<S>))))?;
     command_manager.add_command(Command::with_arguments("show_multisig", "Show multisig history of an address", vec![], vec![], CommandHandler::Async(async_handler!(show_multisig::<S>))))?;
     command_manager.add_command(Command::with_required_arguments("print_block", "Print block in json format", vec![Arg::new("hash", ArgType::Hash)], CommandHandler::Async(async_handler!(print_block::<S>))))?;
     command_manager.add_command(Command::with_required_arguments("dump_tx", "Dump TX in hexadecimal format", vec![Arg::new("hash", ArgType::Hash)], CommandHandler::Async(async_handler!(dump_tx::<S>))))?;
@@ -371,7 +250,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
     command_manager.add_command(Command::new("request_peers_inventory", "Request peers inventory", CommandHandler::Async(async_handler!(request_peers_inventory::<S>))))?;
     command_manager.add_command(Command::new("snapshot_mode", "Force to be in snapshot mode (memory only)", CommandHandler::Async(async_handler!(snapshot_mode::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("inspect_contract", "Inspect a smart contract by its hash", vec![Arg::new("contract", ArgType::Hash), Arg::new("show-storage", ArgType::Bool)], CommandHandler::Async(async_handler!(inspect_contract::<S>))))?;
-    command_manager.add_command(Command::new("show_mempool", "Show all transactions in mempool", CommandHandler::Async(async_handler!(show_mempool::<S>))))?;
+    command_manager.add_command(Command::with_optional_arguments("show_mempool", "Show information about the mempool", vec![Arg::new("show_transactions", ArgType::Bool)], CommandHandler::Async(async_handler!(show_mempool::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("import_block", "Import a block in hexadecimal format", vec![Arg::new("hex", ArgType::String)], CommandHandler::Async(async_handler!(import_block::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("import_tx", "Import a TX in hexadecimal format", vec![Arg::new("hex", ArgType::String)], CommandHandler::Async(async_handler!(import_tx::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("show_emitted_supply_at_topoheight", "Show emitted supply at a specific topoheight", vec![Arg::new("topoheight", ArgType::Number)], CommandHandler::Async(async_handler!(show_emitted_supply_at_topoheight::<S>))))?;
@@ -633,7 +512,7 @@ async fn verify_chain<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
             let base_height = blockdag::find_common_base_height(&*storage, header.get_tips(), header.get_version()).await
                 .context("Error while finding common base for tx verification")?;
 
-            let mut state = ChainState::new(&*storage, blockchain.get_contract_environments(), 0, topo - 1, header.get_version(), required_base_fee, base_height);
+            let mut state = ChainState::new(&*storage, blockchain.get_contract_environments(), 0, topo.saturating_sub(1), topo, header.get_version(), required_base_fee, base_height);
             Transaction::verify_batch(txs.iter().map(|(tx, hash)| (tx, *hash)), &mut state, &NoZKPCache::default()).await
                 .context("Error while verifying txs")?;
 
@@ -812,14 +691,21 @@ async fn export_json_config<S: Storage>(manager: &CommandManager, mut args: Argu
     Ok(())
 }
 
-async fn show_mempool<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {
+async fn show_mempool<S: Storage>(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
     let context = manager.get_context().lock()?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let mempool = blockchain.get_mempool().read().await;
 
-    manager.message(format!("Mempool: {} transactions", mempool.get_txs().iter().len()));
-    for (hash, tx) in mempool.get_txs() {
-        manager.message(format!("- {}: {} XEL fee for {}", hash, format_xelis(tx.get_fee()), human_bytes(tx.get_size() as f64)));
+    manager.message("Mempool:");
+    manager.message(format!("- Transactions: {}", mempool.get_txs().iter().len()));
+    manager.message(format!("- Sources: {}", mempool.get_caches().len()));
+    manager.message(format!("- Memory usage: {}", human_bytes(mempool.memory_usage() as f64)));
+    manager.message(format!("- Max memory usage: {}", human_bytes(mempool.get_max_memory_usage() as f64)));
+
+    if args.get_flag("show_transactions")? {
+        for (hash, tx) in mempool.get_txs() {
+            manager.message(format!("   - {}: {} XEL per kB ({})", hash, format_xelis(tx.get_fee_per_kb()), human_bytes(tx.get_size() as f64)));
+        }
     }
 
     Ok(())
@@ -972,10 +858,11 @@ async fn temp_ban_address<S: Storage>(manager: &CommandManager, mut args: Argume
         Some(p2p) => {
             let addr: IpAddr = args.get_value("address")?.to_string_value()?.parse().context("Error while parsing socket address")?;
             let duration: HumanDuration = args.get_value("duration")?.to_string_value()?.parse().context("Error while parsing duration")?;
+            let duration = Duration::from(duration);
             let peer_list = p2p.get_peer_list();
 
-            peer_list.temp_ban_address(&addr, duration.as_secs(), true).await.context("Error while banning address")?;
-            manager.message(format!("Address {} has been banned for {}", addr, duration));
+            peer_list.temp_ban_address(&addr, duration, true).await.context("Error while banning address")?;
+            manager.message(format!("Address {} has been banned for {}", addr, format_duration(duration)));
         },
         None => {
             manager.error("P2P is not enabled");
@@ -1255,6 +1142,94 @@ async fn show_balance<S: Storage>(manager: &CommandManager, mut arguments: Argum
     }
 
     Ok(())
+}
+
+async fn export_account_txs<S: Storage>(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let prompt = manager.get_prompt();
+    let str_address = if arguments.has_argument("address") {
+        arguments.get_value("address")?.to_string_value()?
+    } else {
+        prompt.read_input(
+            prompt.colorize_string(Color::Green, "Address: "),
+            false
+        ).await.context("Error while reading address")?
+    };
+    let address = Address::from_string(&str_address).context("Invalid address")?;
+
+    let output = if arguments.has_argument("output") {
+        arguments.get_value("output")?.to_string_value()?
+    } else {
+        prompt.read_input("CSV output path: ", false).await
+            .context("Error while reading output path")?
+    };
+
+    let key = address.to_public_key();
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    let storage = blockchain.get_storage().read().await;
+
+    if !storage.has_nonce(&key).await.context("Error while checking account nonce")? {
+        manager.message("No transaction found for address");
+        return Ok(());
+    }
+
+    let mut rows = Vec::new();
+    let mut seen = HashSet::new();
+    let (mut topoheight, mut nonce) = storage.get_last_nonce(&key).await
+        .context("Error while retrieving last nonce")?;
+
+    loop {
+        let (_, header) = storage.get_block_header_at_topoheight(topoheight).await
+            .context("Error while retrieving block at nonce topoheight")?;
+
+        for tx_hash in header.get_transactions() {
+            if !seen.insert(tx_hash.clone()) {
+                continue;
+            }
+
+            let tx = storage.get_transaction(tx_hash).await
+                .context("Error while retrieving transaction")?;
+            if tx.get_source() == &key {
+                rows.push((topoheight, tx_hash.clone(), transaction_type_name(tx.get_data())));
+            }
+        }
+
+        if let Some(previous) = nonce.get_previous_topoheight() {
+            nonce = storage.get_nonce_at_exact_topoheight(&key, previous).await
+                .context("Error while retrieving nonce history")?;
+            topoheight = previous;
+        } else {
+            break;
+        }
+    }
+
+    rows.sort_by_key(|(topoheight, _, _)| *topoheight);
+
+    let mut file = File::create(&output)
+        .context("Error while creating CSV file")?;
+    file.write_all(b"topoheight,hash,type\n")
+        .context("Error while writing CSV header")?;
+    for (topoheight, hash, tx_type) in rows.iter() {
+        writeln!(file, "{},{},{}", topoheight, hash, tx_type)
+            .context("Error while writing CSV row")?;
+    }
+    file.flush()
+        .context("Error while flushing CSV file")?;
+
+    manager.message(format!("Exported {} transactions to {}", rows.len(), output));
+
+    Ok(())
+}
+
+fn transaction_type_name(tx_type: &TransactionType) -> &'static str {
+    match tx_type {
+        TransactionType::Transfers(_) => "transfers",
+        TransactionType::Burn(_) => "burn",
+        TransactionType::MultiSig(_) => "multisig",
+        TransactionType::InvokeContract(_) => "invoke_contract",
+        TransactionType::DeployContract(_) => "deploy_contract",
+        TransactionType::Blob(_) => "blob",
+    }
 }
 
 async fn show_multisig<S: Storage>(manager: &CommandManager, _: ArgumentManager) -> Result<(), CommandError> {

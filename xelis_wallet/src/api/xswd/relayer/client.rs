@@ -1,4 +1,5 @@
 use std::{borrow::Cow, collections::HashMap, sync::Arc, time::Duration};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use futures::{SinkExt, StreamExt};
 use log::{error, debug};
@@ -39,6 +40,7 @@ pub struct ClientImpl {
     target: String,
     sender: mpsc::Sender<InternalMessage>,
     events: RwLock<HashMap<NotifyEvent, task::JoinHandle<()>>>,
+    connected: AtomicBool,
     auto_reconnect: bool,
 }
 
@@ -59,6 +61,7 @@ impl ClientImpl {
             target,
             sender,
             events: RwLock::new(HashMap::new()),
+            connected: AtomicBool::new(true),
             auto_reconnect,
         });
 
@@ -66,29 +69,37 @@ impl ClientImpl {
             let client = client.clone();
             spawn_task(format!("xswd-relayer-{}", state.get_id()), async move {
                 loop {
-                    if let Err(e) = Self::background_task(&client, ws, &state, &relayer, &mut receiver, &mut cipher).await {
-                        debug!("Error on xswd relayer #{}: {}", state.get_id(), e);
+                    match Self::background_task(&client, ws, &state, &relayer, &mut receiver, &mut cipher).await {
+                        Ok(()) => {
+                            client.connected.store(false, Ordering::SeqCst);
+                            break;
+                        },
+                        Err(e) => {
+                            client.connected.store(false, Ordering::SeqCst);
+                            debug!("Error on xswd relayer #{}: {}", state.get_id(), e);
 
-                        if client.auto_reconnect {
-                            debug!("Reconnecting to xswd relayer in 5 seconds #{}...", state.get_id());
-                            sleep(Duration::from_secs(5)).await;
+                            if client.auto_reconnect {
+                                debug!("Reconnecting to xswd relayer in 5 seconds #{}...", state.get_id());
+                                sleep(Duration::from_secs(5)).await;
 
-                            match connect(&client.target).await {
-                                Ok(new_ws) => {
-                                    debug!("Reconnected to xswd relayer #{}", state.get_id());
-                                    ws = new_ws;
+                                match connect(&client.target).await {
+                                    Ok(new_ws) => {
+                                        debug!("Reconnected to xswd relayer #{}", state.get_id());
+                                        ws = new_ws;
+                                        client.connected.store(true, Ordering::SeqCst);
 
-                                    // Loop to try again
-                                    continue;
-                                },
-                                Err(e) => {
-                                    error!("Failed to reconnect to xswd relayer #{}: {}", state.get_id(), e);
+                                        // Loop to try again
+                                        continue;
+                                    },
+                                    Err(e) => {
+                                        error!("Failed to reconnect to xswd relayer #{}: {}", state.get_id(), e);
+                                    }
                                 }
                             }
+
+                            break;
                         }
                     }
-
-                    break;
                 }
 
                 relayer.on_close(state).await;
@@ -102,6 +113,12 @@ impl ClientImpl {
     #[inline(always)]
     pub fn target(&self) -> &str {
         &self.target
+    }
+
+    /// Whether the relayer websocket is currently connected
+    #[inline(always)]
+    pub fn is_connected(&self) -> bool {
+        self.connected.load(Ordering::SeqCst)
     }
 
     /// Send a message to the relayer

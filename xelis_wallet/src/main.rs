@@ -11,6 +11,7 @@ use indexmap::{IndexMap, IndexSet};
 use log::{error, debug, info};
 use clap::Parser;
 use xelis_common::{
+    api::DataElement,
     async_handler,
     asset::AssetData,
     config::{
@@ -57,6 +58,7 @@ use xelis_common::{
             MultiSigBuilder,
             TransactionTypeBuilder,
             TransferBuilder,
+            BlobPayloadBuilder,
             DeployContractBuilder,
             DeployContractInvokeBuilder,
             ContractDepositBuilder,
@@ -74,6 +76,7 @@ use xelis_common::{
 };
 use xelis_wallet::{
     config::{Config, LogProgressTableGenerationReportFunction, DIR_PATH},
+    entry::TransactionEntry,
     precomputed_tables,
     storage::TransactionFilterOptions,
     wallet::{
@@ -106,6 +109,9 @@ use {
     },
     anyhow::Error,
 };
+
+#[cfg(feature = "api_server")]
+use xelis_wallet::api::APIServer;
 
 const ELEMENTS_PER_PAGE: usize = 10;
 
@@ -478,6 +484,17 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
         CommandHandler::Async(async_handler!(transfer_all))
     ))?;
     command_manager.add_command(Command::with_optional_arguments(
+        "blob",
+        "Create a blob transaction to one or more recipients",
+        vec![
+            Arg::new("data", ArgType::String),
+            Arg::new("addresses", ArgType::Array(Box::new(ArgType::String))),
+            Arg::new("encrypt", ArgType::Bool),
+            Arg::new("confirm", ArgType::Bool)
+        ],
+        CommandHandler::Async(async_handler!(blob))
+    ))?;
+    command_manager.add_command(Command::with_optional_arguments(
         "burn",
         "Burn amount of asset",
         vec![
@@ -520,6 +537,12 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
         "Show all your transactions",
         vec![Arg::new("page", ArgType::Number)],
         CommandHandler::Async(async_handler!(history))
+    ))?;
+    command_manager.add_command(Command::with_optional_arguments(
+        "pending_txs",
+        "Show transactions submitted by this wallet and not confirmed yet",
+        vec![Arg::new("page", ArgType::Number)],
+        CommandHandler::Async(async_handler!(pending_txs))
     ))?;
     command_manager.add_command(Command::with_optional_arguments(
         "transaction",
@@ -756,6 +779,12 @@ async fn prompt_message_builder(prompt: &Prompt, command_manager: Option<&Comman
                 prompt.colorize_string(Color::Yellow, "Balance"),
                 prompt.colorize_string(Color::Green, &format_xelis(storage.get_plaintext_balance_for(&XELIS_ASSET).await.unwrap_or(0))),
             );
+            let pending_count = storage.get_pending_txs().len();
+            let pending_str = if pending_count > 0 {
+                format!(" {}", prompt.colorize_string(Color::Yellow, &format!("({} TXs)", pending_count)))
+            } else {
+                String::new()
+            };
             let status = if wallet.is_online().await {
                 prompt.colorize_string(Color::Green, "Online")
             } else {
@@ -770,11 +799,12 @@ async fn prompt_message_builder(prompt: &Prompt, command_manager: Option<&Comman
     
             return Ok(
                 format!(
-                    "{} | {} | {} | {} | {} {}{} ",
+                    "{} | {} | {} | {}{} | {} {}{} ",
                     prompt.colorize_string(Color::Blue, "XELIS Wallet"),
                     addr_str,
                     topoheight_str,
                     balance,
+                    pending_str,
                     status,
                     network_str,
                     prompt.colorize_string(Color::BrightBlack, ">>")
@@ -1213,7 +1243,7 @@ async fn create_transaction_with_multisig(manager: &CommandManager, prompt: &Pro
         let mut state = wallet.create_transaction_state_with_storage(&storage, &tx_type, Default::default(), Default::default(), None, None).await
             .context("Error while creating transaction state")?;
     
-        let mut unsigned = wallet.create_unsigned_transaction(&mut state, Some(payload.threshold), tx_type, Default::default(), storage.get_tx_version().await?)
+        let mut unsigned = wallet.create_unsigned_transaction(&mut state, Some(payload.threshold), tx_type.clone(), Default::default(), storage.get_tx_version().await?)
             .context("Error while building unsigned transaction")?;
     
         let mut multisig = MultiSig::new();
@@ -1264,9 +1294,8 @@ async fn create_transaction_with_multisig(manager: &CommandManager, prompt: &Pro
         unsigned.set_multisig(multisig);
     
         let tx = unsigned.finalize(wallet.get_keypair());
-        state.set_tx_hash_built(tx.hash());
     
-        state.apply_changes(&mut storage).await
+        state.apply_changes(&mut storage, wallet, &tx).await
             .context("Error while applying changes")?;
 
         tx
@@ -1274,7 +1303,7 @@ async fn create_transaction_with_multisig(manager: &CommandManager, prompt: &Pro
         let (tx, mut state) = wallet.create_transaction_with_storage(&storage, tx_type, Default::default(), Default::default(), None).await
             .context("Error while building TX")?;
 
-        state.apply_changes(&mut storage).await
+        state.apply_changes(&mut storage, wallet, &tx).await
             .context("Error while applying changes")?;
 
         tx
@@ -1326,6 +1355,65 @@ async fn read_asset_amount(prompt: &Prompt, wallet: &Wallet, asset: &Hash) -> Re
     Ok((amount, asset))
 }
 
+fn parse_blob_data(data: &str) -> Result<DataElement, CommandError> {
+    serde_json::from_str(data)
+        .context("Invalid blob data JSON")
+        .map_err(CommandError::from)
+}
+
+fn parse_address(value: &str) -> Result<Address, CommandError> {
+    Address::from_string(&value)
+        .context("Invalid address")
+        .map_err(CommandError::from)
+}
+
+async fn read_blob_destinations(prompt: &Prompt, args: &mut ArgumentManager) -> Result<Vec<Address>, CommandError> {
+    let addresses = if args.has_argument("addresses") {
+        args.get_value("addresses")?
+            .to_vec()?
+            .into_iter()
+            .map(|value| value.to_string_value()
+                .map_err(CommandError::from)
+                .and_then(|s| parse_address(&s))
+            )
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        let input = prompt.read_input(
+            prompt.colorize_string(Color::Green, "Address(es), comma separated: "),
+            false
+        ).await.context("Error while reading address")?;
+
+        input.split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| parse_address(value))
+            .collect::<Result<Vec<_>, _>>()?
+    };
+
+    if addresses.is_empty() {
+        return Err(CommandError::InvalidArgument("At least one destination address is required".to_string()));
+    }
+
+    Ok(addresses)
+}
+
+async fn read_blob_encrypt(prompt: &Prompt) -> Result<bool, CommandError> {
+    let mut message = prompt.colorize_string(Color::Green, "Encrypt blob data? (Y/n, encrypted requires exactly one recipient): ");
+
+    loop {
+        let value = prompt.read_input(message, false)
+            .await
+            .context("Error while reading encryption mode")?
+            .to_lowercase();
+
+        match value.as_str() {
+            "" | "y" | "yes" => return Ok(true),
+            "n" | "no" => return Ok(false),
+            _ => message = prompt.colorize_string(Color::Red, "Encrypt blob data? (Y/n, encrypted requires exactly one recipient): ")
+        }
+    }
+}
+
 // Create a new transfer to a specified address
 async fn transfer(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
     let prompt = manager.get_prompt();
@@ -1374,6 +1462,65 @@ async fn transfer(manager: &CommandManager, mut args: ArgumentManager) -> Result
         encrypt_extra_data: true
     };
     let tx_type = TransactionTypeBuilder::Transfers(vec![transfer]);
+    let estimated_fee = wallet.estimate_fees(tx_type.clone(), Default::default(), Default::default()).await
+        .context("Error while estimating TX fee")?;
+
+    manager.message(format!("Estimated TX fee is {} XELIS", format_xelis(estimated_fee)));
+    if !args.get_flag("confirm")? && !prompt.ask_confirmation().await.context("Error while confirming action")? {
+        manager.message("Transaction has been aborted");
+        return Ok(())
+    }
+
+    manager.message("Building transaction...");
+    let tx = create_transaction_with_multisig(manager, prompt, wallet, tx_type).await?;
+
+    broadcast_tx(wallet, manager, tx).await;
+    Ok(())
+}
+
+// Create a blob transaction to one or more recipients.
+async fn blob(manager: &CommandManager, mut args: ArgumentManager) -> Result<(), CommandError> {
+    let prompt = manager.get_prompt();
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+
+    let data = if args.has_argument("data") {
+        let data = args.get_value("data")?.to_string_value()?;
+        parse_blob_data(&data)?
+    } else {
+        let data = prompt.read_input(
+            prompt.colorize_string(Color::Green, "ExtraData JSON: "),
+            false
+        ).await.context("Error while reading blob data")?;
+        parse_blob_data(&data)?
+    };
+
+    let destinations = read_blob_destinations(prompt, &mut args).await?;
+    let encrypt = if args.has_argument("encrypt") {
+        args.get_value("encrypt")?.to_bool()?
+    } else {
+        read_blob_encrypt(prompt).await?
+    };
+
+    if encrypt && destinations.len() != 1 {
+        return Err(CommandError::InvalidArgument("Encrypted blob data requires exactly one recipient".to_string()));
+    }
+
+    manager.message(format!(
+        "Creating {} blob transaction with {} recipient{}",
+        if encrypt { "encrypted" } else { "public" },
+        destinations.len(),
+        if destinations.len() == 1 { "" } else { "s" }
+    ));
+    for destination in destinations.iter() {
+        manager.message(format!("- {}", destination));
+    }
+
+    let tx_type = TransactionTypeBuilder::Blob(BlobPayloadBuilder {
+        data,
+        encrypt,
+        destinations
+    });
     let estimated_fee = wallet.estimate_fees(tx_type.clone(), Default::default(), Default::default()).await
         .context("Error while estimating TX fee")?;
 
@@ -1699,6 +1846,43 @@ async fn history(manager: &CommandManager, mut arguments: ArgumentManager) -> Re
     manager.message(format!("{} Transactions (total {}) page {}/{}:", transactions.len(), txs_len, page, max_pages));
     for tx in transactions {
         manager.message(format!("- {}", tx.summary(wallet.get_network().is_mainnet(), &*storage).await?));
+    }
+
+    Ok(())
+}
+
+async fn pending_txs(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let page = get_page(&mut arguments)?;
+
+    let context = manager.get_context().lock()?;
+    let wallet: &Arc<Wallet> = context.get()?;
+
+    let storage = wallet.get_storage().read().await;
+    let pending = storage.get_pending_txs();
+    let count = pending.len();
+    if count == 0 {
+        manager.message("No pending transactions");
+        return Ok(())
+    }
+
+    let mut max_pages = count / ELEMENTS_PER_PAGE;
+    if count % ELEMENTS_PER_PAGE != 0 {
+        max_pages += 1;
+    }
+
+    if page > max_pages {
+        return Err(CommandError::InvalidArgument(format!("Page must be less than maximum pages ({})", max_pages)));
+    }
+
+    manager.message(format!("Pending transactions (total {}) page {}/{}:", count, page, max_pages));
+    for tx in pending.iter().skip((page - 1) * ELEMENTS_PER_PAGE).take(ELEMENTS_PER_PAGE) {
+        let entry = TransactionEntry::new(
+            tx.hash.clone(),
+            0,
+            tx.timestamp,
+            tx.entry.clone()
+        );
+        manager.message(format!("- {}", entry.summary(wallet.get_network().is_mainnet(), &*storage).await?));
     }
 
     Ok(())
@@ -2035,7 +2219,7 @@ async fn list_xswd_applications(manager: &CommandManager, _: ArgumentManager) ->
     #[cfg(feature = "api_server")]
     {
         let api_server = wallet.get_api_server().lock().await;
-        if let Some(xelis_wallet::api::APIServer::XSWD(xswd)) = api_server.as_ref() {
+        if let Some(APIServer::XSWD(xswd)) = api_server.as_ref() {
             let applications = xswd.get_handler().get_applications().read().await;
             if !applications.is_empty() {
                 manager.message("XSWD server applications:");
@@ -2057,8 +2241,9 @@ async fn list_xswd_applications(manager: &CommandManager, _: ArgumentManager) ->
             let applications = xswd.applications().read().await;
             if !applications.is_empty() {
                 manager.message("XSWD relayer applications:");
-                for app in applications.keys() {
+                for (app, client) in applications.iter() {
                     print_xswd_application(manager, app).await;
+                    manager.message(format!("  Connected: {}", client.is_connected()));
                     total_apps += 1;
                 }
             }

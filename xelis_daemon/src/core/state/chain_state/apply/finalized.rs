@@ -361,7 +361,8 @@ impl<'a> FinalizedChainState<'a> {
         debug!("updating topoheight metadata to {}", self.topoheight);
         let metadata = TopoHeightMetadata {
             block_reward: self.block_reward,
-            emitted_supply: self.block_reward + self.past_emitted_supply,
+            emitted_supply: self.block_reward.checked_add(self.past_emitted_supply)
+                .ok_or(BlockchainError::ConsensusOverflow)?,
             total_fees: self.total_fees,
             total_fees_burned: self.total_fees_burned,
             is_side_block: self.is_side_block,

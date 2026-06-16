@@ -41,6 +41,7 @@ use crate::{
         },
         verify::{NoZKPCache, VerificationError, VerificationStateError, ZKPCache},
         mock::*,
+        BlobPayload,
         BurnPayload,
         MultiSigPayload,
         Reference,
@@ -1299,15 +1300,78 @@ fn test_blob_tx_private_multiple_destinations_rejected_at_build() {
     );
 }
 
-/// A blob TX where the sender is listed as a destination is rejected at verification.
-#[tokio::test]
-async fn test_blob_tx_sender_is_destination_rejected_at_verify() {
+/// A blob TX where the sender is listed as a destination is rejected at build time.
+#[test]
+fn test_blob_tx_sender_is_destination_rejected_at_build() {
     let mut alice = TrackedAccount::new();
 
     alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
 
-    // Build a public blob where Alice (the sender) is also the destination.
-    // The builder does not check this; it is caught during verification.
+    let mut state = AccountStateImpl {
+        balances: alice.balances.clone(),
+        nonce: alice.nonce,
+        reference: Reference { topoheight: 0, hash: Hash::zero() },
+    };
+
+    let data = TransactionTypeBuilder::Blob(BlobPayloadBuilder {
+        data: DataElement::Value(DataValue::String("self-addressed blob".to_string())),
+        encrypt: false,
+        destinations: vec![alice.address()],
+    });
+    let builder = TransactionBuilder::new(
+        TxVersion::V3,
+        alice.keypair.get_public_key().compress(),
+        None,
+        data,
+        FeeBuilder::default(),
+    );
+    let result = builder.build(&mut state, &alice.keypair);
+    assert!(
+        matches!(result, Err(GenerationStateError::GenerationError(GenerationError::SenderIsReceiver))),
+        "expected SenderIsReceiver, got: {:?}", result
+    );
+}
+
+/// A blob TX must have at least one destination.
+#[test]
+fn test_blob_tx_empty_destinations_rejected_at_build() {
+    let mut alice = TrackedAccount::new();
+
+    alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+
+    let mut state = AccountStateImpl {
+        balances: alice.balances.clone(),
+        nonce: alice.nonce,
+        reference: Reference { topoheight: 0, hash: Hash::zero() },
+    };
+
+    let data = TransactionTypeBuilder::Blob(BlobPayloadBuilder {
+        data: DataElement::Value(DataValue::String("empty destinations".to_string())),
+        encrypt: false,
+        destinations: vec![],
+    });
+    let builder = TransactionBuilder::new(
+        TxVersion::V3,
+        alice.keypair.get_public_key().compress(),
+        None,
+        data,
+        FeeBuilder::default(),
+    );
+    let result = builder.build(&mut state, &alice.keypair);
+    assert!(
+        matches!(result, Err(GenerationStateError::GenerationError(GenerationError::BlobMissingDestination))),
+        "expected BlobMissingDestination, got: {:?}", result
+    );
+}
+
+/// Consensus verification also rejects manually crafted blob TXs without destinations.
+#[tokio::test]
+async fn test_blob_tx_empty_destinations_rejected_at_verify() {
+    let mut alice = TrackedAccount::new();
+    let bob = TrackedAccount::new();
+
+    alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+
     let tx = {
         let mut state = AccountStateImpl {
             balances: alice.balances.clone(),
@@ -1316,9 +1380,9 @@ async fn test_blob_tx_sender_is_destination_rejected_at_verify() {
         };
 
         let data = TransactionTypeBuilder::Blob(BlobPayloadBuilder {
-            data: DataElement::Value(DataValue::String("self-addressed blob".to_string())),
+            data: DataElement::Value(DataValue::String("empty destinations".to_string())),
             encrypt: false,
-            destinations: vec![alice.address()],
+            destinations: vec![bob.address()],
         });
         let builder = TransactionBuilder::new(
             TxVersion::V3,
@@ -1327,7 +1391,24 @@ async fn test_blob_tx_sender_is_destination_rejected_at_verify() {
             data,
             FeeBuilder::default(),
         );
-        Arc::new(builder.build(&mut state, &alice.keypair).unwrap())
+        let tx = builder.build(&mut state, &alice.keypair).unwrap();
+        let TransactionType::Blob(blob) = tx.get_data().clone() else { unreachable!() };
+        Arc::new(Transaction::new(
+            tx.get_version(),
+            tx.get_source().clone(),
+            TransactionType::Blob(BlobPayload {
+                data: blob.data,
+                destinations: IndexSet::new(),
+            }),
+            tx.get_fee(),
+            tx.get_fee_limit(),
+            tx.get_nonce(),
+            tx.get_source_commitments().clone(),
+            tx.get_range_proof().clone(),
+            tx.get_reference().clone(),
+            tx.get_multisig().clone(),
+            tx.get_signature().clone(),
+        ))
     };
 
     let mut state = MockChainState::new();
@@ -1346,7 +1427,7 @@ async fn test_blob_tx_sender_is_destination_rejected_at_verify() {
     let result = tx.verify(&hash, &mut state, &NoZKPCache).await;
     assert!(
         matches!(result, Err(VerificationStateError::VerificationError(VerificationError::InvalidFormat))),
-        "expected InvalidFormat, got: {:?}", result
+        "expected InvalidFormat for empty blob destinations, got: {:?}", result
     );
 }
 
