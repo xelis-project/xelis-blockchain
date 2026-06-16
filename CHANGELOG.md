@@ -4,6 +4,24 @@ This file contains all the changelogs to ensure that changes can be tracked and 
 
 To see the full history and exact changes, please refer to the commits history directly.
 
+## v1.22.2
+
+- Mempool configuration: limit the total size (& lifetime of a TX) living in the mempool to prevent memory exhaustion on low-end devices.
+- Bug fix of reference verification on different blockDAG order that could stuck a chain sync. If the previous block wasn't marked as executed, it would prevent syncing the next block.
+- Add daemon CLI commands `export_account_txs`
+- Add temp ban config for daemon
+- P2P Latency sort for best peer selection during chain sync
+- Temp ban on block pre verify failed
+- Configurable websocket server limits
+- Track pending TXs in wallet
+- support Blob in wallet
+- Expose CLI configs as a library
+- Update TransactionResponse from wallet RPC to match the one returned by daemon RPC
+
+## v1.22.1
+
+- Hotfix in the XVM standard library: Scheduled Executions had a offset bug that could generate extra dust of XELIS on each call with incorrect refund to the source.
+
 ## v1.22.0
 
 - DAG optimizations (reorg on best candidate only)
