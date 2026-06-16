@@ -25,6 +25,7 @@ use std::{
     io,
     net::{IpAddr, SocketAddr},
     num::NonZeroUsize,
+    cmp::Ordering as CmpOrdering,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc
@@ -973,11 +974,20 @@ impl<S: Storage> P2pServer<S> {
             peers = priority_peers;
         }
 
-        // Now sort by cumulative difficulty descending
-        // we use unstable sort because we don't care about the order of peers with same cumulative difficulty
-        // then, we sort based on the latency to favor peers with lower latency in case of equal cumulative difficulty
+        // Now sort by cumulative difficulty descending.
+        // We use unstable sort because we don't care about the order of peers with the same
+        // cumulative difficulty and latency state.
+        // Then, favor peers without latency data to give untested peers a chance.
+        // Finally, sort by latency to favor peers with lower latency.
         peers.sort_unstable_by(|a, b| {
-            b.2.cmp(&a.2).then_with(|| a.0.get_latency_ms().cmp(&b.0.get_latency_ms()))
+            b.2.cmp(&a.2).then_with(|| {
+                match (a.0.get_latency_ms(), b.0.get_latency_ms()) {
+                    (None, None) => CmpOrdering::Equal,
+                    (None, Some(_)) => CmpOrdering::Less,
+                    (Some(_), None) => CmpOrdering::Greater,
+                    (Some(a_latency), Some(b_latency)) => a_latency.cmp(&b_latency)
+                }
+            })
         });
 
         // Select the best peer available
