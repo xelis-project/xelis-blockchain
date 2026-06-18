@@ -188,6 +188,8 @@ pub struct P2pServer<S: Storage> {
     // Proxy address to use in case we try to connect
     // to an outgoing peer
     proxy: Option<(ProxyKind, SocketAddr, Option<(String, String)>)>,
+    // Timeout used when initiating outgoing peer connections
+    outgoing_connection_timeout: Duration,
     // Requested objects from various peers
     requests_cache: ExpirableCache,
     // Flags to use in handshake
@@ -223,6 +225,7 @@ impl<S: Storage> P2pServer<S> {
         enable_compression: bool,
         disable_fast_sync_support: bool,
         proxy: Option<(ProxyKind, SocketAddr, Option<(String, String)>)>,
+        outgoing_connection_timeout: Duration,
         sync_from_priority_only: bool,
         reorg_from_priority_only: bool,
     ) -> Result<Arc<Self>, P2pError> {
@@ -315,6 +318,7 @@ impl<S: Storage> P2pServer<S> {
             disable_fetching_txs_propagated,
             handle_peer_packets_in_dedicated_task,
             proxy,
+            outgoing_connection_timeout,
             requests_cache: ExpirableCache::new(),
             flags,
             sync_from_priority_only,
@@ -776,22 +780,21 @@ impl<S: Storage> P2pServer<S> {
             }
         }
 
-        let duration = Duration::from_millis(PEER_TIMEOUT_INIT_OUTGOING_CONNECTION);
         let stream = if let Some((kind, proxy, auth)) = self.proxy.as_ref() {
             match kind {
                 ProxyKind::Socks5 => if let Some((username, password)) = auth {
-                        timeout(duration, Socks5Stream::connect_with_password(proxy, &addr, &username, &password)).await
+                        timeout(self.outgoing_connection_timeout, Socks5Stream::connect_with_password(proxy, &addr, &username, &password)).await
                     } else {
-                        timeout(duration, Socks5Stream::connect(proxy, &addr)).await
+                        timeout(self.outgoing_connection_timeout, Socks5Stream::connect(proxy, &addr)).await
                     }?
                     .context("Error while connecting through given SOCKS5 proxy")?
                     .into_inner(),
-                ProxyKind::Socks4 => timeout(duration, Socks4Stream::connect(proxy, &addr)).await?
+                ProxyKind::Socks4 => timeout(self.outgoing_connection_timeout, Socks4Stream::connect(proxy, &addr)).await?
                     .context("Error while connecting through given SOCKS4 proxy")?
                     .into_inner(),
             }
         } else {
-            timeout(duration, TcpStream::connect(&addr)).await??
+            timeout(self.outgoing_connection_timeout, TcpStream::connect(&addr)).await??
         };
 
         let connection = Connection::new(stream, addr, true);
