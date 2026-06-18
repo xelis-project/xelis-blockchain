@@ -67,7 +67,7 @@ use xelis_common::{
     },
     tokio::{
         io::AsyncWriteExt,
-        net::{TcpListener, TcpStream},
+        net::{lookup_host, TcpListener, TcpStream},
         select,
         spawn_task,
         sync::{
@@ -343,6 +343,49 @@ impl<S: Storage> P2pServer<S> {
         }
 
         Ok(arc)
+    }
+
+    pub fn connect_to_priority_nodes(self: &Arc<Self>, priority_nodes: Vec<String>) {
+        if priority_nodes.is_empty() {
+            return;
+        }
+
+        let zelf = Arc::clone(self);
+        spawn_task("p2p-priority-nodes", async move {
+            zelf.connect_to_priority_nodes_list(priority_nodes).await;
+        });
+    }
+
+    async fn connect_to_priority_nodes_list(&self, priority_nodes: Vec<String>) {
+        // connect to priority nodes
+        for addr in priority_nodes {
+            for origin in addr.split(",") {
+                let addr: SocketAddr = match origin.parse() {
+                    Ok(addr) => addr,
+                    Err(e) => {
+                        match lookup_host(&origin).await {
+                            Ok(it) => {
+                                info!("Valid host found for {}", origin);
+                                for addr in it {
+                                    info!("Trying to connect to priority node with IP from DNS resolution: {}", addr);
+                                    if let Err(e) = self.try_to_connect_to_peer(addr, true).await {
+                                        error!("Error while trying to connect to priority node {}: {}", origin, e);
+                                    }
+                                }
+                            },
+                            Err(e2) => {
+                                error!("Error while parsing {} as priority node address: {}, {}", origin, e, e2);
+                            }
+                        };
+                        continue;
+                    }
+                };
+                info!("Trying to connect to priority node: {}", addr);
+                if let Err(e) = self.try_to_connect_to_peer(addr, true).await {
+                    error!("Error while trying to connect to priority node {}: {}", addr, e);
+                }
+            }
+        }
     }
 
     // Stop the p2p module by closing all connections

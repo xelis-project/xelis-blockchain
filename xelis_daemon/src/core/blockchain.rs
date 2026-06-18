@@ -452,41 +452,7 @@ impl<S: Storage> Blockchain<S> {
             ) {
                 Ok(p2p) => {
                     *arc.p2p.write().await = Some(p2p.clone());
-
-                    let priority_nodes = config.priority_nodes;
-                    if !priority_nodes.is_empty() {
-                        spawn_task("p2p-priority-nodes", async move {
-                            // connect to priority nodes
-                            for addr in priority_nodes {
-                                for origin in addr.split(",") {
-                                    let addr: SocketAddr = match origin.parse() {
-                                        Ok(addr) => addr,
-                                        Err(e) => {
-                                            match lookup_host(&origin).await {
-                                                Ok(it) => {
-                                                    info!("Valid host found for {}", origin);
-                                                    for addr in it {
-                                                        info!("Trying to connect to priority node with IP from DNS resolution: {}", addr);
-                                                        if let Err(e) = p2p.try_to_connect_to_peer(addr, true).await {
-                                                            error!("Error while trying to connect to priority node {}: {}", origin, e);
-                                                        }
-                                                    }
-                                                },
-                                                Err(e2) => {
-                                                    error!("Error while parsing {} as priority node address: {}, {}", origin, e, e2);
-                                                }
-                                            };
-                                            continue;
-                                        }
-                                    };
-                                    info!("Trying to connect to priority node: {}", addr);
-                                    if let Err(e) = p2p.try_to_connect_to_peer(addr, true).await {
-                                        error!("Error while trying to connect to priority node {}: {}", addr, e);
-                                    }
-                                }
-                            }
-                        });
-                    }
+                    p2p.connect_to_priority_nodes(config.priority_nodes);
                 },
                 Err(e) => error!("Error while starting P2p server: {}", e)
             };
