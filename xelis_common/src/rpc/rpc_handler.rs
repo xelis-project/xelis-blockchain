@@ -1,6 +1,6 @@
 use std::{
     borrow::Cow,
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     future::Future,
     pin::Pin,
     sync::Arc,
@@ -39,9 +39,9 @@ pub type HandlerNoParams<R> = for<'a> fn(&'a Context) -> Pin<Box<dyn Future<Outp
 
 // Information about an RPC method
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct RpcMethodInfo<'a> {
-    pub name: Cow<'a, str>,
-    pub schema: Cow<'a, RpcSchema>,
+pub struct RpcMethodInfo {
+    pub name: String,
+    pub schema: RpcSchema,
 }
 
 // Schema information about an RPC method
@@ -49,6 +49,15 @@ pub struct RpcMethodInfo<'a> {
 pub struct RpcSchema {
     pub params_schema: Option<Schema>,
     pub returns_schema: Schema,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RpcSchemaResponse {
+    #[serde(rename = "$schema")]
+    pub schema: String,
+    #[serde(rename = "$defs", skip_serializing_if = "BTreeMap::is_empty")]
+    pub definitions: BTreeMap<String, Value>,
+    pub methods: Vec<RpcMethodInfo>,
 }
 
 /// An RPC method handler with its schema
@@ -80,7 +89,7 @@ where
         };
 
         // Internally register the "schema" method to get all registered methods
-        handler.register_method_no_params_custom_return::<Vec<RpcMethodInfo>>("schema", async_handler!(schema::<T>, single));
+        handler.register_method_no_params_custom_return::<RpcSchemaResponse>("schema", async_handler!(schema::<T>, single));
         handler.register_method_no_params("batch_limit", async_handler!(batch_limit::<T>, single));
 
         handler
@@ -310,13 +319,59 @@ async fn schema<'a, T: ShareableTid<'static>>(context: &'a Context<'_, '_>) -> R
     let rpc_handler: &RPCHandler<T> = context.get()
         .ok_or(InternalRpcError::InternalError("RPCHandler not found in context"))?;
 
-    let methods = rpc_handler.methods.iter()
-        .map(|(name, handler)| RpcMethodInfo {
-            name: Cow::Borrowed(name),
-            schema: Cow::Borrowed(&handler.schema)
-        }).collect::<Vec<_>>();
+    let mut handlers = rpc_handler.methods.iter().collect::<Vec<_>>();
+    handlers.sort_by(|(a, _), (b, _)| a.as_ref().cmp(b.as_ref()));
 
-    Ok(json!(methods))
+    let mut definitions = BTreeMap::new();
+    let mut methods = Vec::with_capacity(handlers.len());
+
+    for (name, handler) in handlers {
+        methods.push(RpcMethodInfo {
+            name: name.to_string(),
+            schema: normalize_rpc_schema(&handler.schema, &mut definitions)?,
+        });
+    }
+
+    Ok(json!(RpcSchemaResponse {
+        schema: "https://json-schema.org/draft/2020-12/schema".to_string(),
+        definitions,
+        methods,
+    }))
+}
+
+fn normalize_rpc_schema(schema: &RpcSchema, definitions: &mut BTreeMap<String, Value>) -> Result<RpcSchema, InternalRpcError> {
+    Ok(RpcSchema {
+        params_schema: schema.params_schema
+            .as_ref()
+            .map(|schema| normalize_schema(schema, definitions))
+            .transpose()?,
+        returns_schema: normalize_schema(&schema.returns_schema, definitions)?,
+    })
+}
+
+fn normalize_schema(schema: &Schema, definitions: &mut BTreeMap<String, Value>) -> Result<Schema, InternalRpcError> {
+    let mut value = schema.clone().to_value();
+
+    if let Value::Object(map) = &mut value {
+        map.remove("$schema");
+
+        if let Some(Value::Object(local_definitions)) = map.remove("$defs") {
+            for (name, definition) in local_definitions {
+                match definitions.get(&name) {
+                    Some(existing) if existing != &definition => {
+                        return Err(InternalRpcError::InternalError("Conflicting JSON schema definition"))
+                    },
+                    Some(_) => {},
+                    None => {
+                        definitions.insert(name, definition);
+                    }
+                }
+            }
+        }
+    }
+
+    Schema::try_from(value)
+        .map_err(|_| InternalRpcError::InternalError("Invalid JSON schema generated"))
 }
 
 // Get the batch limit from the RPC handler, if any
@@ -372,4 +427,58 @@ pub fn require_no_params(value: Value) -> Result<(), InternalRpcError> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::daemon::RPCBlockHeaderResponse;
+
+    struct TestData;
+
+    tid! { impl<'a> TidAble<'a> for TestData }
+
+    async fn dummy_header(_context: &Context<'_, '_>) -> Result<Value, InternalRpcError> {
+        Ok(Value::Null)
+    }
+
+    #[tokio::test]
+    async fn schema_response_lifts_definitions_and_respects_custom_serializer_schema() {
+        let mut handler = RPCHandler::<TestData>::new(None, None);
+        handler.register_method_no_params_custom_return::<RPCBlockHeaderResponse<'static>>(
+            "block_header",
+            async_handler!(dummy_header, single)
+        );
+
+        let response = handler.handle_request(br#"{"jsonrpc":"2.0","id":1,"method":"schema"}"#).await
+            .expect("schema request should execute")
+            .expect("schema request should produce a response");
+        let result = response.get("result")
+            .expect("schema response should contain a result");
+        let definitions = result.get("$defs")
+            .and_then(Value::as_object)
+            .expect("schema response should contain shared definitions");
+        assert!(!definitions.is_empty());
+
+        let methods = result.get("methods")
+            .and_then(Value::as_array)
+            .expect("schema response should contain methods");
+        for method in methods {
+            if let Some(params_schema) = method["schema"].get("params_schema") {
+                assert!(params_schema.get("$defs").is_none());
+            }
+
+            assert!(method["schema"]["returns_schema"].get("$defs").is_none());
+        }
+
+        let block_header_method = methods.iter()
+            .find(|method| method.get("name").and_then(Value::as_str) == Some("block_header"))
+            .expect("block_header method should be present");
+        let returns_schema = &block_header_method["schema"]["returns_schema"];
+
+        assert_eq!(
+            returns_schema.pointer("/properties/extra_nonce/type").and_then(Value::as_str),
+            Some("string")
+        );
+    }
 }

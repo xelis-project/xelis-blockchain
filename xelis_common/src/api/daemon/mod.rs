@@ -131,6 +131,7 @@ pub struct RPCBlockHeaderResponse<'a> {
     pub nonce: Nonce,
     #[serde(serialize_with = "serialize_extra_nonce")]
     #[serde(deserialize_with = "deserialize_extra_nonce")]
+    #[schemars(with = "String", description = "Hexadecimal representation of the 32-byte extra nonce")]
     pub extra_nonce: Cow<'a, [u8; EXTRA_NONCE_SIZE]>,
     pub miner: Cow<'a, Address>,
     pub txs_hashes: Cow<'a, IndexSet<Hash>>,
