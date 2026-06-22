@@ -53,7 +53,7 @@ pub fn deserialize_extra_nonce<'de, 'a, D: Deserializer<'de>>(deserializer: D) -
         .map(Cow::Owned)
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 struct KV<K, V> {
     key: K,
     value: V,
@@ -230,6 +230,11 @@ pub struct GetBlockAtTopoHeightParams {
     pub topoheight: TopoHeight,
     #[serde(default)]
     pub include_txs: bool
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct GetBlockSummaryAtTopoheightParams {
+    pub topoheight: TopoHeight,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
@@ -930,6 +935,7 @@ pub struct GetContractsOutputsResult<'a> {
         serialize_with = "serialize_map_as_list",
         deserialize_with = "deserialize_map_as_list"
     )]
+    #[schemars(with = "Vec<KV<ContractTransfersEntryKey<'a>, ContractTransfersEntry<'a>>>")]
     pub executions: HashMap<ContractTransfersEntryKey<'a>, ContractTransfersEntry<'a>>,
 }
 
@@ -1204,6 +1210,7 @@ pub struct ContractTransfersEvent<'a> {
         serialize_with = "serialize_map_as_list",
         deserialize_with = "deserialize_map_as_list"
     )]
+    #[schemars(with = "Vec<KV<ContractTransfersEntryKey<'a>, ContractTransfersEntry<'a>>>")]
     pub executions: HashMap<ContractTransfersEntryKey<'a>, ContractTransfersEntry<'a>>,
     // Block topoheight in which this transfer happened
     pub topoheight: TopoHeight,
