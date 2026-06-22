@@ -381,8 +381,8 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
     // Transactions
     handler.register_method_with_params("submit_transaction", async_handler!(submit_transaction::<S>));
     handler.register_method_with_params("get_transaction_executor", async_handler!(get_transaction_executor::<S>));
-    handler.register_method_with_params_and_return_schema::<_, RPCTransaction>("get_transaction", async_handler!(get_transaction::<S>));
-    handler.register_method_with_params_and_return_schema::<_, Vec<RPCTransaction>>("get_transactions", async_handler!(get_transactions::<S>));
+    handler.register_method_with_params_and_return_schema::<_, GetTransactionResult>("get_transaction", async_handler!(get_transaction::<S>));
+    handler.register_method_with_params_and_return_schema::<_, Vec<Option<GetTransactionResult>>>("get_transactions", async_handler!(get_transactions::<S>));
     handler.register_method_with_params("get_transactions_summary", async_handler!(get_transactions_summary::<S>));
     handler.register_method_with_params("is_tx_executed_in_block", async_handler!(is_tx_executed_in_block::<S>));
 
@@ -400,8 +400,8 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
 
     // DAG
     handler.register_method_with_params("get_dag_order", async_handler!(get_dag_order::<S>));
-    handler.register_method_with_params_and_return_schema::<_, RPCBlockHeaderResponse>("get_blocks_range_by_topoheight", async_handler!(get_blocks_range_by_topoheight::<S>));
-    handler.register_method_with_params_and_return_schema::<_, RPCBlockHeaderResponse>("get_blocks_range_by_height", async_handler!(get_blocks_range_by_height::<S>));
+    handler.register_method_with_params_and_return_schema::<_, Vec<RPCBlockHeaderResponse>>("get_blocks_range_by_topoheight", async_handler!(get_blocks_range_by_topoheight::<S>));
+    handler.register_method_with_params_and_return_schema::<_, Vec<RPCBlockHeaderResponse>>("get_blocks_range_by_height", async_handler!(get_blocks_range_by_height::<S>));
 
     // Accounts
     handler.register_method_with_params("get_account_history", async_handler!(get_account_history::<S>));
@@ -1762,7 +1762,7 @@ async fn get_block_base_fee_by_hash<S: Storage>(context: &Context<'_, '_>, param
     })
 }
 
-async fn get_block_summary_at_topoheight<S: Storage>(context: &Context<'_, '_>, params: GetBlockAtTopoHeightParams) -> Result<Value, InternalRpcError> {
+async fn get_block_summary_at_topoheight<S: Storage>(context: &Context<'_, '_>, params: GetBlockSummaryAtTopoheightParams) -> Result<Value, InternalRpcError> {
     let blockchain = chain_from_context::<S>(context)?;
     let storage = blockchain.get_storage().read().await;
     let (hash, block_header) = storage.get_block_header_at_topoheight(params.topoheight).await
