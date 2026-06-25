@@ -27,6 +27,7 @@ use xelis_common::{
     },
     network::Network,
     rpc::{
+        ShareableTid,
         Context,
         InternalRpcError,
         RPCHandler,
@@ -52,7 +53,7 @@ use log::{debug, info, warn};
 tid!(Wallet);
 
 // Register all RPC methods
-pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
+pub fn register_methods<T: ShareableTid<'static>>(handler: &mut RPCHandler<T>) {
     info!("Registering RPC methods...");
     handler.register_method_no_params("get_version", async_handler!(get_version, single));
     handler.register_method_no_params("get_network", async_handler!(get_network, single));
@@ -114,9 +115,9 @@ pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
 // Helper to retrieve the wallet from the context
 #[inline]
 fn wallet_from_context<'a, 'ty, 'r>(context: &'a Context<'ty, 'r>) -> Result<&'a Arc<Wallet>, InternalRpcError> {
-    let handler: &RPCHandler<Arc<Wallet>> = context.get()
-        .context("Couldn't retrieve wallet from context")?;
-    handler.get_data().ok_or(InternalRpcError::InvalidContext)
+    context.get()
+        .context("Couldn't retrieve wallet from context")
+        .map_err(InternalRpcError::from)
 }
 
 // Retrieve the version of the wallet
