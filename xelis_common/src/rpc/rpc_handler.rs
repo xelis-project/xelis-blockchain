@@ -70,7 +70,7 @@ pub struct RPCHandler<T: ShareableTid<'static>> {
     // all RPC methods registered
     methods: HashMap<Cow<'static, str>, MethodHandler>,
     // Optional data to be easily mocked in tests
-    data: Option<T>,
+    data: T,
     batch_limit: Option<usize>
 }
 
@@ -81,7 +81,7 @@ where
     T: ShareableTid<'static>
 {
     // Create a new RPC handler with optional batch limit
-    pub fn new(data: impl Into<Option<T>>, limit: impl Into<Option<usize>>) -> Self {
+    pub fn new(data: impl Into<T>, limit: impl Into<Option<usize>>) -> Self {
         let mut handler = Self {
             methods: HashMap::new(),
             data: data.into(),
@@ -309,8 +309,8 @@ where
 
     // Get a reference to the data associated with the RPC handler
     #[inline]
-    pub fn get_data(&self) -> Option<&T> {
-        self.data.as_ref()
+    pub fn get_data(&self) -> &T {
+        &self.data
     }
 }
 
@@ -444,7 +444,7 @@ mod tests {
 
     #[tokio::test]
     async fn schema_response_lifts_definitions_and_respects_custom_serializer_schema() {
-        let mut handler = RPCHandler::<TestData>::new(None, None);
+        let mut handler = RPCHandler::<TestData>::new(TestData, None);
         handler.register_method_no_params_custom_return::<RPCBlockHeaderResponse<'static>>(
             "block_header",
             async_handler!(dummy_header, single)
