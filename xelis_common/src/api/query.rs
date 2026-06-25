@@ -172,21 +172,35 @@ impl Query {
     }
 }
 
-// This is used to do query in daemon (in future for Smart Contracts) and wallet
+/// This is used to do query in daemon (in future for Smart Contracts) and wallet
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")] 
 pub enum QueryElement {
-    // Check if DataElement::Fields has key and optional check on value
-    HasKey { key: DataValue, query: Option<Box<Query>> },
-    // Check query on the value of the key
-    AtKey { key: DataValue, query: Box<Query>},
+    /// Check if DataElement::Fields has a key and optional query on its value.
+    HasKey {
+        /// Key to look up.
+        key: DataValue,
+        /// Optional query to apply on the value.
+        query: Option<Box<Query>>
+    },
+    /// Check query on the value of the key.
+    AtKey {
+        /// Key to look up.
+        key: DataValue,
+        /// Query to apply on the value.
+        query: Box<Query>
+    },
     // check the array or map length
     Len(QueryNumber),
     // Only array supported
     ContainsElement(DataElement),
-    // Verify with query the element at position
-    // This is only for array
-    AtPosition { position: usize, query: Box<Query> },
+    /// Verify with query the array element at position.
+    AtPosition {
+        /// Array position to inspect.
+        position: usize,
+        /// Query to apply on the element.
+        query: Box<Query>
+    },
     // Check value type
     Type(ElementType),
 }
@@ -235,7 +249,9 @@ impl QueryElement {
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct QueryResult {
+    /// Entries matched by the query.
     pub entries: IndexMap<DataValue, DataElement>,
+    /// Next pagination offset, if more entries are available.
     pub next: Option<usize>
 }
 
