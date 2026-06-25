@@ -61,7 +61,7 @@ use xelis_common::{
         CumulativeDifficulty,
         Difficulty
     },
-    rpc::{Context, RPCHandler},
+    rpc::{ShareableTid, Context, RPCHandler},
     serializer::Serializer,
     time::TimestampSeconds,
     transaction::{
@@ -327,7 +327,7 @@ pub async fn get_peer_entry<'a>(peer: &'a Peer) -> PeerEntry<'a> {
 }
 
 // This function is used to register all the RPC methods
-pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>, allow_mining_methods: bool, allow_private_methods: bool, allow_contract_vm_executions: bool) {
+pub fn register_methods<T: ShareableTid<'static>, S: Storage>(handler: &mut RPCHandler<T>, allow_mining_methods: bool, allow_private_methods: bool, allow_contract_vm_executions: bool) {
     info!("Registering RPC methods...");
 
     handler.register_method_no_params("get_version", async_handler!(version::<S>, single));
@@ -461,9 +461,9 @@ pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>
 // Helper to get the blockchain from the context
 #[inline]
 fn chain_from_context<'a, S: Storage>(context: &'a Context<'_, '_>) -> Result<&'a Arc<Blockchain<S>>, InternalRpcError> {
-    let handler: &RPCHandler<Arc<Blockchain<S>>> = context.get()
-        .context("Error while retrieving blockchain from context")?;
-    handler.get_data().ok_or(InternalRpcError::InvalidContext)
+    context.get()
+        .context("Error while retrieving blockchain from context")
+        .map_err(InternalRpcError::from)
 }
 
 async fn version<S: Storage>(_: &Context<'_, '_>) -> Result<&'static str, InternalRpcError> {
