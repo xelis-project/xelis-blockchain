@@ -531,6 +531,8 @@ impl Serializer for Module {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use crate::crypto::Hash;
     use super::*;
 
@@ -541,6 +543,25 @@ mod tests {
         assert_eq!(module.constants().len(), 2);
 
         assert_eq!(hex.len() / 2, module.size());
+    }
+
+    #[test]
+    fn test_contract_module_size_with_type_packed_parameters() {
+        let mut module = Module::new();
+        module.add_entry_chunk(Chunk::new(), Some(vec![
+            TypePacked::Opaque(42),
+            TypePacked::Tuples(vec![
+                TypePacked::String,
+                TypePacked::Optional(Box::new(TypePacked::Number(xelis_vm::NumberType::U64))),
+            ]),
+        ]));
+
+        let contract = crate::contract::ContractModule {
+            version: ContractVersion::V1,
+            module: Arc::new(module),
+        };
+
+        assert_eq!(contract.size(), contract.to_bytes().len());
     }
 
     #[track_caller]
