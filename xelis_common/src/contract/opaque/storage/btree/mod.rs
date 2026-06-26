@@ -37,7 +37,7 @@ use crate::{
 
 use super::{MAX_KEY_SIZE, MAX_VALUE_SIZE, FEE_PER_BYTE_STORED_CONTRACT};
 
-const PREFIX: &[u8] = b"\x00btree:";
+pub(super) const PREFIX: &[u8] = b"\x00btree:";
 const ERR_MISSING_NODE: &str = "missing node";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -506,7 +506,7 @@ pub async fn btree_store_insert<'a, 'ty, 'r, P: ContractProvider<'ty>>(
     let value = params.remove(1).into_owned();
     ensure_value_constraints(&value)?;
 
-    let key = read_key_bytes(params.remove(0).into_owned())?;
+    let key = read_seek_key_bytes(params.remove(0).into_owned())?;
 
     with_store_ctx(instance, metadata, context, |_store, ctx: &mut TreeContext<'_, 'ty, P>, _contract| Box::pin(async move {
         insert_key(ctx, key, value).await?;
@@ -542,18 +542,14 @@ pub async fn btree_store_delete<'a, 'ty, 'r, P: ContractProvider<'ty>>(
 
 pub async fn btree_store_seek<'a, 'ty, 'r, P: ContractProvider<'ty>>(
     instance: FnInstance<'a>,
-    params: FnParams,
+    mut params: FnParams,
     metadata: &ModuleMetadata<'_>,
     context: &mut VMContext<'ty, 'r>
 ) -> FnReturnType<ContractMetadata> {
-    let ascending = params[2]
+    let ascending = params.remove(2)
         .as_bool()?;
-    let bias = read_bias(&params[1])?;
-    let key = params[0].as_bytes()?.to_vec();
-
-    if key.len() > MAX_KEY_SIZE {
-        return Err(EnvironmentError::Static("key is too large"));
-    }
+    let bias = read_bias(&params.remove(1))?;
+    let key = read_key_bytes(params.remove(0).into_owned())?;
 
     with_store_ctx(instance, metadata, context, |store, ctx: &mut TreeContext<'_, 'ty, P>, contract| Box::pin(async move {
         let node = seek_node(ctx, &key, bias).await?;
@@ -1264,11 +1260,41 @@ fn read_key_bytes(value: ValueCell) -> Result<Vec<u8>, EnvironmentError> {
         return Err(EnvironmentError::Static("key cannot be empty"));
     }
 
+    validate_key_bytes(&bytes)?;
+
+    Ok(bytes)
+}
+
+fn read_seek_key_bytes(value: ValueCell) -> Result<Vec<u8>, EnvironmentError> {
+    let bytes = read_bytes(value, "key")?;
+    validate_key_bytes(&bytes)?;
+
+    Ok(bytes)
+}
+
+fn validate_key_bytes(bytes: &[u8]) -> Result<(), EnvironmentError> {
+    if is_reserved_storage_key_bytes(&bytes) {
+        return Err(EnvironmentError::Static("key uses reserved BTree storage prefix"));
+    }
+
     if bytes.len() > MAX_KEY_SIZE {
         return Err(EnvironmentError::Static("key is too large"));
     }
 
-    Ok(bytes)
+    Ok(())
+}
+
+#[inline]
+pub(super) fn is_reserved_storage_key(key: &ValueCell) -> bool {
+    match key {
+        ValueCell::Bytes(bytes) => is_reserved_storage_key_bytes(bytes),
+        _ => false,
+    }
+}
+
+#[inline]
+fn is_reserved_storage_key_bytes(bytes: &[u8]) -> bool {
+    bytes.starts_with(PREFIX)
 }
 
 fn ensure_value_constraints(value: &ValueCell) -> Result<(), EnvironmentError> {

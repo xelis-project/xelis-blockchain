@@ -92,6 +92,25 @@ pub fn check_storage_entry_size(key: &ValueCell, value: &ValueCell) -> Result<us
     Ok(key_size + value_size)
 }
 
+fn check_storage_key(key: &ValueCell) -> Result<(), EnvironmentError> {
+    if !key.is_serializable() {
+        return Err(EnvironmentError::Static("Key is not serializable"))
+    }
+
+    // Same here for raw bytes length
+    let key_size = data_size_in_bytes(key);
+
+    if key_size > MAX_KEY_SIZE {
+        return Err(EnvironmentError::Static("Key is too large"));
+    }
+
+    if btree::is_reserved_storage_key(key) {
+        return Err(EnvironmentError::Static("Key uses reserved BTree storage prefix"))
+    }
+
+    Ok(())
+}
+
 pub fn storage(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
     Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(OpaqueStorage)).into()))
 }
@@ -102,9 +121,7 @@ pub async fn storage_load<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'
     let key = params.remove(0)
         .into_owned();
 
-    if !key.is_serializable() {
-        return Err(EnvironmentError::Static("Key is not serializable"))
-    }
+    check_storage_key(&key)?;
 
     let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.cache_clone_refs);
     let value = match cache.storage.entry(key.clone_ref()) {
@@ -142,9 +159,7 @@ pub async fn storage_has<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a
     let key = params.remove(0)
         .into_owned();
 
-    if !key.is_serializable() {
-        return Err(EnvironmentError::Static("Key is not serializable"))
-    }
+    check_storage_key(&key)?;
 
     let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.cache_clone_refs);
     let contains = match cache.storage.entry(key.clone()) {
@@ -175,6 +190,7 @@ pub async fn storage_store<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<
         .into_owned();
     
     // Dynamic gas cost depending on the size of the key and value
+    check_storage_key(&key)?;
     let total_size = check_storage_entry_size(&key, &value)?;
     let cost = total_size as u64 * FEE_PER_BYTE_STORED_CONTRACT;
     context.increase_gas_usage(cost)?;
@@ -214,9 +230,7 @@ pub async fn storage_delete<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance
     let key = params.remove(0)
         .into_owned();
 
-    if !key.is_serializable() {
-        return Err(EnvironmentError::Static("Key is not serializable"))
-    }
+    check_storage_key(&key)?;
 
     let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.cache_clone_refs);
     let data_state = match cache.storage.get(&key) {
@@ -246,4 +260,18 @@ pub async fn storage_delete<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance
         .unwrap_or_default();
 
     Ok(SysCallResult::Return(value.into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn raw_storage_rejects_reserved_btree_prefix() {
+        let mut key = btree::PREFIX.to_vec();
+        key.extend_from_slice(b"orders:root");
+
+        assert!(check_storage_key(&ValueCell::Bytes(key)).is_err());
+        assert!(check_storage_key(&ValueCell::Bytes(b"orders:root".to_vec())).is_ok());
+    }
 }

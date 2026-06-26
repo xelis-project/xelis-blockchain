@@ -191,6 +191,16 @@ fn btree_header_matches_full_node_layout() {
     assert_eq!(hdr.right, full.right);
 }
 
+#[test]
+fn btree_user_key_rejects_reserved_storage_prefix() {
+    let mut key = PREFIX.to_vec();
+    key.extend_from_slice(b"orders:node:1");
+
+    assert!(super::read_key_bytes(ValueCell::Bytes(key)).is_err());
+    assert!(super::read_key_bytes(ValueCell::Bytes(b"orders:node:1".to_vec())).is_ok());
+    assert!(super::read_seek_key_bytes(ValueCell::Bytes(Vec::new())).is_ok());
+}
+
 #[tokio::test]
 async fn btree_insert_get_delete_roundtrip() {
     init_test!(contract, provider, chain, state);
