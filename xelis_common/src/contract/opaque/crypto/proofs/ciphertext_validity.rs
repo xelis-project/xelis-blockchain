@@ -37,6 +37,10 @@ impl DynEq for CiphertextValidityProof {
 
 impl DynHash for CiphertextValidityProof {
     fn dyn_hash(&self, _: &mut dyn Hasher) {}
+
+    fn can_hash(&self) -> bool {
+        false
+    }
 }
 
 impl Serializable for CiphertextValidityProof {

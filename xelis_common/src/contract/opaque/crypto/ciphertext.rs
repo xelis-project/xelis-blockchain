@@ -46,8 +46,12 @@ impl Serializable for CiphertextCache {
 }
 
 impl DynHash for CiphertextCache {
-    fn dyn_hash(&self, _: &mut dyn Hasher) {
-        // nothing
+    fn dyn_hash(&self, state: &mut dyn Hasher) {
+        state.write(&self.to_bytes());
+    }
+
+    fn can_hash(&self) -> bool {
+        true
     }
 }
 
@@ -269,4 +273,30 @@ pub fn ciphertext_handle(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, 
         .clone();
 
     Ok(SysCallResult::Return(OpaqueRistrettoPoint::Decompressed(None, handle).into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        collections::hash_map::DefaultHasher,
+        hash::Hasher,
+    };
+
+    use super::*;
+
+    fn opaque_hash(value: &CiphertextCache) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        value.dyn_hash(&mut hasher);
+        hasher.finish()
+    }
+
+    #[test]
+    fn ciphertext_dyn_hash_uses_ciphertext_bytes() {
+        let first = CiphertextCache::Decompressed(Some(CompressedCiphertext::zero()), Ciphertext::zero());
+        let second = CiphertextCache::Compressed(CompressedCiphertext::zero());
+        let third = CiphertextCache::Decompressed(None, Ciphertext::new(PedersenCommitment::from_point(curve25519_dalek::constants::RISTRETTO_BASEPOINT_POINT), DecryptHandle::from_point(curve25519_dalek::constants::RISTRETTO_BASEPOINT_POINT)));
+
+        assert_eq!(opaque_hash(&first), opaque_hash(&second));
+        assert_ne!(opaque_hash(&first), opaque_hash(&third));
+    }
 }

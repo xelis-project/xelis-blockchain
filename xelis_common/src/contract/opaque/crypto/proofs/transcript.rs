@@ -49,6 +49,10 @@ impl DynHash for OpaqueTranscript {
     fn dyn_hash(&self, _: &mut dyn Hasher) {
         // No hashing needed for OpaqueTranscript
     }
+
+    fn can_hash(&self) -> bool {
+        false
+    }
 }
 
 impl JSONHelper for OpaqueTranscript {}
