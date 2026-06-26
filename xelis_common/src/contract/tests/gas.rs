@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, collections::HashMap};
 
 use curve25519_dalek::Scalar;
 use indexmap::IndexMap;
@@ -25,6 +25,7 @@ use crate::{
         proofs::G
     },
     transaction::{
+        ContractDeposit,
         mock::{MockAccount, MockChainState},
         verify::{BlockchainApplyState, BlockchainContractState}
     },
@@ -199,6 +200,51 @@ async fn test_contract_balance_for_gas() {
         versioned_state.mark_updated();
         assert_eq!(*versioned_state, VersionedState::Updated(10));
     }
+}
+
+#[tokio::test]
+async fn increase_gas_limit_pre_invoke_check_includes_requested_amount() {
+    let code = r#"
+        entry main() {
+            require(!increase_gas_limit(2u64), "current deposit must not fund gas injection pre-check");
+            return 0
+        }
+    "#;
+
+    let mut chain_state = MockChainState::new();
+    let contract = create_contract(&mut chain_state, code, ContractVersion::V1)
+        .expect("create contract");
+
+    {
+        let (_, balance) = chain_state.get_contract_balance_for_gas(&contract).await.unwrap();
+        *balance = 1;
+    }
+
+    let deposits = [(XELIS_ASSET, ContractDeposit::Public(1))]
+        .into_iter()
+        .collect::<IndexMap<_, _>>();
+    let decompressed_deposits = HashMap::new();
+
+    let result = vm::invoke_contract(
+        ContractCaller::System,
+        &mut chain_state,
+        Cow::Owned(contract.clone()),
+        Some((&deposits, &decompressed_deposits)),
+        std::iter::empty(),
+        IndexMap::new(),
+        100_000,
+        InvokeContract::Entry(0),
+        Cow::Owned(Default::default()),
+        true,
+    ).await
+        .expect("invoke contract");
+
+    assert!(result.is_success(), "gas injection should be rejected by the contract guard");
+    assert_eq!(result.vm_max_gas, 100_000, "rejected injection must not increase VM gas limit");
+    assert!(
+        chain_state.contract_logs.values().flatten().all(|log| !matches!(log, ContractLog::GasInjection { .. })),
+        "rejected injection must not emit a gas injection log"
+    );
 }
 
 #[tokio::test]

@@ -3019,7 +3019,7 @@ async fn increase_gas_limit<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance
     // and gas limit will be paid to the miners
     {
         // Ensure that we check against the overall amount
-        let mut total_amount = 0;
+        let mut total_amount = amount;
         if let Some(amount) = state.injected_gas.get(&Source::Contract(metadata.metadata.contract_executor.clone())).copied() {
             total_amount = amount.checked_add(total_amount)
                 .context("Overflow while checking injected gas")?;
