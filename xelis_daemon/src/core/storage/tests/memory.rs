@@ -228,6 +228,13 @@ async fn test_memory_delete_versioned_balances_above_topoheight() -> Result<()> 
 }
 
 #[tokio::test]
+async fn test_memory_delete_versioned_balances_below_topoheight_keeps_latest_output() -> Result<()> {
+    let data = TestData::new()?;
+    let storage = MemoryStorage::new(data.network, 1);
+    test_delete_versioned_balances_below_topoheight_keeps_latest_output(storage, &data).await
+}
+
+#[tokio::test]
 async fn test_memory_delete_versioned_balances_above_topoheight_multi_account() -> Result<()> {
     let storage = MemoryStorage::new(Network::Devnet, 1);
     test_delete_versioned_balances_above_topoheight_multi_account(storage).await

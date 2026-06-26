@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::borrow::Cow;
 use indexmap::IndexSet;
 use xelis_common::{
-    account::{VersionedBalance, VersionedNonce},
+    account::{BalanceType, VersionedBalance, VersionedNonce},
     asset::{AssetData, AssetOwner, MaxSupplyMode, VersionedAssetData},
     block::{BlockHeader, BlockVersion, EXTRA_NONCE_SIZE},
     config::XELIS_ASSET,
@@ -1337,6 +1337,68 @@ async fn setup_balance_storage<S: Storage>(
             None,
         ),
     ).await.context("Failed to add asset")?;
+
+    Ok(())
+}
+
+pub async fn test_delete_versioned_balances_below_topoheight_keeps_latest_output<S: Storage>(
+    mut storage: S,
+    data: &TestData,
+) -> Result<()> {
+    let key = data.public_key_pair.get_public_key().compress();
+    setup_balance_storage(&mut storage, &key, &XELIS_ASSET).await?;
+
+    let mut balance = VersionedBalance::zero();
+    storage.set_last_balance_to(&key, &XELIS_ASSET, 0, &balance).await
+        .context("Failed to set balance at topo 0")?;
+
+    balance.set_previous_topoheight(Some(0));
+    balance.set_balance_type(BalanceType::Output);
+    storage.set_last_balance_to(&key, &XELIS_ASSET, 1, &balance).await
+        .context("Failed to set output balance at topo 1")?;
+
+    for topo in 2u64..=6 {
+        balance.set_previous_topoheight(Some(topo - 1));
+        balance.set_balance_type(BalanceType::Input);
+        storage.set_last_balance_to(&key, &XELIS_ASSET, topo, &balance).await
+            .with_context(|| format!("Failed to set input balance at topo {}", topo))?;
+    }
+
+    storage.delete_versioned_data_below_topoheight(5, true).await
+        .context("Failed to delete versioned data below topoheight 5")?;
+
+    let output_exists = storage.has_balance_at_exact_topoheight(&key, &XELIS_ASSET, 1).await
+        .context("Failed to check output balance existence")?;
+    assert!(output_exists, "Latest output-bearing balance below the cutoff must be kept");
+
+    let first_exists = storage.has_balance_at_exact_topoheight(&key, &XELIS_ASSET, 0).await
+        .context("Failed to check pruned balance existence")?;
+    assert!(!first_exists, "Balances below the retained output-bearing balance should be pruned");
+
+    let output_balance = storage.get_balance_at_exact_topoheight(&key, &XELIS_ASSET, 1).await
+        .context("Failed to get retained output balance")?;
+    assert_eq!(output_balance.get_previous_topoheight(), None, "Retained output balance should become the chain anchor");
+    assert!(output_balance.contains_output(), "Retained balance should still be output-bearing");
+
+    let (output_topoheight, _) = storage.get_output_balance_at_maximum_topoheight(&key, &XELIS_ASSET, 6).await
+        .context("Failed to get output balance")?
+        .context("Expected output balance to be found")?;
+    assert_eq!(output_topoheight, 1, "Latest output-bearing balance should be returned after pruning");
+
+    let (last_topoheight, mut last_balance) = storage.get_last_balance(&key, &XELIS_ASSET).await
+        .context("Failed to get last balance")?;
+    assert_eq!(last_topoheight, 6, "Latest balance pointer should remain unchanged");
+
+    let mut seen_output = false;
+    while let Some(prev) = last_balance.get_previous_topoheight() {
+        last_balance = storage.get_balance_at_exact_topoheight(&key, &XELIS_ASSET, prev).await
+            .with_context(|| format!("Failed to get balance at topoheight {}", prev))?;
+        if prev == 1 {
+            seen_output = true;
+        }
+    }
+
+    assert!(seen_output, "Last balance chain should still link back to the retained output balance");
 
     Ok(())
 }
