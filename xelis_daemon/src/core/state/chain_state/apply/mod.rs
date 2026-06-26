@@ -711,13 +711,13 @@ impl<'s, 'b, P: ApplicableChainStateProvider> ApplicableChainState<'s, 'b, P> {
                 }
             };
 
-            for (contract, callback) in callbacks {
-                debug!("processing event callback of {}", contract);
+            for (listener_contract, callback) in callbacks {
+                debug!("processing event callback of {}", listener_contract);
                 self.process_execution(
-                    Cow::Owned(event.contract.clone()),
+                    Cow::Owned(listener_contract.clone()),
                     ContractCaller::EventCallback(Cow::Owned(caller.clone()), Cow::Owned(event.contract.clone())),
                     // Gas source is the contract being called
-                    [(Source::Contract(contract.clone()), callback.max_gas)].into_iter().collect(),
+                    [(Source::Contract(listener_contract.clone()), callback.max_gas)].into_iter().collect(),
                     callback.max_gas,
                     callback.chunk_id,
                     event.params.iter().map(|v| v.deep_clone()),
@@ -857,5 +857,119 @@ impl<'s, 'b, P: ApplicableChainStateProvider> ApplicableChainState<'s, 'b, P> {
             past_emitted_supply,
             block_reward,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{borrow::Cow, collections::HashMap, sync::Arc};
+
+    use indexmap::IndexSet;
+    use xelis_assembler::Assembler;
+    use xelis_common::{
+        block::{Block, BlockHeader, BlockVersion, EXTRA_NONCE_SIZE},
+        contract::{build_environment, CallbackEvent, ContractLog, ContractModule, ContractVersion, EventCallbackRegistration},
+        crypto::{Hash, KeyPair},
+        network::Network,
+        versioned::VersionedState,
+    };
+    use xelis_vm::Primitive;
+
+    use crate::core::storage::MemoryStorage;
+
+    use super::*;
+
+    fn module_returning(exit_code: u64) -> ContractModule {
+        let mut assembler = Assembler::new(
+            r#"
+                #callback internal
+                CONSTANT 0
+                RETURN
+            "#,
+        );
+        assembler.add_constant(Primitive::U64(exit_code).into());
+
+        ContractModule {
+            version: ContractVersion::V1,
+            module: Arc::new(assembler.assemble().expect("assemble callback module")),
+        }
+    }
+
+    #[tokio::test]
+    async fn event_callback_executes_listener_contract() {
+        let storage = MemoryStorage::new(Network::Devnet, 1);
+        let environments = HashMap::from([(
+            ContractVersion::V1,
+            Arc::new(build_environment::<MemoryStorage>(ContractVersion::V1).build()),
+        )]);
+        let block_hash = Hash::new([1u8; 32]);
+        let miner = KeyPair::new().get_public_key().compress();
+        let block_header = BlockHeader::new(
+            BlockVersion::V3,
+            0,
+            0,
+            IndexSet::new(),
+            [0u8; EXTRA_NONCE_SIZE],
+            miner,
+            IndexSet::new(),
+        );
+        let block = Block::new(block_header, Vec::new());
+
+        let mut state = ApplicableChainState::new(
+            &storage,
+            &environments,
+            0,
+            1,
+            BlockVersion::V3,
+            &block_hash,
+            &block,
+            false,
+            0,
+            0,
+            false,
+        );
+
+        let emitter = Hash::new([2u8; 32]);
+        let listener = Hash::new([3u8; 32]);
+        state.inner.contracts.insert(
+            Cow::Owned(emitter.clone()),
+            Some((VersionedState::New, Some(Cow::Owned(module_returning(1))))),
+        );
+        state.inner.contracts.insert(
+            Cow::Owned(listener.clone()),
+            Some((VersionedState::New, Some(Cow::Owned(module_returning(0))))),
+        );
+
+        state.contract_manager.events.push_back(CallbackEvent {
+            contract: emitter.clone(),
+            event_id: 7,
+            params: Vec::new(),
+        });
+        state.contract_manager.events_listeners.insert(
+            (emitter, 7),
+            vec![(
+                listener,
+                EventCallbackRegistration {
+                    chunk_id: 0,
+                    max_gas: 1_000,
+                },
+            )],
+        );
+
+        let caller = Hash::new([4u8; 32]);
+        state.execute_callback_events(&caller)
+            .await
+            .expect("execute callback event");
+
+        let exit_codes = state.contract_manager.logs.get(&Cow::Owned(caller))
+            .expect("callback logs")
+            .iter()
+            .filter_map(|log| match log {
+                ContractLog::ExitCode(code) => Some(*code),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(exit_codes, vec![Some(0)]);
     }
 }
