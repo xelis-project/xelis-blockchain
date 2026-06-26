@@ -58,7 +58,7 @@ pub fn signature_from_bytes_fn(_: FnInstance, params: FnParams, _: &ModuleMetada
     Ok(SysCallResult::Return(Primitive::Opaque(signature.into()).into()))
 }
 
-pub fn signature_verify_fn(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn signature_verify_fn(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let signature: &Signature = zelf.as_opaque_type()?;
 
@@ -69,6 +69,8 @@ pub fn signature_verify_fn(zelf: FnInstance, mut params: FnParams, _: &ModuleMet
     let data = params[0]
         .as_ref()
         .as_bytes()?;
+
+    context.increase_gas_usage(data.len() as u64 * 2)?;
 
     let (compressed, key) = point.both()?;
     Ok(SysCallResult::Return(Primitive::Boolean(signature.verify_internal(&data, &key, compressed)).into()))
