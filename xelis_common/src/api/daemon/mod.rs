@@ -694,7 +694,7 @@ pub enum AccountHistoryType {
 pub struct AccountHistoryEntry {
     /// Topoheight used by this request.
     pub topoheight: TopoHeight,
-    /// Hash used by this request.
+    /// Block hash.
     pub hash: Hash,
     /// History type value.
     #[serde(flatten)]
