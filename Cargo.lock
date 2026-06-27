@@ -389,9 +389,9 @@ dependencies = [
 
 [[package]]
 name = "anyhow"
-version = "1.0.102"
+version = "1.0.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
+checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 
 [[package]]
 name = "arbitrary"
@@ -847,9 +847,9 @@ dependencies = [
 
 [[package]]
 name = "chacha20"
-version = "0.10.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f8d983286843e49675a4b7a2d174efe136dc93a18d69130dd18198a6c167601"
+checksum = "d524456ba66e72eb8b115ff89e01e497f8e6d11d78b70b1aa13c0fbd97540a81"
 dependencies = [
  "cfg-if",
  "cipher 0.5.2",
@@ -864,7 +864,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c9ed179664f12fd6f155f6dd632edf5f3806d48c228c67ff78366f2a0eb6b5e"
 dependencies = [
  "aead",
- "chacha20 0.10.0",
+ "chacha20 0.10.1",
  "cipher 0.5.2",
  "poly1305",
 ]
@@ -2357,9 +2357,9 @@ dependencies = [
 
 [[package]]
 name = "js-sys"
-version = "0.3.102"
+version = "0.3.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03d04c30968dffe80775bd4d7fb676131cd04a1fb46d2686dbffbaec2d9dfd31"
+checksum = "53b44bfcdb3f8d5837a46dae1ca9660a837176eee74a28b229bc626816589102"
 dependencies = [
  "cfg-if",
  "futures-util",
@@ -3088,7 +3088,7 @@ version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2e8e8bcc7961af1fdac401278c6a831614941f6164ee3bf4ce61b7edb162207"
 dependencies = [
- "chacha20 0.10.0",
+ "chacha20 0.10.1",
  "getrandom 0.4.3",
  "rand_core 0.10.1",
 ]
@@ -3163,9 +3163,9 @@ dependencies = [
 
 [[package]]
 name = "rapidhash"
-version = "4.4.1"
+version = "4.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5e48930979c155e2f33aa36ab3119b5ee81332beb6482199a8ecd6029b80b59"
+checksum = "32b266a82f4aa99bb5c25e28d11cc44ace63d91adbcbcee4d323e2ae3d49ef37"
 dependencies = [
  "rustversion",
 ]
@@ -4504,9 +4504,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen"
-version = "0.2.125"
+version = "0.2.126"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ddb3f79143bced6de84270411622a2699cee572fc0875aeaf1e7867cf9fca1a"
+checksum = "4b067c0c11094aef6b7a801c1e34a26affafdf3d051dba08456b868789aaf9a4"
 dependencies = [
  "cfg-if",
  "once_cell",
@@ -4517,9 +4517,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-futures"
-version = "0.4.75"
+version = "0.4.76"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "503b14d284f2c8dac03b819967e155ea753f573586193b2b2c95990cb5d69280"
+checksum = "c62df1340f32221cb9c54d6a27b030e3dba64361d4a95bed55f9aacb44da291d"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
@@ -4527,9 +4527,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro"
-version = "0.2.125"
+version = "0.2.126"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e21a184b13fb19e157296e2c46056aec9092264fab83e4ba59e68c61b323c3d"
+checksum = "167ce5e579f6bcf889c4f7175a8a5a585de84e8ff93976ce393efa5f2837aab1"
 dependencies = [
  "quote",
  "wasm-bindgen-macro-support",
@@ -4537,9 +4537,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro-support"
-version = "0.2.125"
+version = "0.2.126"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fecefd9c35bd935a20fc3fc344b5f29138961e4f47fb03297d88f2587afb5ebd"
+checksum = "f3997c7839262f4ef12cf90b818d6340c18e80f263f1a94bf157d0ec4420380e"
 dependencies = [
  "bumpalo",
  "proc-macro2",
@@ -4550,18 +4550,18 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-shared"
-version = "0.2.125"
+version = "0.2.126"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23939e44bb9a5d7576fa2b563dc2e136628f1224e88a8deed09e04858b77871f"
+checksum = "dc1b4cb0cc549fcf58d7dfc081778139b3d283a081644e833e84682ad71cea24"
 dependencies = [
  "unicode-ident",
 ]
 
 [[package]]
 name = "web-sys"
-version = "0.3.102"
+version = "0.3.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6430a72df5eb332242960fe84b3002a241163998241eb596d4f739b9757061d"
+checksum = "8622dcb61c0bcc9fffa6938bed81210af2da9a7e4a1a834b2e37a59b6dfb6141"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
@@ -4918,7 +4918,7 @@ dependencies = [
 [[package]]
 name = "xelis-assembler"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#109946951a0c5d30984ae7e55f3dc5de7dcee21d"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#18d066e5b52f083875c1ac8d314bfb68079e2b78"
 dependencies = [
  "log",
  "thiserror 2.0.18",
@@ -4929,7 +4929,7 @@ dependencies = [
 [[package]]
 name = "xelis-ast"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#109946951a0c5d30984ae7e55f3dc5de7dcee21d"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#18d066e5b52f083875c1ac8d314bfb68079e2b78"
 dependencies = [
  "indexmap 2.14.0",
  "xelis-types",
@@ -4938,7 +4938,7 @@ dependencies = [
 [[package]]
 name = "xelis-builder"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#109946951a0c5d30984ae7e55f3dc5de7dcee21d"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#18d066e5b52f083875c1ac8d314bfb68079e2b78"
 dependencies = [
  "anyhow",
  "hex",
@@ -4953,7 +4953,7 @@ dependencies = [
 [[package]]
 name = "xelis-bytecode"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#109946951a0c5d30984ae7e55f3dc5de7dcee21d"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#18d066e5b52f083875c1ac8d314bfb68079e2b78"
 dependencies = [
  "hex",
  "indexmap 2.14.0",
@@ -4966,7 +4966,7 @@ dependencies = [
 [[package]]
 name = "xelis-compiler"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#109946951a0c5d30984ae7e55f3dc5de7dcee21d"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#18d066e5b52f083875c1ac8d314bfb68079e2b78"
 dependencies = [
  "log",
  "thiserror 2.0.18",
@@ -4979,7 +4979,7 @@ dependencies = [
 [[package]]
 name = "xelis-environment"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#109946951a0c5d30984ae7e55f3dc5de7dcee21d"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#18d066e5b52f083875c1ac8d314bfb68079e2b78"
 dependencies = [
  "anyhow",
  "better_any",
@@ -5008,7 +5008,7 @@ dependencies = [
 [[package]]
 name = "xelis-lexer"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#109946951a0c5d30984ae7e55f3dc5de7dcee21d"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#18d066e5b52f083875c1ac8d314bfb68079e2b78"
 dependencies = [
  "log",
  "thiserror 2.0.18",
@@ -5019,7 +5019,7 @@ dependencies = [
 [[package]]
 name = "xelis-parser"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#109946951a0c5d30984ae7e55f3dc5de7dcee21d"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#18d066e5b52f083875c1ac8d314bfb68079e2b78"
 dependencies = [
  "anyhow",
  "indexmap 2.14.0",
@@ -5035,7 +5035,7 @@ dependencies = [
 [[package]]
 name = "xelis-types"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#109946951a0c5d30984ae7e55f3dc5de7dcee21d"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#18d066e5b52f083875c1ac8d314bfb68079e2b78"
 dependencies = [
  "anyhow",
  "hex",
@@ -5051,7 +5051,7 @@ dependencies = [
 [[package]]
 name = "xelis-vm"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#109946951a0c5d30984ae7e55f3dc5de7dcee21d"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#18d066e5b52f083875c1ac8d314bfb68079e2b78"
 dependencies = [
  "anyhow",
  "futures",
