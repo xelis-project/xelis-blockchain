@@ -1187,8 +1187,22 @@ impl Transaction {
         trace!("Applying transaction data");
 
         // Handle the fee
-        state.handle_tx_fee(self, tx_hash).await
+        let refund = state.handle_tx_fee(self, tx_hash).await
             .map_err(VerificationStateError::State)?;
+
+        // Refund the left-over TX fee if any
+        if refund > 0 {
+            // Get the balance as a receiver to prevent breaking the link between ZK Proofs
+            // in case we have more than one TX executed from the same source key
+            let balance = state
+                .get_receiver_balance(
+                    Cow::Borrowed(&self.source),
+                    Cow::Borrowed(&XELIS_ASSET)
+                ).await
+                .map_err(VerificationStateError::State)?;
+
+            *balance += Scalar::from(refund);
+        }
 
         // Update nonce
         let next_nonce = self.nonce.checked_add(1)

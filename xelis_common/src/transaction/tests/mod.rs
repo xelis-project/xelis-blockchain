@@ -990,20 +990,19 @@ async fn test_apply_partial_fee_paid_on_missing_contract() {
     // No gas was actually executed so no gas fee should be tracked.
     assert_eq!(state.gas_fee, 0, "gas_fee must be 0 since no execution occurred");
 
-    // Alice's balance must be reduced by exactly fee_limit.
+    // Alice's balance must be reduced by the actual fee only.
     // The full max_gas is refunded (unused), no deposits to worry about.
-    // The fee_limit is NOT refunded because apply_with_partial_verify does not
-    // apply the fee-limit refund that verify_dynamic_parts would apply.
+    // The fee_limit is refunded, so only `tx.fee` remains charged.
     let balance = alice.keypair.decrypt_to_point(
         &state.accounts[&alice.keypair.get_public_key().compress()].balances[&XELIS_ASSET],
     );
-    let expected = (100 * COIN_VALUE) - tx.get_fee_limit();
+    let expected = (100 * COIN_VALUE) - tx.fee;
     assert_eq!(
         balance,
         Scalar::from(expected) * (*G),
-        "expected balance {} (paid fee_limit = {}), but got a different decrypted point",
+        "expected balance {} (paid fee = {}), but got a different decrypted point",
         expected,
-        tx.get_fee_limit()
+        tx.fee
     );
 }
 
@@ -1069,18 +1068,16 @@ async fn test_apply_partial_deposit_refunded_fee_paid_on_missing_contract() {
     // Gas fee is zero (no execution).
     assert_eq!(state.gas_fee, 0);
 
-    // Deposit is refunded, max_gas is refunded, but fee_limit is permanently lost.
-    // Net deduction = fee_limit only.
+    // Deposit is refunded, max_gas is refunded, and fee_limit is refunded too.
     let balance = alice.keypair.decrypt_to_point(
         &state.accounts[&alice.keypair.get_public_key().compress()].balances[&XELIS_ASSET],
     );
-    let expected = (100 * COIN_VALUE) - tx.get_fee_limit();
+    let expected = 100 * COIN_VALUE - tx.fee; // only the actual fee is deducted
     assert_eq!(
         balance,
         Scalar::from(expected) * (*G),
-        "expected balance {} (deposit and gas refunded, fee_limit = {} kept), got a different point",
-        expected,
-        tx.get_fee_limit()
+        "expected balance {} (deposit, gas, and fee_limit refunded), got a different point",
+        expected
     );
 }
 
