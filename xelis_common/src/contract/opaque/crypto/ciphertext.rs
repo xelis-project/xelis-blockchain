@@ -50,7 +50,7 @@ impl DynHash for CiphertextCache {
         state.write(&self.to_bytes());
     }
 
-    fn can_hash(&self) -> bool {
+    fn is_hashable(&self) -> bool {
         true
     }
 }

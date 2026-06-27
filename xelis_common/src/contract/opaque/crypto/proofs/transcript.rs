@@ -50,7 +50,7 @@ impl DynHash for OpaqueTranscript {
         // No hashing needed for OpaqueTranscript
     }
 
-    fn can_hash(&self) -> bool {
+    fn is_hashable(&self) -> bool {
         false
     }
 }

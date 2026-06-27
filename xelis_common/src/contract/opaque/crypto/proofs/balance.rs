@@ -43,7 +43,7 @@ impl DynEq for BalanceProof {
 impl DynHash for BalanceProof {
     fn dyn_hash(&self, _: &mut dyn Hasher) {}
 
-    fn can_hash(&self) -> bool {
+    fn is_hashable(&self) -> bool {
         false
     }
 }
