@@ -69,7 +69,7 @@ pub const MAX_TIPS_IN_CACHE: usize = u8::MAX as usize;
 pub const fn get_stable_limit(version: BlockVersion) -> u64 {
     match version {
         BlockVersion::V0 | BlockVersion::V1 | BlockVersion::V2 => 8,
-        BlockVersion::V3 | BlockVersion::V4 | BlockVersion::V5 | BlockVersion::V6 => 24,
+        BlockVersion::V3 | BlockVersion::V4 | BlockVersion::V5 | BlockVersion::V6 | BlockVersion::V7 => 24,
     }
 }
 
