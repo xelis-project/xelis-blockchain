@@ -67,7 +67,7 @@ pub fn calculate_difficulty(solve_time: TimestampMillis, previous_difficulty: Di
         BlockVersion::V3 |
         BlockVersion::V4 |
         BlockVersion::V5 => v2::calculate_difficulty(solve_time, previous_difficulty, p, minimum_difficulty, block_time_target),
-        BlockVersion::V6 => panic!("Difficulty calculation for V6 should use hashrate and not solve time"),
+        BlockVersion::V6 | BlockVersion::V7 => panic!("Difficulty calculation for V6/V7 should use hashrate and not solve time"),
     }
 }
 
@@ -81,7 +81,7 @@ pub fn get_covariance_p(version: BlockVersion) -> VarUint {
         BlockVersion::V3 |
         BlockVersion::V4 |
         BlockVersion::V5 => v2::P,
-        BlockVersion::V6 => v3::P,
+        BlockVersion::V6 | BlockVersion::V7 => v3::P,
     }
 }
 
@@ -111,7 +111,10 @@ pub const fn get_difficulty_at_hard_fork(network: &Network, version: BlockVersio
             BlockVersion::V0 | BlockVersion::V1 => 20 * KILO_HASH,
             BlockVersion::V2 => 2 * GIGA_HASH,
             BlockVersion::V3 => 200 * MEGA_HASH,
-            BlockVersion::V4 | BlockVersion::V5 | BlockVersion::V6 => 400 * MEGA_HASH,
+            BlockVersion::V4
+            | BlockVersion::V5
+            | BlockVersion::V6
+            | BlockVersion::V7 => 400 * MEGA_HASH,
         },
         _ => return None,
     };
