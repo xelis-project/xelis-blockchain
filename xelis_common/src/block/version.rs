@@ -24,6 +24,7 @@ pub enum BlockVersion {
     V5 = 5,
     // DAG Improvements, Smart Contracts new features
     V6 = 6,
+    V7 = 7,
 }
 
 impl BlockVersion {
@@ -38,6 +39,7 @@ impl BlockVersion {
             // allows V2 & V3 transactions, as there is no breaking change in V3
             // and banning V2 would block old wallets from sending transactions
             | BlockVersion::V6 => matches!(tx_version, TxVersion::V2 | TxVersion::V3),
+            BlockVersion::V7 => matches!(tx_version, TxVersion::V3),
         }
     }
 
@@ -50,6 +52,7 @@ impl BlockVersion {
             | BlockVersion::V4
             | BlockVersion::V5 => TxVersion::V2,
             | BlockVersion::V6 => TxVersion::V3,
+            BlockVersion::V7 => TxVersion::V3,
         }
     }
 }
@@ -66,6 +69,7 @@ impl TryFrom<u8> for BlockVersion {
             4 => Ok(BlockVersion::V4),
             5 => Ok(BlockVersion::V5),
             6 => Ok(BlockVersion::V6),
+            7 => Ok(BlockVersion::V7),
             _ => Err(()),
         }
     }
@@ -129,5 +133,10 @@ mod tests {
     fn test_block_version_ord() {
         assert!(BlockVersion::V0 < BlockVersion::V1);
         assert!(BlockVersion::V1 < BlockVersion::V2);
+        assert!(BlockVersion::V2 < BlockVersion::V3);
+        assert!(BlockVersion::V3 < BlockVersion::V4);
+        assert!(BlockVersion::V4 < BlockVersion::V5);
+        assert!(BlockVersion::V5 < BlockVersion::V6);
+        assert!(BlockVersion::V6 < BlockVersion::V7);
     }
 }
