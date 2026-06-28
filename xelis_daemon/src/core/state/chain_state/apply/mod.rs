@@ -745,6 +745,11 @@ impl<'s, 'b, P: ApplicableChainStateProvider> ApplicableChainState<'s, 'b, P> {
 
         if !self.load_contract_module(contract.clone()).await? {
             warn!("failed to load contract module for scheduled execution of contract {} with caller {}", contract, caller.get_hash());
+            vm::refund_gas_sources(self, gas_sources, 0, max_gas).await
+                .map_err(|err| match err {
+                    vm::ContractStateError::State(err) => err,
+                    vm::ContractStateError::Contract(err) => BlockchainError::ContractError(err),
+                })?;
             return Ok(());
         }
 
@@ -971,5 +976,80 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(exit_codes, vec![Some(0)]);
+    }
+
+    #[tokio::test]
+    async fn missing_event_callback_module_refunds_reserved_gas() {
+        let storage = MemoryStorage::new(Network::Devnet, 1);
+        let environments = HashMap::from([(
+            ContractVersion::V1,
+            Arc::new(build_environment::<MemoryStorage>(ContractVersion::V1).build()),
+        )]);
+        let block_hash = Hash::new([1u8; 32]);
+        let miner = KeyPair::new().get_public_key().compress();
+        let block_header = BlockHeader::new(
+            BlockVersion::V6,
+            0,
+            0,
+            IndexSet::new(),
+            [0u8; EXTRA_NONCE_SIZE],
+            miner,
+            IndexSet::new(),
+        );
+        let block = Block::new(block_header, Vec::new());
+
+        let mut state = ApplicableChainState::new(
+            &storage,
+            &environments,
+            0,
+            1,
+            BlockVersion::V6,
+            &block_hash,
+            &block,
+            false,
+            0,
+            0,
+            false,
+        );
+
+        let emitter = Hash::new([2u8; 32]);
+        let listener = Hash::new([3u8; 32]);
+        state.inner.contracts.insert(
+            Cow::Owned(listener.clone()),
+            Some((VersionedState::New, None)),
+        );
+
+        state.contract_manager.events.push_back(CallbackEvent {
+            contract: emitter.clone(),
+            event_id: 7,
+            params: Vec::new(),
+        });
+        state.contract_manager.events_listeners.insert(
+            (emitter, 7),
+            vec![(
+                listener.clone(),
+                EventCallbackRegistration {
+                    chunk_id: 0,
+                    max_gas: 1_000,
+                },
+            )],
+        );
+
+        let caller = Hash::new([4u8; 32]);
+        state.execute_callback_events(&caller)
+            .await
+            .expect("execute callback event");
+
+        let refunded = {
+            let (_, balance) = state.get_contract_balance_for_gas(&listener)
+                .await
+                .expect("listener gas balance");
+            *balance
+        };
+        assert_eq!(refunded, 1_000);
+        assert!(
+            state.contract_manager.logs.get(&Cow::Owned(caller)).is_none(),
+            "missing module should not emit callback logs"
+        );
     }
 }
