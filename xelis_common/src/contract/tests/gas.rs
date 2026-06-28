@@ -612,6 +612,116 @@ async fn successful_account_paid_scheduled_execution_keeps_reserved_gas_funded()
 }
 
 #[tokio::test]
+async fn duplicate_account_paid_scheduled_execution_does_not_reserve_unowned_gas() {
+    let scheduled_gas = 50_000u64;
+    let max_gas = 200_000u64;
+    let code = format!(r#"
+        pub fn callback(args: any[]) -> u64 {{
+            return 0
+        }}
+
+        entry main() {{
+            let execution = ScheduledExecution::new_at_block_end(callback, [], {scheduled_gas}u64, false);
+            require(execution != null, "scheduled execution was not created");
+            ScheduledExecution::new_at_block_end(callback, [], {scheduled_gas}u64, false);
+            return 0
+        }}
+    "#);
+
+    let mut chain_state = MockChainState::new();
+    let contract = create_contract(&mut chain_state, &code, ContractVersion::V1)
+        .expect("create contract");
+
+    let mut account = TrackedAccount::new();
+    account.set_balance(XELIS_ASSET, 1_000_000);
+
+    let data = TransactionTypeBuilder::InvokeContract(InvokeContractBuilder {
+        contract: contract.clone(),
+        entry_id: 1,
+        max_gas,
+        parameters: Vec::new(),
+        deposits: Default::default(),
+        permission: Default::default(),
+    });
+    let mut builder_state = TrackedAccountState {
+        balances: account.balances.clone(),
+        nonce: account.nonce,
+        reference: Reference { topoheight: 0, hash: Hash::zero() },
+    };
+    let tx = Arc::new(TransactionBuilder::new(
+        TxVersion::V2,
+        account.keypair.get_public_key().compress(),
+        None,
+        data,
+        FeeBuilder::default(),
+    ).build(&mut builder_state, &account.keypair).expect("build tx"));
+    let tx_hash = tx.hash();
+
+    let source = account.keypair.get_public_key().compress();
+    chain_state.accounts.insert(source.clone(), MockAccount {
+        balances: [(XELIS_ASSET, account.keypair.get_public_key().encrypt(0u64))]
+            .into_iter()
+            .collect(),
+        nonce: 0,
+    });
+
+    let result = vm::invoke_contract(
+        ContractCaller::Transaction(&tx_hash, &tx),
+        &mut chain_state,
+        Cow::Owned(contract.clone()),
+        None,
+        std::iter::empty(),
+        IndexMap::new(),
+        max_gas,
+        InvokeContract::Entry(1),
+        Cow::Owned(Default::default()),
+        true,
+    ).await
+        .expect("invoke contract");
+
+    assert!(result.is_success(), "duplicate scheduling should be handled by the contract: {:?}", result);
+    assert_eq!(
+        chain_state.executions.block_end.len(),
+        1,
+        "only the first scheduled execution must be registered"
+    );
+
+    let execution_hash = chain_state.executions.block_end.first()
+        .expect("block-end execution hash");
+    let execution = chain_state.executions.executions.get(execution_hash)
+        .expect("scheduled execution");
+    assert_eq!(execution.max_gas, scheduled_gas);
+    assert_eq!(
+        execution.gas_sources.get(&Source::Account(source.clone())).copied(),
+        Some(scheduled_gas),
+        "only the registered execution may own reserved account gas"
+    );
+
+    assert!(
+        result.used_gas + scheduled_gas <= max_gas,
+        "test must leave enough outer gas for a refund"
+    );
+    let expected_refund = max_gas - result.used_gas - scheduled_gas;
+    assert_account_xelis_balance(
+        &chain_state,
+        &account.keypair,
+        &source,
+        expected_refund,
+        "duplicate schedule must not reserve gas outside the registered execution"
+    );
+    assert_eq!(
+        refund_gas_amount(&chain_state, &tx_hash),
+        expected_refund,
+        "refund log must match the tx source refund"
+    );
+    assert_eq!(
+        expected_refund + scheduled_gas + chain_state.gas_fee + chain_state.burned_fee,
+        max_gas,
+        "tx gas input must conserve across refund, fees, burn, and the one scheduled source"
+    );
+}
+
+#[tokio::test]
 async fn failed_account_paid_scheduled_execution_refunds_only_current_input() {
     let code = r#"
         pub fn callback(args: any[]) -> u64 {

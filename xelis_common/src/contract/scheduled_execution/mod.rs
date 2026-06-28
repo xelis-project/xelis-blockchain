@@ -211,6 +211,19 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider<'ty>>(
             + (params_size as u64 * FEE_PER_BYTE_IN_CONTRACT_MEMORY),
     };
 
+    // build the caller hash
+    let hash = hash_multiple(&[
+        metadata.metadata.contract_executor.as_bytes(),
+        &kind.to_bytes(),
+    ]);
+
+    // Reject duplicates before reserving gas. Account-paid scheduling records the
+    // reservation through gas allowance, so doing this after insert failure would
+    // leave gas reserved without any scheduled execution owning it.
+    if state.executions.contains_key(&hash) {
+        return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
+    }
+
     let total_cost = max_gas.checked_add(extra_cost)
         .ok_or(EnvironmentError::GasOverflow)?;
     let source = if use_contract_balance {
@@ -234,12 +247,6 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider<'ty>>(
 
         source
     };
-
-    // build the caller hash
-    let hash = hash_multiple(&[
-        metadata.metadata.contract_executor.as_bytes(),
-        &kind.to_bytes(),
-    ]);
 
     let execution = ScheduledExecution {
         hash: Arc::new(hash.clone()),
