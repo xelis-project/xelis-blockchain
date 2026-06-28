@@ -57,11 +57,8 @@ impl DynHash for CiphertextCache {
 
 impl_opaque!(
     "Ciphertext",
-    CiphertextCache
-);
-impl_opaque!(
-    "Ciphertext",
     CiphertextCache,
+    display,
     json
 );
 
