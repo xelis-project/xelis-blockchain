@@ -461,8 +461,9 @@ pub fn register_methods<T: ShareableTid<'static>, S: Storage>(handler: &mut RPCH
 // Helper to get the blockchain from the context
 #[inline]
 fn chain_from_context<'a, S: Storage>(context: &'a Context<'_, '_>) -> Result<&'a Arc<Blockchain<S>>, InternalRpcError> {
-    context.get()
+    context.get::<RPCHandler<Arc<Blockchain<S>>>>()
         .context("Error while retrieving blockchain from context")
+        .map(|handler| handler.get_data())
         .map_err(InternalRpcError::from)
 }
 
