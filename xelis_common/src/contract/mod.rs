@@ -1019,7 +1019,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("amount", Type::U64)
             ],
             FunctionHandler::Sync(ciphertext_generate),
-            1000,
+            2500,
             Some(ciphertext_type.clone()),
             "Generates a ciphertext for an address and plaintext amount."
         );

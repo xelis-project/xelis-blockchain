@@ -1,5 +1,6 @@
 use anyhow::Context;
 use blake3::OutputReader;
+use rand::{CryptoRng, RngCore};
 
 use crate::{block::TopoHeight, crypto::Hash};
 
@@ -41,5 +42,29 @@ impl DeterministicRandom {
         self.reader.fill(buffer);
 
         Ok(())
+    }
+}
+
+impl CryptoRng for DeterministicRandom {}
+
+impl RngCore for DeterministicRandom {
+    fn next_u32(&mut self) -> u32 {
+        let mut buffer = [0u8; 4];
+        self.fill(&mut buffer).expect("fill failed");
+        u32::from_le_bytes(buffer)
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        let mut buffer = [0u8; 8];
+        self.fill(&mut buffer).expect("fill failed");
+        u64::from_le_bytes(buffer)
+    }
+
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        self.fill(dest).expect("fill failed");
+    }
+
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand::Error> {
+        self.fill(dest).map_err(|e| rand::Error::new(e))
     }
 }

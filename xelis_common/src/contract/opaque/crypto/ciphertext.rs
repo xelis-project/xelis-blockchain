@@ -17,9 +17,12 @@ use crate::{
     contract::{
         CIPHERTEXT_OPAQUE_ID,
         ContractMetadata,
+        DeterministicRandom,
         ModuleMetadata,
         OpaqueRistrettoPoint,
         OpaqueScalar,
+        get_cache_for_contract,
+        state_from_context,
     },
     crypto::{
         Address,
@@ -122,7 +125,7 @@ pub fn ciphertext_sub_plaintext(zelf: FnInstance, mut params: FnParams, _: &Modu
     Ok(SysCallResult::None)
 }
 
-pub fn ciphertext_generate(_: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn ciphertext_generate(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let amount = params.remove(1)
         .into_owned()
         .as_u64()?;
@@ -134,7 +137,22 @@ pub fn ciphertext_generate(_: FnInstance, mut params: FnParams, _: &ModuleMetada
         .decompress()
         .context("Invalid public key")?;
 
-    let ciphertext = CiphertextCache::Decompressed(None, key.encrypt(amount));
+    let state = state_from_context(context)?;
+    let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.cache_clone_refs);
+    if cache.random.is_none() {
+        cache.random = Some(DeterministicRandom::new(&metadata.metadata.contract_executor, state.block_hash, state.topoheight, &state.caller.get_hash()));
+    }
+
+    let random = cache.random.as_mut()
+        .context("Random not initialized")?;
+
+    let mut buffer = [0u8; 64];
+    random.fill(&mut buffer)?;
+
+    let scalar = Scalar::from_bytes_mod_order_wide(&buffer);
+    let opening = PedersenOpening::from_scalar(scalar);
+
+    let ciphertext = CiphertextCache::Decompressed(None, key.encrypt_with_opening(amount, &opening));
     Ok(SysCallResult::Return(Primitive::Opaque(ciphertext.into()).into()))
 }
 
