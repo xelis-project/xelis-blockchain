@@ -475,39 +475,45 @@ pub async fn invoke_contract<'a, 'ty, P: for<'x> ContractProvider<'x>, E, B: Blo
     })
 }
 
-// We need to refund the extra (unused) gas
-// this is the tx max gas - used gas
-// We want to refund proportionally to the injections made
+fn sum_gas_sources(gas_sources: &IndexMap<Source, u64>) -> Result<u64, ContractError> {
+    gas_sources.values()
+        .try_fold(0u64, |sum, gas| sum.checked_add(*gas))
+        .ok_or(ContractError::GasOverflow)
+}
+
+// We need to refund the unused scheduled gas sources.
+// The provided max gas must equal the sum of all sources.
 pub async fn refund_gas_sources<'a, 'ty, P: for<'x> ContractProvider<'x>, E, B: BlockchainApplyState<'a, 'ty, P, E>>(
     state: &mut B,
     gas_sources: IndexMap<Source, u64>,
     used_gas: u64,
     tx_max_gas: u64,
 ) -> Result<(), ContractStateError<E>> {
-    let gas_refund = tx_max_gas.checked_sub(used_gas)
-        .ok_or(ContractError::GasOverflow)?;
+    let total_sources = sum_gas_sources(&gas_sources)?;
+    if total_sources != tx_max_gas {
+        return Err(ContractError::GasOverflow.into());
+    }
 
-    // Refund proportionally to the injections made
+    let gas_refund = tx_max_gas.saturating_sub(used_gas);
+
+    // Refund proportionally to the scheduled gas sources
     // examples:
     // available: 1000
-    // injected 1: 200
-    // injected 2: 200
+    // source 1: 200
+    // source 2: 200
     // used: 1200
     // refund 1: 100
     // refund 2: 100
-    let total_injected = gas_sources.values()
-        .try_fold(0u64, |sum, gas| sum.checked_add(*gas))
-        .ok_or(ContractError::GasOverflow)?;
-    if total_injected == 0 {
+    let target_refund = gas_refund.min(total_sources);
+    if target_refund == 0 {
         return Ok(());
     }
 
-    let target_refund = gas_refund.min(total_injected);
     let mut total_refunded = 0u64;
     let mut refunds = Vec::new();
     for (source, gas) in gas_sources.into_iter() {
         // Calculate the proportional part of the refund without float.
-        let refund = ((gas as u128 * target_refund as u128) / total_injected as u128) as u64;
+        let refund = ((gas as u128 * target_refund as u128) / total_sources as u128) as u64;
         let refund_amount = refund.min(gas);
         total_refunded = total_refunded.checked_add(refund_amount)
             .ok_or(ContractError::GasOverflow)?;
