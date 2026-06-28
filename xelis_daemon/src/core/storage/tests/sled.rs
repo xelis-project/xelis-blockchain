@@ -346,6 +346,13 @@ async fn test_sled_scheduled_execution_lifecycle() -> Result<()> {
 }
 
 #[tokio::test]
+async fn test_sled_scheduled_execution_prune_keeps_future_execution() -> Result<()> {
+    let temp_dir = TempDir::new("storage_test")?;
+    let storage = new_sled_storage(Network::Devnet, temp_dir.path().to_str().unwrap())?;
+    test_scheduled_execution_prune_keeps_future_execution(storage).await
+}
+
+#[tokio::test]
 async fn test_sled_scheduled_execution_range_query() -> Result<()> {
     let temp_dir = TempDir::new("storage_test")?;
     let storage = new_sled_storage(Network::Devnet, temp_dir.path().to_str().unwrap())?;

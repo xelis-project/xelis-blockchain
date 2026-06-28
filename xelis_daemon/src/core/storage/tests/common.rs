@@ -2175,3 +2175,57 @@ pub async fn test_account_registration_topoheight<S: Storage>(mut storage: S) ->
 
     Ok(())
 }
+
+// Pruning below a topoheight must remove executions that were already due, not
+// future executions merely because their registration block is old.
+pub async fn test_scheduled_execution_prune_keeps_future_execution<S: Storage>(mut storage: S) -> Result<()> {
+    let contract = Hash::new([251u8; 32]);
+    register_contract(&mut storage, &contract, 0).await?;
+
+    let future_execution = ScheduledExecution {
+        hash: Arc::new(Hash::new([250u8; 32])),
+        contract: contract.clone(),
+        kind: ScheduledExecutionKind::TopoHeight(100),
+        params: vec![],
+        chunk_id: 0,
+        max_gas: 1000,
+        gas_sources: Default::default(),
+    };
+    storage.set_contract_scheduled_execution_at_topoheight(
+        &contract, 1, &future_execution, 100,
+    ).await?;
+
+    let past_execution = ScheduledExecution {
+        hash: Arc::new(Hash::new([249u8; 32])),
+        contract: contract.clone(),
+        kind: ScheduledExecutionKind::TopoHeight(3),
+        params: vec![],
+        chunk_id: 0,
+        max_gas: 1000,
+        gas_sources: Default::default(),
+    };
+    storage.set_contract_scheduled_execution_at_topoheight(
+        &contract, 2, &past_execution, 3,
+    ).await?;
+
+    storage.delete_scheduled_executions_below_topoheight(10).await?;
+
+    assert!(storage.has_contract_scheduled_execution_at_topoheight(&contract, 100).await?,
+        "future execution must survive pruning below its execution topoheight");
+    assert!(!storage.has_contract_scheduled_execution_at_topoheight(&contract, 3).await?,
+        "past due execution should be pruned");
+
+    let retrieved = storage.get_contract_scheduled_execution_at_topoheight(&contract, 100).await?;
+    assert_eq!(retrieved.hash, future_execution.hash, "future execution payload should stay intact");
+
+    let due_contracts = storage.get_contract_scheduled_executions_for_execution_topoheight(100).await?;
+    let mut found = false;
+    for result in due_contracts {
+        if result? == contract {
+            found = true;
+        }
+    }
+    assert!(found, "future execution must remain indexed by execution topoheight");
+
+    Ok(())
+}

@@ -284,6 +284,12 @@ async fn test_memory_scheduled_execution_lifecycle() -> Result<()> {
 }
 
 #[tokio::test]
+async fn test_memory_scheduled_execution_prune_keeps_future_execution() -> Result<()> {
+    let storage = MemoryStorage::new(Network::Devnet, 1);
+    test_scheduled_execution_prune_keeps_future_execution(storage).await
+}
+
+#[tokio::test]
 async fn test_memory_scheduled_execution_range_query() -> Result<()> {
     let storage = MemoryStorage::new(Network::Devnet, 1);
     test_scheduled_execution_range_query(storage).await

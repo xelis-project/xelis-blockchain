@@ -55,10 +55,9 @@ impl VersionedScheduledExecutionsProvider for SledStorage {
         let snapshot = self.snapshot.clone();
         for el in Self::iter_raw(snapshot.as_ref(), &self.contracts_scheduled_executions_registrations) {
             let (key, _) = el?;
-            let topo = TopoHeight::from_bytes(&key)?;
+            let (contract, execution_topoheight) = <(Hash, TopoHeight)>::from_bytes(&key[8..])?;
 
-            if topo < topoheight {
-                let (contract, execution_topoheight) = <(Hash, TopoHeight)>::from_bytes(&key[8..])?;
+            if execution_topoheight < topoheight {
                 let execution_key = Self::get_contract_scheduled_execution_key(&contract, execution_topoheight);
 
                 // Delete the "pointer"
