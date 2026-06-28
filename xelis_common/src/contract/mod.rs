@@ -2284,10 +2284,10 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "Creates a ciphertext from commitment and handle points."
         );
 
-        // Ciphertext::add_ct(other)
-        env.register_static_function_with_comment(
+        // Ciphertext#add_ct(other)
+        env.register_native_function_with_comment(
             "add_ct",
-            ciphertext_type.clone(),
+            Some(ciphertext_type.clone()),
             vec![
                 ("other", ciphertext_type.clone()),
             ],
@@ -2296,10 +2296,10 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             None,
             "Adds another ciphertext to this ciphertext in place."
         );
-        // Ciphertext::sub_ct(other)
-        env.register_static_function_with_comment(
+        // Ciphertext#sub_ct(other)
+        env.register_native_function_with_comment(
             "sub_ct",
-            ciphertext_type.clone(),
+            Some(ciphertext_type.clone()),
             vec![
                 ("other", ciphertext_type.clone()),
             ],
@@ -2308,10 +2308,10 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             None,
             "Subtracts another ciphertext from this ciphertext in place."
         );
-        // Ciphertext::add_scalar(scalar)
-        env.register_static_function_with_comment(
+        // Ciphertext#add_scalar(scalar)
+        env.register_native_function_with_comment(
             "add_scalar",
-            ciphertext_type.clone(),
+            Some(ciphertext_type.clone()),
             vec![
                 ("scalar", scalar_type.clone()),
             ],
@@ -2320,10 +2320,10 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             None,
             "Adds a scalar to this ciphertext in place."
         );
-        // Ciphertext::sub_scalar(scalar)
-        env.register_static_function_with_comment(
+        // Ciphertext#sub_scalar(scalar)
+        env.register_native_function_with_comment(
             "sub_scalar",
-            ciphertext_type.clone(),
+            Some(ciphertext_type.clone()),
             vec![
                 ("scalar", scalar_type.clone()),
             ],
