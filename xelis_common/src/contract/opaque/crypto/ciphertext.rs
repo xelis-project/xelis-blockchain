@@ -156,7 +156,7 @@ pub fn ciphertext_generate(_: FnInstance, mut params: FnParams, metadata: &Modul
     Ok(SysCallResult::Return(Primitive::Opaque(ciphertext.into()).into()))
 }
 
-pub fn ciphertext_new(_: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn ciphertext_from(_: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let handle: OpaqueRistrettoPoint = params.remove(1)
         .into_owned()
         .into_opaque_type()?;

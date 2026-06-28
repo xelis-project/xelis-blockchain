@@ -2270,15 +2270,15 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
 
         // Ciphertext improvements
 
-        // Ciphertext::new(commitment, handle)
+        // Ciphertext::from(commitment, handle)
         env.register_static_function_with_comment(
-            "new",
+            "from",
             ciphertext_type.clone(),
             vec![
                 ("commitment", ristretto_type.clone()),
                 ("handle", ristretto_type.clone()),
             ],
-            FunctionHandler::Sync(ciphertext_new),
+            FunctionHandler::Sync(ciphertext_from),
             50,
             Some(ciphertext_type.clone()),
             "Creates a ciphertext from commitment and handle points."
