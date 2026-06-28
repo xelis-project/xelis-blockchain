@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashMap};
+use std::{borrow::Cow, collections::HashMap, sync::Arc};
 
 use curve25519_dalek::Scalar;
 use indexmap::IndexMap;
@@ -21,12 +21,26 @@ use crate::{
     },
     crypto::{
         Hash,
+        Hashable,
         KeyPair,
         proofs::G
     },
     transaction::{
+        Reference,
         ContractDeposit,
-        mock::{MockAccount, MockChainState},
+        TxVersion,
+        builder::{
+            FeeBuilder,
+            InvokeContractBuilder,
+            TransactionBuilder,
+            TransactionTypeBuilder
+        },
+        mock::{
+            MockAccount,
+            MockChainState,
+            TrackedAccount,
+            TrackedAccountState
+        },
         verify::{BlockchainApplyState, BlockchainContractState}
     },
     versioned::VersionedState
@@ -44,6 +58,22 @@ fn refund_gas_amount(state: &MockChainState, caller: &Hash) -> u64 {
             _ => None
         })
         .sum()
+}
+
+fn assert_account_xelis_balance(
+    state: &MockChainState,
+    keypair: &KeyPair,
+    source: &crate::crypto::elgamal::CompressedPublicKey,
+    expected: u64,
+    message: &str,
+) {
+    let balance = &state.accounts.get(source).unwrap().balances[&XELIS_ASSET];
+    assert_eq!(
+        keypair.decrypt_to_point(balance),
+        Scalar::from(expected) * (*G),
+        "{}",
+        message
+    );
 }
 
 fn assert_account_gas_conservation(
@@ -244,6 +274,290 @@ async fn increase_gas_limit_pre_invoke_check_includes_requested_amount() {
     assert!(
         chain_state.contract_logs.values().flatten().all(|log| !matches!(log, ContractLog::GasInjection { .. })),
         "rejected injection must not emit a gas injection log"
+    );
+}
+
+#[tokio::test]
+async fn increase_gas_limit_rejects_zero_and_limit_overflow_without_charging() {
+    let max_gas = 100_000u64;
+    let code = format!(r#"
+        entry main() {{
+            let before = get_gas_limit();
+            require(!increase_gas_limit(0u64), "zero gas injection must be rejected");
+            require(get_gas_limit() == before, "zero gas injection must not change the limit");
+            require(!increase_gas_limit({limit}u64), "tx gas limit overflow must be rejected");
+            require(get_gas_limit() == before, "rejected gas injection must not change the limit");
+            return 0
+        }}
+    "#, limit = MAX_GAS_USAGE_PER_TX);
+
+    let mut chain_state = MockChainState::new();
+    let contract = create_contract(&mut chain_state, &code, ContractVersion::V1)
+        .expect("create contract");
+    let initial_balance = MAX_GAS_USAGE_PER_TX;
+
+    {
+        let (_, balance) = chain_state.get_contract_balance_for_gas(&contract).await.unwrap();
+        *balance = initial_balance;
+    }
+
+    let result = vm::invoke_contract(
+        ContractCaller::System,
+        &mut chain_state,
+        Cow::Owned(contract.clone()),
+        None,
+        std::iter::empty(),
+        IndexMap::new(),
+        max_gas,
+        InvokeContract::Entry(0),
+        Cow::Owned(Default::default()),
+        true,
+    ).await
+        .expect("invoke contract");
+
+    assert!(result.is_success(), "contract should handle rejected gas injections");
+    assert_eq!(result.vm_max_gas, max_gas, "rejected gas injections must not raise VM gas limit");
+
+    {
+        let (_, balance) = chain_state.get_contract_balance_for_gas(&contract).await.unwrap();
+        assert_eq!(*balance, initial_balance, "rejected gas injections must not charge balance");
+    }
+
+    assert!(
+        chain_state.contract_logs.values().flatten().all(|log| !matches!(log, ContractLog::GasInjection { .. })),
+        "rejected gas injections must not emit gas injection logs"
+    );
+}
+
+#[tokio::test]
+async fn transaction_refund_gas_is_paid_only_to_tx_source() {
+    let code = r#"
+        entry main() {
+            return 0
+        }
+    "#;
+    let max_gas = 100_000u64;
+
+    let mut chain_state = MockChainState::new();
+    let contract = create_contract(&mut chain_state, code, ContractVersion::V1)
+        .expect("create contract");
+
+    let mut account = TrackedAccount::new();
+    account.set_balance(XELIS_ASSET, 1_000_000);
+
+    let data = TransactionTypeBuilder::InvokeContract(InvokeContractBuilder {
+        contract: contract.clone(),
+        entry_id: 0,
+        max_gas,
+        parameters: Vec::new(),
+        deposits: Default::default(),
+        permission: Default::default(),
+    });
+    let mut builder_state = TrackedAccountState {
+        balances: account.balances.clone(),
+        nonce: account.nonce,
+        reference: Reference { topoheight: 0, hash: Hash::zero() },
+    };
+    let tx = Arc::new(TransactionBuilder::new(
+        TxVersion::V2,
+        account.keypair.get_public_key().compress(),
+        None,
+        data,
+        FeeBuilder::default(),
+    ).build(&mut builder_state, &account.keypair).expect("build tx"));
+    let tx_hash = tx.hash();
+
+    let source = account.keypair.get_public_key().compress();
+    chain_state.accounts.insert(source.clone(), MockAccount {
+        balances: [(XELIS_ASSET, account.keypair.get_public_key().encrypt(0u64))]
+            .into_iter()
+            .collect(),
+        nonce: 0,
+    });
+
+    let bystander = KeyPair::new();
+    let bystander_source = bystander.get_public_key().compress();
+    chain_state.accounts.insert(bystander_source.clone(), MockAccount {
+        balances: [(XELIS_ASSET, bystander.get_public_key().encrypt(0u64))]
+            .into_iter()
+            .collect(),
+        nonce: 0,
+    });
+
+    let result = vm::invoke_contract(
+        ContractCaller::Transaction(&tx_hash, &tx),
+        &mut chain_state,
+        Cow::Owned(contract),
+        None,
+        std::iter::empty(),
+        IndexMap::new(),
+        max_gas,
+        InvokeContract::Entry(0),
+        Cow::Owned(Default::default()),
+        true,
+    ).await
+        .expect("invoke contract");
+
+    assert!(result.is_success(), "noop contract should succeed: {:?}", result);
+    assert!(result.used_gas <= max_gas, "noop must not exceed the tx gas limit");
+
+    let expected_refund = max_gas - result.used_gas;
+    assert_account_xelis_balance(
+        &chain_state,
+        &account.keypair,
+        &source,
+        expected_refund,
+        "unused tx gas must be refunded to the transaction source"
+    );
+    assert_account_xelis_balance(
+        &chain_state,
+        &bystander,
+        &bystander_source,
+        0,
+        "unused tx gas must not be refunded to unrelated accounts"
+    );
+    assert_eq!(
+        refund_gas_amount(&chain_state, &tx_hash),
+        expected_refund,
+        "refund log must match the amount credited to the tx source"
+    );
+    assert_eq!(
+        chain_state.gas_fee + chain_state.burned_fee + expected_refund,
+        max_gas,
+        "tx gas input must be conserved between fee, burn, and refund"
+    );
+}
+
+#[tokio::test]
+async fn successful_increase_gas_limit_charges_extra_gas_used() {
+    let max_gas = 50_000u64;
+    let injection = 150_000u64;
+    let target_gas = max_gas + 25_000;
+    let code = format!(r#"
+        entry main() {{
+            require(increase_gas_limit({injection}u64), "gas injection must succeed");
+            let i: u64 = 0;
+            while get_gas_usage() < {target_gas}u64 {{
+                i += 1;
+            }}
+            return 0
+        }}
+    "#);
+
+    let mut chain_state = MockChainState::new();
+    let contract = create_contract(&mut chain_state, &code, ContractVersion::V1)
+        .expect("create contract");
+
+    {
+        let (_, balance) = chain_state.get_contract_balance_for_gas(&contract).await.unwrap();
+        *balance = injection;
+    }
+
+    let result = vm::invoke_contract(
+        ContractCaller::System,
+        &mut chain_state,
+        Cow::Owned(contract.clone()),
+        None,
+        std::iter::empty(),
+        IndexMap::new(),
+        max_gas,
+        InvokeContract::Entry(0),
+        Cow::Owned(Default::default()),
+        true,
+    ).await
+        .expect("invoke contract");
+
+    assert!(result.is_success(), "contract should succeed after using injected gas: {:?}", result);
+    assert_eq!(result.vm_max_gas, max_gas + injection);
+    assert!(result.used_gas > max_gas, "test must consume gas above the original tx limit");
+    assert!(result.used_gas <= result.vm_max_gas, "used gas must remain capped by the raised VM limit");
+
+    let extra_used = result.used_gas - max_gas;
+    {
+        let (_, balance) = chain_state.get_contract_balance_for_gas(&contract).await.unwrap();
+        assert_eq!(
+            *balance,
+            injection - extra_used,
+            "contract must pay exactly the gas used above the original tx limit"
+        );
+    }
+
+    let logs = chain_state.contract_logs.get(&Hash::zero())
+        .expect("system caller logs");
+    assert!(
+        logs.iter().any(|log| matches!(
+            log,
+            ContractLog::GasInjection { contract: logged_contract, amount }
+                if logged_contract == &contract && *amount == extra_used
+        )),
+        "consumed injected gas must be logged"
+    );
+}
+
+#[tokio::test]
+async fn failed_increase_gas_limit_charges_extra_gas_used() {
+    let max_gas = 50_000u64;
+    let injection = 150_000u64;
+    let target_gas = max_gas + 25_000;
+    let code = format!(r#"
+        entry main() {{
+            require(increase_gas_limit({injection}u64), "gas injection must succeed");
+            let i: u64 = 0;
+            while get_gas_usage() < {target_gas}u64 {{
+                i += 1;
+            }}
+            require(false, "fail after consuming injected gas");
+            return 0
+        }}
+    "#);
+
+    let mut chain_state = MockChainState::new();
+    let contract = create_contract(&mut chain_state, &code, ContractVersion::V1)
+        .expect("create contract");
+
+    {
+        let (_, balance) = chain_state.get_contract_balance_for_gas(&contract).await.unwrap();
+        *balance = injection;
+    }
+
+    let result = vm::invoke_contract(
+        ContractCaller::System,
+        &mut chain_state,
+        Cow::Owned(contract.clone()),
+        None,
+        std::iter::empty(),
+        IndexMap::new(),
+        max_gas,
+        InvokeContract::Entry(0),
+        Cow::Owned(Default::default()),
+        true,
+    ).await
+        .expect("invoke contract");
+
+    assert!(!result.is_success(), "contract must fail after using injected gas");
+    assert_eq!(result.vm_max_gas, max_gas + injection);
+    assert!(result.used_gas > max_gas, "failed execution must preserve gas used above the original tx limit");
+    assert!(result.used_gas <= result.vm_max_gas, "used gas must remain capped by the raised VM limit");
+
+    let extra_used = result.used_gas - max_gas;
+    {
+        let (_, balance) = chain_state.get_contract_balance_for_gas(&contract).await.unwrap();
+        assert_eq!(
+            *balance,
+            injection - extra_used,
+            "failed execution must still charge the contract-funded extra gas it consumed"
+        );
+    }
+
+    let logs = chain_state.contract_logs.get(&Hash::zero())
+        .expect("system caller logs");
+    assert!(
+        logs.iter().any(|log| matches!(
+            log,
+            ContractLog::GasInjection { contract: logged_contract, amount }
+                if logged_contract == &contract && *amount == extra_used
+        )),
+        "failed execution must log consumed injected gas"
     );
 }
 
@@ -720,6 +1034,286 @@ async fn block_end_noop_without_scheduling_headroom_fails_without_committing_exe
 }
 
 #[tokio::test]
+async fn account_paid_scheduled_execution_increase_max_gas_conserves_funds() {
+    let initial_gas = 40_000u64;
+    let extra_gas = 20_000u64;
+    let total_reserved = initial_gas + extra_gas;
+    let code = format!(r#"
+        pub fn callback() -> u64 {{
+            return 0
+        }}
+
+        entry main() {{
+            let execution = ScheduledExecution::new_at_block_end(callback, [], {initial_gas}u64, false)
+                .expect("scheduled execution");
+            require(execution.increase_max_gas({extra_gas}u64, false), "gas increase must succeed");
+            require(execution.get_max_gas() == {total_reserved}u64, "bad max gas after increase");
+            return 0
+        }}
+    "#);
+
+    let mut chain_state = MockChainState::new();
+    let contract = create_contract(&mut chain_state, &code, ContractVersion::V1)
+        .expect("create contract");
+
+    let keypair = KeyPair::new();
+    let source = keypair.get_public_key().compress();
+    chain_state.accounts.insert(source.clone(), MockAccount {
+        balances: [(XELIS_ASSET, keypair.get_public_key().encrypt(0u64))]
+            .into_iter()
+            .collect(),
+        nonce: 0,
+    });
+
+    let result = vm::invoke_contract(
+        ContractCaller::Impersonate(Cow::Owned(source.clone())),
+        &mut chain_state,
+        Cow::Owned(contract.clone()),
+        None,
+        std::iter::empty(),
+        IndexMap::new(),
+        150_000,
+        InvokeContract::Entry(1),
+        Cow::Owned(Default::default()),
+        true,
+    ).await
+        .expect("invoke scheduler");
+
+    assert!(result.is_success(), "scheduling with gas increase should succeed: {:?}", result);
+
+    let execution_hash = chain_state.executions.block_end.pop()
+        .expect("block-end execution hash");
+    let execution = chain_state.executions.executions.remove(&execution_hash)
+        .expect("scheduled execution");
+
+    assert_eq!(execution.max_gas, total_reserved);
+    assert_eq!(
+        execution.gas_sources.get(&Source::Account(source.clone())).copied(),
+        Some(total_reserved),
+        "same account source must fund both initial and increased scheduled gas"
+    );
+
+    let gas_fee_before = chain_state.gas_fee;
+    let burned_fee_before = chain_state.burned_fee;
+    let execution_result = vm::invoke_contract(
+        ContractCaller::Scheduled(
+            Cow::Owned(execution.hash.as_ref().clone()),
+            Cow::Owned(execution.contract.clone())
+        ),
+        &mut chain_state,
+        Cow::Owned(execution.contract),
+        None,
+        execution.params.into_iter(),
+        execution.gas_sources,
+        execution.max_gas,
+        InvokeContract::Chunk(execution.chunk_id, false),
+        Cow::Owned(InterContractPermission::All),
+        true,
+    ).await
+        .expect("invoke scheduled noop");
+
+    assert!(execution_result.is_success(), "scheduled noop should succeed: {:?}", execution_result);
+    assert_account_gas_conservation(
+        &chain_state,
+        &keypair,
+        &source,
+        total_reserved,
+        execution_result.used_gas,
+        gas_fee_before,
+        burned_fee_before,
+    );
+}
+
+#[tokio::test]
+async fn contract_paid_scheduled_execution_increase_max_gas_conserves_funds() {
+    let initial_gas = 40_000u64;
+    let extra_gas = 20_000u64;
+    let total_reserved = initial_gas + extra_gas;
+    let initial_balance = total_reserved + COST_PER_SCHEDULED_EXECUTION_AT_BLOCK_END + 1_000;
+    let code = format!(r#"
+        pub fn callback() -> u64 {{
+            return 0
+        }}
+
+        entry main() {{
+            let execution = ScheduledExecution::new_at_block_end(callback, [], {initial_gas}u64, true)
+                .expect("scheduled execution");
+            require(execution.increase_max_gas({extra_gas}u64, true), "gas increase must succeed");
+            require(execution.get_max_gas() == {total_reserved}u64, "bad max gas after increase");
+            return 0
+        }}
+    "#);
+
+    let mut chain_state = MockChainState::with(BlockVersion::V6);
+    let contract = create_contract(&mut chain_state, &code, ContractVersion::V1)
+        .expect("create contract");
+    chain_state.set_contract_balance(&contract, &XELIS_ASSET, initial_balance);
+
+    let registration = vm::invoke_contract(
+        ContractCaller::System,
+        &mut chain_state,
+        Cow::Owned(contract.clone()),
+        None,
+        std::iter::empty(),
+        IndexMap::new(),
+        150_000,
+        InvokeContract::Entry(1),
+        Cow::Owned(Default::default()),
+        true,
+    ).await
+        .expect("invoke scheduler");
+
+    assert!(registration.is_success(), "contract-funded scheduling should succeed: {:?}", registration);
+    let balance_after_registration = chain_state.get_contract_balance(&contract, &XELIS_ASSET);
+    let paid_at_registration = initial_balance - balance_after_registration;
+    let paid_overhead = paid_at_registration - total_reserved;
+    assert!(
+        paid_overhead >= COST_PER_SCHEDULED_EXECUTION_AT_BLOCK_END,
+        "contract must pay initial gas, increased gas, and at least the fixed scheduling overhead"
+    );
+
+    let execution_hash = chain_state.executions.block_end.pop()
+        .expect("block-end execution hash");
+    let execution = chain_state.executions.executions.remove(&execution_hash)
+        .expect("scheduled execution");
+
+    assert_eq!(execution.max_gas, total_reserved);
+    assert_eq!(
+        execution.gas_sources.get(&Source::Contract(contract.clone())).copied(),
+        Some(total_reserved),
+        "contract source must fund both initial and increased scheduled gas"
+    );
+
+    let gas_fee_before = chain_state.gas_fee;
+    let burned_fee_before = chain_state.burned_fee;
+    let execution_result = vm::invoke_contract(
+        ContractCaller::Scheduled(
+            Cow::Owned(execution.hash.as_ref().clone()),
+            Cow::Owned(execution.contract.clone())
+        ),
+        &mut chain_state,
+        Cow::Owned(execution.contract),
+        None,
+        execution.params.into_iter(),
+        execution.gas_sources,
+        execution.max_gas,
+        InvokeContract::Chunk(execution.chunk_id, false),
+        Cow::Owned(InterContractPermission::All),
+        true,
+    ).await
+        .expect("invoke scheduled noop");
+
+    assert!(execution_result.is_success(), "scheduled noop should succeed: {:?}", execution_result);
+    let gas_fee_delta = chain_state.gas_fee - gas_fee_before;
+    let burned_fee_delta = chain_state.burned_fee - burned_fee_before;
+    let refund_delta = chain_state.get_contract_balance(&contract, &XELIS_ASSET) - balance_after_registration;
+
+    assert_eq!(gas_fee_delta, execution_result.fee_gas);
+    assert_eq!(burned_fee_delta, execution_result.burned_gas);
+    assert_eq!(
+        refund_delta + gas_fee_delta + burned_fee_delta,
+        total_reserved,
+        "scheduled execution must conserve contract-funded reserved gas"
+    );
+}
+
+#[tokio::test]
+async fn failed_account_paid_scheduled_execution_after_increase_refunds_reserved_gas() {
+    let initial_gas = 40_000u64;
+    let extra_gas = 20_000u64;
+    let total_reserved = initial_gas + extra_gas;
+    let max_gas = 150_000u64;
+    let code = format!(r#"
+        pub fn callback() -> u64 {{
+            return 0
+        }}
+
+        entry main() {{
+            let execution = ScheduledExecution::new_at_block_end(callback, [], {initial_gas}u64, false)
+                .expect("scheduled execution");
+            require(execution.increase_max_gas({extra_gas}u64, false), "gas increase must succeed");
+            require(false, "fail after increasing scheduled gas");
+            return 0
+        }}
+    "#);
+
+    let mut chain_state = MockChainState::new();
+    let contract = create_contract(&mut chain_state, &code, ContractVersion::V1)
+        .expect("create contract");
+
+    let source = KeyPair::new().get_public_key().compress();
+    let result = vm::invoke_contract(
+        ContractCaller::Impersonate(Cow::Owned(source)),
+        &mut chain_state,
+        Cow::Owned(contract),
+        None,
+        std::iter::empty(),
+        IndexMap::new(),
+        max_gas,
+        InvokeContract::Entry(1),
+        Cow::Owned(Default::default()),
+        true,
+    ).await
+        .expect("invoke scheduler");
+
+    assert!(!result.is_success(), "contract must fail after increasing scheduled gas");
+    assert!(chain_state.executions.block_end.is_empty(), "failed execution must not commit block-end pointer");
+    assert!(chain_state.executions.executions.is_empty(), "failed execution must not commit scheduled execution");
+
+    let refund = refund_gas_amount(&chain_state, &Hash::zero());
+    assert!(
+        refund > max_gas - total_reserved,
+        "discarded scheduled gas allowance, including increase, should be refundable on failure"
+    );
+}
+
+#[tokio::test]
+async fn contract_paid_scheduled_execution_increase_over_limit_rolls_back() {
+    let initial_gas = MAX_GAS_USAGE_PER_TX - 1;
+    let initial_balance = initial_gas + COST_PER_SCHEDULED_EXECUTION_AT_BLOCK_END + 1_000;
+    let code = format!(r#"
+        pub fn callback() -> u64 {{
+            return 0
+        }}
+
+        entry main() {{
+            let execution = ScheduledExecution::new_at_block_end(callback, [], {initial_gas}u64, true)
+                .expect("scheduled execution");
+            execution.increase_max_gas(2u64, true);
+            return 0
+        }}
+    "#);
+
+    let mut chain_state = MockChainState::with(BlockVersion::V6);
+    let contract = create_contract(&mut chain_state, &code, ContractVersion::V1)
+        .expect("create contract");
+    chain_state.set_contract_balance(&contract, &XELIS_ASSET, initial_balance);
+
+    let result = vm::invoke_contract(
+        ContractCaller::System,
+        &mut chain_state,
+        Cow::Owned(contract.clone()),
+        None,
+        std::iter::empty(),
+        IndexMap::new(),
+        MAX_GAS_USAGE_PER_TX,
+        InvokeContract::Entry(1),
+        Cow::Owned(Default::default()),
+        true,
+    ).await
+        .expect("invoke scheduler");
+
+    assert!(!result.is_success(), "over-limit increase must fail the contract");
+    assert_eq!(
+        chain_state.get_contract_balance(&contract, &XELIS_ASSET),
+        initial_balance,
+        "failed over-limit increase must not charge contract balance"
+    );
+    assert!(chain_state.executions.block_end.is_empty(), "failed over-limit increase must not commit pointer");
+    assert!(chain_state.executions.executions.is_empty(), "failed over-limit increase must not commit execution");
+}
+
+#[tokio::test]
 async fn successful_account_paid_event_listener_keeps_callback_gas_funded() {
     let emitter_code = r#"
         entry emit() -> u64 {
@@ -1179,6 +1773,74 @@ async fn test_refund_gas_sources_mixed_sources() {
 }
 
 #[tokio::test]
+async fn test_refund_gas_sources_rounding_remainder_conserves_and_pays_only_sources() {
+    let mut state = MockChainState::new();
+    let contract1 = Hash::zero();
+    let contract2 = Hash::new([1u8; 32]);
+    let keypair = KeyPair::new();
+    let account = keypair.get_public_key().compress();
+    let bystander = KeyPair::new();
+    let bystander_account = bystander.get_public_key().compress();
+
+    {
+        let (_, balance) = state.get_contract_balance_for_gas(&contract1).await.unwrap();
+        *balance = 1000;
+    }
+    {
+        let (_, balance) = state.get_contract_balance_for_gas(&contract2).await.unwrap();
+        *balance = 2000;
+    }
+
+    state.accounts.insert(account.clone(), MockAccount {
+        balances: [(XELIS_ASSET, keypair.get_public_key().encrypt(3000u64))]
+            .into_iter()
+            .collect(),
+        nonce: 0,
+    });
+    state.accounts.insert(bystander_account.clone(), MockAccount {
+        balances: [(XELIS_ASSET, bystander.get_public_key().encrypt(4000u64))]
+            .into_iter()
+            .collect(),
+        nonce: 0,
+    });
+
+    let mut gas_sources = IndexMap::new();
+    gas_sources.insert(Source::Contract(contract1.clone()), 2);
+    gas_sources.insert(Source::Contract(contract2.clone()), 3);
+    gas_sources.insert(Source::Account(account.clone()), 5);
+
+    refund_gas_sources(&mut state, gas_sources, 9, 17).await.unwrap();
+
+    {
+        let (_, balance) = state.get_contract_balance_for_gas(&contract1).await.unwrap();
+        assert_eq!(*balance, 1002, "first contract receives the deterministic rounding remainder");
+    }
+    {
+        let (_, balance) = state.get_contract_balance_for_gas(&contract2).await.unwrap();
+        assert_eq!(*balance, 2002, "second contract receives only its proportional refund");
+    }
+    assert_account_xelis_balance(
+        &state,
+        &keypair,
+        &account,
+        3004,
+        "account source receives only its proportional refund"
+    );
+    assert_account_xelis_balance(
+        &state,
+        &bystander,
+        &bystander_account,
+        4000,
+        "non-source account must not receive gas refund"
+    );
+
+    let refunded = (1002 - 1000) + (2002 - 2000) + (3004 - 3000);
+    assert_eq!(refunded, 8, "all unused funded gas must be refunded exactly once");
+    assert_eq!(state.gas_fee, 0, "refund helper must not mint miner fees");
+    assert_eq!(state.burned_fee, 0, "refund helper must not mint burned fees");
+}
+
+#[tokio::test]
 async fn test_refund_gas_sources_empty_sources() {
     let mut state = MockChainState::new();
     
@@ -1429,8 +2091,8 @@ async fn test_refund_gas_sources_rounding_dust_does_not_over_refund() {
     }
 
     assert!(
-        total_refunded <= 1,
-        "rounding must never refund more than the available refund"
+        total_refunded == 1,
+        "rounding remainder must be refunded exactly once"
     );
 }
 
@@ -1459,7 +2121,8 @@ async fn test_refund_extra_gas_injections_refunds_latest_sources_first() {
         &mut state,
         gas_injections,
         100,
-        220,
+        130,
+        250,
         &mut outputs,
         &mut caches,
     ).await
@@ -1474,6 +2137,167 @@ async fn test_refund_extra_gas_injections_refunds_latest_sources_first() {
 }
 
 #[tokio::test]
+async fn test_refund_extra_gas_injections_all_unused_refunds_all_sources_without_logs() {
+    let mut state = MockChainState::new();
+    let first = Hash::zero();
+    let second = Hash::new([1u8; 32]);
+    let mut caches = std::collections::HashMap::new();
+
+    for contract in [&first, &second] {
+        let mut cache = ContractCache::default();
+        cache.balances.insert(
+            XELIS_ASSET,
+            Some((VersionedState::New, 0))
+        );
+        caches.insert(contract.clone(), cache);
+    }
+
+    let mut gas_injections = IndexMap::new();
+    gas_injections.insert(Source::Contract(first.clone()), 100);
+    gas_injections.insert(Source::Contract(second.clone()), 50);
+    let mut outputs = Vec::new();
+
+    vm::refund_extra_gas_injections(
+        &mut state,
+        gas_injections,
+        100,
+        80,
+        250,
+        &mut outputs,
+        &mut caches,
+    ).await
+        .expect("refund extra gas injections");
+
+    assert_eq!(
+        caches[&first].balances[&XELIS_ASSET].as_ref().unwrap().1,
+        100,
+        "first source must receive its full unused injection"
+    );
+    assert_eq!(
+        caches[&second].balances[&XELIS_ASSET].as_ref().unwrap().1,
+        50,
+        "second source must receive its full unused injection"
+    );
+    assert!(outputs.is_empty(), "fully refunded injections must not be logged as consumed");
+}
+
+#[tokio::test]
+async fn test_refund_extra_gas_injections_all_consumed_refunds_nothing_and_logs_sources() {
+    let mut state = MockChainState::new();
+    let first = Hash::zero();
+    let second = Hash::new([1u8; 32]);
+    let mut caches = std::collections::HashMap::new();
+
+    for contract in [&first, &second] {
+        let mut cache = ContractCache::default();
+        cache.balances.insert(
+            XELIS_ASSET,
+            Some((VersionedState::New, 0))
+        );
+        caches.insert(contract.clone(), cache);
+    }
+
+    let mut gas_injections = IndexMap::new();
+    gas_injections.insert(Source::Contract(first.clone()), 100);
+    gas_injections.insert(Source::Contract(second.clone()), 50);
+    let mut outputs = Vec::new();
+
+    vm::refund_extra_gas_injections(
+        &mut state,
+        gas_injections,
+        100,
+        250,
+        250,
+        &mut outputs,
+        &mut caches,
+    ).await
+        .expect("refund extra gas injections");
+
+    assert_eq!(caches[&first].balances[&XELIS_ASSET].as_ref().unwrap().1, 0);
+    assert_eq!(caches[&second].balances[&XELIS_ASSET].as_ref().unwrap().1, 0);
+    assert_eq!(outputs.len(), 2, "all consumed injections must be logged");
+    assert_gas_injection_log(&outputs[0], &second, 50);
+    assert_gas_injection_log(&outputs[1], &first, 100);
+}
+
+#[tokio::test]
+async fn test_refund_extra_gas_injections_mixed_account_contract_pays_correct_sources() {
+    let mut state = MockChainState::new();
+    let contract = Hash::zero();
+    let keypair = KeyPair::new();
+    let account = keypair.get_public_key().compress();
+    let bystander = KeyPair::new();
+    let bystander_account = bystander.get_public_key().compress();
+    let mut caches = std::collections::HashMap::new();
+
+    let mut cache = ContractCache::default();
+    cache.balances.insert(
+        XELIS_ASSET,
+        Some((VersionedState::New, 0))
+    );
+    caches.insert(contract.clone(), cache);
+
+    state.accounts.insert(account.clone(), MockAccount {
+        balances: [(XELIS_ASSET, keypair.get_public_key().encrypt(500u64))]
+            .into_iter()
+            .collect(),
+        nonce: 0,
+    });
+    state.accounts.insert(bystander_account.clone(), MockAccount {
+        balances: [(XELIS_ASSET, bystander.get_public_key().encrypt(700u64))]
+            .into_iter()
+            .collect(),
+        nonce: 0,
+    });
+
+    let mut gas_injections = IndexMap::new();
+    gas_injections.insert(Source::Contract(contract.clone()), 100);
+    gas_injections.insert(Source::Account(account.clone()), 50);
+    let mut outputs = Vec::new();
+
+    vm::refund_extra_gas_injections(
+        &mut state,
+        gas_injections,
+        100,
+        130,
+        250,
+        &mut outputs,
+        &mut caches,
+    ).await
+        .expect("refund extra gas injections");
+
+    assert_eq!(
+        caches[&contract].balances[&XELIS_ASSET].as_ref().unwrap().1,
+        70,
+        "contract source receives only its unused part"
+    );
+    assert_account_xelis_balance(
+        &state,
+        &keypair,
+        &account,
+        550,
+        "account source receives its full unused part"
+    );
+    assert_account_xelis_balance(
+        &state,
+        &bystander,
+        &bystander_account,
+        700,
+        "non-source account must not receive extra gas refund"
+    );
+    assert_eq!(outputs.len(), 1, "only consumed contract gas should be logged");
+    assert_gas_injection_log(&outputs[0], &contract, 30);
+
+    let refunded = 70 + (550 - 500);
+    let consumed = 30;
+    assert_eq!(
+        refunded + consumed,
+        150,
+        "contract and account gas injections must be conserved"
+    );
+}
+
+#[tokio::test]
 async fn test_refund_extra_gas_injections_rejects_missing_cache_without_outputs() {
     let mut state = MockChainState::new();
     let contract = Hash::zero();
@@ -1485,6 +2309,7 @@ async fn test_refund_extra_gas_injections_rejects_missing_cache_without_outputs(
     let result = vm::refund_extra_gas_injections(
         &mut state,
         gas_injections,
+        100,
         100,
         150,
         &mut outputs,
@@ -1514,6 +2339,7 @@ async fn test_refund_extra_gas_injections_late_missing_cache_does_not_partially_
     let result = vm::refund_extra_gas_injections(
         &mut state,
         gas_injections,
+        100,
         100,
         200,
         &mut outputs,
@@ -1558,6 +2384,7 @@ async fn test_refund_extra_gas_injections_late_overflow_does_not_partially_refun
     let result = vm::refund_extra_gas_injections(
         &mut state,
         gas_injections,
+        100,
         100,
         200,
         &mut outputs,

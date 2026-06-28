@@ -222,8 +222,8 @@ pub(crate) async fn run_virtual_machine<'a, 'ty, P: for<'x> ContractProvider<'x>
     // We need to handle the result of the VM
     let res = vm.run().await;
 
-    // To be sure that we don't have any overflow
-    // We take the minimum between the gas used and the max gas
+    // Gas usage is already capped by the VM context gas limit, which may have
+    // been increased by contract-funded gas injections.
     let context = vm.context_mut();
 
     let error_level = if debug_mode {
@@ -279,9 +279,7 @@ pub(crate) async fn run_virtual_machine<'a, 'ty, P: for<'x> ContractProvider<'x>
         }
     };
 
-    let gas_usage = context
-        .current_gas_usage()
-        .min(max_gas);
+    let gas_usage = context.current_gas_usage();
     let vm_max_gas = context.get_gas_limit();
 
     Ok((gas_usage, vm_max_gas, exit_code))
@@ -365,7 +363,7 @@ pub async fn invoke_contract<'a, 'ty, P: for<'x> ContractProvider<'x>, E, B: Blo
         // Some contract have injected gas to users
         if vm_max_gas > max_gas && !gas_injections.is_empty() {
             // Refund only based on the extra max gas
-            refund_extra_gas_injections(state, gas_injections, max_gas, vm_max_gas, &mut logs, &mut changes.caches).await?;
+            refund_extra_gas_injections(state, gas_injections, max_gas, used_gas, vm_max_gas, &mut logs, &mut changes.caches).await?;
         }
 
         state.merge_contract_changes(
@@ -504,24 +502,35 @@ pub async fn refund_gas_sources<'a, 'ty, P: for<'x> ContractProvider<'x>, E, B: 
         return Ok(());
     }
 
-    let mut gas_refund_left = gas_refund.min(total_injected);
-    let initial_gas_refund = gas_refund_left;
+    let target_refund = gas_refund.min(total_injected);
+    let mut total_refunded = 0u64;
     let mut refunds = Vec::new();
     for (source, gas) in gas_sources.into_iter() {
-        if gas_refund_left == 0 {
+        // Calculate the proportional part of the refund without float.
+        let refund = ((gas as u128 * target_refund as u128) / total_injected as u128) as u64;
+        let refund_amount = refund.min(gas);
+        total_refunded = total_refunded.checked_add(refund_amount)
+            .ok_or(ContractError::GasOverflow)?;
+        refunds.push((source, refund_amount, gas));
+    }
+
+    // Integer division can leave a remainder. Pay it to existing sources with
+    // remaining capacity so the total refund is exact and no source is overpaid.
+    let mut remaining_refund = target_refund.checked_sub(total_refunded)
+        .ok_or(ContractError::GasOverflow)?;
+    for (_, refund_amount, gas) in refunds.iter_mut() {
+        if remaining_refund == 0 {
             break;
         }
 
-        // Calculate the proportion of the injection without float
-        let proportion = (gas as u128 * initial_gas_refund as u128) / total_injected as u128;
-        let refund = proportion as u64;
-
-        let refund_amount = refund.min(gas_refund_left);
-        refunds.push((source, refund_amount));
-        gas_refund_left = gas_refund_left.saturating_sub(refund_amount);
+        let capacity = gas.saturating_sub(*refund_amount);
+        let extra = capacity.min(remaining_refund);
+        *refund_amount = refund_amount.checked_add(extra)
+            .ok_or(ContractError::GasOverflow)?;
+        remaining_refund -= extra;
     }
 
-    for (source, refund_amount) in refunds.iter() {
+    for (source, refund_amount, _) in refunds.iter() {
         if *refund_amount == 0 {
             continue;
         }
@@ -541,7 +550,7 @@ pub async fn refund_gas_sources<'a, 'ty, P: for<'x> ContractProvider<'x>, E, B: 
         }
     }
 
-    for (source, refund_amount) in refunds.into_iter() {
+    for (source, refund_amount, _) in refunds.into_iter() {
         if refund_amount == 0 {
             continue;
         }
@@ -576,11 +585,13 @@ pub async fn refund_extra_gas_injections<'a, 'ty, P: for<'x> ContractProvider<'x
     state: &mut B,
     gas_injections: IndexMap<Source, u64>,
     max_gas: u64,
+    used_gas: u64,
     vm_max_gas: u64,
     outputs: &mut Vec<ContractLog>,
     caches: &mut HashMap<Hash, ContractCache>,
 ) -> Result<(), ContractStateError<E>> {
-    let mut gas_refund_left = vm_max_gas.checked_sub(max_gas)
+    let gas_paid_by_invoke = max_gas.max(used_gas);
+    let mut gas_refund_left = vm_max_gas.checked_sub(gas_paid_by_invoke)
         .ok_or(ContractError::GasOverflow)?;
     let mut refunds = Vec::new();
 
