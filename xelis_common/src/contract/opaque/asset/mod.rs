@@ -238,7 +238,11 @@ pub async fn asset_transfer_ownership<'a, 'ty, 'r, P: ContractProvider<'ty>>(zel
 
     let changes = get_asset_changes_for_hash_mut(state, &asset.hash)?;
     let owner = changes.data.1.get_owner_mut();
-    Ok(SysCallResult::Return(Primitive::Boolean(owner.transfer(&metadata.metadata.contract_executor, param)).into()))
+    let transfer = owner.transfer(&metadata.metadata.contract_executor, param);
+    if transfer {
+        changes.data.0.mark_updated();
+    }
+    Ok(SysCallResult::Return(Primitive::Boolean(transfer).into()))
 }
 
 pub async fn asset_mint<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance<'a>, params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
