@@ -116,8 +116,9 @@ pub fn register_methods<T: ShareableTid<'static>>(handler: &mut RPCHandler<T>) {
 // Helper to retrieve the wallet from the context
 #[inline]
 fn wallet_from_context<'a, 'ty, 'r>(context: &'a Context<'ty, 'r>) -> Result<&'a Arc<Wallet>, InternalRpcError> {
-    context.get()
+    context.get::<RPCHandler<Arc<Wallet>>>()
         .context("Couldn't retrieve wallet from context")
+        .map(|handler| handler.get_data())
         .map_err(InternalRpcError::from)
 }
 
