@@ -745,6 +745,11 @@ pub async fn charge_gas_injections<'a, 'ty, P: for<'x> ContractProvider<'x>, E, 
     Ok(())
 }
 
+fn calculate_burned_gas(used_gas: u64) -> Result<u64, ContractError> {
+    Ok(used_gas.checked_mul(TX_GAS_BURN_PERCENT)
+        .ok_or(ContractError::GasOverflow)? / 100)
+}
+
 pub async fn handle_gas<'a, 'ty, P: for<'x> ContractProvider<'x>, E, B: BlockchainApplyState<'a, 'ty, P, E>>(
     caller: &ContractCaller<'a>,
     state: &mut B,
@@ -752,7 +757,7 @@ pub async fn handle_gas<'a, 'ty, P: for<'x> ContractProvider<'x>, E, B: Blockcha
     refund_gas: u64,
 ) -> Result<(u64, u64), ContractStateError<E>> {
     // Part of the gas is burned
-    let burned_gas = used_gas * TX_GAS_BURN_PERCENT / 100;
+    let burned_gas = calculate_burned_gas(used_gas)?;
     // Part of the gas is given to the miners as fees
     let gas_fee = used_gas.checked_sub(burned_gas)
         .ok_or(ContractError::GasOverflow)?;

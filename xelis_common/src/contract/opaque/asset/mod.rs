@@ -261,6 +261,9 @@ pub async fn asset_mint<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance<
     }
 
     let amount = params[0].as_u64()?;
+    if amount == 0 {
+        return Ok(SysCallResult::Return(Primitive::Boolean(false).into()))
+    }
 
     // Check if we can mint that amount
     {

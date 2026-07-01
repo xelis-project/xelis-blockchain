@@ -52,6 +52,11 @@ use crate::{
 pub use kind::*;
 pub use manager::*;
 
+fn calculate_burned_extra_cost(extra_cost: u64) -> Result<u64, EnvironmentError> {
+    Ok(extra_cost.checked_mul(TX_GAS_BURN_PERCENT)
+        .ok_or(EnvironmentError::GasOverflow)? / 100)
+}
+
 // Scheduled executions are unique per contract
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
 pub struct ScheduledExecution {
@@ -278,7 +283,7 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider<'ty>>(
     if use_contract_balance {
         // Once passed here, we are safe and can apply changes
         // record the burn part
-        let burned_part = extra_cost * TX_GAS_BURN_PERCENT / 100;
+        let burned_part = calculate_burned_extra_cost(extra_cost)?;
         record_burned_asset(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET, burned_part).await?;
 
         // add the part for the miners
