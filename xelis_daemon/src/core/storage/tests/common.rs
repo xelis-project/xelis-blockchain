@@ -1020,6 +1020,123 @@ pub async fn test_versioned_data_max_topoheight_boundary<S: Storage>(mut storage
     Ok(())
 }
 
+pub async fn test_asset_data_at_maximum_topoheight<S: Storage>(mut storage: S) -> Result<()> {
+    let asset = Hash::new([182u8; 32]);
+    let origin = Hash::new([183u8; 32]);
+    let owner_at_10 = Hash::new([184u8; 32]);
+    let owner_at_20 = Hash::new([185u8; 32]);
+
+    let data_at_0 = AssetData::new(
+        8,
+        "Asset 0".to_owned(),
+        "A0".to_owned(),
+        MaxSupplyMode::Mintable(1_000),
+        AssetOwner::Creator {
+            contract: origin.clone(),
+            id: 0,
+        },
+    );
+    storage.add_asset(&asset, 0, VersionedAssetData::new(data_at_0, None)).await
+        .context("Failed to add asset at topo 0")?;
+
+    let data_at_10 = AssetData::new(
+        8,
+        "Asset 10".to_owned(),
+        "A10".to_owned(),
+        MaxSupplyMode::Mintable(1_000),
+        AssetOwner::Owner {
+            origin: origin.clone(),
+            origin_id: 0,
+            owner: owner_at_10,
+        },
+    );
+    storage.add_asset(&asset, 10, VersionedAssetData::new(data_at_10, Some(0))).await
+        .context("Failed to add asset at topo 10")?;
+
+    let data_at_20 = AssetData::new(
+        8,
+        "Asset 20".to_owned(),
+        "A20".to_owned(),
+        MaxSupplyMode::Mintable(1_000),
+        AssetOwner::Owner {
+            origin,
+            origin_id: 0,
+            owner: owner_at_20,
+        },
+    );
+    storage.add_asset(&asset, 20, VersionedAssetData::new(data_at_20, Some(10))).await
+        .context("Failed to add asset at topo 20")?;
+
+    let (topoheight, data) = storage.get_asset_at_maximum_topoheight(&asset, 15).await
+        .context("Failed to get asset at maximum topoheight 15")?
+        .context("Expected asset data at maximum topoheight 15")?;
+    assert_eq!(topoheight, 10, "Should walk back to the newest asset data <= 15");
+    assert_eq!(data.get().get_name(), "Asset 10", "Unexpected asset data at topoheight 15");
+    assert_eq!(data.get().get_ticker(), "A10", "Unexpected asset ticker at topoheight 15");
+
+    let (topoheight, data) = storage.get_asset_at_maximum_topoheight(&asset, 10).await
+        .context("Failed to get asset at maximum topoheight 10")?
+        .context("Expected asset data at maximum topoheight 10")?;
+    assert_eq!(topoheight, 10, "Should return exact asset data at topoheight 10");
+    assert_eq!(data.get().get_name(), "Asset 10", "Unexpected asset data at exact topoheight");
+
+    let (topoheight, data) = storage.get_asset_at_maximum_topoheight(&asset, 25).await
+        .context("Failed to get asset at maximum topoheight 25")?
+        .context("Expected asset data at maximum topoheight 25")?;
+    assert_eq!(topoheight, 20, "Should return latest asset data below topoheight 25");
+    assert_eq!(data.get().get_name(), "Asset 20", "Unexpected asset data at latest topoheight");
+
+    Ok(())
+}
+
+pub async fn test_asset_supply_at_maximum_topoheight<S: Storage>(mut storage: S) -> Result<()> {
+    let asset = Hash::new([186u8; 32]);
+    let origin = Hash::new([187u8; 32]);
+    let data = AssetData::new(
+        8,
+        "Supply Asset".to_owned(),
+        "SUP".to_owned(),
+        MaxSupplyMode::Mintable(1_000),
+        AssetOwner::Creator {
+            contract: origin,
+            id: 0,
+        },
+    );
+    storage.add_asset(&asset, 0, VersionedAssetData::new(data, None)).await
+        .context("Failed to add asset for supply test")?;
+
+    storage.set_last_circulating_supply_for_asset(&asset, 5, &Versioned::new(100u64, None)).await
+        .context("Failed to set supply at topo 5")?;
+    storage.set_last_circulating_supply_for_asset(&asset, 10, &Versioned::new(200u64, Some(5))).await
+        .context("Failed to set supply at topo 10")?;
+    storage.set_last_circulating_supply_for_asset(&asset, 20, &Versioned::new(300u64, Some(10))).await
+        .context("Failed to set supply at topo 20")?;
+
+    let supply_before_first = storage.get_circulating_supply_for_asset_at_maximum_topoheight(&asset, 3).await
+        .context("Failed to get supply at maximum topoheight 3")?;
+    assert!(supply_before_first.is_none(), "Should not find supply before its first version");
+
+    let (topoheight, supply) = storage.get_circulating_supply_for_asset_at_maximum_topoheight(&asset, 15).await
+        .context("Failed to get supply at maximum topoheight 15")?
+        .context("Expected supply at maximum topoheight 15")?;
+    assert_eq!(topoheight, 10, "Should walk back to the newest supply <= 15");
+    assert_eq!(*supply.get(), 200u64, "Unexpected supply at topoheight 15");
+
+    let (topoheight, supply) = storage.get_circulating_supply_for_asset_at_maximum_topoheight(&asset, 10).await
+        .context("Failed to get supply at maximum topoheight 10")?
+        .context("Expected supply at maximum topoheight 10")?;
+    assert_eq!(topoheight, 10, "Should return exact supply at topoheight 10");
+    assert_eq!(*supply.get(), 200u64, "Unexpected supply at exact topoheight");
+
+    let (topoheight, supply) = storage.get_circulating_supply_for_asset_at_maximum_topoheight(&asset, 25).await
+        .context("Failed to get supply at maximum topoheight 25")?
+        .context("Expected supply at maximum topoheight 25")?;
+    assert_eq!(topoheight, 20, "Should return latest supply below topoheight 25");
+    assert_eq!(*supply.get(), 300u64, "Unexpected supply at latest topoheight");
+
+    Ok(())
+}
+
 // Tests for versioned data cleanup operations
 pub async fn test_delete_versioned_data_at_topoheight_nonces<S: Storage>(mut storage: S, data: &TestData) -> Result<()> {
     let public_key = data.public_key_pair.get_public_key().compress();

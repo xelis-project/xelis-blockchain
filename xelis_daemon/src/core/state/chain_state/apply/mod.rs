@@ -62,6 +62,11 @@ pub use finalized::*;
 pub use contract::ContractManager;
 pub use provider::ApplicableChainStateProvider;
 
+fn calculate_burned_extra_base_fee(tx_extra_base_fee: u64) -> Result<u64, BlockchainError> {
+    Ok(tx_extra_base_fee.checked_mul(EXTRA_BASE_FEE_BURN_PERCENT)
+        .ok_or(BlockchainError::ConsensusOverflow)? / 100)
+}
+
 // Chain State that can be applied to the mutable storage
 // 's is the storage lifetime, 'b is the block data lifetime
 pub struct ApplicableChainState<'s, 'b, P: ApplicableChainStateProvider> {
@@ -93,7 +98,7 @@ impl<'s, 'b, P: ApplicableChainStateProvider> BlockchainVerificationState<'b, Bl
             let tx_extra_base_fee = extra_base_fee.checked_mul(tx_kb_size_rounded(tx.size()) as u64)
                 .ok_or(BlockchainError::ConsensusOverflow)?;
             // The burned part is computed above the extra base fee
-            let burned_part = tx_extra_base_fee * EXTRA_BASE_FEE_BURN_PERCENT / 100;
+            let burned_part = calculate_burned_extra_base_fee(tx_extra_base_fee)?;
 
             // Remove the burned part from fee
             fees_paid = fees_paid.checked_sub(burned_part)

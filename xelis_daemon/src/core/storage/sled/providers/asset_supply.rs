@@ -23,18 +23,18 @@ impl AssetCirculatingSupplyProvider for SledStorage {
             None
         };
 
-        while let Some(t) = topo {
-            if t <= topoheight {
+        while let Some(current) = topo {
+            if current <= topoheight {
                 let supply = self.load_from_disk(
                     &self.versioned_assets_supply,
-                    &Self::get_versioned_key(asset, t),
+                    &Self::get_versioned_key(asset, current),
                     DiskContext::AssetSupplyAtTopoHeight(topoheight)
                 )?;
 
-                return Ok(Some((t, supply)));
+                return Ok(Some((current, supply)));
             }
 
-            topo = self.load_from_disk(&self.versioned_assets_supply, &Self::get_versioned_key(asset, topoheight), DiskContext::AssetSupplyTopoHeight)?;
+            topo = self.load_from_disk(&self.versioned_assets_supply, &Self::get_versioned_key(asset, current), DiskContext::AssetSupplyTopoHeight)?;
         }
 
         Ok(None)

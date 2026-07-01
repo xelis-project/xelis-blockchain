@@ -198,6 +198,20 @@ async fn test_rocksdb_versioned_data_max_topoheight_boundary() -> Result<()> {
 }
 
 #[tokio::test]
+async fn test_rocksdb_asset_data_at_maximum_topoheight_walks_previous_versions() -> Result<()> {
+    let temp_dir = TempDir::new("storage_test")?;
+    let storage = new_rocksdb_storage(Network::Devnet, temp_dir.path().to_str().unwrap())?;
+    test_asset_data_at_maximum_topoheight(storage).await
+}
+
+#[tokio::test]
+async fn test_rocksdb_asset_supply_at_maximum_topoheight_walks_previous_versions() -> Result<()> {
+    let temp_dir = TempDir::new("storage_test")?;
+    let storage = new_rocksdb_storage(Network::Devnet, temp_dir.path().to_str().unwrap())?;
+    test_asset_supply_at_maximum_topoheight(storage).await
+}
+
+#[tokio::test]
 async fn test_rocksdb_delete_versioned_data_at_topoheight_nonces() -> Result<()> {
     let data = TestData::new()?;
     let temp_dir = TempDir::new("storage_test")?;
