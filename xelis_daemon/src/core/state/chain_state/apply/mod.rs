@@ -224,6 +224,13 @@ impl<'s, 'b, P: ApplicableChainStateProvider> BlockchainVerificationState<'b, Bl
         self.inner.load_contract_module(hash).await
     }
 
+    async fn is_contract_module_new(
+        &mut self,
+        hash: Cow<'b, Hash>
+    ) -> Result<bool, BlockchainError> {
+        self.inner.is_contract_module_new(hash).await
+    }
+
     async fn get_contract_module_with_environment(
         &self,
         hash: &'b Hash
