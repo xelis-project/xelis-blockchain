@@ -247,7 +247,7 @@ impl MockChainState {
     pub fn internal_set_contract_module(&mut self, hash: Hash, module: ContractModule) {
         self.contracts.insert(
             Cow::Owned(hash),
-            Some((VersionedState::New, Some(Cow::Owned(module)))),
+            Some((VersionedState::FetchedAt(0), Some(Cow::Owned(module)))),
         );
     }
 }
@@ -368,6 +368,13 @@ impl<'a> BlockchainVerificationState<'a, anyhow::Error> for MockChainState {
 
     async fn load_contract_module(&mut self, hash: Cow<'a, Hash>) -> Result<bool, anyhow::Error> {
         Ok(self.contracts.contains_key(&hash))
+    }
+
+    async fn is_contract_module_new(&mut self, hash: Cow<'a, Hash>) -> Result<bool, anyhow::Error> {
+        Ok(self.contracts
+            .get(&hash)
+            .and_then(|contract| contract.as_ref())
+            .is_some_and(|(state, module)| state.is_new() && module.is_some()))
     }
 
     async fn get_contract_module_with_environment(

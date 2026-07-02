@@ -598,6 +598,11 @@ impl Transaction {
                     return Err(VerificationError::ContractNotFound.into());
                 }
 
+                if state.is_contract_module_new(Cow::Borrowed(&payload.contract)).await
+                    .map_err(VerificationStateError::State)? {
+                    return Err(VerificationError::ContractDeployedInSameBlock.into());
+                }
+
                 let (module, environment) = state.get_contract_module_with_environment(&payload.contract).await
                     .map_err(VerificationStateError::State)?;
 
@@ -794,11 +799,6 @@ impl Transaction {
                     payload.max_gas,
                     false,
                 )?;
-
-                // We need to load the contract module if not already in cache
-                if !self.is_contract_available(state, &payload.contract).await? {
-                    return Err(VerificationError::ContractNotFound.into());
-                }
             },
             TransactionType::DeployContract(payload) => {
                 if let Some(invoke) = payload.invoke.as_ref() {

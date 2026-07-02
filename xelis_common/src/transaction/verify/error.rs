@@ -76,6 +76,8 @@ pub enum VerificationError {
     InvalidInvokeContract,
     #[error("Contract not found")]
     ContractNotFound,
+    #[error("Contract was deployed in the same block")]
+    ContractDeployedInSameBlock,
     #[error("Deposit decompressed not found")]
     DepositNotFound,
     #[error("Configured max gas is above the network limit")]

@@ -442,6 +442,85 @@ async fn test_tx_deploy_contract() {
 }
 
 #[tokio::test]
+async fn test_tx_invoke_contract_deployed_in_same_batch_is_rejected() {
+    let mut alice = TrackedAccount::new();
+    alice.set_balance(XELIS_ASSET, 100 * COIN_VALUE);
+
+    let (deploy_tx, deploy_hash, invoke_tx, invoke_hash) = {
+        let mut state = AccountStateImpl {
+            balances: alice.balances.clone(),
+            nonce: alice.nonce,
+            reference: Reference {
+                topoheight: 0,
+                hash: Hash::zero(),
+            },
+        };
+
+        let mut module = Module::new();
+        module.add_entry_chunk(Chunk::new(), None);
+
+        let deploy_data = TransactionTypeBuilder::DeployContract(DeployContractBuilder {
+            contract_version: Default::default(),
+            module: module.to_hex(),
+            invoke: None,
+        });
+        let deploy_builder = TransactionBuilder::new(
+            TxVersion::V2,
+            alice.keypair.get_public_key().compress(),
+            None,
+            deploy_data,
+            FeeBuilder::default(),
+        );
+        let deploy_tx = Arc::new(deploy_builder.build(&mut state, &alice.keypair).unwrap());
+        let deploy_hash = deploy_tx.hash();
+
+        let invoke_data = TransactionTypeBuilder::InvokeContract(InvokeContractBuilder {
+            contract: deploy_hash.clone(),
+            entry_id: 0,
+            max_gas: 1000,
+            parameters: Vec::new(),
+            deposits: Default::default(),
+            permission: Default::default(),
+        });
+        let invoke_builder = TransactionBuilder::new(
+            TxVersion::V2,
+            alice.keypair.get_public_key().compress(),
+            None,
+            invoke_data,
+            FeeBuilder::default(),
+        );
+        let invoke_tx = Arc::new(invoke_builder.build(&mut state, &alice.keypair).unwrap());
+        let invoke_hash = invoke_tx.hash();
+
+        (deploy_tx, deploy_hash, invoke_tx, invoke_hash)
+    };
+
+    let mut state = MockChainState::new();
+    {
+        let mut balances = HashMap::new();
+        for (asset, balance) in &alice.balances {
+            balances.insert(asset.clone(), balance.ciphertext.clone().take_ciphertext().unwrap());
+        }
+        state.accounts.insert(alice.keypair.get_public_key().compress(), MockAccount {
+            balances,
+            nonce: alice.nonce,
+        });
+    }
+
+    let result = Transaction::verify_batch(
+        vec![(&deploy_tx, &deploy_hash), (&invoke_tx, &invoke_hash)].into_iter(),
+        &mut state,
+        &NoZKPCache,
+    ).await;
+
+    assert!(
+        matches!(result, Err(VerificationStateError::VerificationError(VerificationError::ContractDeployedInSameBlock))),
+        "expected ContractDeployedInSameBlock, got: {:?}",
+        result
+    );
+}
+
+#[tokio::test]
 async fn test_max_transfers() {
     let mut alice = TrackedAccount::new();
     let mut bob = TrackedAccount::new();
