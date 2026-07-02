@@ -6,7 +6,8 @@ use xelis_vm::{
     FnReturnType,
     OpaqueWrapper,
     Primitive,
-    SysCallResult
+    SysCallResult,
+    EnvironmentError
 };
 use crate::{
     config::FEE_PER_BYTE_IN_CONTRACT_MEMORY,
@@ -58,6 +59,10 @@ pub fn memory_storage_load<'ty, P: ContractProvider<'ty>>(instance: FnInstance, 
     let key = params.remove(0)
         .into_owned();
 
+    if !key.is_hashable() {
+        return Err(EnvironmentError::Static("Key is not hashable"))
+    }
+
     let value = get_optional_cache_for_contract(&state.changes.caches, state.global_caches, &metadata.metadata.contract_executor)
         .and_then(|cache| if storage.shared {
                 &cache.memory_shared
@@ -83,6 +88,10 @@ pub fn memory_storage_has<'ty, P: ContractProvider<'ty>>(instance: FnInstance, m
     let key = params.remove(0)
         .into_owned();
 
+    if !key.is_hashable() {
+        return Err(EnvironmentError::Static("Key is not hashable"))
+    }
+
     let contains = get_optional_cache_for_contract(&state.changes.caches, state.global_caches, &metadata.metadata.contract_executor)
         .map_or(false, |cache| if storage.shared {
                 &cache.memory_shared
@@ -103,6 +112,10 @@ pub fn memory_storage_store<'ty, P: ContractProvider<'ty>>(instance: FnInstance,
 
     let key = params.remove(0)
         .into_owned();
+
+    if !key.is_hashable() {
+        return Err(EnvironmentError::Static("Key is not hashable"))
+    }
 
     let total_size = check_storage_entry_size(&key, &value)?;
     let cost = total_size as u64 * FEE_PER_BYTE_IN_CONTRACT_MEMORY;
@@ -136,6 +149,10 @@ pub fn memory_storage_delete<'ty, P: ContractProvider<'ty>>(instance: FnInstance
 
     let key = params.remove(0)
         .into_owned();
+
+    if !key.is_hashable() {
+        return Err(EnvironmentError::Static("Key is not hashable"))
+    }
 
     let cache = get_cache_for_contract(
         &mut state.changes.caches,

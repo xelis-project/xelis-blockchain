@@ -3,7 +3,6 @@ use std::collections::hash_map::Entry;
 use xelis_vm::{
     traits::{JSONHelper, Serializable},
     VMContext,
-    EnvironmentError,
     FnInstance,
     FnParams,
     FnReturnType,
@@ -23,6 +22,7 @@ use crate::{
     crypto::Hash,
     versioned::VersionedState
 };
+use super::check_storage_key;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct OpaqueReadOnlyStorage(Hash);
@@ -55,9 +55,7 @@ pub async fn read_only_storage_load<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf:
     let key = params.remove(0)
         .into_owned();
 
-    if !key.is_serializable() {
-        return Err(EnvironmentError::Static("Key is not serializable"))
-    }
+    check_storage_key(&key)?;
 
     // Read from global cache first, then fallback to provider
     let value = match get_cache_for_contract(&mut state.changes.caches, state.global_caches, zelf.0.clone(), state.cache_clone_refs)
@@ -98,9 +96,7 @@ pub async fn read_only_storage_has<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: 
     let key = params.remove(0)
         .into_owned();
 
-    if !key.is_serializable() {
-        return Err(EnvironmentError::Static("Key is not serializable"))
-    }
+    check_storage_key(&key)?;
 
     // Read from global cache first, then fallback to provider
     let contains = match get_cache_for_contract(&mut state.changes.caches, state.global_caches, zelf.0.clone(), state.cache_clone_refs)

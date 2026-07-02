@@ -2660,6 +2660,10 @@ async fn listen_event_fn<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance
     let max_gas = params.remove(2)
         .as_u64()?;
 
+    if max_gas == 0 {
+        return Err(EnvironmentError::Static("max_gas must be greater than zero"))
+    }
+
     if max_gas > MAX_GAS_USAGE_PER_TX {
         return Err(EnvironmentError::Static("max_gas exceeds allowed limit"))
     }
@@ -2676,6 +2680,11 @@ async fn listen_event_fn<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance
         .as_u64()?;
 
     let (provider, state) = from_context::<P>(context)?;
+    let source = match state.caller.get_source() {
+        Some(source) => Source::Account(source.clone()),
+        None => Source::Contract(metadata.metadata.contract_executor.clone())
+    };
+
     // check from storage that we're not already registered
     if provider.has_contract_callback_for_event(
         &contract,
@@ -2696,7 +2705,7 @@ async fn listen_event_fn<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance
     let listeners = state.changes.events_listeners.entry((contract.clone(), event_id))
         .or_insert_with(Default::default);
 
-    let callback = EventCallbackRegistration { chunk_id, max_gas };
+    let callback = EventCallbackRegistration::new(chunk_id, max_gas, source);
     listeners.push((metadata.metadata.contract_executor.clone(), callback));
 
     record_gas_allowance(context, max_gas)?;

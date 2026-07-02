@@ -1099,7 +1099,9 @@ async fn write_u64_slot<'ty, P: ContractProvider<'ty>>(
 async fn allocate_node_id<'ty, P: ContractProvider<'ty>>(ctx: &mut TreeContext<'_, 'ty, P>) -> Result<u64, EnvironmentError> {
     // Sequential ids are sufficient because inserts happen serially within a contract execution.
     let next = read_next_id(ctx).await?;
-    write_next_id(ctx, next + 1).await?;
+    let new_next = next.checked_add(1)
+        .ok_or(EnvironmentError::Static("too many nodes allocated"))?;
+    write_next_id(ctx, new_next).await?;
     Ok(next)
 }
 

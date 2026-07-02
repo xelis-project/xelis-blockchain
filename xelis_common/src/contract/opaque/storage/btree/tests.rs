@@ -1359,6 +1359,28 @@ async fn btree_allocate_node_id_monotonic_per_namespace() {
 }
 
 #[tokio::test]
+async fn btree_allocate_node_id_rejects_u64_overflow() {
+    init_test!(contract, provider, chain, state);
+    let namespace = b"id_overflow".to_vec();
+
+    {
+        let mut ctx = TreeContext::new(&provider, &mut state, &contract, &namespace);
+        super::write_next_id(&mut ctx, u64::MAX).await.unwrap();
+        let _ = ctx.finish();
+    }
+
+    let err = allocate_node_id(&provider, &mut state, &contract, &namespace)
+        .await
+        .expect_err("allocating past u64::MAX must fail");
+    assert!(matches!(err, EnvironmentError::Static(_)), "unexpected error: {:?}", err);
+
+    let next = read_next_id(&provider, &mut state, &contract, &namespace)
+        .await
+        .expect("read next id");
+    assert_eq!(next, u64::MAX, "failed allocation must not advance next id");
+}
+
+#[tokio::test]
 async fn btree_storage_usage_records_reads() {
     init_test!(contract, provider, chain, state);
     let namespace = b"usage_read".to_vec();

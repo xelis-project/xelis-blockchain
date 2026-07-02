@@ -97,6 +97,10 @@ fn check_storage_key(key: &ValueCell) -> Result<(), EnvironmentError> {
         return Err(EnvironmentError::Static("Key is not serializable"))
     }
 
+    if !key.is_hashable() {
+        return Err(EnvironmentError::Static("Key is not hashable"))
+    }
+
     // Same here for raw bytes length
     let key_size = data_size_in_bytes(key);
 

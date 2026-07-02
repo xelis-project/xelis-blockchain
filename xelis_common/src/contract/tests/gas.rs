@@ -115,44 +115,6 @@ fn assert_account_gas_conservation(
     );
 }
 
-async fn assert_contract_gas_conservation(
-    state: &mut MockChainState,
-    contract: &Hash,
-    reserved_gas: u64,
-    used_gas: u64,
-    gas_fee_before: u64,
-    burned_fee_before: u64,
-) {
-    let expected_burned_gas = used_gas * TX_GAS_BURN_PERCENT / 100;
-    let expected_fee_gas = used_gas - expected_burned_gas;
-    let refunded_gas = reserved_gas - used_gas;
-    let gas_fee_delta = state.gas_fee - gas_fee_before;
-    let burned_fee_delta = state.burned_fee - burned_fee_before;
-
-    assert_eq!(
-        gas_fee_delta,
-        expected_fee_gas,
-        "miner fee must be charged only from gas actually used"
-    );
-    assert_eq!(
-        burned_fee_delta,
-        expected_burned_gas,
-        "burned fee must be charged only from gas actually used"
-    );
-
-    let (_, balance) = state.get_contract_balance_for_gas(contract).await.unwrap();
-    assert_eq!(
-        *balance,
-        refunded_gas,
-        "contract must receive only unused reserved gas"
-    );
-    assert_eq!(
-        refunded_gas + gas_fee_delta + burned_fee_delta,
-        reserved_gas,
-        "gas accounting must conserve the reserved input"
-    );
-}
-
 fn assert_gas_injection_log(log: &ContractLog, expected_contract: &Hash, expected_amount: u64) {
     match log {
         ContractLog::GasInjection { contract, amount } => {
@@ -2020,7 +1982,7 @@ async fn failed_account_paid_event_listener_refunds_only_current_input() {
 }
 
 #[tokio::test]
-async fn fired_event_callback_pays_fee_and_refunds_only_leftover_to_listener_contract() {
+async fn fired_event_callback_pays_fee_and_refunds_only_leftover_to_account_source() {
     let callback_gas = 50000u64;
     let emitter_code = r#"
         entry emit() -> u64 {
@@ -2049,10 +2011,15 @@ async fn fired_event_callback_pays_fee_and_refunds_only_leftover_to_listener_con
 
     let listener = create_contract(&mut chain_state, &listener_code, ContractVersion::V1)
         .expect("create listener");
-    let source = KeyPair::new().get_public_key().compress();
+    let keypair = KeyPair::new();
+    let source = keypair.get_public_key().compress();
+    chain_state.accounts.insert(source.clone(), MockAccount {
+        balances: [(XELIS_ASSET, keypair.get_public_key().encrypt(0u64))].into_iter().collect(),
+        nonce: 0,
+    });
 
     let registration = vm::invoke_contract(
-        ContractCaller::Impersonate(Cow::Owned(source)),
+        ContractCaller::Impersonate(Cow::Owned(source.clone())),
         &mut chain_state,
         Cow::Owned(listener.clone()),
         None,
@@ -2114,14 +2081,15 @@ async fn fired_event_callback_pays_fee_and_refunds_only_leftover_to_listener_con
         "event callback should leave gas to refund"
     );
 
-    assert_contract_gas_conservation(
-        &mut chain_state,
-        &listener,
+    assert_account_gas_conservation(
+        &chain_state,
+        &keypair,
+        &source,
         callback_gas,
         callback_used_gas,
         gas_fee_before,
         burned_fee_before,
-    ).await;
+    );
 }
 
 #[tokio::test]

@@ -284,3 +284,22 @@ async fn private_chunk_cannot_be_called_via_call() {
 
     assert!(!res.is_success(), "calling a private chunk should fail even with All permission: {:?}", res);
 }
+
+
+// `delegate` keeps the current environment, so target bytecode must use the same contract version.
+#[tokio::test]
+async fn delegate_rejects_version_mismatch() {
+    let mut state = MockChainState::new();
+    let b = create_contract(&mut state, B_ONE_CHUNK, ContractVersion::V0).expect("create contract B");
+    let a = create_contract(&mut state, &code_delegating(&b.to_string(), 0), ContractVersion::V1).expect("create contract A");
+
+    let res = invoke_contract_with_permission(
+        &mut state,
+        &a,
+        InvokeContract::Entry(0),
+        vec![],
+        InterContractPermission::All,
+    ).await.expect("invoke delegating contract");
+
+    assert!(!res.is_success(), "delegate should reject version mismatches: {:?}", res);
+}

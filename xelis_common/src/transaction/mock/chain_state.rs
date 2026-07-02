@@ -37,7 +37,6 @@ use crate::{
         ExecutionsChanges,
         ExecutionsManager,
         InterContractPermission,
-        Source,
     },
     crypto::{
         elgamal::{Ciphertext, CompressedPublicKey},
@@ -160,7 +159,7 @@ impl MockChainState {
                         Cow::Owned(contract.clone()),
                         None,
                         event.params.iter().map(|p| p.deep_clone()),
-                        [(Source::Contract(contract.clone()), callback.max_gas)].into_iter().collect(),
+                        callback.gas_sources,
                         callback.max_gas,
                         InvokeContract::Chunk(callback.chunk_id, false),
                         Cow::Owned(InterContractPermission::All),
