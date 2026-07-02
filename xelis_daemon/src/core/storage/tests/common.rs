@@ -8,7 +8,7 @@ use xelis_common::{
     asset::{AssetData, AssetOwner, MaxSupplyMode, VersionedAssetData},
     block::{BlockHeader, BlockVersion, EXTRA_NONCE_SIZE},
     config::XELIS_ASSET,
-    contract::{ContractModule, EventCallbackRegistration, ScheduledExecution, ScheduledExecutionKind},
+    contract::{ContractModule, EventCallbackRegistration, ScheduledExecution, ScheduledExecutionKind, Source},
     crypto::{Hash, KeyPair, PublicKey},
     difficulty::Difficulty,
     immutable::Immutable,
@@ -199,10 +199,7 @@ pub async fn test_contract_event_callback_storage<S: Storage>(mut storage: S) ->
     storage.set_last_contract_to(&listener_contract_hash, topoheight, &versioned2).await.context("Failed to create listener contract")?;
     
     // Create an event callback registration
-    let callback = EventCallbackRegistration {
-        chunk_id: 0,
-        max_gas: 100,
-    };
+    let callback = EventCallbackRegistration::new(0, 100, Source::Contract(listener_contract_hash.clone()));
     let versioned_callback = Versioned::new(Some(callback.clone()), None);
     
     // Set event callback
@@ -226,8 +223,9 @@ pub async fn test_contract_event_callback_storage<S: Storage>(mut storage: S) ->
     let (retrieved_topo, retrieved_versioned) = retrieved.unwrap();
     assert_eq!(retrieved_topo, topoheight, "Topoheight mismatch");
     assert!(retrieved_versioned.get().is_some(), "Callback registration should exist");
-    assert_eq!(retrieved_versioned.get().unwrap().chunk_id, 0, "Chunk ID mismatch");
-    assert_eq!(retrieved_versioned.get().unwrap().max_gas, 100, "Max gas mismatch");
+    let retrieved_callback = retrieved_versioned.get().as_ref().unwrap();
+    assert_eq!(retrieved_callback.chunk_id, 0, "Chunk ID mismatch");
+    assert_eq!(retrieved_callback.max_gas, 100, "Max gas mismatch");
     
     Ok(())
 }
@@ -260,10 +258,7 @@ pub async fn test_contract_event_callback_retrieval<S: Storage>(mut storage: S) 
     // Register multiple listeners for the same event
     let listeners = vec![(listener1_hash, 0u64), (listener2_hash, 1u64)];
     for (listener_hash, listener_idx) in listeners {
-        let callback = EventCallbackRegistration {
-            chunk_id: listener_idx as u16,
-            max_gas: 200u64 + listener_idx,
-        };
+        let callback = EventCallbackRegistration::new(listener_idx as u16, 200u64 + listener_idx, Source::Contract(listener_hash.clone()));
         let versioned = Versioned::new(Some(callback), None);
         storage.set_last_contract_event_callback(
             &contract_hash,
@@ -317,10 +312,7 @@ pub async fn test_contract_event_callback_versioning<S: Storage>(mut storage: S)
     storage.set_last_contract_to(&listener_hash, topoheight, &versioned2).await.context("Failed to create listener contract")?;
     
     // Register version 1 at topoheight 5
-    let callback_v1 = EventCallbackRegistration {
-        chunk_id: 0,
-        max_gas: 300,
-    };
+    let callback_v1 = EventCallbackRegistration::new(0, 300, Source::Contract(listener_hash.clone()));
     storage.set_last_contract_event_callback(
         &contract_hash,
         event_id,
@@ -330,10 +322,7 @@ pub async fn test_contract_event_callback_versioning<S: Storage>(mut storage: S)
     ).await.context("Failed to set callback v1")?;
     
     // Register version 2 at topoheight 10 (update)
-    let callback_v2 = EventCallbackRegistration {
-        chunk_id: 1,
-        max_gas: 400,
-    };
+    let callback_v2 = EventCallbackRegistration::new(1, 400, Source::Contract(listener_hash.clone()));
     storage.set_last_contract_event_callback(
         &contract_hash,
         event_id,
@@ -351,7 +340,8 @@ pub async fn test_contract_event_callback_versioning<S: Storage>(mut storage: S)
     ).await.context("Failed to get callback at topo 8")?;
     
     assert!(result_v1.is_some(), "Should find v1 at topoheight 8");
-    assert_eq!(result_v1.unwrap().1.get().unwrap().max_gas, 300, "v1 max_gas should be 300");
+    let result_v1 = result_v1.unwrap();
+    assert_eq!(result_v1.1.get().as_ref().unwrap().max_gas, 300, "v1 max_gas should be 300");
     
     // Get at topoheight 15 should return v2
     let result_v2 = storage.get_event_callback_for_contract_at_maximum_topoheight(
@@ -362,7 +352,8 @@ pub async fn test_contract_event_callback_versioning<S: Storage>(mut storage: S)
     ).await.context("Failed to get callback at topo 15")?;
     
     assert!(result_v2.is_some(), "Should find v2 at topoheight 15");
-    assert_eq!(result_v2.unwrap().1.get().unwrap().max_gas, 400, "v2 max_gas should be 400");
+    let result_v2 = result_v2.unwrap();
+    assert_eq!(result_v2.1.get().as_ref().unwrap().max_gas, 400, "v2 max_gas should be 400");
     
     Ok(())
 }
@@ -390,10 +381,7 @@ pub async fn test_event_callback_unregister<S: Storage>(mut storage: S) -> Resul
     storage.set_last_contract_to(&listener_hash, topoheight, &versioned2).await.context("Failed to create listener contract")?;
     
     // Register callback
-    let callback = EventCallbackRegistration {
-        chunk_id: 0,
-        max_gas: 500,
-    };
+    let callback = EventCallbackRegistration::new(0, 500, Source::Contract(listener_hash.clone()));
     storage.set_last_contract_event_callback(
         &contract_hash,
         event_id,
@@ -634,10 +622,7 @@ pub async fn test_cleanup_above_topoheight_with_mixed_data<S: Storage>(mut stora
     storage.set_last_contract_to(&listener_hash, 0u64, &versioned2).await.context("Failed to create listener contract")?;
     
     for topo in 0u64..5 {
-        let callback = EventCallbackRegistration {
-            chunk_id: topo as u16,
-            max_gas: 100 + topo,
-        };
+        let callback = EventCallbackRegistration::new(topo as u16, 100 + topo, Source::Contract(listener_hash.clone()));
         storage.set_last_contract_event_callback(
             &contract_hash,
             1u64,
@@ -739,10 +724,7 @@ pub async fn test_cleanup_all_data_types_at_topoheight<S: Storage>(mut storage: 
         .context("Failed to set nonce")?;
     
     // Set event callback at target topoheight
-    let callback = EventCallbackRegistration {
-        chunk_id: 1,
-        max_gas: 500,
-    };
+    let callback = EventCallbackRegistration::new(1, 500, Source::Contract(listener_hash.clone()));
     storage.set_last_contract_event_callback(
         &contract_hash,
         1u64,
@@ -862,10 +844,7 @@ pub async fn test_versioned_contract_event_callback_stream<S: Storage>(mut stora
         let versioned = Versioned::new(Some(Cow::Owned(contract_module)), None);
         storage.set_last_contract_to(&listener_hash, idx, &versioned).await.context("Failed to create listener contract")?;
         
-        let callback = EventCallbackRegistration {
-            chunk_id: idx as u16,
-            max_gas: 600 + idx,
-        };
+        let callback = EventCallbackRegistration::new(idx as u16, 600 + idx, Source::Contract(listener_hash.clone()));
         
         storage.set_last_contract_event_callback(
             &contract_hash,
@@ -974,10 +953,7 @@ pub async fn test_versioned_data_max_topoheight_boundary<S: Storage>(mut storage
         .context("Failed to set nonce")?;
     
     // Set event callback at topoheight 100
-    let callback = EventCallbackRegistration {
-        chunk_id: 10,
-        max_gas: 1000,
-    };
+    let callback = EventCallbackRegistration::new(10, 1000, Source::Contract(listener_hash.clone()));
     storage.set_last_contract_event_callback(
         &contract_hash,
         1u64,
@@ -1739,7 +1715,7 @@ pub async fn test_event_callbacks_available_at_maximum_topoheight<S: Storage>(mu
 
     for (listener_hash, chunk_id, max_gas, topo) in &listeners {
         register_contract(&mut storage, listener_hash, *topo).await?;
-        let callback = EventCallbackRegistration { chunk_id: *chunk_id, max_gas: *max_gas };
+        let callback = EventCallbackRegistration::new(*chunk_id, *max_gas, Source::Contract(listener_hash.clone()));
         storage.set_last_contract_event_callback(
             &contract_hash,
             event_id,
@@ -1791,12 +1767,12 @@ pub async fn test_event_callbacks_available_after_rewind<S: Storage>(mut storage
     // listener_a registered at topo 2, listener_b registered at topo 8
     storage.set_last_contract_event_callback(
         &contract_hash, event_id, &listener_a,
-        Versioned::new(Some(EventCallbackRegistration { chunk_id: 0, max_gas: 500 }), None),
+        Versioned::new(Some(EventCallbackRegistration::new(0, 500, Source::Contract(listener_a.clone()))), None),
         2,
     ).await?;
     storage.set_last_contract_event_callback(
         &contract_hash, event_id, &listener_b,
-        Versioned::new(Some(EventCallbackRegistration { chunk_id: 1, max_gas: 600 }), None),
+        Versioned::new(Some(EventCallbackRegistration::new(1, 600, Source::Contract(listener_b.clone()))), None),
         8,
     ).await?;
 
@@ -1868,13 +1844,13 @@ pub async fn test_listeners_for_contract_events<S: Storage>(mut storage: S) -> R
     // listener_1 listens to event_a at topo 1
     storage.set_last_contract_event_callback(
         &contract_hash, event_a, &listener_1,
-        Versioned::new(Some(EventCallbackRegistration { chunk_id: 10, max_gas: 100 }), None),
+        Versioned::new(Some(EventCallbackRegistration::new(10, 100, Source::Contract(listener_1.clone()))), None),
         1,
     ).await?;
     // listener_2 listens to event_b at topo 2
     storage.set_last_contract_event_callback(
         &contract_hash, event_b, &listener_2,
-        Versioned::new(Some(EventCallbackRegistration { chunk_id: 20, max_gas: 200 }), None),
+        Versioned::new(Some(EventCallbackRegistration::new(20, 200, Source::Contract(listener_2.clone()))), None),
         2,
     ).await?;
 
@@ -1922,7 +1898,7 @@ pub async fn test_event_callback_consumed_versioning<S: Storage>(mut storage: S)
     // topo 2: register callback
     storage.set_last_contract_event_callback(
         &contract, event_id, &listener,
-        Versioned::new(Some(EventCallbackRegistration { chunk_id: 0, max_gas: 100 }), None),
+        Versioned::new(Some(EventCallbackRegistration::new(0, 100, Source::Contract(listener.clone()))), None),
         2,
     ).await?;
 
@@ -1962,7 +1938,7 @@ pub async fn test_event_callback_consumed_versioning<S: Storage>(mut storage: S)
     // topo 8: re-register after consumption
     storage.set_last_contract_event_callback(
         &contract, event_id, &listener,
-        Versioned::new(Some(EventCallbackRegistration { chunk_id: 1, max_gas: 200 }), Some(5)),
+        Versioned::new(Some(EventCallbackRegistration::new(1, 200, Source::Contract(listener.clone()))), Some(5)),
         8,
     ).await?;
 

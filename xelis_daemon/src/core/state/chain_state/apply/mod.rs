@@ -721,8 +721,7 @@ impl<'s, 'b, P: ApplicableChainStateProvider> ApplicableChainState<'s, 'b, P> {
                 self.process_execution(
                     Cow::Owned(listener_contract.clone()),
                     ContractCaller::EventCallback(Cow::Owned(caller.clone()), Cow::Owned(event.contract.clone())),
-                    // Gas source is the contract being called
-                    [(Source::Contract(listener_contract.clone()), callback.max_gas)].into_iter().collect(),
+                    callback.gas_sources,
                     callback.max_gas,
                     callback.chunk_id,
                     event.params.iter().map(|v| v.deep_clone()),
@@ -878,7 +877,7 @@ mod tests {
     use xelis_assembler::Assembler;
     use xelis_common::{
         block::{Block, BlockHeader, BlockVersion, EXTRA_NONCE_SIZE},
-        contract::{build_environment, CallbackEvent, ContractLog, ContractModule, ContractVersion, EventCallbackRegistration},
+        contract::{build_environment, CallbackEvent, ContractLog, ContractModule, ContractVersion, EventCallbackRegistration, Source},
         crypto::{Hash, KeyPair},
         network::Network,
         versioned::VersionedState,
@@ -958,11 +957,8 @@ mod tests {
         state.contract_manager.events_listeners.insert(
             (emitter, 7),
             vec![(
-                listener,
-                EventCallbackRegistration {
-                    chunk_id: 0,
-                    max_gas: 1_000,
-                },
+                listener.clone(),
+                EventCallbackRegistration::new(0, 1_000, Source::Contract(listener)),
             )],
         );
 
@@ -1033,10 +1029,7 @@ mod tests {
             (emitter, 7),
             vec![(
                 listener.clone(),
-                EventCallbackRegistration {
-                    chunk_id: 0,
-                    max_gas: 1_000,
-                },
+                EventCallbackRegistration::new(0, 1_000, Source::Contract(listener.clone())),
             )],
         );
 
