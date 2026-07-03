@@ -224,6 +224,10 @@ impl Serializer for PrivateKey {
 
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         let scalar = Scalar::read(reader)?;
+        if scalar == Scalar::ZERO {
+            return Err(ReaderError::InvalidValue);
+        }
+
         Ok(PrivateKey::from_scalar(scalar))
     }
 
@@ -260,6 +264,11 @@ mod tests {
         let message = b"Hello, world!";
         let signature = keypair.sign(message);
         assert!(signature.verify(message, public_key));
+    }
+
+    #[test]
+    fn private_key_read_rejects_zero_scalar_without_panicking() {
+        assert!(PrivateKey::from_bytes(&[0; 32]).is_err());
     }
 
     #[test]
