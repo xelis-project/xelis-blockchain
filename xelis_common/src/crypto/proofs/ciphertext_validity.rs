@@ -380,5 +380,72 @@ mod tests {
         );
         assert!(result.is_ok());
         assert!(batch_collector.verify().is_ok());
+
+        let mut transcript = Transcript::new(b"test");
+        assert!(
+            proof
+                .verify(
+                    &commitment,
+                    keypair.get_public_key(),
+                    sender.get_public_key(),
+                    &receiver_handle,
+                    &sender_handle,
+                    &mut transcript,
+                )
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_ciphertext_validity_proof_rejects_wrong_handle_direct_and_batch() {
+        let mut transcript = Transcript::new(b"test");
+        let keypair = KeyPair::new();
+        let sender = KeyPair::new();
+        let amount = 5u64;
+        let opening = PedersenOpening::generate_new();
+        let commitment = PedersenCommitment::new_with_opening(amount, &opening);
+        let receiver_handle = keypair.get_public_key().decrypt_handle(&opening);
+        let wrong_opening = PedersenOpening::generate_new();
+        let wrong_sender_handle = sender.get_public_key().decrypt_handle(&wrong_opening);
+        let proof = CiphertextValidityProof::new(
+            keypair.get_public_key(),
+            sender.get_public_key(),
+            amount,
+            &opening,
+            TxVersion::V2,
+            &mut transcript,
+        );
+
+        let mut transcript = Transcript::new(b"test");
+        assert!(
+            proof
+                .verify(
+                    &commitment,
+                    keypair.get_public_key(),
+                    sender.get_public_key(),
+                    &receiver_handle,
+                    &wrong_sender_handle,
+                    &mut transcript,
+                )
+                .is_err()
+        );
+
+        let mut transcript = Transcript::new(b"test");
+        let mut batch_collector = BatchCollector::default();
+        assert!(
+            proof
+                .pre_verify(
+                    &commitment,
+                    keypair.get_public_key(),
+                    sender.get_public_key(),
+                    &receiver_handle,
+                    &wrong_sender_handle,
+                    TxVersion::V2,
+                    &mut transcript,
+                    &mut batch_collector,
+                )
+                .is_ok()
+        );
+        assert!(batch_collector.verify().is_err());
     }
 }

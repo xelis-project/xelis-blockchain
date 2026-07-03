@@ -355,5 +355,50 @@ mod tests {
         );
         assert!(result.is_ok());
         assert!(batch_collector.verify().is_ok());
+
+        let mut transcript = Transcript::new(b"test");
+        assert!(
+            proof
+                .verify(keypair.get_public_key(), &final_balance, &commitment, &mut transcript)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_commitment_eq_proof_rejects_wrong_commitment_direct_and_batch() {
+        let mut transcript = Transcript::new(b"test");
+        let keypair = KeyPair::new();
+        let balance = 100u64;
+        let source_balance = keypair.get_public_key().encrypt(balance);
+        let amount = 5;
+        let ciphertext = keypair.get_public_key().encrypt(amount);
+        let opening = PedersenOpening::generate_new();
+        let commitment = PedersenCommitment::new_with_opening(balance - amount, &opening);
+        let final_balance = source_balance - ciphertext;
+        let proof = CommitmentEqProof::new(&keypair, &final_balance, &opening, balance - amount, TxVersion::V2, &mut transcript);
+
+        let wrong_commitment = commitment.clone() + Scalar::ONE;
+        let mut transcript = Transcript::new(b"test");
+        assert!(
+            proof
+                .verify(keypair.get_public_key(), &final_balance, &wrong_commitment, &mut transcript)
+                .is_err()
+        );
+
+        let mut transcript = Transcript::new(b"test");
+        let mut batch_collector = BatchCollector::default();
+        assert!(
+            proof
+                .pre_verify(
+                    keypair.get_public_key(),
+                    &final_balance,
+                    &wrong_commitment,
+                    TxVersion::V2,
+                    &mut transcript,
+                    &mut batch_collector,
+                )
+                .is_ok()
+        );
+        assert!(batch_collector.verify().is_err());
     }
 }
