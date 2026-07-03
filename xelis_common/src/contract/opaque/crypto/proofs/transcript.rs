@@ -100,7 +100,7 @@ pub fn transcript_challenge_bytes(zelf: FnInstance, params: FnParams, _: &Module
         .as_ref()
         .as_bytes()?;
 
-    let bytes_len = params[0]
+    let bytes_len = params[1]
         .as_ref()
         .as_u32()?;
 
