@@ -73,8 +73,12 @@ impl Cipher {
 
         // decrypt the value using the nonce previously decoded
         let mut decrypted = self.cipher.decrypt(&nonce, &encrypted[nonce.len()..]).map_err(|e| WalletError::CryptoError(e))?;
-        // delete the salt from the decrypted slice
+        // Validate and remove the storage salt prefix.
         if let Some(salt) = &self.salt {
+            if decrypted.len() < salt.len() || &decrypted[..salt.len()] != salt {
+                return Err(WalletError::InvalidEncryptedValue)
+            }
+
             decrypted.drain(0..salt.len());
         }
 
@@ -89,5 +93,45 @@ impl Cipher {
         }
         data.extend_from_slice(key.as_ref());
         hash(&data).to_bytes()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const KEY: [u8; 32] = [7; 32];
+    const NONCE: [u8; Cipher::NONCE_SIZE] = [3; Cipher::NONCE_SIZE];
+
+    fn salt(byte: u8) -> [u8; SALT_SIZE] {
+        [byte; SALT_SIZE]
+    }
+
+    #[test]
+    fn decrypt_value_accepts_matching_salt_prefix() {
+        let cipher = Cipher::new(&KEY, Some(salt(1))).unwrap();
+        let encrypted = cipher.encrypt_value_with_nonce(b"value", &NONCE).unwrap();
+
+        let decrypted = cipher.decrypt_value(&encrypted).unwrap();
+
+        assert_eq!(decrypted, b"value");
+    }
+
+    #[test]
+    fn decrypt_value_rejects_wrong_salt_prefix() {
+        let encrypting_cipher = Cipher::new(&KEY, Some(salt(1))).unwrap();
+        let decrypting_cipher = Cipher::new(&KEY, Some(salt(2))).unwrap();
+        let encrypted = encrypting_cipher.encrypt_value_with_nonce(b"value", &NONCE).unwrap();
+
+        assert!(decrypting_cipher.decrypt_value(&encrypted).is_err());
+    }
+
+    #[test]
+    fn decrypt_value_rejects_missing_salt_prefix_without_panicking() {
+        let encrypting_cipher = Cipher::new(&KEY, None).unwrap();
+        let decrypting_cipher = Cipher::new(&KEY, Some(salt(1))).unwrap();
+        let encrypted = encrypting_cipher.encrypt_value_with_nonce(b"short", &NONCE).unwrap();
+
+        assert!(decrypting_cipher.decrypt_value(&encrypted).is_err());
     }
 }
