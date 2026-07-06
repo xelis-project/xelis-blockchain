@@ -34,7 +34,7 @@ use std::{
 };
 use tokio_socks::tcp::{Socks4Stream, Socks5Stream};
 use bytes::{Bytes, BytesMut};
-use rand::{seq::IteratorRandom, Rng};
+use rand::{RngExt, seq::IteratorRandom};
 use futures::{
     stream::{self, FuturesOrdered},
     Stream,
@@ -56,7 +56,7 @@ use xelis_common::{
         TopoHeight,
     },
     config::{TIPS_LIMIT, VERSION},
-    crypto::{Hash, Hashable},
+    crypto::{Hash, Hashable, rng},
     difficulty::CumulativeDifficulty,
     immutable::Immutable,
     serializer::Serializer,
@@ -250,9 +250,9 @@ impl<S: Storage> P2pServer<S> {
         }
 
         // set channel to communicate with listener thread
-        let mut rng = rand::thread_rng();
+        let mut rng = rng();
         // generate a random peer id for network
-        let peer_id: u64 = rng.gen();
+        let peer_id = rng.random::<u64>();
         // parse the bind address
         let bind_address: SocketAddr = bind_address.parse()?;
 
@@ -1407,7 +1407,7 @@ impl<S: Storage> P2pServer<S> {
         }
 
         availables.into_iter()
-            .choose(&mut rand::thread_rng())
+            .choose(&mut rng())
     }
 
     // try to extend our peerlist each time its possible by searching in known peerlist from disk

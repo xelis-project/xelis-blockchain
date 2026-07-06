@@ -13,7 +13,7 @@ use std::{
     }, time::Duration
 };
 use futures::{stream, StreamExt};
-use rand::{rngs::OsRng, RngCore};
+use rand::RngExt;
 use actix_web::HttpResponse;
 use anyhow::Context;
 use async_trait::async_trait;
@@ -33,7 +33,8 @@ use xelis_common::{
         Address,
         Hash,
         Hashable,
-        PublicKey
+        PublicKey,
+        rng
     },
     difficulty::Difficulty,
     immutable::Immutable,
@@ -224,7 +225,7 @@ impl<S: Storage> GetWorkServer<S> {
 
         // set miner key and random extra nonce
         job.set_miner(Cow::Borrowed(key));
-        OsRng.fill_bytes(job.get_extra_nonce());
+        rng().fill(job.get_extra_nonce());
 
         // get the algorithm for the current version
         let algorithm = get_pow_algorithm_for_version(version);
@@ -342,7 +343,7 @@ impl<S: Storage> GetWorkServer<S> {
                         let addr = addr.clone();
 
                         job.set_miner(Cow::Owned(key));
-                        OsRng.fill_bytes(job.get_extra_nonce());
+                        rng().fill(job.get_extra_nonce());
                         let template = job.to_hex();
 
                         if let Err(e) = addr.send_json(Response::NewJob(GetMinerWorkResult { algorithm, miner_work: template, height, topoheight, difficulty })).await {

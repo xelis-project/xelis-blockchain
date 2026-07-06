@@ -51,6 +51,7 @@ use xelis_common::{
         Hashable,
         PublicKey,
         pow_hash as compute_pow_hash,
+        rng,
         HASH_SIZE
     },
     difficulty::{
@@ -136,7 +137,7 @@ use std::{
     time::{Duration, Instant}
 };
 use log::{info, error, debug, warn, trace};
-use rand::Rng;
+use rand::RngExt;
 
 use super::storage::{
     BlocksAtHeightProvider,
@@ -1408,7 +1409,7 @@ impl<S: Storage> Blockchain<S> {
         let start = Instant::now();
 
          // generate random bytes
-        let extra_nonce: [u8; EXTRA_NONCE_SIZE] = rand::thread_rng().gen::<[u8; EXTRA_NONCE_SIZE]>();
+        let extra_nonce: [u8; EXTRA_NONCE_SIZE] = rng().random::<[u8; EXTRA_NONCE_SIZE]>();
 
         let mut lock = self.mining_cache.write().await;
         if let Some(mut cached_template) = lock.as_ref().cloned() {

@@ -2,7 +2,7 @@ use std::{fmt, str::FromStr};
 
 use serde::{Serialize, Deserialize};
 pub use x25519_dalek::{PublicKey, StaticSecret};
-use rand::rngs::OsRng;
+use xelis_common::crypto::rng;
 
 /// A wrapped secret key
 /// For clap implementation
@@ -60,7 +60,7 @@ pub struct DHKeyPair {
 impl DHKeyPair {
     /// Create a new keypair
     pub fn new() -> Self {
-        let priv_key = StaticSecret::random_from_rng(&mut OsRng);
+        let priv_key = StaticSecret::random_from_rng(&mut rng());
         let pub_key = PublicKey::from(&priv_key);
         Self {
             pub_key,

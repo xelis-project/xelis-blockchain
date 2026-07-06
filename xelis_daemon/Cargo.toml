@@ -17,7 +17,7 @@ sled = "0.34.7"
 rocksdb = { version = "0.23.0", optional = true }
 
 # Used for Diffie-Hellman key exchange in p2p
-x25519-dalek = { version = "2.0.1", features = ["serde", "zeroize", "static_secrets"] }
+x25519-dalek = { git = "https://github.com/xelis-project/curve25519-dalek", tag = "v5.0.2", features = ["serde", "zeroize", "static_secrets"] }
 
 metrics-exporter-prometheus = "0.17.0"
 semver = "1.0.23"
