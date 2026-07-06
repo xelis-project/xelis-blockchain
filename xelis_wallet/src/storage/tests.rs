@@ -1,8 +1,8 @@
 use super::*;
 use crate::entry::{EntryData, TransactionEntry};
-use rand::{Rng, rngs::OsRng};
+use rand::RngExt;
 use xelis_common::{
-    crypto::Hash,
+    crypto::{Hash, rng},
     network::Network,
 };
 use std::{
@@ -94,7 +94,8 @@ fn test_binary_search_exact_match() {
     let mut storage = create_test_storage().unwrap();
 
     // Insert transactions with different topoheights
-    let mut topoheights = (0..1000).map(|_| OsRng.gen_range(1..5000)).collect::<Vec<u64>>();
+    let mut rng = rng();
+    let mut topoheights = (0..1000).map(|_| rng.random_range(1..5000)).collect::<Vec<u64>>();
     topoheights.sort();
     let find_lowest_id = |topo: u64| -> Option<u64> {
         for (i, t) in topoheights.iter().enumerate() {
@@ -115,7 +116,7 @@ fn test_binary_search_exact_match() {
     };
 
     for topo in topoheights.iter() {
-        let buffer = OsRng.gen::<[u8; 32]>();
+        let buffer = rng.random::<[u8; 32]>();
         let hash = Hash::new(buffer);
         let entry = create_test_tx(&hash, *topo);
         storage.save_transaction(&hash, &entry).unwrap();
@@ -260,8 +261,9 @@ fn test_delete_transactions_at_or_above_topoheight() {
 
     // Insert transactions
     let topoheights = vec![10, 20, 30, 39, 40, 40, 41, 50, 60, 70];
+    let mut rng = rng();
     let hashes: Vec<Hash> = (0..topoheights.len())
-        .map(|_| Hash::new(OsRng.gen::<[u8; 32]>()))
+        .map(|_| Hash::new(rng.random::<[u8; 32]>()))
         .collect();
 
     for (i, topo) in topoheights.iter().enumerate() {
@@ -873,11 +875,12 @@ fn test_filter_topoheight() {
     let mut storage = create_test_storage().unwrap();
 
     let mut count_per_topoheight = HashMap::new();
+    let mut rng = rng();
     // Create many transactions
     for i in 0..50 {
         let hash = Hash::new([i as u8; 32]);
-        let topo = rand::thread_rng().gen_range(0..500);
-        let entry = EntryData::Coinbase { reward: rand::thread_rng().gen_range(100..1000) }; 
+        let topo = rng.random_range(0..500);
+        let entry = EntryData::Coinbase { reward: rng.random_range(100..1000) }; 
         let entry_obj = create_test_tx_with_entry(&hash, topo, entry);
         storage.save_transaction(&hash, &entry_obj).unwrap();
 

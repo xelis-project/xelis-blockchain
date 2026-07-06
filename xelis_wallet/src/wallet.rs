@@ -10,7 +10,7 @@ use cfg_if::cfg_if;
 use indexmap::IndexSet;
 #[cfg(feature = "xswd")]
 use indexmap::IndexMap;
-use rand::{rngs::OsRng, RngCore};
+use rand::TryRng;
 use log::{
     debug,
     info,
@@ -39,6 +39,7 @@ use xelis_common::{
         KeyPair,
         PrivateKey,
         PublicKey,
+        rng,
         Signature
     },
     network::Network,
@@ -425,7 +426,10 @@ impl Wallet {
 
         // generate random salt for hashed password
         let mut salt: [u8; SALT_SIZE] = [0; SALT_SIZE];
-        OsRng.fill_bytes(&mut salt);
+        
+        let mut rng = rng();
+        rng.try_fill_bytes(&mut salt)
+            .context("Error while generating new salt for password")?;
 
         // generate hashed password which will be used as key to encrypt master_key
         debug!("hashing provided password");
@@ -443,14 +447,16 @@ impl Wallet {
 
         // generate the master key which is used for storage and then save it in encrypted form
         let mut master_key: [u8; 32] = [0; 32];
-        OsRng.fill_bytes(&mut master_key);
+        rng.try_fill_bytes(&mut master_key)
+            .context("Error while generating new master key")?;
         let encrypted_master_key = cipher.encrypt_value(&master_key)?;
         debug!("Save encrypted master key in public storage");
         inner.set_encrypted_master_key(&encrypted_master_key)?;
 
         // generate the storage salt and save it in encrypted form
         let mut storage_salt = [0; SALT_SIZE];
-        OsRng.fill_bytes(&mut storage_salt);
+        rng.try_fill_bytes(&mut storage_salt)
+            .context("Error while generating new storage salt")?;
         let encrypted_storage_salt = cipher.encrypt_value(&storage_salt)?;
         inner.set_encrypted_storage_salt(&encrypted_storage_salt)?;
 
@@ -819,7 +825,9 @@ impl Wallet {
 
         // generate a new salt for password
         let mut salt: [u8; SALT_SIZE] = [0; SALT_SIZE];
-        OsRng.fill_bytes(&mut salt);
+        rng()
+            .try_fill_bytes(&mut salt)
+            .context("Error while generating new salt for password")?;
 
         // generate the password-based derivated key to encrypt the master key
         let hashed_password = hash_password(password, &salt)?;
