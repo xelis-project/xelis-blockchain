@@ -685,18 +685,18 @@ dependencies = [
 
 [[package]]
 name = "bulletproofs"
-version = "5.2.0"
-source = "git+https://github.com/xelis-project/bulletproofs?tag=v5.2.0#288386bb4c69489d6468653242247ad350fc317c"
+version = "5.3.0"
+source = "git+https://github.com/xelis-project/bulletproofs?tag=v5.3.0#961bf3f8c2baa1e4d2a87e8e1f5b6f12e7fe6c82"
 dependencies = [
  "byteorder",
- "curve25519-dalek 5.0.0-pre.0",
+ "curve25519-dalek 5.0.2",
  "digest 0.11.3",
- "merlin 4.0.0",
- "rand 0.9.4",
- "rand_core 0.9.5",
+ "merlin",
+ "rand 0.10.2",
+ "rand_core 0.10.1",
  "serde",
  "serde_derive",
- "sha3 0.11.0",
+ "sha3",
  "subtle",
  "thiserror 2.0.18",
  "zeroize",
@@ -1274,7 +1274,7 @@ checksum = "97fb8b7c4503de7d6ae7b42ab72a5a59857b4c937ec27a3d4539dba95b5ab2be"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.2.17",
- "curve25519-dalek-derive 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "curve25519-dalek-derive",
  "fiat-crypto 0.2.9",
  "rustc_version",
  "serde",
@@ -1284,35 +1284,17 @@ dependencies = [
 
 [[package]]
 name = "curve25519-dalek"
-version = "4.1.3"
-source = "git+https://github.com/xelis-project/curve25519-dalek?tag=v4.2.0#a7bd1e9c2f2d391ca151ae9c9a4f1a79d9b9060f"
+version = "5.0.2"
+source = "git+https://github.com/xelis-project/curve25519-dalek?tag=v5.0.2#10042b03cfc92e505e9d33d2827d5c0f0d36989a"
 dependencies = [
  "bytemuck",
  "cfg-if",
- "cpufeatures 0.2.17",
- "curve25519-dalek-derive 0.1.1 (git+https://github.com/xelis-project/curve25519-dalek?tag=v4.2.0)",
- "digest 0.10.7",
- "fiat-crypto 0.2.9",
- "group 0.13.0",
- "rand_core 0.6.4",
- "rustc_version",
- "serde",
- "subtle",
- "zeroize",
-]
-
-[[package]]
-name = "curve25519-dalek"
-version = "5.0.0-pre.0"
-source = "git+https://github.com/xelis-project/curve25519-dalek?branch=master#f3c4462a901390de12be32ddd51fa5ecf588229d"
-dependencies = [
- "cfg-if",
- "cpufeatures 0.2.17",
- "curve25519-dalek-derive 0.1.1 (git+https://github.com/xelis-project/curve25519-dalek?branch=master)",
+ "cpufeatures 0.3.0",
+ "curve25519-dalek-derive",
  "digest 0.11.3",
  "fiat-crypto 0.3.0",
- "group 0.14.0-pre.0",
- "rand_core 0.9.5",
+ "group",
+ "rand_core 0.10.1",
  "rustc_version",
  "serde",
  "subtle",
@@ -1324,26 +1306,6 @@ name = "curve25519-dalek-derive"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f46882e17999c6cc590af592290432be3bce0428cb0d5f8b6715e4dc7b383eb3"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
-name = "curve25519-dalek-derive"
-version = "0.1.1"
-source = "git+https://github.com/xelis-project/curve25519-dalek?tag=v4.2.0#a7bd1e9c2f2d391ca151ae9c9a4f1a79d9b9060f"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
-name = "curve25519-dalek-derive"
-version = "0.1.1"
-source = "git+https://github.com/xelis-project/curve25519-dalek?branch=master#f3c4462a901390de12be32ddd51fa5ecf588229d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1500,21 +1462,11 @@ dependencies = [
 
 [[package]]
 name = "ff"
-version = "0.13.1"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c0b50bfb653653f9ca9095b427bed08ab8d75a137839d9ad64eb11810d5b6393"
+checksum = "a1f686ab92a9fb0eaf188f6c6c87b89490baa6fdb0db4544ba4dc47f7942489f"
 dependencies = [
- "rand_core 0.6.4",
- "subtle",
-]
-
-[[package]]
-name = "ff"
-version = "0.14.0-pre.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d42dd26f5790eda47c1a2158ea4120e32c35ddc9a7743c98a292accc01b54ef3"
-dependencies = [
- "rand_core 0.9.5",
+ "rand_core 0.10.1",
  "subtle",
 ]
 
@@ -1776,23 +1728,12 @@ checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
 
 [[package]]
 name = "group"
-version = "0.13.0"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f0f9ef7462f7c099f518d754361858f86d8a07af53ba9af0fe635bbccb151a63"
+checksum = "7fd1a1c7a5206c5b7a3f5a0d7ccd3ff85d0c8f5133d62a02680255b0004af5f4"
 dependencies = [
- "ff 0.13.1",
- "rand_core 0.6.4",
- "subtle",
-]
-
-[[package]]
-name = "group"
-version = "0.14.0-pre.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1ff6a0b2dd4b981b1ae9e3e6830ab146771f3660d31d57bafd9018805a91b0f1"
-dependencies = [
- "ff 0.14.0-pre.0",
- "rand_core 0.9.5",
+ "ff",
+ "rand_core 0.10.1",
  "subtle",
 ]
 
@@ -2567,24 +2508,12 @@ checksum = "88904434abc2901f197fe8cc55f0445e7ded921dba5911dad2e2b39b48e663c4"
 
 [[package]]
 name = "merlin"
-version = "3.1.0"
-source = "git+https://github.com/xelis-project/merlin?tag=v3.1.0#adf820dbb1ce8b92f1122a368c9a22e4afbaf524"
+version = "4.1.0"
+source = "git+https://github.com/xelis-project/merlin?tag=v4.1.0#ee857c79347e0e2201e5192523faea13ac9bf451"
 dependencies = [
  "byteorder",
  "keccak 0.1.6",
- "rand_core 0.6.4",
- "strobe-rs",
- "zeroize",
-]
-
-[[package]]
-name = "merlin"
-version = "4.0.0"
-source = "git+https://github.com/xelis-project/merlin?tag=v4.0.0#ee9ef32eb3db5295a6a1089ae2c3ef0c86b3be92"
-dependencies = [
- "byteorder",
- "keccak 0.1.6",
- "rand_core 0.9.5",
+ "rand_core 0.10.1",
  "strobe-rs",
  "zeroize",
 ]
@@ -3588,16 +3517,6 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.3.0",
  "digest 0.11.3",
-]
-
-[[package]]
-name = "sha3"
-version = "0.10.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77fd7028345d415a4034cf8777cd4f8ab1851274233b45f84e3d955502d93874"
-dependencies = [
- "digest 0.10.7",
- "keccak 0.1.6",
 ]
 
 [[package]]
@@ -4846,7 +4765,7 @@ version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c7e468321c81fb07fa7f4c636c3972b9100f0346e5b6a9f2bd0603a52f7ed277"
 dependencies = [
- "curve25519-dalek 4.1.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "curve25519-dalek 4.1.3",
  "rand_core 0.6.4",
  "serde",
  "zeroize",
@@ -4932,7 +4851,7 @@ dependencies = [
 [[package]]
 name = "xelis-hash"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-hash?branch=master#ab57614f22d43b4a492ebe5f0e9434de4097eae6"
+source = "git+https://github.com/xelis-project/xelis-hash?tag=v3.1.0#f48262b931438fdbf2932711613e020c02f1ea04"
 dependencies = [
  "aes 0.8.4",
  "blake3",
@@ -5020,7 +4939,7 @@ dependencies = [
  "console-subscriber",
  "criterion",
  "crossterm",
- "curve25519-dalek 4.1.3 (git+https://github.com/xelis-project/curve25519-dalek?tag=v4.2.0)",
+ "curve25519-dalek 5.0.2",
  "fern",
  "futures",
  "futures-util",
@@ -5031,12 +4950,12 @@ dependencies = [
  "lazy_static",
  "log",
  "log-panics",
- "merlin 3.1.0",
+ "merlin",
  "metrics",
  "pin-project-lite",
  "pooled-arc",
  "primitive-types",
- "rand 0.8.6",
+ "rand 0.10.2",
  "regex",
  "reqwest",
  "runtime-context",
@@ -5044,7 +4963,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_regex",
- "sha3 0.10.9",
+ "sha3",
  "strum",
  "thiserror 2.0.18",
  "tokio",
@@ -5088,7 +5007,7 @@ dependencies = [
  "metrics",
  "metrics-exporter-prometheus",
  "pooled-arc",
- "rand 0.8.6",
+ "rand 0.10.2",
  "rocksdb",
  "schemars",
  "semver",
@@ -5117,7 +5036,7 @@ dependencies = [
  "futures-util",
  "lazy_static",
  "log",
- "rand 0.8.6",
+ "rand 0.10.2",
  "serde",
  "serde_json",
  "tokio",
@@ -5150,7 +5069,7 @@ dependencies = [
  "linked-hash-table",
  "log",
  "lru",
- "rand 0.8.6",
+ "rand 0.10.2",
  "serde",
  "serde_json",
  "sled",
