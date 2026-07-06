@@ -71,7 +71,7 @@ use crate::{
     versioned::VersionedState
 };
 
-pub use random::DeterministicRandom;
+pub use random::{DeterministicRandom, DeterministicRandomError};
 pub use contract_log::*;
 
 pub use opaque::*;

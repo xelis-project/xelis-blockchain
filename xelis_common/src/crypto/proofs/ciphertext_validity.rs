@@ -5,7 +5,6 @@ use curve25519_dalek::{
     Scalar
 };
 use merlin::Transcript;
-use rand::rngs::OsRng;
 use schemars::JsonSchema;
 use zeroize::Zeroize;
 
@@ -20,6 +19,8 @@ use crate::{
             RISTRETTO_COMPRESSED_SIZE,
             SCALAR_SIZE
         },
+        non_zero_random_scalar,
+        rng,
         ProtocolTranscript
     },
     serializer::{
@@ -72,8 +73,9 @@ impl CiphertextValidityProof {
         let x = Scalar::from(amount);
         let r = opening.as_scalar();
 
-        let mut y_r = Scalar::random(&mut OsRng);
-        let mut y_x = Scalar::random(&mut OsRng);
+        let mut rng = rng();
+        let mut y_r = Scalar::random(&mut rng);
+        let mut y_x = Scalar::random(&mut rng);
 
         let Y_0 = PC_GENS.commit(y_x, y_r).compress();
         let Y_1 = (&y_r * P_dest).compress();
@@ -172,7 +174,7 @@ impl CiphertextValidityProof {
         let D_dest = dest_handle.as_point();
         let D_source = sender_handle.as_point();
 
-        let batch_factor = Scalar::random(&mut OsRng);
+        let batch_factor = non_zero_random_scalar(&mut rng());
 
         // z_x * G
         batch_collector.g_scalar += self.z_x * batch_factor;

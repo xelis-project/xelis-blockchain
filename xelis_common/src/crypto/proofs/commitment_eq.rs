@@ -5,7 +5,6 @@ use curve25519_dalek::{
     Scalar
 };
 use merlin::Transcript;
-use rand::rngs::OsRng;
 use schemars::JsonSchema;
 use zeroize::Zeroize;
 use crate::{
@@ -20,6 +19,8 @@ use crate::{
             SCALAR_SIZE
         },
         KeyPair,
+        non_zero_random_scalar,
+        rng,
         ProtocolTranscript
     },
     serializer::{Reader, ReaderError, Serializer, Writer},
@@ -72,9 +73,10 @@ impl CommitmentEqProof {
         let r = opening.as_scalar();
 
         // generate random masking factors that also serves as nonces
-        let mut y_s = Scalar::random(&mut OsRng);
-        let mut y_x = Scalar::random(&mut OsRng);
-        let mut y_r = Scalar::random(&mut OsRng);
+        let mut rng = rng();
+        let mut y_s = Scalar::random(&mut rng);
+        let mut y_x = Scalar::random(&mut rng);
+        let mut y_r = Scalar::random(&mut rng);
 
         let Y_0 = (&y_s * P_source).compress();
         let Y_1 =
@@ -170,7 +172,7 @@ impl CommitmentEqProof {
             .decompress()
             .ok_or(DecompressionError)?;
 
-        let batch_factor = Scalar::random(&mut OsRng);
+        let batch_factor = non_zero_random_scalar(&mut rng());
 
         // w * z_x * G + ww * z_x * G
         batch_collector.g_scalar += (w * self.z_x + ww * self.z_x) * batch_factor;

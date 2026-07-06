@@ -3,7 +3,6 @@ use curve25519_dalek::{
     ristretto::RistrettoPoint,
     Scalar
 };
-use rand::rngs::OsRng;
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 use sha3::Sha3_512;
@@ -13,6 +12,8 @@ use crate::{
     config::MAXIMUM_SUPPLY,
     crypto::{
         proofs::H,
+        non_zero_random_scalar,
+        rng,
         Address,
         AddressType,
         Hash
@@ -160,7 +161,7 @@ impl PrivateKey {
 impl KeyPair {
     // Generate a random new KeyPair
     pub fn new() -> Self {
-        let scalar = Scalar::random(&mut OsRng);
+        let scalar = non_zero_random_scalar(&mut rng());
         let private_key = PrivateKey::from_scalar(scalar);
 
         Self::from_private_key(private_key)
@@ -194,7 +195,7 @@ impl KeyPair {
 
     // Sign a message with the private key
     pub fn sign(&self, message: &[u8]) -> Signature {
-        let k = Scalar::random(&mut OsRng);
+        let k = Scalar::random(&mut rng());
         let r = k * (*H);
         let e = hash_and_point_to_scalar(&self.public_key.as_point().compress(), message, &r);
         let s = self.private_key.as_scalar().invert() * e + k;

@@ -8,18 +8,18 @@ build = "build.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-xelis-hash = { git = "https://github.com/xelis-project/xelis-hash", branch = "master" }
+xelis-hash = { git = "https://github.com/xelis-project/xelis-hash", tag = "v3.1.0" }
 xelis-vm = { workspace = true }
 xelis-types = { workspace = true }
 xelis-builder = { workspace = true }
 xelis-bytecode = { workspace = true }
-bulletproofs = { git = "https://github.com/xelis-project/bulletproofs", tag = "v5.2.0" }
-curve25519-dalek = { features = ["digest", "group", "rand_core", "serde", "ecdlp"], git = "https://github.com/xelis-project/curve25519-dalek", tag = "v4.2.0" }
-merlin = { git = "https://github.com/xelis-project/merlin", tag = "v3.1.0" }
+bulletproofs = { git = "https://github.com/xelis-project/bulletproofs", tag = "v5.3.0" }
+curve25519-dalek = { features = ["digest", "group", "rand_core", "serde", "ecdlp"], git = "https://github.com/xelis-project/curve25519-dalek", tag = "v5.0.2" }
+merlin = { git = "https://github.com/xelis-project/merlin", tag = "v4.1.0" }
 pooled-arc = "0.1"
 blake3 = "1.5.1"
 zeroize = "1.7.0"
-sha3 = "0.10.8"
+sha3 = "0.11"
 fern = { version = "0.7.1", features = ["colored", "date-based"] }
 
 reqwest = { version = "0.11.27", default-features = false, features = ["json"], optional = true }

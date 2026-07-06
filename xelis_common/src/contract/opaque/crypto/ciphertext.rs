@@ -147,7 +147,8 @@ pub fn ciphertext_generate(_: FnInstance, mut params: FnParams, metadata: &Modul
         .context("Random not initialized")?;
 
     let mut buffer = [0u8; 64];
-    random.fill(&mut buffer)?;
+    random.fill(&mut buffer)
+        .context("filling random buffer")?;
 
     let scalar = Scalar::from_bytes_mod_order_wide(&buffer);
     let opening = PedersenOpening::from_scalar(scalar);
