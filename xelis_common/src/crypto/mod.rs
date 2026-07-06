@@ -7,7 +7,7 @@ pub mod elgamal;
 pub mod proofs;
 pub mod bech32;
 
-use rand::CryptoRng;
+use rand::{CryptoRng, TryCryptoRng};
 use curve25519_dalek::Scalar;
 
 pub use hash::*;
@@ -34,7 +34,7 @@ pub fn non_zero_random_scalar<R: CryptoRng + ?Sized>(rng: &mut R) -> Scalar {
 
 /// Random generator that implements CryptoRng
 #[inline(always)]
-pub fn rng() -> impl CryptoRng {
+pub fn rng() -> impl CryptoRng + TryCryptoRng {
     rand::rng()
 }
 
