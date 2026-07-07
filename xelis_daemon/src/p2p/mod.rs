@@ -16,9 +16,6 @@ pub use peer_list::*;
 pub use error::*;
 pub use diffie_hellman::*;
 
-use anyhow::Context;
-use log::{debug, error, info, log, trace, warn};
-use metrics::counter;
 use std::{
     borrow::Cow,
     collections::HashSet,
@@ -32,6 +29,10 @@ use std::{
     },
     time::Duration
 };
+use anyhow::Context;
+use log::{debug, error, info, log, trace, warn};
+use metrics::counter;
+use itertools::Either;
 use tokio_socks::tcp::{Socks4Stream, Socks5Stream};
 use bytes::{Bytes, BytesMut};
 use rand::{RngExt, seq::IteratorRandom};
@@ -356,34 +357,45 @@ impl<S: Storage> P2pServer<S> {
         });
     }
 
+    // Parse a target address to a SocketAddr
+    async fn parse_target<'a>(&self, address: &'a str) -> Result<impl Iterator<Item = SocketAddr> + 'a, P2pError> {
+        let addr: SocketAddr = match address.parse() {
+            Ok(addr) => addr,
+            Err(e) => {
+                match lookup_host(address).await {
+                    Ok(it) => {
+                        info!("Valid host found for {}", address);
+                        return Ok(Either::Left(it));
+                    },
+                    Err(e2) => {
+                        error!("Error while parsing {} as peer address: {}, {}", address, e, e2);
+                        return Err(P2pError::InvalidPeerAddress(address.to_owned()));
+                    }
+                };
+            }
+        };
+        Ok(Either::Right(std::iter::once(addr)))
+    }
+
+    // connect to priority nodes
+    // Try by parsing the address, and if it is a host, resolve it to an IP address
     async fn connect_to_priority_nodes_list(&self, priority_nodes: Vec<String>) {
-        // connect to priority nodes
         for addr in priority_nodes {
             for origin in addr.split(",") {
-                let addr: SocketAddr = match origin.parse() {
-                    Ok(addr) => addr,
-                    Err(e) => {
-                        match lookup_host(&origin).await {
-                            Ok(it) => {
-                                info!("Valid host found for {}", origin);
-                                for addr in it {
-                                    info!("Trying to connect to priority node with IP from DNS resolution: {}", addr);
-                                    if let Err(e) = self.try_to_connect_to_peer(addr, true).await {
-                                        error!("Error while trying to connect to priority node {}: {}", origin, e);
-                                    }
-                                }
-                            },
-                            Err(e2) => {
-                                error!("Error while parsing {} as priority node address: {}, {}", origin, e, e2);
+                match self.parse_target(origin).await {
+                    Ok(it) => {
+                        for addr in it {
+                            info!("Trying to connect to priority node: {}", addr);
+                            if let Err(e) = self.try_to_connect_to_peer(addr, true).await {
+                                error!("Error while trying to connect to priority node {}: {}", origin, e);
                             }
-                        };
+                        }
+                    },
+                    Err(e) => {
+                        error!("Error while parsing {} as priority node address: {}", origin, e);
                         continue;
                     }
                 };
-                info!("Trying to connect to priority node: {}", addr);
-                if let Err(e) = self.try_to_connect_to_peer(addr, true).await {
-                    error!("Error while trying to connect to priority node {}: {}", addr, e);
-                }
             }
         }
     }
@@ -1433,7 +1445,15 @@ impl<S: Storage> P2pServer<S> {
                                 None => {
                                     debug!("No peer found in peerlist, selecting a random seed node");
                                     let seed_nodes = get_seed_nodes(self.blockchain.get_network());
-                                    self.select_random_socket_address(seed_nodes.iter().map(|v| v.parse().expect("seed node socket address"))).await
+                                    let mut addresses = Vec::new();
+                                    for node in seed_nodes {
+                                        let iter = self.parse_target(node).await
+                                            .expect("Error while parsing seed node address");
+
+                                        addresses.push(iter);
+                                    }
+
+                                    self.select_random_socket_address(addresses.into_iter().flatten()).await
                                         .map(|v| (v, true))
                                 },
                             },

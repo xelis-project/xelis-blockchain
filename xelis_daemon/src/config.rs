@@ -314,11 +314,12 @@ const DEV_NET_HARD_FORKS: [HardFork; 1] = [
 ];
 
 // Mainnet seed nodes
-const MAINNET_SEED_NODES: [&str; 2] = [
+const MAINNET_SEED_NODES: [&str; 1] = [
+    "seeds.xelis.io:2125",
     // France
-    "51.210.117.23:2125",
-    // US
-    "198.71.55.87:2125",
+    // "51.210.117.23:2125",
+    // // US
+    // "198.71.55.87:2125",
 ];
 
 // Testnet seed nodes
