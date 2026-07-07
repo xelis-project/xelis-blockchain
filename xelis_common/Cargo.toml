@@ -88,6 +88,8 @@ criterion = "0.6.0"
 xelis_compiler = { workspace = true }
 xelis_parser = { workspace = true }
 xelis_lexer = { workspace = true }
+futures = { workspace = true }
+futures-util = { workspace = true }
 
 [features]
 tokio = ["dep:tokio", "dep:tokio_with_wasm", "dep:futures", "dep:pin-project-lite"]
@@ -115,4 +117,8 @@ harness = false
 
 [[bench]]
 name = "address"
+harness = false
+
+[[bench]]
+name = "transactions"
 harness = false
