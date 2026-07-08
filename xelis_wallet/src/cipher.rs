@@ -101,8 +101,17 @@ impl Cipher {
 mod tests {
     use super::*;
 
-    const KEY: [u8; 32] = [7; 32];
-    const NONCE: [u8; Cipher::NONCE_SIZE] = [3; Cipher::NONCE_SIZE];
+    fn random_key() -> [u8; 32] {
+        let mut key = [0u8; 32];
+        rng().try_fill_bytes(&mut key).expect("failed to generate test key");
+        key
+    }
+
+    fn random_nonce() -> [u8; Cipher::NONCE_SIZE] {
+        let mut nonce = [0u8; Cipher::NONCE_SIZE];
+        rng().try_fill_bytes(&mut nonce).expect("failed to generate test nonce");
+        nonce
+    }
 
     fn salt(byte: u8) -> [u8; SALT_SIZE] {
         [byte; SALT_SIZE]
@@ -110,8 +119,10 @@ mod tests {
 
     #[test]
     fn decrypt_value_accepts_matching_salt_prefix() {
-        let cipher = Cipher::new(&KEY, Some(salt(1))).unwrap();
-        let encrypted = cipher.encrypt_value_with_nonce(b"value", &NONCE).unwrap();
+        let key = random_key();
+        let nonce = random_nonce();
+        let cipher = Cipher::new(&key, Some(salt(1))).unwrap();
+        let encrypted = cipher.encrypt_value_with_nonce(b"value", &nonce).unwrap();
 
         let decrypted = cipher.decrypt_value(&encrypted).unwrap();
 
@@ -120,18 +131,22 @@ mod tests {
 
     #[test]
     fn decrypt_value_rejects_wrong_salt_prefix() {
-        let encrypting_cipher = Cipher::new(&KEY, Some(salt(1))).unwrap();
-        let decrypting_cipher = Cipher::new(&KEY, Some(salt(2))).unwrap();
-        let encrypted = encrypting_cipher.encrypt_value_with_nonce(b"value", &NONCE).unwrap();
+        let key = random_key();
+        let nonce = random_nonce();
+        let encrypting_cipher = Cipher::new(&key, Some(salt(1))).unwrap();
+        let decrypting_cipher = Cipher::new(&key, Some(salt(2))).unwrap();
+        let encrypted = encrypting_cipher.encrypt_value_with_nonce(b"value", &nonce).unwrap();
 
         assert!(decrypting_cipher.decrypt_value(&encrypted).is_err());
     }
 
     #[test]
     fn decrypt_value_rejects_missing_salt_prefix_without_panicking() {
-        let encrypting_cipher = Cipher::new(&KEY, None).unwrap();
-        let decrypting_cipher = Cipher::new(&KEY, Some(salt(1))).unwrap();
-        let encrypted = encrypting_cipher.encrypt_value_with_nonce(b"short", &NONCE).unwrap();
+        let key = random_key();
+        let nonce = random_nonce();
+        let encrypting_cipher = Cipher::new(&key, None).unwrap();
+        let decrypting_cipher = Cipher::new(&key, Some(salt(1))).unwrap();
+        let encrypted = encrypting_cipher.encrypt_value_with_nonce(b"short", &nonce).unwrap();
 
         assert!(decrypting_cipher.decrypt_value(&encrypted).is_err());
     }
