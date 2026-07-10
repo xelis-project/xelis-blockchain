@@ -647,12 +647,12 @@ impl Storage for RocksStorage {
 mod tests {
     use itertools::Itertools;
     use rocksdb::{Direction, IteratorMode, Options, ReadOptions, SliceTransform, DB};
-    use tempdir::TempDir;
+    use tempfile::TempDir;
 
     #[test]
     fn test_rocks_db_iterator_behavior() {
         // Create a temporary RocksDB instance
-        let tmp_dir = TempDir::new("rocksdb-iterator").unwrap();
+        let tmp_dir = TempDir::with_prefix("rocksdb-iterator").unwrap();
    
         let mut opts = Options::default();
         opts.create_if_missing(true);
@@ -756,7 +756,7 @@ mod tests {
     #[test]
     fn test_rocks_db_iterator_range() {
         // Create a temporary RocksDB instance
-        let tmp_dir = TempDir::new("rocksdb-iterator").unwrap();
+        let tmp_dir = TempDir::with_prefix("rocksdb-iterator").unwrap();
 
         let mut opts = Options::default();
         opts.create_if_missing(true);

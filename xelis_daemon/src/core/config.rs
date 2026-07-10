@@ -57,6 +57,10 @@ fn default_p2p_temp_ban_duration() -> HumanDuration {
     HumanDuration::from(Duration::from_secs(PEER_TEMP_BAN_TIME))
 }
 
+fn default_p2p_outgoing_connection_timeout() -> HumanDuration {
+    HumanDuration::from(Duration::from_millis(PEER_TIMEOUT_INIT_OUTGOING_CONNECTION))
+}
+
 const fn default_p2p_fail_count_limit() -> u8 {
     PEER_FAIL_LIMIT
 }
@@ -483,6 +487,13 @@ pub struct P2pConfig {
         default = "default_p2p_temp_ban_duration"
     )]
     pub temp_ban_duration: HumanDuration,
+    /// Timeout used when initiating outbound P2P peer connections.
+    #[clap(name = "p2p-outgoing-connection-timeout", long, default_value_t = default_p2p_outgoing_connection_timeout())]
+    #[serde(
+        with = "humantime_serde",
+        default = "default_p2p_outgoing_connection_timeout"
+    )]
+    pub outgoing_connection_timeout: HumanDuration,
     /// Number of peer failures allowed before applying a temporary ban.
     #[clap(name = "p2p-fail-count-limit", long, default_value_t = default_p2p_fail_count_limit())]
     #[serde(default = "default_p2p_fail_count_limit")]
@@ -555,6 +566,7 @@ impl Default for P2pConfig {
             dh_private_key: None,
             stream_concurrency: detect_available_parallelism(),
             temp_ban_duration: default_p2p_temp_ban_duration(),
+            outgoing_connection_timeout: default_p2p_outgoing_connection_timeout(),
             fail_count_limit: default_p2p_fail_count_limit(),
             disable_reexecute_blocks_on_sync: false,
             block_propagation_log_level: debug_log_level(),

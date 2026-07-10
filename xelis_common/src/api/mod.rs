@@ -40,31 +40,43 @@ pub use data::*;
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct SubscribeParams<'a, E: Clone> {
+    /// Event notification kind to subscribe or unsubscribe.
     pub notify: Cow<'a, E>
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct EventResult<'a, E: Clone> {
+    /// Event name.
     pub event: Cow<'a, E>,
+    /// Value carried by this field.
     #[serde(flatten)]
     pub value: Value
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct DataHash<'a, T: Clone> {
+    /// Hash used by this field.
     pub hash: Cow<'a, Hash>,
+    /// Data carried by this field.
     #[serde(flatten)]
     pub data: Cow<'a, T>
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct RPCTransferPayload<'a> {
+    /// Asset transferred by this payload.
     pub asset: Cow<'a, Hash>,
+    /// Destination value.
     pub destination: Address,
+    /// Extra data carried by this field.
     pub extra_data: Cow<'a, Option<UnknownExtraDataFormat>>,
+    /// Compressed commitment.
     pub commitment: Cow<'a, CompressedCommitment>,
+    /// Sender handle.
     pub sender_handle: Cow<'a, CompressedHandle>,
+    /// Receiver handle.
     pub receiver_handle: Cow<'a, CompressedHandle>,
+    /// Ciphertext validity proof.
     pub ct_validity_proof: Cow<'a, CiphertextValidityProof>,
 }
 
@@ -84,7 +96,9 @@ impl<'a> From<RPCTransferPayload<'a>> for TransferPayload {
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone)]
 pub struct RPCBlobPayload<'a> {
+    /// Blob payload data.
     pub data: Cow<'a, UnknownExtraDataFormat>,
+    /// Blob destination addresses.
     pub destinations: Cow<'a, IndexSet<Address>>
 }
 
@@ -190,16 +204,17 @@ pub struct FeeUsage {
     pub fee_refund: u64,
 }
 
-// This is exactly the same as the one in xelis_common/src/transaction/mod.rs
-// We use this one for serde (de)serialization
-// So we have addresses displayed as strings and not Public Key as bytes
-// This is much more easier for developers relying on the API
+/// This is exactly the same as the one in xelis_common/src/transaction/mod.rs
+/// We use this one for serde (de)serialization
+/// So we have addresses displayed as strings and not Public Key as bytes
+/// This is much more easier for developers relying on the API
 #[derive(Serialize, Deserialize, Clone, JsonSchema)]
 pub struct RPCTransaction<'a> {
+    /// Transaction hash.
     pub hash: Cow<'a, Hash>,
     /// Version of the transaction
     pub version: TxVersion,
-    // Source of the transaction
+    /// Source of the transaction
     pub source: Address,
     /// Type of the transaction
     pub data: RPCTransactionType<'a>,
@@ -303,23 +318,23 @@ impl<'a> From<RPCTransaction<'a>> for Transaction {
     }
 }
 
-// We create a type above it so for deserialize we can use this type directly
-// and not have to specify the lifetime
+/// We create a type above it so for deserialize we can use this type directly
+/// and not have to specify the lifetime
 pub type TransactionResponse = RPCTransaction<'static>;
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct SplitAddressParams {
-    // address which must be in integrated form
+    /// address which must be in integrated form
     pub address: Address
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct SplitAddressResult {
-    // Normal address
+    /// Normal address
     pub address: Address,
-    // Encoded data from address
+    /// Encoded data from address
     pub integrated_data: DataElement,
-    // Integrated data size
+    /// Integrated data size
     pub size: usize
 }
 
@@ -328,66 +343,91 @@ pub struct SplitAddressResult {
 #[serde(tag = "type", content = "value")]
 pub enum RPCContractLog<'a> {
     RefundGas {
+        /// Amount of gas refunded.
         amount: u64
     },
     Transfer {
+        /// Contract that emitted the transfer.
         contract: Cow<'a, Hash>,
+        /// Amount transferred.
         amount: u64,
+        /// Asset hash transferred.
         asset: Cow<'a, Hash>,
+        /// Destination address that received the transfer.
         destination: Cow<'a, Address>
     },
     TransferContract {
-        // Contract from which the asset is transferred
+        /// Contract from which the asset is transferred.
         contract: Cow<'a, Hash>,
+        /// Amount transferred.
         amount: u64,
+        /// Asset hash transferred.
         asset: Cow<'a, Hash>,
-        // Destination contract
+        /// Destination contract that received the transfer.
         destination: Cow<'a, Hash>
     },
     Mint {
-        // Contract minter
+        /// Contract that minted the asset.
         contract: Cow<'a, Hash>,
+        /// Asset hash minted.
         asset: Cow<'a, Hash>,
+        /// Amount minted.
         amount: u64
     },
     Burn {
-        // Contract burner
+        /// Contract that burned the asset.
         contract: Cow<'a, Hash>,
+        /// Asset hash burned.
         asset: Cow<'a, Hash>,
+        /// Amount burned.
         amount: u64
     },
     NewAsset {
-        // Contract creator
+        /// Contract that created the asset.
         contract: Cow<'a, Hash>,
+        /// Newly created asset hash.
         asset: Cow<'a, Hash>
     },
     ExitCode(Option<u64>),
     RefundDeposits,
     GasInjection {
-        // Contract from which gas is injected
+        /// Contract from which gas is injected.
         contract: Cow<'a, Hash>,
+        /// Gas amount injected.
         amount: u64,
     },
     ScheduledExecution {
+        /// Contract that scheduled the execution.
         contract: Cow<'a, Hash>,
+        /// Scheduled execution hash.
         hash: Cow<'a, Hash>,
+        /// Scheduled execution kind.
         kind: Cow<'a, ScheduledExecutionKindLog>,
     },
     ExitPayload {
+        /// Payload returned by the contract.
         payload: Cow<'a, ValueCell>,
     },
     TransferPayload {
+        /// Contract that emitted the transfer.
         contract: Cow<'a, Hash>,
+        /// Amount transferred.
         amount: u64,
+        /// Asset hash transferred.
         asset: Cow<'a, Hash>,
+        /// Destination address that received the transfer.
         destination: Cow<'a, Address>,
+        /// Payload attached to the transfer.
         payload: Cow<'a, ValueCell>,
     },
     ExitError {
+        /// Error returned by the contract.
         err: Cow<'a, ExitError>,
     },
     Event {
+        /// Contract that emitted the event.
         contract: Cow<'a, Hash>,
+        /// Event identifier.
         event_id: u64,
     }
 }

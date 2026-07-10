@@ -159,26 +159,27 @@ impl TransactionBuilderState {
 
         if let Some(tx) = tx.into() {
             let tx_hash = tx.hash();
-            let rpc_tx = RPCTransaction::from_tx(tx, Cow::Borrowed(&tx_hash), tx.size(), None, self.mainnet);
-            let provider = decoder::StorageDecoderProvider::new(wallet, storage);
-            let entry = decoder::decode_transaction(&provider, &wallet.get_address(), &rpc_tx, wallet.get_history_scan(), |_| ready(Ok(()))).await?
-                .ok_or(WalletError::NotTransactionSigner)?;
 
             storage.set_tx_cache(TxCache {
                 reference: self.reference.clone(),
                 nonce: self.nonce,
-                last_tx_hash_created: Some(tx_hash),
+                last_tx_hash_created: Some(tx_hash.clone()),
                 assets: self.balances.keys().cloned().collect(),
             });
 
-            let pending = TransactionPending {
-                hash: tx.hash(),
-                timestamp: get_current_time_in_millis(),
-                entry,
-            };
+            let rpc_tx = RPCTransaction::from_tx(tx, Cow::Borrowed(&tx_hash), tx.size(), None, self.mainnet);
+            let provider = decoder::StorageDecoderProvider::new(wallet, storage);
 
-            storage.track_pending_tx(pending.clone());
-            wallet.propagate_event(Event::NewPendingTransaction(pending.serializable(self.mainnet))).await;
+            if let Some(entry) = decoder::decode_transaction(&provider, &wallet.get_address(), &rpc_tx, wallet.get_history_scan(), |_| ready(Ok(()))).await? {
+                let pending = TransactionPending {
+                    hash: tx.hash(),
+                    timestamp: get_current_time_in_millis(),
+                    entry,
+                };
+    
+                storage.track_pending_tx(pending.clone());
+                wallet.propagate_event(Event::NewPendingTransaction(pending.serializable(self.mainnet))).await;
+            }
         }
 
         for (asset, balance) in self.balances.drain() {

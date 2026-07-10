@@ -41,7 +41,11 @@ pub const fn get_pow_algorithm_for_version(version: BlockVersion) -> Algorithm {
     match version {
         BlockVersion::V0 => Algorithm::V1,
         BlockVersion::V1 | BlockVersion::V2 => Algorithm::V2,
-        BlockVersion::V3 | BlockVersion::V4 | BlockVersion::V5 | BlockVersion::V6 => Algorithm::V3,
+        BlockVersion::V3
+        | BlockVersion::V4
+        | BlockVersion::V5
+        | BlockVersion::V6
+        | BlockVersion::V7 => Algorithm::V3,
     }
 }
 
@@ -54,7 +58,11 @@ pub const fn get_block_time_target_for_version(version: BlockVersion) -> u64 {
         BlockVersion::V0
         | BlockVersion::V1
         | BlockVersion::V2 => 15 * MILLIS_PER_SECOND,
-        BlockVersion::V3 | BlockVersion::V4 | BlockVersion::V5 | BlockVersion::V6 => 5 * MILLIS_PER_SECOND,
+        BlockVersion::V3
+        | BlockVersion::V4
+        | BlockVersion::V5
+        | BlockVersion::V6
+        | BlockVersion::V7 => 5 * MILLIS_PER_SECOND,
     }
 }
 
@@ -115,6 +123,7 @@ pub const fn is_contract_version_allowed_in_block_version(
         BlockVersion::V3 | BlockVersion::V4 | BlockVersion::V5 => matches!(contract_version, ContractVersion::V0),
         // Starting from V6, we enable V1 contracts
         BlockVersion::V6 => matches!(contract_version, ContractVersion::V0 | ContractVersion::V1),
+        BlockVersion::V7 => matches!(contract_version, ContractVersion::V1),
     }
 }
 

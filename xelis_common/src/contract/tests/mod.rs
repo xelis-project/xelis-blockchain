@@ -288,18 +288,34 @@ async fn test_refund_with_gas_sources() {
 
     let expected_refund = 10000 - execution.used_gas;
     let expected_refund_per_source = expected_refund / 2;
+    let expected_refund_remainder = expected_refund % 2;
 
     // Check that the actual contract didn't receive any refund
     let (_, actual_contract_balance) = chain_state.get_contract_balance_for_gas(&contract_hash).await.unwrap();
     assert_eq!(*actual_contract_balance, 0, "actual contract gas balance should be 0 after execution");
 
     // Check the contract balances
-    let (_, contract_balance_1) = chain_state.get_contract_balance_for_gas(&contract1).await.unwrap();
-    assert_eq!(*contract_balance_1, expected_refund_per_source, "contract gas balance should be 0 after refund");
+    let contract_balance_1 = {
+        let (_, balance) = chain_state.get_contract_balance_for_gas(&contract1).await.unwrap();
+        *balance
+    };
+    assert_eq!(
+        contract_balance_1,
+        expected_refund_per_source + expected_refund_remainder,
+        "first gas source should receive its share plus deterministic rounding remainder"
+    );
 
-    let (_, contract_balance_2) = chain_state.get_contract_balance_for_gas(&contract2).await.unwrap();
+    let contract_balance_2 = {
+        let (_, balance) = chain_state.get_contract_balance_for_gas(&contract2).await.unwrap();
+        *balance
+    };
 
-    assert_eq!(*contract_balance_2, expected_refund_per_source, "contract gas balance should receive a refund");
+    assert_eq!(contract_balance_2, expected_refund_per_source, "second gas source should receive its share");
+    assert_eq!(
+        contract_balance_1 + contract_balance_2,
+        expected_refund,
+        "gas source refunds must conserve the full unused gas"
+    );
 
     assert_eq!(chain_state.contract_caches.len(), 3);
 }

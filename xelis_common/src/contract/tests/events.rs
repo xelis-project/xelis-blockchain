@@ -1,6 +1,20 @@
-use crate::contract::ContractLog;
+use crate::{
+    contract::ContractLog,
+    crypto::{KeyPair, PublicKey},
+    transaction::mock::MockAccount,
+};
 
 use super::*;
+
+fn add_zero_xelis_account(chain_state: &mut MockChainState) -> PublicKey {
+    let keypair = KeyPair::new();
+    let source = keypair.get_public_key().compress();
+    chain_state.accounts.insert(source.clone(), MockAccount {
+        balances: [(XELIS_ASSET, keypair.get_public_key().encrypt(0u64))].into_iter().collect(),
+        nonce: 0,
+    });
+    source
+}
 
 #[tokio::test]
 async fn contract_event_flow() {
@@ -26,7 +40,7 @@ async fn contract_event_flow() {
             return 0
         }
 
-        hook constructor() -> u64 {
+        entry register() -> u64 {
             let contract_hash = Hash::from_hex("CONTRACT_HASH");
             let contract = Contract::new(contract_hash).expect("load contract");
             contract.listen_event(42, on_contract_event, 500);
@@ -35,11 +49,24 @@ async fn contract_event_flow() {
         }
     "#.replace("CONTRACT_HASH", &emitter_hash.to_string());
 
-    // Deploy the listener hash
-    let (_, execution) = deploy_contract(&mut chain_state, &code, ContractVersion::V1).await
-        .expect("deploy listener contract");
+    // Create the listener contract and register the callback from an account-backed execution.
+    let listener_hash = create_contract(&mut chain_state, &code, ContractVersion::V1)
+        .expect("create listener contract");
+    let source = add_zero_xelis_account(&mut chain_state);
+    let execution = vm::invoke_contract(
+        ContractCaller::Impersonate(Cow::Owned(source)),
+        &mut chain_state,
+        Cow::Owned(listener_hash),
+        None,
+        std::iter::empty(),
+        IndexMap::new(),
+        100000,
+        InvokeContract::Entry(1),
+        Cow::Owned(Default::default()),
+        true,
+    ).await.expect("register listener contract");
 
-    assert!(execution.is_success(), "listener contract deployment failed {:?}", execution);
+    assert!(execution.is_success(), "listener registration failed {:?}", execution);
 
     // Invoke the emitter contract to trigger the event
     let execution = invoke_contract(
@@ -63,7 +90,7 @@ async fn contract_event_flow() {
         }
     }
 
-    // - constructor execution
+    // - listener registration execution
     // - call_event execution
     // - on_contract_event execution
     assert_eq!(executions, 3);
@@ -91,6 +118,55 @@ async fn get_contract_caller_is_null_for_direct_invocation() {
     assert!(result.is_success(), "expected success: {:?}", result);
 }
 
+#[tokio::test]
+async fn listen_event_rejects_zero_max_gas() {
+    let emitter_code = r#"
+        entry emit() -> u64 {
+            emit_event(7, []);
+            return 0
+        }
+    "#;
+
+    let mut chain_state = MockChainState::new();
+    let emitter = create_contract(&mut chain_state, emitter_code, ContractVersion::V1)
+        .expect("create emitter");
+
+    let listener_code = r#"
+        fn on_event() -> u64 {
+            return 0
+        }
+
+        entry register() -> u64 {
+            let emitter: Hash = Hash::from_hex("EMITTER_HASH");
+            let contract = Contract::new(emitter).expect("load emitter");
+            contract.listen_event(7, on_event, 0u64);
+            return 0
+        }
+    "#.replace("EMITTER_HASH", &emitter.to_string());
+
+    let listener = create_contract(&mut chain_state, &listener_code, ContractVersion::V1)
+        .expect("create listener");
+    let source = add_zero_xelis_account(&mut chain_state);
+
+    let result = vm::invoke_contract(
+        ContractCaller::Impersonate(Cow::Owned(source)),
+        &mut chain_state,
+        Cow::Owned(listener),
+        None,
+        std::iter::empty(),
+        IndexMap::new(),
+        100000,
+        InvokeContract::Entry(1),
+        Cow::Owned(Default::default()),
+        true,
+    ).await.expect("register zero gas listener");
+    assert!(!result.is_success(), "zero-gas listener registration must fail: {:?}", result);
+    assert!(
+        chain_state.events_listeners.is_empty(),
+        "zero-gas listener registration must not be committed"
+    );
+}
+
 // get_contract_caller() must return the emitting contract's hash when called
 // from inside an event callback not the TX/system hash.
 #[tokio::test]
@@ -116,7 +192,7 @@ async fn get_contract_caller_returns_emitter_in_event_callback() {
             return 0
         }
 
-        hook constructor() -> u64 {
+        entry register() -> u64 {
             let emitter: Hash = Hash::from_hex("EMITTER_HASH");
             let contract = Contract::new(emitter).expect("load emitter");
             contract.listen_event(7, on_event, 10000);
@@ -124,10 +200,22 @@ async fn get_contract_caller_returns_emitter_in_event_callback() {
         }
     "#.replace("EMITTER_HASH", &emitter.to_string());
 
-    let (_, deploy) = deploy_contract(&mut chain_state, &listener_code, ContractVersion::V1)
-        .await
-        .expect("deploy listener");
-    assert!(deploy.is_success(), "listener deploy failed: {:?}", deploy);
+    let listener = create_contract(&mut chain_state, &listener_code, ContractVersion::V1)
+        .expect("create listener");
+    let source = add_zero_xelis_account(&mut chain_state);
+    let register = vm::invoke_contract(
+        ContractCaller::Impersonate(Cow::Owned(source)),
+        &mut chain_state,
+        Cow::Owned(listener),
+        None,
+        std::iter::empty(),
+        IndexMap::new(),
+        100000,
+        InvokeContract::Entry(1),
+        Cow::Owned(Default::default()),
+        true,
+    ).await.expect("register listener");
+    assert!(register.is_success(), "listener registration failed: {:?}", register);
 
     let result = invoke_contract(&mut chain_state, &emitter, InvokeContract::Entry(0), vec![])
         .await
@@ -140,7 +228,7 @@ async fn get_contract_caller_returns_emitter_in_event_callback() {
         .filter(|log| matches!(log, ContractLog::ExitCode(Some(0))))
         .count();
 
-    // constructor + emit() + on_event() = 3 successful exits
+    // register() + emit() + on_event() = 3 successful exits
     assert_eq!(callback_success, 3, "event callback did not run or failed");
 }
 

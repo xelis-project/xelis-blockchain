@@ -167,6 +167,18 @@ impl Serializer for Primitive {
     }
 
     fn read(reader: &mut Reader) -> Result<Primitive, ReaderError> {
+        fn read_range_boundary(reader: &mut Reader) -> Result<Primitive, ReaderError> {
+            Ok(match reader.read_u8()? {
+                1 => Primitive::U8(reader.read_u8()?),
+                2 => Primitive::U16(reader.read_u16()?),
+                3 => Primitive::U32(reader.read_u32()?),
+                4 => Primitive::U64(reader.read_u64()?),
+                5 => Primitive::U128(reader.read_u128()?),
+                6 => Primitive::U256(U256::read(reader)?),
+                _ => return Err(ReaderError::InvalidValue)
+            })
+        }
+
         Ok(match reader.read_u8()? {
             0 => Primitive::Null,
             1 => Primitive::U8(reader.read_u8()?),
@@ -181,15 +193,8 @@ impl Serializer for Primitive {
                 Primitive::String(reader.read_string_with_size(len)?)
             },
             9 => {
-                let left = Primitive::read(reader)?;
-                if !left.is_number() {
-                    return Err(ReaderError::InvalidValue);
-                }
-
-                let right = Primitive::read(reader)?;
-                if !right.is_number() {
-                    return Err(ReaderError::InvalidValue);
-                }
+                let left = read_range_boundary(reader)?;
+                let right = read_range_boundary(reader)?;
 
                 let left_type = left.get_type().context("left range type")?;
                 let right_type = right.get_type().context("right range type")?;
@@ -526,6 +531,8 @@ impl Serializer for Module {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use crate::crypto::Hash;
     use super::*;
 
@@ -536,6 +543,25 @@ mod tests {
         assert_eq!(module.constants().len(), 2);
 
         assert_eq!(hex.len() / 2, module.size());
+    }
+
+    #[test]
+    fn test_contract_module_size_with_type_packed_parameters() {
+        let mut module = Module::new();
+        module.add_entry_chunk(Chunk::new(), Some(vec![
+            TypePacked::Opaque(42),
+            TypePacked::Tuples(vec![
+                TypePacked::String,
+                TypePacked::Optional(Box::new(TypePacked::Number(xelis_vm::NumberType::U64))),
+            ]),
+        ]));
+
+        let contract = crate::contract::ContractModule {
+            version: ContractVersion::V1,
+            module: Arc::new(module),
+        };
+
+        assert_eq!(contract.size(), contract.to_bytes().len());
     }
 
     #[track_caller]
@@ -559,6 +585,20 @@ mod tests {
         test_serde_cell(ValueCell::Primitive(Primitive::String("hello world!!!".to_owned())));
 
         test_serde_cell(ValueCell::Primitive(Primitive::Opaque(OpaqueWrapper::new(Hash::zero()))));
+    }
+
+    #[test]
+    fn test_serde_nested_range_is_rejected() {
+        let bytes: [u8; 9] = [
+            0, // ValueCell::Primitive
+            9, // Primitive::Range
+            9, // invalid nested Primitive::Range as left boundary
+            1, 0,
+            1, 1,
+            1, 2,
+        ];
+
+        assert!(ValueCell::from_bytes(&bytes).is_err());
     }
 
     #[test]

@@ -6,9 +6,12 @@ use chacha20poly1305::{
     ChaCha20Poly1305,
     KeyInit
 };
-use rand::Rng;
+use rand::TryRng;
 use thiserror::Error;
-use xelis_common::tokio::sync::Mutex;
+use xelis_common::{
+    crypto::rng,
+    tokio::sync::Mutex
+};
 use log::trace;
 
 // This symetric key is used to encrypt/decrypt the data
@@ -114,8 +117,8 @@ impl Encryption {
     // Generate a new random key
     pub fn generate_key(&self) -> Result<EncryptionKey, EncryptionError> {
         let mut key = EncryptionKey::default();
-        rand::thread_rng()
-            .try_fill(&mut key)
+        rng()
+            .try_fill_bytes(&mut key)
             .map_err(|_| EncryptionError::Rng)?;
 
         Ok(key)
@@ -204,7 +207,7 @@ impl Encryption {
 mod tests {
     use super::*;
     use bytes::BytesMut;
-    use rand::RngCore;
+    use rand::RngExt;
 
     #[tokio::test]
     async fn test_encryption_decryption() {
@@ -229,9 +232,9 @@ mod tests {
         encryption.rotate_key(key, CipherSide::Both).await.unwrap();
 
         // Create a large random data buffer
-        let mut rng = rand::thread_rng();
+        let mut rng = rng();
         let mut original_data = vec![0u8; 10 * 1024]; // 10 KB of random data
-        rng.fill_bytes(&mut original_data);
+        rng.fill(&mut original_data);
 
         let mut data = BytesMut::from(&original_data[..]);
 

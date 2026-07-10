@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use xelis_vm::{NumberType, TypePacked};
+use xelis_vm::{Access, NumberType, TypePacked};
 use crate::serializer::*;
 use super::ContractVersion;
 
@@ -38,7 +38,33 @@ impl Serializer for ContractModule {
     }
 
     fn size(&self) -> usize {
-        self.version.size() + self.module.size()
+        let mut size = self.version.size();
+
+        size += DynamicLen(self.module.constants().len()).size() + self.module.constants()
+            .iter()
+            .map(Serializer::size)
+            .sum::<usize>();
+
+        size += 2 + self.module.chunks()
+            .iter()
+            .map(|entry| {
+                let instructions = entry.chunk.get_instructions();
+                DynamicLen(instructions.len()).size() + instructions.len() + match &entry.access {
+                    Access::Internal => 1,
+                    Access::All { parameters } | Access::Entry { parameters } => {
+                        if self.version >= ContractVersion::V1 {
+                            parameters.as_ref()
+                                .map_or(2, |v| 3 + v.iter().map(Serializer::size).sum::<usize>())
+                        } else {
+                            1
+                        }
+                    },
+                    Access::Hook { id } => 1 + id.size(),
+                }
+            })
+            .sum::<usize>();
+
+        size
     }
 }
 
@@ -296,7 +322,40 @@ impl Serializer for TypePacked {
     }
 
     fn size(&self) -> usize {
-        1
+        let mut size = 0;
+        let mut stack = vec![self];
+
+        while let Some(value) = stack.pop() {
+            match value {
+                TypePacked::Number(_)
+                | TypePacked::Bool
+                | TypePacked::Bytes
+                | TypePacked::String
+                | TypePacked::Range(_)
+                | TypePacked::Any => size += 1,
+                TypePacked::Opaque(_) => size += 3,
+                TypePacked::Array(inner)
+                | TypePacked::Optional(inner) => {
+                    size += 1;
+                    stack.push(inner);
+                },
+                TypePacked::Tuples(fields) => {
+                    size += 2;
+                    stack.extend(fields);
+                },
+                TypePacked::Map(key, value) => {
+                    size += 1;
+                    stack.push(key);
+                    stack.push(value);
+                },
+                TypePacked::OneOf(variants) => {
+                    size += 2 + variants.len();
+                    stack.extend(variants.iter().flatten());
+                }
+            }
+        }
+
+        size
     }
 }
 
@@ -308,6 +367,11 @@ mod tests {
         let bytes = value.to_bytes();
         let mut reader = Reader::new(&bytes);
         TypePacked::read(&mut reader).expect("Deserialization failed")
+    }
+
+    #[track_caller]
+    fn assert_type_packed_size(value: &TypePacked) {
+        assert_eq!(value.size(), value.to_bytes().len());
     }
 
     fn nested_array(depth: usize) -> TypePacked {
@@ -387,8 +451,36 @@ mod tests {
         ];
 
         for original in variants {
+            assert_type_packed_size(&original);
             let deserialized = roundtrip(original.clone());
             assert_eq!(original, deserialized);
+        }
+    }
+
+    #[test]
+    fn test_type_packed_size_matches_serialized_len_for_composites() {
+        let values = vec![
+            TypePacked::Opaque(42),
+            TypePacked::Array(Box::new(TypePacked::Bool)),
+            TypePacked::Optional(Box::new(TypePacked::Opaque(7))),
+            TypePacked::Tuples(vec![
+                TypePacked::Number(NumberType::U16),
+                TypePacked::Bytes,
+                TypePacked::Optional(Box::new(TypePacked::Bool)),
+            ]),
+            TypePacked::Map(
+                Box::new(TypePacked::String),
+                Box::new(TypePacked::Array(Box::new(TypePacked::Number(NumberType::U32)))),
+            ),
+            TypePacked::OneOf(vec![
+                vec![TypePacked::Any],
+                vec![TypePacked::Bool, TypePacked::Opaque(9)],
+                vec![],
+            ]),
+        ];
+
+        for value in values {
+            assert_type_packed_size(&value);
         }
     }
 

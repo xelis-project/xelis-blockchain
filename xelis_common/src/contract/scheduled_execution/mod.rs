@@ -52,6 +52,11 @@ use crate::{
 pub use kind::*;
 pub use manager::*;
 
+fn calculate_burned_extra_cost(extra_cost: u64) -> Result<u64, EnvironmentError> {
+    Ok(extra_cost.checked_mul(TX_GAS_BURN_PERCENT)
+        .ok_or(EnvironmentError::GasOverflow)? / 100)
+}
+
 // Scheduled executions are unique per contract
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
 pub struct ScheduledExecution {
@@ -211,6 +216,19 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider<'ty>>(
             + (params_size as u64 * FEE_PER_BYTE_IN_CONTRACT_MEMORY),
     };
 
+    // build the caller hash
+    let hash = hash_multiple(&[
+        metadata.metadata.contract_executor.as_bytes(),
+        &kind.to_bytes(),
+    ]);
+
+    // Reject duplicates before reserving gas. Account-paid scheduling records the
+    // reservation through gas allowance, so doing this after insert failure would
+    // leave gas reserved without any scheduled execution owning it.
+    if state.executions.contains_key(&hash) {
+        return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
+    }
+
     let total_cost = max_gas.checked_add(extra_cost)
         .ok_or(EnvironmentError::GasOverflow)?;
     let source = if use_contract_balance {
@@ -234,12 +252,6 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider<'ty>>(
 
         source
     };
-
-    // build the caller hash
-    let hash = hash_multiple(&[
-        metadata.metadata.contract_executor.as_bytes(),
-        &kind.to_bytes(),
-    ]);
 
     let execution = ScheduledExecution {
         hash: Arc::new(hash.clone()),
@@ -271,7 +283,7 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider<'ty>>(
     if use_contract_balance {
         // Once passed here, we are safe and can apply changes
         // record the burn part
-        let burned_part = extra_cost * TX_GAS_BURN_PERCENT / 100;
+        let burned_part = calculate_burned_extra_cost(extra_cost)?;
         record_burned_asset(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET, burned_part).await?;
 
         // add the part for the miners
@@ -411,17 +423,34 @@ pub async fn scheduled_execution_increase_max_gas<'a, 'ty, 'r, P: ContractProvid
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
     }
 
-    // Pay from the contract balance
-    let source = if use_contract_balance {
-        // check that we have enough to pay the reserved gas
-        if !has_enough_balance_for_contract(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET, amount).await? {
-            return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
-        }
-    
-        // Check that the scheduled execution exists and belongs to this contract
-        let execution = state.executions.get(&scheduled_execution.hash)?;
+    // Check that the scheduled execution exists and belongs to this contract.
+    let execution = state.executions.get(&scheduled_execution.hash)?;
+    if execution.contract != metadata.metadata.contract_executor {
+        return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
+    }
 
-        if execution.contract != metadata.metadata.contract_executor {
+    let new_max_gas = execution.max_gas.checked_add(amount)
+        .ok_or(EnvironmentError::GasOverflow)?;
+    if new_max_gas > MAX_GAS_USAGE_PER_TX {
+        return Err(EnvironmentError::Static("max_gas exceeds allowed limit"))
+    }
+
+    let source = if use_contract_balance {
+        Source::Contract(metadata.metadata.contract_executor.clone())
+    } else {
+        state.caller.get_source()
+            .cloned()
+            .map(Source::Account)
+            .ok_or(EnvironmentError::Static("cannot pay from non transaction call"))?
+    };
+
+    if execution.gas_sources.len() >= u16::MAX as usize && !execution.gas_sources.contains_key(&source) {
+        return Err(EnvironmentError::Static("too many gas injection sources")).into();
+    }
+
+    if use_contract_balance {
+        // Check that we have enough to pay the reserved gas.
+        if !has_enough_balance_for_contract(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET, amount).await? {
             return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
         }
 
@@ -434,34 +463,17 @@ pub async fn scheduled_execution_increase_max_gas<'a, 'ty, 'r, P: ContractProvid
             amount
         ).await?;
 
-        Source::Contract(metadata.metadata.contract_executor.clone())
     } else {
-        let source = state.caller.get_source()
-            .cloned()
-            .map(Source::Account)
-            .ok_or(EnvironmentError::Static("cannot pay from non transaction call"))?;
-
         // Pay from the gas allowance
         record_gas_allowance(context, amount)?;
-
-        source
-    };
+    }
 
     let (_, state) = from_context::<P>(context)?;
 
     let execution = state.executions.get_mut(&scheduled_execution.hash)?;
 
     // Total max gas allocated to this execution
-    execution.max_gas = execution.max_gas.checked_add(amount)
-        .ok_or(EnvironmentError::GasOverflow)?;
-
-    if execution.max_gas > MAX_GAS_USAGE_PER_TX {
-        return Err(EnvironmentError::Static("max_gas exceeds allowed limit"))
-    }
-
-    if execution.gas_sources.len() >= u16::MAX as usize && !execution.gas_sources.contains_key(&source) {
-        return Err(EnvironmentError::Static("too many gas injection sources")).into();
-    }
+    execution.max_gas = new_max_gas;
 
     // Individual gas injected from this source
     // This is used for a better tracking of gas usage per source

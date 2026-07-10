@@ -13,7 +13,7 @@ use std::{
     }, time::Duration
 };
 use futures::{stream, StreamExt};
-use rand::{rngs::OsRng, RngCore};
+use rand::RngExt;
 use actix_web::HttpResponse;
 use anyhow::Context;
 use async_trait::async_trait;
@@ -33,7 +33,8 @@ use xelis_common::{
         Address,
         Hash,
         Hashable,
-        PublicKey
+        PublicKey,
+        rng
     },
     difficulty::Difficulty,
     immutable::Immutable,
@@ -224,7 +225,7 @@ impl<S: Storage> GetWorkServer<S> {
 
         // set miner key and random extra nonce
         job.set_miner(Cow::Borrowed(key));
-        OsRng.fill_bytes(job.get_extra_nonce());
+        rng().fill(job.get_extra_nonce());
 
         // get the algorithm for the current version
         let algorithm = get_pow_algorithm_for_version(version);
@@ -324,26 +325,45 @@ impl<S: Storage> GetWorkServer<S> {
         }
 
         if !miners_empty {
-            // now let's send the job to every miner
-            let miners = self.miners.lock().await;
+            let miners = {
+                let miners = self.miners.lock().await;
+                miners.iter()
+                    .map(|(session, miner)| (session.clone(), miner.get_public_key().clone(), miner.to_string()))
+                    .collect::<Vec<_>>()
+            };
+            let failed_sessions = Mutex::new(Vec::new());
 
             debug!("Notifying {} miners for new job", miners.len());
-            stream::iter(miners.iter())
-                .for_each_concurrent(self.notify_job_concurrency, |(addr, miner)| {
+            stream::iter(miners)
+                .for_each_concurrent(self.notify_job_concurrency, |(addr, key, miner)| {
+                    let failed_sessions = &failed_sessions;
                     let mut job = job.clone();
                     async move {
                         debug!("Notifying {} for new job", miner);
                         let addr = addr.clone();
 
-                        job.set_miner(Cow::Borrowed(miner.get_public_key()));
-                        OsRng.fill_bytes(job.get_extra_nonce());
+                        job.set_miner(Cow::Owned(key));
+                        rng().fill(job.get_extra_nonce());
                         let template = job.to_hex();
 
                         if let Err(e) = addr.send_json(Response::NewJob(GetMinerWorkResult { algorithm, miner_work: template, height, topoheight, difficulty })).await {
                             warn!("Error while notifying {} about new job: {}", miner, e);
+                            failed_sessions.lock().await.push(addr);
                         }
                     }
                 }).await;
+
+            let failed_sessions = failed_sessions.into_inner();
+            for session in &failed_sessions {
+                session.get_server().delete_session(session, None).await;
+            }
+
+            if !failed_sessions.is_empty() {
+                let mut miners = self.miners.lock().await;
+                for session in failed_sessions {
+                    miners.remove(&session);
+                }
+            }
         }
 
         debug!("job has been shared!");
@@ -436,10 +456,6 @@ impl<S: Storage> GetWorkServer<S> {
 impl<S: Storage> WebSocketHandler for GetWorkServer<S> {
     // For retro-compatibility with older miner versions,
     // we don't send any ping
-    async fn check_heartbeat(&self, _: &WebSocketSessionShared<Self>) -> bool {
-        false
-    }
-
     async fn on_connection(&self, session: &WebSocketSessionShared<Self>) -> Result<Option<actix_web::HttpResponse>, anyhow::Error> {
         let path = session.get_request().uri().path();
         let parts: Vec<_> = path.split("/").collect();

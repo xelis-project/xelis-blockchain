@@ -3,11 +3,7 @@ use std::{borrow::Cow, sync::Arc};
 use super::*;
 
 use indexmap::{IndexMap, IndexSet};
-use rand::{
-    rngs::StdRng,
-    Rng,
-    SeedableRng,
-};
+use rand::{RngExt, SeedableRng, rngs::StdRng};
 use xelis_vm::Module;
 
 use crate::{
@@ -191,6 +187,16 @@ fn btree_header_matches_full_node_layout() {
     assert_eq!(hdr.right, full.right);
 }
 
+#[test]
+fn btree_user_key_rejects_reserved_storage_prefix() {
+    let mut key = PREFIX.to_vec();
+    key.extend_from_slice(b"orders:node:1");
+
+    assert!(super::read_key_bytes(ValueCell::Bytes(key)).is_err());
+    assert!(super::read_key_bytes(ValueCell::Bytes(b"orders:node:1".to_vec())).is_ok());
+    assert!(super::read_seek_key_bytes(ValueCell::Bytes(Vec::new())).is_ok());
+}
+
 #[tokio::test]
 async fn btree_insert_get_delete_roundtrip() {
     init_test!(contract, provider, chain, state);
@@ -278,11 +284,11 @@ async fn btree_cursor_scans_random_u64s_in_order() {
     let mut rng = StdRng::seed_from_u64(0x5EED_5EED);
     let mut entries = IndexMap::new();
     while entries.len() < 100 {
-        let key = rng.gen::<u64>();
+        let key = rng.random::<u64>();
         if entries.contains_key(&key) {
             continue;
         }
-        let value = rng.gen::<u64>();
+        let value = rng.random::<u64>();
         entries.insert(key, value);
         insert_key(
             &provider,
@@ -697,7 +703,7 @@ async fn btree_cursor_selective_delete_during_scan() {
     // Insert 100 keys with range 1..=20 (lots of duplicates)
     // Values are unique (0..100) to verify identity
     for i in 0..100 {
-        let key = rng.gen_range(1..=20u64);
+        let key = rng.random_range(1..=20u64);
         let value = i as u64;
         insert_key(
             &provider,
@@ -1349,6 +1355,28 @@ async fn btree_allocate_node_id_monotonic_per_namespace() {
 }
 
 #[tokio::test]
+async fn btree_allocate_node_id_rejects_u64_overflow() {
+    init_test!(contract, provider, chain, state);
+    let namespace = b"id_overflow".to_vec();
+
+    {
+        let mut ctx = TreeContext::new(&provider, &mut state, &contract, &namespace);
+        super::write_next_id(&mut ctx, u64::MAX).await.unwrap();
+        let _ = ctx.finish();
+    }
+
+    let err = allocate_node_id(&provider, &mut state, &contract, &namespace)
+        .await
+        .expect_err("allocating past u64::MAX must fail");
+    assert!(matches!(err, EnvironmentError::Static(_)), "unexpected error: {:?}", err);
+
+    let next = read_next_id(&provider, &mut state, &contract, &namespace)
+        .await
+        .expect("read next id");
+    assert_eq!(next, u64::MAX, "failed allocation must not advance next id");
+}
+
+#[tokio::test]
 async fn btree_storage_usage_records_reads() {
     init_test!(contract, provider, chain, state);
     let namespace = b"usage_read".to_vec();
@@ -1514,12 +1542,8 @@ async fn btree_assert_treap_invariants(
     }
 }
 
-// --- tests ---
-
 #[tokio::test]
 async fn btree_treap_invariants_after_random_inserts_and_deletes() {
-    use rand::{rngs::StdRng, Rng, SeedableRng};
-
     init_test!(contract, provider, chain, state);
     let store = OpaqueBTreeStore { namespace: b"invariants".to_vec() };
 
@@ -1527,7 +1551,7 @@ async fn btree_treap_invariants_after_random_inserts_and_deletes() {
     let mut rng = StdRng::seed_from_u64(0xC0FF_EE);
     let mut keys = IndexSet::new();
     while keys.len() < 128 {
-        keys.insert(rng.gen::<u64>());
+        keys.insert(rng.random::<u64>());
     }
     for &k in &keys {
         insert_key(

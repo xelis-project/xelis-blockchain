@@ -43,6 +43,10 @@ impl DynEq for RangeProofWrapper {
 
 impl DynHash for RangeProofWrapper {
     fn dyn_hash(&self, _: &mut dyn Hasher) {}
+
+    fn is_hashable(&self) -> bool {
+        false
+    }
 }
 
 impl Serializable for RangeProofWrapper {
@@ -100,11 +104,14 @@ pub fn range_proof_verify_single(zelf: FnInstance, mut params: FnParams, _: &Mod
 
 pub fn range_proof_verify_multiple(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     // SAFETY: no other reference is made to it
-    let commitments = unsafe {
-        params[0]
+    let tmp = params[0]
         .as_mut()
-        .as_mut_vec()?
-        .iter_mut()
+        .as_mut_vec()?;
+
+    context.increase_gas_usage((tmp.len() * 5000) as u64)?;
+
+    let commitments = unsafe {
+        tmp.iter_mut()
         .map(|p| {
             let opaque: &mut OpaqueRistrettoPoint = p.as_mut()
                 .as_opaque_type_mut()?;
@@ -113,8 +120,6 @@ pub fn range_proof_verify_multiple(zelf: FnInstance, mut params: FnParams, _: &M
         })
         .collect::<Result<Vec<_>, EnvironmentError>>()?
     };
-
-    context.increase_gas_usage((commitments.len() * 5000) as u64)?;
 
     let proof_size = params[2].as_ref()
         .as_u8()?;

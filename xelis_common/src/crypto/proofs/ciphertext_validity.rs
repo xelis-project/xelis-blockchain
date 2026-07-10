@@ -5,7 +5,6 @@ use curve25519_dalek::{
     Scalar
 };
 use merlin::Transcript;
-use rand::rngs::OsRng;
 use schemars::JsonSchema;
 use zeroize::Zeroize;
 
@@ -20,6 +19,8 @@ use crate::{
             RISTRETTO_COMPRESSED_SIZE,
             SCALAR_SIZE
         },
+        non_zero_random_scalar,
+        rng,
         ProtocolTranscript
     },
     serializer::{
@@ -72,8 +73,9 @@ impl CiphertextValidityProof {
         let x = Scalar::from(amount);
         let r = opening.as_scalar();
 
-        let mut y_r = Scalar::random(&mut OsRng);
-        let mut y_x = Scalar::random(&mut OsRng);
+        let mut rng = rng();
+        let mut y_r = Scalar::random(&mut rng);
+        let mut y_x = Scalar::random(&mut rng);
 
         let Y_0 = PC_GENS.commit(y_x, y_r).compress();
         let Y_1 = (&y_r * P_dest).compress();
@@ -172,7 +174,7 @@ impl CiphertextValidityProof {
         let D_dest = dest_handle.as_point();
         let D_source = sender_handle.as_point();
 
-        let batch_factor = Scalar::random(&mut OsRng);
+        let batch_factor = non_zero_random_scalar(&mut rng());
 
         // z_x * G
         batch_collector.g_scalar += self.z_x * batch_factor;
@@ -380,5 +382,72 @@ mod tests {
         );
         assert!(result.is_ok());
         assert!(batch_collector.verify().is_ok());
+
+        let mut transcript = Transcript::new(b"test");
+        assert!(
+            proof
+                .verify(
+                    &commitment,
+                    keypair.get_public_key(),
+                    sender.get_public_key(),
+                    &receiver_handle,
+                    &sender_handle,
+                    &mut transcript,
+                )
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_ciphertext_validity_proof_rejects_wrong_handle_direct_and_batch() {
+        let mut transcript = Transcript::new(b"test");
+        let keypair = KeyPair::new();
+        let sender = KeyPair::new();
+        let amount = 5u64;
+        let opening = PedersenOpening::generate_new();
+        let commitment = PedersenCommitment::new_with_opening(amount, &opening);
+        let receiver_handle = keypair.get_public_key().decrypt_handle(&opening);
+        let wrong_opening = PedersenOpening::generate_new();
+        let wrong_sender_handle = sender.get_public_key().decrypt_handle(&wrong_opening);
+        let proof = CiphertextValidityProof::new(
+            keypair.get_public_key(),
+            sender.get_public_key(),
+            amount,
+            &opening,
+            TxVersion::V2,
+            &mut transcript,
+        );
+
+        let mut transcript = Transcript::new(b"test");
+        assert!(
+            proof
+                .verify(
+                    &commitment,
+                    keypair.get_public_key(),
+                    sender.get_public_key(),
+                    &receiver_handle,
+                    &wrong_sender_handle,
+                    &mut transcript,
+                )
+                .is_err()
+        );
+
+        let mut transcript = Transcript::new(b"test");
+        let mut batch_collector = BatchCollector::default();
+        assert!(
+            proof
+                .pre_verify(
+                    &commitment,
+                    keypair.get_public_key(),
+                    sender.get_public_key(),
+                    &receiver_handle,
+                    &wrong_sender_handle,
+                    TxVersion::V2,
+                    &mut transcript,
+                    &mut batch_collector,
+                )
+                .is_ok()
+        );
+        assert!(batch_collector.verify().is_err());
     }
 }

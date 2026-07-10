@@ -51,6 +51,7 @@ use xelis_common::{
         Hashable,
         PublicKey,
         pow_hash as compute_pow_hash,
+        rng,
         HASH_SIZE
     },
     difficulty::{
@@ -136,7 +137,7 @@ use std::{
     time::{Duration, Instant}
 };
 use log::{info, error, debug, warn, trace};
-use rand::Rng;
+use rand::RngExt;
 
 use super::storage::{
     BlocksAtHeightProvider,
@@ -446,41 +447,13 @@ impl<S: Storage> Blockchain<S> {
                 config.enable_compression,
                 config.disable_fast_sync_support,
                 proxy,
+                config.outgoing_connection_timeout.into(),
                 config.sync_from_priority_only,
                 config.reorg_from_priority_only,
             ) {
                 Ok(p2p) => {
                     *arc.p2p.write().await = Some(p2p.clone());
-
-                    // connect to priority nodes
-                    for addr in config.priority_nodes {
-                        for origin in addr.split(",") {
-                            let addr: SocketAddr = match origin.parse() {
-                                Ok(addr) => addr,
-                                Err(e) => {
-                                    match lookup_host(&origin).await {
-                                        Ok(it) => {
-                                            info!("Valid host found for {}", origin);
-                                            for addr in it {
-                                                info!("Trying to connect to priority node with IP from DNS resolution: {}", addr);
-                                                if let Err(e) = p2p.try_to_connect_to_peer(addr, true).await {
-                                                    error!("Error while trying to connect to priority node {}: {}", origin, e);
-                                                }
-                                            }
-                                        },
-                                        Err(e2) => {
-                                            error!("Error while parsing {} as priority node address: {}, {}", origin, e, e2);
-                                        }
-                                    };
-                                    continue;
-                                }
-                            };
-                            info!("Trying to connect to priority node: {}", addr);
-                            if let Err(e) = p2p.try_to_connect_to_peer(addr, true).await {
-                                error!("Error while trying to connect to priority node {}: {}", addr, e);
-                            }
-                        }
-                    }
+                    p2p.connect_to_priority_nodes(config.priority_nodes);
                 },
                 Err(e) => error!("Error while starting P2p server: {}", e)
             };
@@ -1436,7 +1409,7 @@ impl<S: Storage> Blockchain<S> {
         let start = Instant::now();
 
          // generate random bytes
-        let extra_nonce: [u8; EXTRA_NONCE_SIZE] = rand::thread_rng().gen::<[u8; EXTRA_NONCE_SIZE]>();
+        let extra_nonce: [u8; EXTRA_NONCE_SIZE] = rng().random::<[u8; EXTRA_NONCE_SIZE]>();
 
         let mut lock = self.mining_cache.write().await;
         if let Some(mut cached_template) = lock.as_ref().cloned() {

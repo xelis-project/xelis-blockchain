@@ -16,9 +16,6 @@ pub use peer_list::*;
 pub use error::*;
 pub use diffie_hellman::*;
 
-use anyhow::Context;
-use log::{debug, error, info, log, trace, warn};
-use metrics::counter;
 use std::{
     borrow::Cow,
     collections::HashSet,
@@ -32,9 +29,13 @@ use std::{
     },
     time::Duration
 };
+use anyhow::Context;
+use log::{debug, error, info, log, trace, warn};
+use metrics::counter;
+use itertools::Either;
 use tokio_socks::tcp::{Socks4Stream, Socks5Stream};
 use bytes::{Bytes, BytesMut};
-use rand::{seq::IteratorRandom, Rng};
+use rand::{RngExt, seq::IteratorRandom};
 use futures::{
     stream::{self, FuturesOrdered},
     Stream,
@@ -56,7 +57,7 @@ use xelis_common::{
         TopoHeight,
     },
     config::{TIPS_LIMIT, VERSION},
-    crypto::{Hash, Hashable},
+    crypto::{Hash, Hashable, rng},
     difficulty::CumulativeDifficulty,
     immutable::Immutable,
     serializer::Serializer,
@@ -67,7 +68,7 @@ use xelis_common::{
     },
     tokio::{
         io::AsyncWriteExt,
-        net::{TcpListener, TcpStream},
+        net::{lookup_host, TcpListener, TcpStream},
         select,
         spawn_task,
         sync::{
@@ -188,6 +189,8 @@ pub struct P2pServer<S: Storage> {
     // Proxy address to use in case we try to connect
     // to an outgoing peer
     proxy: Option<(ProxyKind, SocketAddr, Option<(String, String)>)>,
+    // Timeout used when initiating outgoing peer connections
+    outgoing_connection_timeout: Duration,
     // Requested objects from various peers
     requests_cache: ExpirableCache,
     // Flags to use in handshake
@@ -223,6 +226,7 @@ impl<S: Storage> P2pServer<S> {
         enable_compression: bool,
         disable_fast_sync_support: bool,
         proxy: Option<(ProxyKind, SocketAddr, Option<(String, String)>)>,
+        outgoing_connection_timeout: Duration,
         sync_from_priority_only: bool,
         reorg_from_priority_only: bool,
     ) -> Result<Arc<Self>, P2pError> {
@@ -247,9 +251,9 @@ impl<S: Storage> P2pServer<S> {
         }
 
         // set channel to communicate with listener thread
-        let mut rng = rand::thread_rng();
+        let mut rng = rng();
         // generate a random peer id for network
-        let peer_id: u64 = rng.gen();
+        let peer_id = rng.random::<u64>();
         // parse the bind address
         let bind_address: SocketAddr = bind_address.parse()?;
 
@@ -315,6 +319,7 @@ impl<S: Storage> P2pServer<S> {
             disable_fetching_txs_propagated,
             handle_peer_packets_in_dedicated_task,
             proxy,
+            outgoing_connection_timeout,
             requests_cache: ExpirableCache::new(),
             flags,
             sync_from_priority_only,
@@ -339,6 +344,60 @@ impl<S: Storage> P2pServer<S> {
         }
 
         Ok(arc)
+    }
+
+    pub fn connect_to_priority_nodes(self: &Arc<Self>, priority_nodes: Vec<String>) {
+        if priority_nodes.is_empty() {
+            return;
+        }
+
+        let zelf = Arc::clone(self);
+        spawn_task("p2p-priority-nodes", async move {
+            zelf.connect_to_priority_nodes_list(priority_nodes).await;
+        });
+    }
+
+    // Parse a target address to a SocketAddr
+    async fn parse_target<'a>(&self, address: &'a str) -> Result<impl Iterator<Item = SocketAddr> + 'a, P2pError> {
+        let addr: SocketAddr = match address.parse() {
+            Ok(addr) => addr,
+            Err(e) => {
+                match lookup_host(address).await {
+                    Ok(it) => {
+                        info!("Valid host found for {}", address);
+                        return Ok(Either::Left(it));
+                    },
+                    Err(e2) => {
+                        error!("Error while parsing {} as peer address: {}, {}", address, e, e2);
+                        return Err(P2pError::InvalidPeerAddress(address.to_owned()));
+                    }
+                };
+            }
+        };
+        Ok(Either::Right(std::iter::once(addr)))
+    }
+
+    // connect to priority nodes
+    // Try by parsing the address, and if it is a host, resolve it to an IP address
+    async fn connect_to_priority_nodes_list(&self, priority_nodes: Vec<String>) {
+        for addr in priority_nodes {
+            for origin in addr.split(",") {
+                match self.parse_target(origin).await {
+                    Ok(it) => {
+                        for addr in it {
+                            info!("Trying to connect to priority node: {}", addr);
+                            if let Err(e) = self.try_to_connect_to_peer(addr, true).await {
+                                error!("Error while trying to connect to priority node {}: {}", origin, e);
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        error!("Error while parsing {} as priority node address: {}", origin, e);
+                        continue;
+                    }
+                };
+            }
+        }
     }
 
     // Stop the p2p module by closing all connections
@@ -776,22 +835,21 @@ impl<S: Storage> P2pServer<S> {
             }
         }
 
-        let duration = Duration::from_millis(PEER_TIMEOUT_INIT_OUTGOING_CONNECTION);
         let stream = if let Some((kind, proxy, auth)) = self.proxy.as_ref() {
             match kind {
                 ProxyKind::Socks5 => if let Some((username, password)) = auth {
-                        timeout(duration, Socks5Stream::connect_with_password(proxy, &addr, &username, &password)).await
+                        timeout(self.outgoing_connection_timeout, Socks5Stream::connect_with_password(proxy, &addr, &username, &password)).await
                     } else {
-                        timeout(duration, Socks5Stream::connect(proxy, &addr)).await
+                        timeout(self.outgoing_connection_timeout, Socks5Stream::connect(proxy, &addr)).await
                     }?
                     .context("Error while connecting through given SOCKS5 proxy")?
                     .into_inner(),
-                ProxyKind::Socks4 => timeout(duration, Socks4Stream::connect(proxy, &addr)).await?
+                ProxyKind::Socks4 => timeout(self.outgoing_connection_timeout, Socks4Stream::connect(proxy, &addr)).await?
                     .context("Error while connecting through given SOCKS4 proxy")?
                     .into_inner(),
             }
         } else {
-            timeout(duration, TcpStream::connect(&addr)).await??
+            timeout(self.outgoing_connection_timeout, TcpStream::connect(&addr)).await??
         };
 
         let connection = Connection::new(stream, addr, true);
@@ -1361,7 +1419,7 @@ impl<S: Storage> P2pServer<S> {
         }
 
         availables.into_iter()
-            .choose(&mut rand::thread_rng())
+            .choose(&mut rng())
     }
 
     // try to extend our peerlist each time its possible by searching in known peerlist from disk
@@ -1387,7 +1445,15 @@ impl<S: Storage> P2pServer<S> {
                                 None => {
                                     debug!("No peer found in peerlist, selecting a random seed node");
                                     let seed_nodes = get_seed_nodes(self.blockchain.get_network());
-                                    self.select_random_socket_address(seed_nodes.iter().map(|v| v.parse().expect("seed node socket address"))).await
+                                    let mut addresses = Vec::new();
+                                    for node in seed_nodes {
+                                        let iter = self.parse_target(node).await
+                                            .expect("Error while parsing seed node address");
+
+                                        addresses.push(iter);
+                                    }
+
+                                    self.select_random_socket_address(addresses.into_iter().flatten()).await
                                         .map(|v| (v, true))
                                 },
                             },

@@ -261,6 +261,9 @@ impl Mempool {
         multisig: Option<MultiSigPayload>
     ) -> Result<(), BlockchainError> {
         let nonce = tx.get_nonce();
+        let (fee_per_kb, fee_limit_per_kb) = estimate_tx_fee_per_kb(storage, stable_topoheight, &tx, size, block_version).await?;
+        debug!("fee per kb {} for TX {}", fee_per_kb, hash);
+
         // update the cache for this owner
         if let Some(cache) = self.caches.get_mut(tx.get_source()) {
             // delete the TX if its in the range of already tracked nonces
@@ -284,9 +287,6 @@ impl Mempool {
             };
             self.caches.insert(tx.get_source().clone(), cache);
         }
-
-        let (fee_per_kb, fee_limit_per_kb) = estimate_tx_fee_per_kb(storage, stable_topoheight, &tx, size, block_version).await?;
-        debug!("fee per kb {} for TX {}", fee_per_kb, hash);
 
         let sorted_tx = SortedTx {
             size,

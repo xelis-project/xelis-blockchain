@@ -41,19 +41,19 @@ pub enum BlockType {
     Normal
 }
 
-// Serialize the extra nonce in a hexadecimal string
+/// Serialize the extra nonce in a hexadecimal string
 pub fn serialize_extra_nonce<S: Serializer>(extra_nonce: &Cow<'_, [u8; EXTRA_NONCE_SIZE]>, s: S) -> Result<S::Ok, S::Error> {
     s.serialize_str(&hex::encode(extra_nonce.as_ref()))
 }
 
-// Deserialize the extra nonce from a hexadecimal string
+/// Deserialize the extra nonce from a hexadecimal string
 pub fn deserialize_extra_nonce<'de, 'a, D: Deserializer<'de>>(deserializer: D) -> Result<Cow<'a, [u8; EXTRA_NONCE_SIZE]>, D::Error> {
     let hex = String::deserialize(deserializer)?;
     deserialize_extra_nonce_hex::<D::Error>(hex)
         .map(Cow::Owned)
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 struct KV<K, V> {
     key: K,
     value: V,
@@ -86,61 +86,66 @@ where
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct RPCTopoHeightMetadata {
-    // TopoHeight of the block
+    /// TopoHeight of the block
     pub topoheight: TopoHeight,
-    // Total Block reward
+    /// Total Block reward
     pub reward: u64,
-    // Miner reward (the one that found the block)
+    /// Miner reward (the one that found the block)
     pub miner_reward: u64,
-    // And Dev Fee reward if any
+    /// And Dev Fee reward if any
     pub dev_reward: u64,
-    // emitted supply at this topoheight
+    /// emitted supply at this topoheight
     pub supply: u64,
-    // Total fees paid in this block
+    /// Total fees paid in this block
     pub total_fees: u64,
-    // Total fees burned in this block
+    /// Total fees burned in this block
     pub total_fees_burned: u64
 }
 
-// Structure used to map the public key to a human readable address
+/// Structure used to map the public key to a human readable address
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct RPCBlockHeaderResponse<'a> {
-    // Block hash
+    /// Block hash
     pub hash: Cow<'a, Hash>,
-    // Metadata related to the topoheight if the block
-    // is ordered in the DAG
+    /// Metadata related to the topoheight if the block
+    /// is ordered in the DAG
     #[serde(flatten)]
     pub metadata: Option<RPCTopoHeightMetadata>,
-    // Type of the block (sync, side, orphaned, normal)
+    /// Type of the block (sync, side, orphaned, normal)
     pub block_type: BlockType,
-    // Difficulty of the block
+    /// Difficulty of the block
     pub difficulty: Cow<'a, Difficulty>,
-    // Cumulative difficulty up to this block
+    /// Cumulative difficulty up to this block
     pub cumulative_difficulty: Cow<'a, CumulativeDifficulty>,
-    // Total size of the block including TXs in bytes
+    /// Total size of the block including TXs in bytes
     pub total_size_in_bytes: usize,
-    // Block version
+    /// Block version
     pub version: BlockVersion,
-    // Previous block hashes
+    /// Previous block hashes
     pub tips: Cow<'a, IndexSet<Hash>>,
-    // timestamp of the block in milliseconds
+    /// timestamp of the block in milliseconds
     pub timestamp: TimestampMillis,
-    // Height of the block
+    /// Height of the block
     pub height: u64,
-    // Nonce used to mine the block
+    /// Nonce used to mine the block
     pub nonce: Nonce,
+    /// Extra nonce value.
     #[serde(serialize_with = "serialize_extra_nonce")]
     #[serde(deserialize_with = "deserialize_extra_nonce")]
+    #[schemars(with = "String", description = "Hexadecimal representation of the 32-byte extra nonce")]
     pub extra_nonce: Cow<'a, [u8; EXTRA_NONCE_SIZE]>,
+    /// Miner address.
     pub miner: Cow<'a, Address>,
+    /// Transaction hashes included in the block.
     pub txs_hashes: Cow<'a, IndexSet<Hash>>,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct RPCBlockResponse<'a> {
-    // Block hash
+    /// Block hash
     #[serde(flatten)]
     pub header: RPCBlockHeaderResponse<'a>,
+    /// Transactions value.
     #[serde(default)]
     pub transactions: Vec<RPCTransaction<'a>>,
 }
@@ -161,59 +166,61 @@ impl<'a> DerefMut for RPCBlockResponse<'a> {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct GetMempoolParams {
+    /// Maximum transactions to fetch.
     pub maximum: Option<usize>,
+    /// Number of transactions to skip.
     pub skip: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MempoolTransactionSummary<'a> {
-    // TX hash
+    /// TX hash
     pub hash: Cow<'a, Hash>,
-    // The current sender
+    /// The current sender
     pub source: Address,
-    // Fees expected to be paid
+    /// Fees expected to be paid
     pub fee: u64,
-    // First time seen in the mempool
+    /// First time seen in the mempool
     pub first_seen: TimestampSeconds,
-    // Size of the TX
+    /// Size of the TX
     pub size: usize,
-    // Fee per KB
+    /// Fee per KB
     pub fee_per_kb: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TransactionSummary<'a> {
-    // TX hash
+    /// TX hash
     pub hash: Cow<'a, Hash>,
-    // The current sender
+    /// The current sender
     pub source: Address,
-    // Fees expected to be paid
+    /// Fees expected to be paid
     pub fee: u64,
-    // Size of the TX
+    /// Size of the TX
     pub size: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PredicatedBaseFeeResult {
-    // Current fee per KB based on the blockchain state
+    /// Current fee per KB based on the blockchain state
     pub fee_per_kb: u64,
-    // Predicated fee per KB based on the mempool state
+    /// Predicated fee per KB based on the mempool state
     pub predicated_fee_per_kb: u64,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetMempoolResult<'a> {
-    // The range of transactions requested
+    /// The range of transactions requested
     pub transactions: Vec<GetTransactionResult<'a>>,
-    // How many TXs in total available in mempool
+    /// How many TXs in total available in mempool
     pub total: usize,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetMempoolSummaryResult<'a> {
-    // The range of transactions requested
+    /// The range of transactions requested
     pub transactions: Vec<MempoolTransactionSummary<'a>>,
-    // How many TXs in total available in mempool
+    /// How many TXs in total available in mempool
     pub total: usize,
 }
 
@@ -221,161 +228,198 @@ pub type BlockResponse = RPCBlockResponse<'static>;
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetTopBlockParams {
+    /// Whether to include full transactions in the top block response.
     #[serde(default)]
     pub include_txs: bool
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetBlockAtTopoHeightParams {
+    /// Topoheight of the block to fetch.
     pub topoheight: TopoHeight,
+    /// Whether to include full transactions in the response.
     #[serde(default)]
     pub include_txs: bool
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
+pub struct GetBlockSummaryAtTopoheightParams {
+    /// Topoheight of the block summary to fetch.
+    pub topoheight: TopoHeight,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetBlockSummaryByHashParams<'a> {
+    /// Block hash of the summary to fetch.
     pub hash: Cow<'a, Hash>
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetBlocksAtHeightParams {
+    /// Height whose blocks should be fetched.
     pub height: u64,
+    /// Whether to include full transactions in the response.
     #[serde(default)]
     pub include_txs: bool
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetBlockByHashParams<'a> {
+    /// Block hash to fetch.
     pub hash: Cow<'a, Hash>,
+    /// Whether to include full transactions in the response.
     #[serde(default)]
     pub include_txs: bool
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetBlockTemplateParams<'a> {
+    /// Miner address to use in the block template.
     pub address: Cow<'a, Address>
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetMinerWorkParams<'a> {
-    // Block Template in hexadecimal format
+    /// Block Template in hexadecimal format
     pub template: Cow<'a, String>,
-    // Address of the miner, if empty, it will use the address from template
+    /// Address of the miner, if empty, it will use the address from template
     pub address: Option<Cow<'a, Address>>,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetBlockTemplateResult {
-    // block_template is Block Header in hexadecimal format
-    // miner jobs can be created from it
+    /// block_template is Block Header in hexadecimal format
+    /// miner jobs can be created from it
     pub template: String,
-    // Algorithm to use for the POW challenge
+    /// Algorithm to use for the POW challenge
     pub algorithm: Algorithm,
-    // Blockchain height
+    /// Blockchain height
     pub height: u64,
-    // Topoheight of the daemon
+    /// Topoheight of the daemon
     pub topoheight: TopoHeight,
-    // Difficulty target for the POW challenge
+    /// Difficulty target for the POW challenge
     pub difficulty: Difficulty,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct GetMinerWorkResult {
-    // algorithm to use
+    /// algorithm to use
     pub algorithm: Algorithm,
-    // template is miner job in hex format
+    /// template is miner job in hex format
     pub miner_work: String,
-    // block height
+    /// block height
     pub height: u64,
-    // difficulty required for valid block POW
+    /// difficulty required for valid block POW
     pub difficulty: Difficulty,
-    // topoheight of the daemon
-    // this is for visual purposes only
+    /// topoheight of the daemon
+    /// this is for visual purposes only
     pub topoheight: TopoHeight,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct SubmitMinerWorkParams {
-    // hex: represent block miner in hexadecimal format
-    // NOTE: alias block_template is used for backward compatibility < 1.9.4
+    /// hex: represent block miner in hexadecimal format
+    /// NOTE: alias block_template is used for backward compatibility < 1.9.4
     #[serde(alias = "miner_work", alias = "block_template")]
     pub miner_work: String,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct SubmitBlockParams {
-    // hex: represent the BlockHeader (Block)
+    /// hex: represent the BlockHeader (Block)
     pub block_template: String,
-    // optional miner work to apply to the block template
+    /// optional miner work to apply to the block template
     pub miner_work: Option<String>
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetBalanceParams<'a> {
+    /// Address used by this field.
     pub address: Cow<'a, Address>,
+    /// Asset hash.
     pub asset: Cow<'a, Hash>
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct HasBalanceParams<'a> {
+    /// Address used by this field.
     pub address: Cow<'a, Address>,
+    /// Asset hash.
     pub asset: Cow<'a, Hash>,
+    /// Optional topoheight at which to test the balance.
     #[serde(default)]
     pub topoheight: Option<TopoHeight>
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct HasBalanceResult {
+    /// Whether the balance exists.
     pub exist: bool
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetBalanceAtTopoHeightParams<'a> {
+    /// Address used by this field.
     pub address: Cow<'a, Address>,
+    /// Asset hash.
     pub asset: Cow<'a, Hash>,
+    /// Exact topoheight at which to fetch the balance.
     pub topoheight: TopoHeight
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetBalancesAtMaximumTopoHeightParams<'a> {
+    /// Address used by this field.
     pub address: Cow<'a, Address>,
+    /// Asset hashes.
     pub assets: IndexSet<Cow<'a, Hash>>,
+    /// Maximum topoheight to search at or below.
     pub maximum_topoheight: TopoHeight
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetNonceParams<'a> {
+    /// Address used by this field.
     pub address: Cow<'a, Address>
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct HasNonceParams<'a> {
+    /// Address used by this field.
     pub address: Cow<'a, Address>,
+    /// Optional topoheight at which to test the nonce.
     #[serde(default)]
     pub topoheight: Option<TopoHeight>
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetNonceAtTopoHeightParams<'a> {
+    /// Address used by this field.
     pub address: Cow<'a, Address>,
+    /// Exact topoheight at which to fetch the nonce.
     pub topoheight: TopoHeight
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetNonceResult {
+    /// Topoheight used by this request.
     pub topoheight: TopoHeight,
+    /// Versioned nonce data.
     #[serde(flatten)]
     pub version: VersionedNonce
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct HasNonceResult {
+    /// Whether the nonce exists.
     pub exist: bool
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetBalanceResult {
+    /// Versioned balance data.
     pub version: VersionedBalance,
+    /// Topoheight of the returned balance version.
     pub topoheight: TopoHeight
 }
 
@@ -393,51 +437,62 @@ pub struct GetStableBalanceResult {
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetInfoResult {
+    /// Current chain height.
     pub height: u64,
+    /// Current chain topoheight.
     pub topoheight: TopoHeight,
+    /// Current stable chain height.
     pub stableheight: u64,
+    /// Current stable topoheight.
     pub stable_topoheight: TopoHeight,
+    /// Pruned topoheight if the chain is pruned.
     pub pruned_topoheight: Option<TopoHeight>,
+    /// Hash of the current top block.
     pub top_block_hash: Hash,
-    // Current XELIS circulating supply
-    // This is calculated by doing
-    // emitted_supply - burned_supply
+    /// Current XELIS circulating supply
+    /// This is calculated by doing
+    /// emitted_supply - burned_supply
     pub circulating_supply: u64,
-    // Burned XELIS supply
+    /// Burned XELIS supply
     #[serde(default)]
     pub burned_supply: u64,
-    // Emitted XELIS supply
+    /// Emitted XELIS supply
     #[serde(default)]
     pub emitted_supply: u64,
-    // Maximum supply of XELIS
+    /// Maximum supply of XELIS
     pub maximum_supply: u64,
-    // Current difficulty at tips
+    /// Current difficulty at tips
     pub difficulty: Difficulty,
-    // Expected block time in milliseconds
+    /// Expected block time in milliseconds
     pub block_time_target: u64,
-    // Average block time of last 50 blocks
-    // in milliseconds
+    /// Average block time of last 50 blocks
+    /// in milliseconds
     pub average_block_time: u64,
+    /// Current total block reward.
     pub block_reward: u64,
+    /// Current dev fee reward.
     pub dev_reward: u64,
+    /// Current miner reward.
     pub miner_reward: u64,
-    // count how many transactions are present in mempool
+    /// count how many transactions are present in mempool
     pub mempool_size: usize,
-    // software version on which the daemon is running
+    /// software version on which the daemon is running
     pub version: String,
-    // Network state (mainnet, testnet, devnet)
+    /// Network state (mainnet, testnet, devnet)
     pub network: Network,
-    // Current block version enabled
+    /// Current block version enabled
     pub block_version: BlockVersion,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct SubmitTransactionParams {
-    pub data: String // should be in hex format
+    /// Transaction serialized in hexadecimal format.
+    pub data: String
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetTransactionParams<'a> {
+    /// Transaction hash to fetch.
     pub hash: Cow<'a, Hash>
 }
 
@@ -445,79 +500,110 @@ pub type GetTransactionExecutorParams<'a> = GetTransactionParams<'a>;
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetTransactionExecutorResult<'a> {
+    /// Topoheight of the block.
     pub block_topoheight: TopoHeight,
+    /// Timestamp of the block in milliseconds.
     pub block_timestamp: TimestampMillis,
+    /// Block hash.
     pub block_hash: Cow<'a, Hash>
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetPeersResponse<'a> {
-    // Peers that are connected and allows to be displayed
+    /// Peers that are connected and allows to be displayed
     pub peers: Vec<PeerEntry<'a>>,
-    // All peers connected
+    /// All peers connected
     pub total_peers: usize,
-    // Peers that asked to not be listed
+    /// Peers that asked to not be listed
     pub hidden_peers: usize
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct PeerEntry<'a> {
+    /// Identifier for this entry.
     pub id: u64,
+    /// Peer socket address.
     pub addr: Cow<'a, SocketAddr>,
+    /// Local port used by the peer.
     pub local_port: u16,
+    /// Optional tag.
     pub tag: Cow<'a, Option<String>>,
+    /// Version information.
     pub version: Cow<'a, String>,
+    /// Top block hash.
     pub top_block_hash: Cow<'a, Hash>,
+    /// Topoheight used by this request.
     pub topoheight: TopoHeight,
+    /// Block height.
     pub height: u64,
+    /// Timestamp of the last peer ping.
     pub last_ping: TimestampSeconds,
+    /// Peer pruned topoheight if available.
     pub pruned_topoheight: Option<TopoHeight>,
+    /// Known peers.
     pub peers: Cow<'a, HashMap<SocketAddr, TimedDirection>>,
+    /// Cumulative difficulty.
     pub cumulative_difficulty: Cow<'a, CumulativeDifficulty>,
+    /// Timestamp when the peer connected.
     pub connected_on: TimestampSeconds,
+    /// Bytes sent to the peer.
     pub bytes_sent: usize,
+    /// Bytes received from the peer.
     pub bytes_recv: usize,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct P2pStatusResult<'a> {
+    /// Number of connected peers.
     pub peer_count: usize,
+    /// Maximum number of peers allowed.
     pub max_peers: usize,
+    /// Optional tag.
     pub tag: Cow<'a, Option<String>>,
+    /// Local node topoheight.
     pub our_topoheight: TopoHeight,
+    /// Best topoheight among peers.
     pub best_topoheight: TopoHeight,
+    /// Median peer topoheight.
     pub median_topoheight: TopoHeight,
+    /// Local peer identifier.
     pub peer_id: u64
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetTopoHeightRangeParams {
+    /// Start topoheight of the requested range.
     pub start_topoheight: Option<TopoHeight>,
+    /// End topoheight of the requested range.
     pub end_topoheight: Option<TopoHeight>
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetHeightRangeParams {
+    /// Start height of the requested range.
     pub start_height: Option<u64>,
+    /// End height of the requested range.
     pub end_height: Option<u64>
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetTransactionsParams {
+    /// Transaction hashes used by this request.
     pub tx_hashes: Vec<Hash>
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetTransactionResult<'a> {
-    // in which blocks it was included
+    /// in which blocks it was included
     pub blocks: Option<HashSet<Hash>>,
-    // in which blocks it was executed
+    /// in which blocks it was executed
     pub executed_in_block: Option<Hash>,
-    // if it is in mempool
+    /// if it is in mempool
     pub in_mempool: bool,
-    // if its a mempool tx, we add the timestamp when it was added
+    /// if its a mempool tx, we add the timestamp when it was added
     #[serde(default)]
     pub first_seen: Option<TimestampSeconds>,
+    /// Flattened transaction data.
     #[serde(flatten)]
     pub data: RPCTransaction<'a>
 }
@@ -528,15 +614,19 @@ fn default_xelis_asset() -> Hash {
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetAccountHistoryParams {
+    /// Address whose history should be fetched.
     pub address: Address,
+    /// Asset hash whose history should be fetched.
     #[serde(default = "default_xelis_asset")]
     pub asset: Hash,
+    /// Minimum topoheight filter.
     pub minimum_topoheight: Option<TopoHeight>,
+    /// Maximum topoheight filter.
     pub maximum_topoheight: Option<TopoHeight>,
-    // Any incoming funds tracked
+    /// Any incoming funds tracked
     #[serde(default = "default_true_value")]
     pub incoming_flow: bool,
-    // Any outgoing funds tracked
+    /// Any outgoing funds tracked
     #[serde(default = "default_true_value")]
     pub outgoing_flow: bool,
 }
@@ -544,40 +634,57 @@ pub struct GetAccountHistoryParams {
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")] 
 pub enum AccountHistoryType {
-    DevFee { reward: u64 },
-    Mining { reward: u64 },
+    DevFee {
+        /// Developer fee reward amount.
+        reward: u64
+    },
+    Mining {
+        /// Mining reward amount.
+        reward: u64
+    },
     Burn {
+        /// Asset hash burned.
         asset: Hash,
+        /// Amount burned.
         amount: u64,
     },
     Outgoing {
+        /// Asset hash sent.
         asset: Hash,
+        /// Destination address.
         to: Address
     },
     Incoming {
+        /// Asset hash received.
         asset: Hash,
+        /// Source address.
         from: Address
     },
     MultiSig {
+        /// Multisig participant addresses.
         participants: Vec<Address>,
+        /// Number of signatures required.
         threshold: u8,
     },
     InvokeContract {
+        /// Invoked contract hash.
         contract: Hash,
+        /// Contract entry identifier.
         entry_id: u16,
+        /// Assets deposited into the invocation.
         deposits: IndexSet<Hash>,
     },
-    // Contract hash is already stored
-    // by the parent struct
+    /// Contract hash is already stored by the parent struct.
     DeployContract {
+        /// Assets deposited during deployment.
         deposits: Option<IndexSet<Hash>>,
     },
     FromContract {
-        // Contract that sent the funds
+        /// Contract that sent the funds.
         contract: Hash,
-        // All assets received from the contract
+        /// Asset received from the contract.
         asset: Hash,
-        // Amount received from the contract
+        /// Amount received from the contract.
         amount: u64,
     },
     Blob
@@ -585,44 +692,62 @@ pub enum AccountHistoryType {
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct AccountHistoryEntry {
+    /// Topoheight used by this request.
     pub topoheight: TopoHeight,
+    /// Block hash.
     pub hash: Hash,
+    /// History type value.
     #[serde(flatten)]
     pub history_type: AccountHistoryType,
+    /// Timestamp of the block in milliseconds.
     pub block_timestamp: TimestampMillis
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetAccountAssetsParams<'a> {
+    /// Address used by this field.
     pub address: Cow<'a, Address>,
+    /// Number of entries to skip.
     pub skip: Option<usize>,
+    /// Maximum number of entries to return.
     pub maximum: Option<usize>
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetAssetParams<'a> {
+    /// Asset hash.
     pub asset: Cow<'a, Hash>
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetAssetSupplyAtTopoHeightParams<'a> {
+    /// Asset hash.
     pub asset: Cow<'a, Hash>,
+    /// Topoheight at which to fetch the supply.
     pub topoheight: TopoHeight
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetAssetsParams {
+    /// Number of entries to skip.
     pub skip: Option<usize>,
+    /// Maximum number of entries to return.
     pub maximum: Option<usize>,
+    /// Minimum topoheight filter.
     pub minimum_topoheight: Option<TopoHeight>,
+    /// Maximum topoheight filter.
     pub maximum_topoheight: Option<TopoHeight>
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetAccountsParams {
+    /// Number of entries to skip.
     pub skip: Option<usize>,
+    /// Maximum number of entries to return.
     pub maximum: Option<usize>,
+    /// Minimum topoheight filter.
     pub minimum_topoheight: Option<TopoHeight>,
+    /// Maximum topoheight filter.
     pub maximum_topoheight: Option<TopoHeight>
 }
 
@@ -657,176 +782,219 @@ pub struct PruneChainResult {
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetContractsParams {
+    /// Number of entries to skip.
     pub skip: Option<usize>,
+    /// Maximum number of entries to return.
     pub maximum: Option<usize>,
+    /// Minimum topoheight filter.
     pub minimum_topoheight: Option<TopoHeight>,
+    /// Maximum topoheight filter.
     pub maximum_topoheight: Option<TopoHeight>
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetContractDataEntriesParams<'a> {
+    /// Contract hash.
     pub contract: Cow<'a, Hash>,
+    /// Minimum topoheight filter.
     pub minimum_topoheight: Option<TopoHeight>,
+    /// Maximum topoheight filter.
     pub maximum_topoheight: Option<TopoHeight>,
+    /// Number of entries to skip.
     pub skip: Option<usize>,
+    /// Maximum number of entries to return.
     pub maximum: Option<usize>
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetContractTransactionsParams<'a> {
+    /// Contract hash.
     pub contract: Cow<'a, Hash>,
+    /// Number of entries to skip.
     pub skip: Option<usize>,
+    /// Maximum number of entries to return.
     pub maximum: Option<usize>
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct ContractDataEntry {
+    /// Contract storage key.
     pub key: ValueCell,
+    /// Contract storage value.
     pub value: ValueCell,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct IsAccountRegisteredParams<'a> {
+    /// Address used by this field.
     pub address: Cow<'a, Address>,
-    // If it is registered in stable height (confirmed)
+    /// If it is registered in stable height (confirmed)
     pub in_stable_height: bool,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetAccountRegistrationParams<'a> {
+    /// Address used by this field.
     pub address: Cow<'a, Address>,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct IsTxExecutedInBlockParams<'a> {
+    /// Transaction hash.
     pub tx_hash: Cow<'a, Hash>,
+    /// Block hash.
     pub block_hash: Cow<'a, Hash>
 }
 
-// Struct to define dev fee threshold
+/// Struct to define dev fee threshold
 #[derive(serde::Serialize, serde::Deserialize, JsonSchema)]
 pub struct DevFeeThreshold {
-    // block height to start dev fee
+    /// block height to start dev fee
     pub height: u64,
-    // percentage of dev fee, example 10 = 10%
+    /// percentage of dev fee, example 10 = 10%
     pub fee_percentage: u64
 }
 
-// Struct to define hard fork
+/// Struct to define hard fork
 #[derive(Debug, serde::Serialize, serde::Deserialize, JsonSchema)]
 pub struct HardFork {
-    // block height to start hard fork
+    /// block height to start hard fork
     pub height: u64,
-    // Block version to use
+    /// Block version to use
     pub version: BlockVersion,
-    // All the changes that will be applied
+    /// All the changes that will be applied
     pub changelog: &'static str,
-    // Version requirement, example: >=1.13.0
-    // This is used for p2p protocol
+    /// Version requirement, example: >=1.13.0
+    /// This is used for p2p protocol
     pub version_requirement: Option<&'static str>,
 }
 
-// Struct to returns the size of the blockchain on disk
+/// Struct to returns the size of the blockchain on disk
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct SizeOnDiskResult {
+    /// Blockchain size on disk in bytes.
     pub size_bytes: u64,
+    /// Human-readable blockchain size on disk.
     pub size_formatted: String
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetMempoolCacheParams<'a> {
+    /// Address used by this field.
     pub address: Cow<'a, Address>
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetMempoolCacheResult {
     // lowest nonce used
+    /// Min value.
     min: Nonce,
     // highest nonce used
+    /// Maximum number of entries to return.
     max: Nonce,
     // all txs ordered by nonce
+    /// Txs value.
     txs: Vec<Hash>,
     // All "final" cached balances used
+    /// Final cached balances by asset.
     balances: HashMap<Hash, CiphertextCache>
 }
 
-// This struct is used to store the fee rate estimation for the following priority levels:
-// 1. Low
-// 2. Medium
-// 3. High
-// Each priority is in fee per KB.  It cannot be below `FEE_PER_KB` which is required by the network.
+/// This struct is used to store the fee rate estimation for the following priority levels:
+/// 1. Low
+/// 2. Medium
+/// 3. High
+/// Each priority is in fee per KB.  It cannot be below `FEE_PER_KB` which is required by the network.
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct FeeRatesEstimated {
+    /// Estimated low priority fee rate per KB.
     pub low: u64,
+    /// Estimated medium priority fee rate per KB.
     pub medium: u64,
+    /// Estimated high priority fee rate per KB.
     pub high: u64,
-    // The minimum fee rate possible on the network
+    /// The minimum fee rate possible on the network
     pub default: u64
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetBlockDifficultyByHashParams<'a> {
+    /// Block hash.
     pub block_hash: Cow<'a, Hash>
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetDifficultyResult {
+    /// Current network difficulty.
     pub difficulty: Difficulty,
+    /// Estimated network hashrate.
     pub hashrate: Difficulty,
+    /// Human-readable estimated network hashrate.
     pub hashrate_formatted: String
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetBlockBaseFeeByHashParams<'a> {
+    /// Block hash.
     pub block_hash: Cow<'a, Hash>
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetBlockBaseFeeByHashResult {
+    /// Base fee per KB for the block.
     pub fee_per_kb: u64,
+    /// Block size EMA at the block.
     pub block_size_ema: usize,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetBlockSummaryResult<'a> {
-    // Hash of the block header
+    /// Hash of the block header
     pub block_hash: Cow<'a, Hash>,
-    // Height of the block
+    /// Height of the block
     pub height: u64,
-    // Timestamp of the block in milliseconds
+    /// Timestamp of the block in milliseconds
     pub timestamp: TimestampMillis,
-    // Miner address
+    /// Miner address
     pub miner: Cow<'a, Address>,
-    // Transactions included in the block
+    /// Transactions included in the block
     pub transactions: Vec<TransactionSummary<'a>>,
-    // Type of the block (sync, side, orphaned, normal)
+    /// Type of the block (sync, side, orphaned, normal)
     pub block_type: BlockType,
-    // Difficulty of the block
+    /// Difficulty of the block
     pub difficulty: Cow<'a, Difficulty>,
-    // Cumulative difficulty up to this block
+    /// Cumulative difficulty up to this block
     pub cumulative_difficulty: Cow<'a, CumulativeDifficulty>,
+    /// Metadata value.
     #[serde(flatten)]
     pub metadata: Option<RPCTopoHeightMetadata>,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct ValidateAddressParams<'a> {
+    /// Address used by this field.
     pub address: Cow<'a, Address>,
+    /// Whether integrated addresses are allowed.
     #[serde(default)]
     pub allow_integrated: bool,
+    /// Maximum integrated data size allowed.
     #[serde(default)]
     pub max_integrated_data_size: Option<usize>
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct ValidateAddressResult {
+    /// Whether the address is valid.
     pub is_valid: bool,
+    /// Whether the address contains integrated data.
     pub is_integrated: bool
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct ExtractKeyFromAddressParams<'a> {
+    /// Address used by this field.
     pub address: Cow<'a, Address>,
+    /// Whether to return the key as hexadecimal.
     #[serde(default)]
     pub as_hex: bool
 }
@@ -847,80 +1015,99 @@ pub enum ExtractKeyFromAddressResult {
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct MakeIntegratedAddressParams<'a> {
+    /// Address used by this field.
     pub address: Cow<'a, Address>,
+    /// Integrated data.
     pub integrated_data: Cow<'a, DataElement>
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct DecryptExtraDataParams<'a> {
+    /// Shared key.
     pub shared_key: Cow<'a, SharedKey>,
+    /// Extra data carried by this field.
     pub extra_data: Cow<'a, UnknownExtraDataFormat>
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MultisigState {
-    // If the user has deleted its multisig at requested topoheight
+    /// The user deleted its multisig at the requested topoheight.
     Deleted,
-    // If the user has a multisig at requested topoheight
+    /// The user has an active multisig at the requested topoheight.
     Active {
+        /// Multisig participant addresses.
         participants: Vec<Address>,
+        /// Number of signatures required.
         threshold: u8
     }
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetMultisigAtTopoHeightParams<'a> {
+    /// Address used by this field.
     pub address: Cow<'a, Address>,
+    /// Topoheight used by this request.
     pub topoheight: TopoHeight
 }
 
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetMultisigAtTopoHeightResult {
+    /// Multisig state at the requested topoheight.
     pub state: MultisigState,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetMultisigParams<'a> {
+    /// Address used by this field.
     pub address: Cow<'a, Address>
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetMultisigResult {
-    // State at topoheight
+    /// State at topoheight
     pub state: MultisigState,
-    // Topoheight of the last change
+    /// Topoheight of the last change
     pub topoheight: TopoHeight
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct HasMultisigParams<'a> {
+    /// Address used by this field.
     pub address: Cow<'a, Address>
 }
 
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct HasMultisigAtTopoHeightParams<'a> {
+    /// Address used by this field.
     pub address: Cow<'a, Address>,
+    /// Topoheight used by this request.
     pub topoheight: TopoHeight
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetContractLogsParams<'a> {
+    /// Caller hash.
     pub caller: Cow<'a, Hash>
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetContractScheduledExecutionsAtTopoHeightParams {
+    /// Topoheight whose scheduled executions should be fetched.
     pub topoheight: TopoHeight,
+    /// Maximum number of entries to return.
     pub max: Option<usize>,
+    /// Number of entries to skip.
     pub skip: Option<usize>,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetContractOutputsParams<'a> {
+    /// Address used by this field.
     pub address: Cow<'a, Address>,
+    /// Topoheight used by this request.
     pub topoheight: TopoHeight,
 }
 
@@ -930,104 +1117,125 @@ pub struct GetContractsOutputsResult<'a> {
         serialize_with = "serialize_map_as_list",
         deserialize_with = "deserialize_map_as_list"
     )]
+    /// Contract executions.
+    #[schemars(with = "Vec<KV<ContractTransfersEntryKey<'a>, ContractTransfersEntry<'a>>>")]
     pub executions: HashMap<ContractTransfersEntryKey<'a>, ContractTransfersEntry<'a>>,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetContractModuleParams<'a> {
+    /// Contract hash.
     pub contract: Cow<'a, Hash>
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetContractDataParams<'a> {
+    /// Contract hash.
     pub contract: Cow<'a, Hash>,
+    /// Key used by this field.
     pub key: Cow<'a, ValueCell>
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetContractDataAtTopoHeightParams<'a> {
+    /// Contract hash.
     pub contract: Cow<'a, Hash>,
+    /// Key used by this field.
     pub key: Cow<'a, ValueCell>,
+    /// Topoheight at which to fetch contract data.
     pub topoheight: TopoHeight
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetContractBalanceParams<'a> {
+    /// Contract hash.
     pub contract: Cow<'a, Hash>,
+    /// Asset hash.
     pub asset: Cow<'a, Hash>,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetContractBalanceAtTopoHeightParams<'a> {
+    /// Contract hash.
     pub contract: Cow<'a, Hash>,
+    /// Asset hash.
     pub asset: Cow<'a, Hash>,
+    /// Topoheight at which to fetch the contract balance.
     pub topoheight: TopoHeight
 }
 
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetContractAssetsParams<'a> {
+    /// Contract hash.
     pub contract: Cow<'a, Hash>,
+    /// Number of entries to skip.
     pub skip: Option<usize>,
+    /// Maximum number of entries to return.
     pub maximum: Option<usize>
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct SimulateContractInvokeParams<'a> {
-    // The caller of the contract
+    /// The caller of the contract
     pub source: Cow<'a, Address>,
-    // The contract address
-    // Contract are the TXID of the transaction that deployed the contract
+    /// The contract address
+    /// Contract are the TXID of the transaction that deployed the contract
     pub contract: Cow<'a, Hash>,
-    // Assets deposited with this call
+    /// Assets deposited with this call
     pub deposits: Cow<'a, Deposits>,
-    // The chunk to invoke
-    // It can only be a entry id
+    /// The chunk to invoke
+    /// It can only be a entry id
     pub entry_id: u16,
-    // The parameters to call the contract
+    /// The parameters to call the contract
     pub parameters: Cow<'a, Vec<ValueCell>>,
-    // The permission of this contract call
-    // It is used to restrict access to certain inter-contracts.
+    /// The permission of this contract call
+    /// It is used to restrict access to certain inter-contracts.
     #[serde(default)]
     pub permission: Cow<'a, InterContractPermission>,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct SimulateContractInvokeResult<'a> {
-    // Current base fee per KB based on the blockchain state
+    /// Current base fee per KB based on the blockchain state
     pub base_fee: u64,
-    // Result of the execution of the contract,
-    // it contains the used gas and the returned value if any
+    /// Result of the execution of the contract,
+    /// it contains the used gas and the returned value if any
     pub result: ExecutionResult,
-    // Block hash used for the estimation, it is the best block at the time of estimation
+    /// Block hash used for the estimation, it is the best block at the time of estimation
     pub block_hash: Cow<'a, Hash>,
-    // Block topoheight used for the estimation, it is the best block at the time of estimation
+    /// Block topoheight used for the estimation, it is the best block at the time of estimation
     pub topoheight: TopoHeight,
 }
 
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct RPCVersioned<T> {
+    /// Topoheight of the versioned value.
     pub topoheight: TopoHeight,
+    /// Versioned value.
     #[serde(flatten)]
     pub version: T
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct P2pBlockPropagationResult {
-    // peer id => entry
+    /// peer id => entry
     pub peers: HashMap<u64, TimedDirection>,
-    // When was the first time we saw this block
+    /// When was the first time we saw this block
     pub first_seen: Option<TimestampMillis>,
-    // At which time we started to process it
+    /// At which time we started to process it
     pub processing_at: Option<TimestampMillis>,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetP2pBlockPropagationParams<'a> {
+    /// Hash used by this field.
     pub hash: Cow<'a, Hash>,
+    /// Whether outgoing propagation entries are included.
     #[serde(default = "default_true_value")]
     pub outgoing: bool,
+    /// Whether incoming propagation entries are included.
     #[serde(default = "default_true_value")]
     pub incoming: bool,
 }
@@ -1073,21 +1281,22 @@ pub enum NotifyEvent {
     // When the contract has been invoked
     // This allows to track all the contract invocations
     ContractInvoke {
+        /// Contract hash to track.
         contract: Hash
     },
     // When a contract has transfered any asset
     // to the receiver address
     // It contains ContractTransfersEvent struct as value
     ContractTransfers {
+        /// Receiver address to track.
         address: Address
     },
     // When a contract fire an event
     // It contains ContractEvent struct as value
     ContractEvent {
-        // Contract hash to track
+        /// Contract hash to track.
         contract: Hash,
-        // ID of the event that is fired from the contract
-        // if set to None, it will track all events from the contract
+        /// Event identifier to track. If unset, all events from the contract are tracked.
         id: Option<u64>
     },
     // When a new contract has been deployed
@@ -1115,170 +1324,192 @@ pub enum NotifyEvent {
     NewBlockTemplate,
 }
 
-// Value of NotifyEvent::NewTopoHeight
+/// Value of NotifyEvent::NewTopoHeight
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct NewTopoHeightEvent {
+    /// New topoheight value.
     pub new_topoheight: TopoHeight,
 }
 
-// Value of NotifyEvent::NewBlock
+/// Value of NotifyEvent::NewBlock
 pub type NewBlockEvent = BlockResponse;
 
-// Value of NotifyEvent::BlockOrdered
+/// Value of NotifyEvent::BlockOrdered
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct BlockOrderedEvent<'a> {
-    // block hash in which this event was triggered
+    /// block hash in which this event was triggered
     pub block_hash: Cow<'a, Hash>,
+    /// Block type value.
     pub block_type: BlockType,
-    // the new topoheight of the block
+    /// the new topoheight of the block
     pub topoheight: TopoHeight,
 }
 
-// Value of NotifyEvent::BlockOrphaned
+/// Value of NotifyEvent::BlockOrphaned
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct BlockOrphanedEvent<'a> {
+    /// Block hash.
     pub block_hash: Cow<'a, Hash>,
-    // Tpoheight of the block before being orphaned
+    /// Tpoheight of the block before being orphaned
     pub old_topoheight: TopoHeight
 }
 
-// Value of NotifyEvent::StableHeightChanged
+/// Value of NotifyEvent::StableHeightChanged
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct StableHeightChangedEvent {
+    /// Previous stable height value.
     pub previous_stable_height: u64,
+    /// New stable height value.
     pub new_stable_height: u64
 }
 
-// Value of NotifyEvent::StableTopoHeightChanged
+/// Value of NotifyEvent::StableTopoHeightChanged
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct StableTopoHeightChangedEvent {
+    /// Previous stable topoheight value.
     pub previous_stable_topoheight: TopoHeight,
+    /// New stable topoheight value.
     pub new_stable_topoheight: TopoHeight
 }
 
-// Value of NotifyEvent::TransactionAddedInMempool
+/// Value of NotifyEvent::TransactionAddedInMempool
 pub type TransactionAddedInMempoolEvent = MempoolTransactionSummary<'static>;
-// Value of NotifyEvent::TransactionOrphaned
+/// Value of NotifyEvent::TransactionOrphaned
 pub type TransactionOrphanedEvent = GetTransactionResult<'static>;
 
-// Value of NotifyEvent::TransactionExecuted
+/// Value of NotifyEvent::TransactionExecuted
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct TransactionExecutedEvent<'a> {
+    /// Block hash.
     pub block_hash: Cow<'a, Hash>,
+    /// Transaction hash.
     pub tx_hash: Cow<'a, Hash>,
+    /// Topoheight used by this request.
     pub topoheight: TopoHeight,
 }
 
-// Value of NotifyEvent::NewAsset
+/// Value of NotifyEvent::NewAsset
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct NewAssetEvent<'a> {
+    /// Asset hash.
     pub asset: Cow<'a, Hash>,
+    /// Block hash.
     pub block_hash: Cow<'a, Hash>,
+    /// Topoheight used by this request.
     pub topoheight: TopoHeight,
 }
 
 #[derive(Default, Serialize, Deserialize, JsonSchema)]
 pub struct ContractTransfersEntry<'a> {
-    // Assets transferred to the key
+    /// Assets transferred to the key
     pub transfers: HashMap<Cow<'a, Hash>, u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub struct ContractTransfersEntryKey<'a> {
-    // Contract hash that has been executed
+    /// Contract hash that has been executed
     pub contract: Cow<'a, Hash>,
-    // Caller hash that triggered this transfer
-    // See `ContractCaller`
+    /// Caller hash that triggered this transfer
+    /// See `ContractCaller`
     pub caller: Cow<'a, Hash>,
 }
 
-// Value of NotifyEvent::ContractTransfer
+/// Value of NotifyEvent::ContractTransfer
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct ContractTransfersEvent<'a> {
-    // Block hash in which this transfer happened
+    /// Block hash in which this transfer happened
     pub block_hash: Cow<'a, Hash>,
-    // Block timestamp
+    /// Block timestamp
     pub block_timestamp: TimestampMillis,
     // All executions that transferred to the given address
     #[serde(
         serialize_with = "serialize_map_as_list",
         deserialize_with = "deserialize_map_as_list"
     )]
+    /// Contract executions.
+    #[schemars(with = "Vec<KV<ContractTransfersEntryKey<'a>, ContractTransfersEntry<'a>>>")]
     pub executions: HashMap<ContractTransfersEntryKey<'a>, ContractTransfersEntry<'a>>,
-    // Block topoheight in which this transfer happened
+    /// Block topoheight in which this transfer happened
     pub topoheight: TopoHeight,
 }
 
-// Value of NotifyEvent::ContractCallError
+/// Value of NotifyEvent::ContractCallError
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct InvokeContractError<'a> {
-    // The error message that was returned by the contract
-    // maximum 256 characters, if it is longer, it will be truncated
+    /// The error message that was returned by the contract
+    /// maximum 256 characters, if it is longer, it will be truncated
     pub error: Cow<'a, str>,
-    // TX Hash that triggered this error
+    /// TX Hash that triggered this error
     pub tx_hash: Cow<'a, Hash>,
-    // Block hash in which this error was triggered
+    /// Block hash in which this error was triggered
     pub block_hash: Cow<'a, Hash>,
-    // Block timestamp
+    /// Block timestamp
     pub block_timestamp: TimestampMillis,
-    // Block topoheight in which this transfer happened
+    /// Block topoheight in which this transfer happened
     pub topoheight: TopoHeight,
 }
 
-// Value of NotifyEvent::ContractEvent
+/// Value of NotifyEvent::ContractEvent
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct ContractEvent<'a> {
-    // at which topoheight this occured
+    /// at which topoheight this occured
     pub topoheight: TopoHeight,
-    // which block is the TX executor
+    /// which block is the TX executor
     pub block_hash: Cow<'a, Hash>,
-    // the actual event_id fired
+    /// the actual event_id fired
     pub event_id: u64,
-    // event data
+    /// event data
     pub data: Cow<'a, ValueCell>
 }
 
-// Value of NotifyEvent::PeerConnected
+/// Value of NotifyEvent::PeerConnected
 pub type PeerConnectedEvent = PeerEntry<'static>;
 
-// Value of NotifyEvent::PeerDisconnected
+/// Value of NotifyEvent::PeerDisconnected
 pub type PeerDisconnectedEvent = PeerEntry<'static>;
 
-// Value of NotifyEvent::PeerPeerListUpdated
+/// Value of NotifyEvent::PeerPeerListUpdated
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct PeerPeerListUpdatedEvent {
-    // Peer ID of the peer that sent us the new peer list
+    /// Peer ID of the peer that sent us the new peer list
     pub peer_id: u64,
-    // Peerlist received from this peer
+    /// Peerlist received from this peer
     pub peerlist: IndexSet<SocketAddr>
 }
 
-// Value of NotifyEvent::PeerStateUpdated
+/// Value of NotifyEvent::PeerStateUpdated
 pub type PeerStateUpdatedEvent = PeerEntry<'static>;
 
-// Value of NotifyEvent::PeerPeerDisconnected
+/// Value of NotifyEvent::PeerPeerDisconnected
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct PeerPeerDisconnectedEvent {
-    // Peer ID of the peer that sent us this notification
+    /// Peer ID of the peer that sent us this notification
     pub peer_id: u64,
-    // address of the peer that disconnected from him
+    /// address of the peer that disconnected from him
     pub peer_addr: SocketAddr
 }
 
-// Value of NotifyEvent::InvokeContract
+/// Value of NotifyEvent::InvokeContract
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct InvokeContractEvent<'a> {
+    /// Block hash.
     pub block_hash: Cow<'a, Hash>,
+    /// Transaction hash.
     pub tx_hash: Cow<'a, Hash>,
+    /// Topoheight used by this request.
     pub topoheight: TopoHeight,
+    /// Contract logs value.
     pub contract_logs: Vec<RPCContractLog<'a>>
 }
 
-// Value of NotifyEvent::DeployContract
+/// Value of NotifyEvent::DeployContract
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct ContractDeployEvent<'a> {
+    /// Contract hash.
     pub contract: Cow<'a, Hash>,
+    /// Block hash.
     pub block_hash: Cow<'a, Hash>,
+    /// Topoheight used by this request.
     pub topoheight: TopoHeight,
 }
 

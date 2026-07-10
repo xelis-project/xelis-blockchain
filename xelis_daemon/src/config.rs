@@ -69,7 +69,7 @@ pub const MAX_TIPS_IN_CACHE: usize = u8::MAX as usize;
 pub const fn get_stable_limit(version: BlockVersion) -> u64 {
     match version {
         BlockVersion::V0 | BlockVersion::V1 | BlockVersion::V2 => 8,
-        BlockVersion::V3 | BlockVersion::V4 | BlockVersion::V5 | BlockVersion::V6 => 24,
+        BlockVersion::V3 | BlockVersion::V4 | BlockVersion::V5 | BlockVersion::V6 | BlockVersion::V7 => 24,
     }
 }
 
@@ -153,8 +153,6 @@ pub const P2P_EXTEND_PEERLIST_DELAY: u64 = 60;
 // At least 5 minutes of countdown to retry to connect to the same peer
 // This will be multiplied by the number of fails
 pub const P2P_PEERLIST_RETRY_AFTER: u64 = 60 * 15;
-// Delay in second to connect to priority nodes
-pub const P2P_AUTO_CONNECT_PRIORITY_NODES_DELAY: u64 = 5;
 // Default number of concurrent tasks for incoming p2p connections
 pub const P2P_DEFAULT_CONCURRENCY_TASK_COUNT_LIMIT: usize = 4;
 // Heartbeat interval in seconds to check if peer is still alive
@@ -316,11 +314,12 @@ const DEV_NET_HARD_FORKS: [HardFork; 1] = [
 ];
 
 // Mainnet seed nodes
-const MAINNET_SEED_NODES: [&str; 2] = [
+const MAINNET_SEED_NODES: [&str; 1] = [
+    "seeds.xelis.io:2125",
     // France
-    "51.210.117.23:2125",
-    // US
-    "198.71.55.87:2125",
+    // "51.210.117.23:2125",
+    // // US
+    // "198.71.55.87:2125",
 ];
 
 // Testnet seed nodes

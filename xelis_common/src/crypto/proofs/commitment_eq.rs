@@ -5,7 +5,6 @@ use curve25519_dalek::{
     Scalar
 };
 use merlin::Transcript;
-use rand::rngs::OsRng;
 use schemars::JsonSchema;
 use zeroize::Zeroize;
 use crate::{
@@ -20,6 +19,8 @@ use crate::{
             SCALAR_SIZE
         },
         KeyPair,
+        non_zero_random_scalar,
+        rng,
         ProtocolTranscript
     },
     serializer::{Reader, ReaderError, Serializer, Writer},
@@ -72,9 +73,10 @@ impl CommitmentEqProof {
         let r = opening.as_scalar();
 
         // generate random masking factors that also serves as nonces
-        let mut y_s = Scalar::random(&mut OsRng);
-        let mut y_x = Scalar::random(&mut OsRng);
-        let mut y_r = Scalar::random(&mut OsRng);
+        let mut rng = rng();
+        let mut y_s = Scalar::random(&mut rng);
+        let mut y_x = Scalar::random(&mut rng);
+        let mut y_r = Scalar::random(&mut rng);
 
         let Y_0 = (&y_s * P_source).compress();
         let Y_1 =
@@ -170,7 +172,7 @@ impl CommitmentEqProof {
             .decompress()
             .ok_or(DecompressionError)?;
 
-        let batch_factor = Scalar::random(&mut OsRng);
+        let batch_factor = non_zero_random_scalar(&mut rng());
 
         // w * z_x * G + ww * z_x * G
         batch_collector.g_scalar += (w * self.z_x + ww * self.z_x) * batch_factor;
@@ -355,5 +357,50 @@ mod tests {
         );
         assert!(result.is_ok());
         assert!(batch_collector.verify().is_ok());
+
+        let mut transcript = Transcript::new(b"test");
+        assert!(
+            proof
+                .verify(keypair.get_public_key(), &final_balance, &commitment, &mut transcript)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_commitment_eq_proof_rejects_wrong_commitment_direct_and_batch() {
+        let mut transcript = Transcript::new(b"test");
+        let keypair = KeyPair::new();
+        let balance = 100u64;
+        let source_balance = keypair.get_public_key().encrypt(balance);
+        let amount = 5;
+        let ciphertext = keypair.get_public_key().encrypt(amount);
+        let opening = PedersenOpening::generate_new();
+        let commitment = PedersenCommitment::new_with_opening(balance - amount, &opening);
+        let final_balance = source_balance - ciphertext;
+        let proof = CommitmentEqProof::new(&keypair, &final_balance, &opening, balance - amount, TxVersion::V2, &mut transcript);
+
+        let wrong_commitment = commitment.clone() + Scalar::ONE;
+        let mut transcript = Transcript::new(b"test");
+        assert!(
+            proof
+                .verify(keypair.get_public_key(), &final_balance, &wrong_commitment, &mut transcript)
+                .is_err()
+        );
+
+        let mut transcript = Transcript::new(b"test");
+        let mut batch_collector = BatchCollector::default();
+        assert!(
+            proof
+                .pre_verify(
+                    keypair.get_public_key(),
+                    &final_balance,
+                    &wrong_commitment,
+                    TxVersion::V2,
+                    &mut transcript,
+                    &mut batch_collector,
+                )
+                .is_ok()
+        );
+        assert!(batch_collector.verify().is_err());
     }
 }

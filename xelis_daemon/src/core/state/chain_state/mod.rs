@@ -463,6 +463,14 @@ impl<'s, 'b, P: ChainStateProvider> BlockchainVerificationState<'b, BlockchainEr
             .map(|v| v.as_ref().is_some_and(|(_, m)| m.is_some()))
     }
 
+    async fn is_contract_module_new(
+        &mut self,
+        hash: Cow<'b, Hash>
+    ) -> Result<bool, BlockchainError> {
+        self.internal_get_versioned_contract(hash).await
+            .map(|v| v.as_ref().is_some_and(|(state, m)| state.is_new() && m.is_some()))
+    }
+
     /// Get the contract module with the environments
     async fn get_contract_module_with_environment(
         &self,

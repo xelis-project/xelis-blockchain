@@ -193,11 +193,11 @@ pub async fn contract_delegate<'a, 'ty, 'r>(zelf: FnInstance<'a>, mut params: Fn
     let opaque: &OpaqueContract = zelf.as_opaque_type()?;
     let p = params.remove(1)
         .into_owned()
-        .to_vec()?
-        .into_iter()
-        .rev()
-        .map(|v| v.to_owned().into())
-        .collect::<VecDeque<_>>();
+        .to_vec()?;
+
+    if p.len() > (u8::MAX - 1) as usize {
+        return Err(EnvironmentError::Static("Too many parameters"));
+    }
 
     let chunk_id = params.remove(0)
         .into_owned()
@@ -206,6 +206,22 @@ pub async fn contract_delegate<'a, 'ty, 'r>(zelf: FnInstance<'a>, mut params: Fn
     if !opaque.contract_module.module.is_public_chunk(chunk_id as usize) {
         return Err(EnvironmentError::Static("Chunk is not public"));
     }
+
+    if metadata.metadata.contract_version != opaque.contract_module.version {
+        return Err(EnvironmentError::Static("Cannot delegate to a contract with a different version"));
+    }
+
+    let validator = ModuleValidator::new(&opaque.contract_module.module, &metadata.environment);
+    validator.verify_invoke_chunk(chunk_id as usize, p.iter().map(|v| v.as_ref()))
+        .map_err(|e| {
+            debug!("Contract delegate {} chunk {} validation failed from {}: {}", opaque.hash, chunk_id, metadata.metadata.contract_executor, e);
+            EnvironmentError::Static("Invalid parameters for contract delegate")
+        })?;
+
+    let p = p.into_iter()
+        .rev()
+        .map(|v| v.to_owned().into())
+        .collect::<VecDeque<_>>();
 
     Ok(SysCallResult::ModuleCall {
         module: opaque.contract_module.module.clone(),

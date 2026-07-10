@@ -42,6 +42,10 @@ impl DynEq for CommitmentEqProof {
 
 impl DynHash for CommitmentEqProof {
     fn dyn_hash(&self, _: &mut dyn Hasher) {}
+
+    fn is_hashable(&self) -> bool {
+        false
+    }
 }
 
 impl Serializable for CommitmentEqProof {

@@ -27,8 +27,7 @@ impl VersionedScheduledExecutionsProvider for RocksStorage {
 
     async fn delete_scheduled_executions_below_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         trace!("delete scheduled executions below topoheight {}", topoheight);
-        let start = topoheight.to_be_bytes();
-        self.delete_scheduled_executions_with_mode(IteratorMode::From(&start, Direction::Reverse)).await
+        self.delete_scheduled_executions_matching(move |execution_topoheight| execution_topoheight < topoheight).await
     }
 }
 
@@ -48,6 +47,31 @@ impl RocksStorage {
                 let (contract, execution_topoheight) = <(ContractId, TopoHeight)>::from_bytes(&key[8..])?;
                 let delayed_key = Self::get_contract_scheduled_execution_key(contract, execution_topoheight);
 
+                Self::remove_from_disk_internal(&s.db, s.snapshot.as_mut(), Column::DelayedExecution, &delayed_key)?;
+            }
+
+            Ok(())
+        })
+    }
+
+    async fn delete_scheduled_executions_matching(
+        &mut self,
+        should_delete: impl Fn(TopoHeight) -> bool + Send + Sync + 'static,
+    ) -> Result<(), BlockchainError> {
+        trace!("delete scheduled executions with predicate");
+        self.run_blocking_mut(move |s| {
+            let snapshot = s.snapshot.clone();
+            for res in Self::iter_raw_internal(&s.db, snapshot.as_ref(), IteratorMode::Start, Column::DelayedExecutionRegistrations)? {
+                let (key, _) = res?;
+
+                let (contract, execution_topoheight) = <(ContractId, TopoHeight)>::from_bytes(&key[8..])?;
+                if !should_delete(execution_topoheight) {
+                    continue;
+                }
+
+                Self::remove_from_disk_internal(&s.db, s.snapshot.as_mut(), Column::DelayedExecutionRegistrations, &key)?;
+
+                let delayed_key = Self::get_contract_scheduled_execution_key(contract, execution_topoheight);
                 Self::remove_from_disk_internal(&s.db, s.snapshot.as_mut(), Column::DelayedExecution, &delayed_key)?;
             }
 

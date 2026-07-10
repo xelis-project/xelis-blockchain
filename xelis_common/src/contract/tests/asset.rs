@@ -124,6 +124,8 @@ async fn asset_mint_updates_supply_balance_and_logs() {
 
             require(asset.mint(40), "first mint failed");
             require(asset.get_supply() == 40, "bad supply after first mint");
+            require(!asset.mint(0), "zero mint must fail");
+            require(asset.get_supply() == 40, "zero mint changed supply");
             require(asset.mint(60), "second mint failed");
             require(asset.get_supply() == 100, "bad supply after second mint");
             require(!asset.mint(1), "mint above max supply must fail");
@@ -149,6 +151,10 @@ async fn asset_mint_updates_supply_balance_and_logs() {
     assert!(has_contract_log(&state, |log| matches!(
         log,
         ContractLog::Mint { contract: c, asset: a, amount: 60 } if c == &contract && a == &asset
+    )));
+    assert!(!has_contract_log(&state, |log| matches!(
+        log,
+        ContractLog::Mint { contract: c, asset: a, amount: 0 } if c == &contract && a == &asset
     )));
 }
 

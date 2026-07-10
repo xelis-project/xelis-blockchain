@@ -1,6 +1,6 @@
 use std::{
     borrow::Cow,
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     future::Future,
     pin::Pin,
     sync::Arc,
@@ -39,16 +39,181 @@ pub type HandlerNoParams<R> = for<'a> fn(&'a Context) -> Pin<Box<dyn Future<Outp
 
 // Information about an RPC method
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct RpcMethodInfo<'a> {
-    pub name: Cow<'a, str>,
-    pub schema: Cow<'a, RpcSchema>,
+pub struct RpcMethodInfo {
+    pub name: String,
+    pub schema: RpcSchema,
+}
+
+// Metadata used while registering an RPC method
+#[derive(Debug, Clone)]
+pub struct RpcMethod {
+    pub name: Cow<'static, str>,
+    pub description: Vec<Cow<'static, str>>,
+    pub notes: Vec<Cow<'static, str>>,
+}
+
+impl RpcMethod {
+    pub fn new(name: impl Into<Cow<'static, str>>) -> Self {
+        Self {
+            name: name.into(),
+            description: Vec::new(),
+            notes: Vec::new(),
+        }
+    }
+
+    pub fn with_description(
+        name: impl Into<Cow<'static, str>>,
+        description: impl Into<Cow<'static, str>>,
+    ) -> Self {
+        Self::with_optional_description(name, Some(description))
+    }
+
+    pub fn with_descriptions<I, D>(
+        name: impl Into<Cow<'static, str>>,
+        descriptions: I,
+    ) -> Self
+    where
+        I: IntoIterator<Item = D>,
+        D: Into<Cow<'static, str>>
+    {
+        Self {
+            name: name.into(),
+            description: descriptions.into_iter().map(Into::into).collect(),
+            notes: Vec::new(),
+        }
+    }
+
+    pub fn with_optional_description<D>(
+        name: impl Into<Cow<'static, str>>,
+        description: Option<D>,
+    ) -> Self
+    where
+        D: Into<Cow<'static, str>>
+    {
+        Self {
+            name: name.into(),
+            description: description.into_iter().map(Into::into).collect(),
+            notes: Vec::new(),
+        }
+    }
+
+    pub fn with_notes<I, N>(
+        name: impl Into<Cow<'static, str>>,
+        notes: I,
+    ) -> Self
+    where
+        I: IntoIterator<Item = N>,
+        N: Into<Cow<'static, str>>
+    {
+        Self::with_optional_description_and_notes(name, None::<Cow<'static, str>>, notes)
+    }
+
+    pub fn with_description_and_notes<I, N>(
+        name: impl Into<Cow<'static, str>>,
+        description: impl Into<Cow<'static, str>>,
+        notes: I,
+    ) -> Self
+    where
+        I: IntoIterator<Item = N>,
+        N: Into<Cow<'static, str>>
+    {
+        Self::with_optional_description_and_notes(name, Some(description), notes)
+    }
+
+    pub fn with_descriptions_and_notes<DI, D, NI, N>(
+        name: impl Into<Cow<'static, str>>,
+        descriptions: DI,
+        notes: NI,
+    ) -> Self
+    where
+        DI: IntoIterator<Item = D>,
+        D: Into<Cow<'static, str>>,
+        NI: IntoIterator<Item = N>,
+        N: Into<Cow<'static, str>>
+    {
+        Self {
+            name: name.into(),
+            description: descriptions.into_iter().map(Into::into).collect(),
+            notes: notes.into_iter().map(Into::into).collect(),
+        }
+    }
+
+    pub fn with_optional_description_and_notes<D, I, N>(
+        name: impl Into<Cow<'static, str>>,
+        description: Option<D>,
+        notes: I,
+    ) -> Self
+    where
+        D: Into<Cow<'static, str>>,
+        I: IntoIterator<Item = N>,
+        N: Into<Cow<'static, str>>
+    {
+        Self {
+            name: name.into(),
+            description: description.into_iter().map(Into::into).collect(),
+            notes: notes.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<&'static str> for RpcMethod {
+    fn from(name: &'static str) -> Self {
+        Self::new(name)
+    }
+}
+
+impl From<String> for RpcMethod {
+    fn from(name: String) -> Self {
+        Self::new(name)
+    }
+}
+
+impl From<Cow<'static, str>> for RpcMethod {
+    fn from(name: Cow<'static, str>) -> Self {
+        Self::new(name)
+    }
+}
+
+impl<N, D> From<(N, D)> for RpcMethod
+where
+    N: Into<Cow<'static, str>>,
+    D: Into<Cow<'static, str>>,
+{
+    fn from((name, description): (N, D)) -> Self {
+        Self::with_description(name, description)
+    }
+}
+
+impl<N, D, I, Note> From<(N, D, I)> for RpcMethod
+where
+    N: Into<Cow<'static, str>>,
+    D: Into<Cow<'static, str>>,
+    I: IntoIterator<Item = Note>,
+    Note: Into<Cow<'static, str>>,
+{
+    fn from((name, description, notes): (N, D, I)) -> Self {
+        Self::with_description_and_notes(name, description, notes)
+    }
 }
 
 // Schema information about an RPC method
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct RpcSchema {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub description: Vec<Cow<'static, str>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<Cow<'static, str>>,
     pub params_schema: Option<Schema>,
     pub returns_schema: Schema,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RpcSchemaResponse {
+    #[serde(rename = "$schema")]
+    pub schema: String,
+    #[serde(rename = "$defs", skip_serializing_if = "BTreeMap::is_empty")]
+    pub definitions: BTreeMap<String, Value>,
+    pub methods: Vec<RpcMethodInfo>,
 }
 
 /// An RPC method handler with its schema
@@ -61,7 +226,7 @@ pub struct RPCHandler<T: ShareableTid<'static>> {
     // all RPC methods registered
     methods: HashMap<Cow<'static, str>, MethodHandler>,
     // Optional data to be easily mocked in tests
-    data: Option<T>,
+    data: T,
     batch_limit: Option<usize>
 }
 
@@ -72,7 +237,7 @@ where
     T: ShareableTid<'static>
 {
     // Create a new RPC handler with optional batch limit
-    pub fn new(data: impl Into<Option<T>>, limit: impl Into<Option<usize>>) -> Self {
+    pub fn new(data: impl Into<T>, limit: impl Into<Option<usize>>) -> Self {
         let mut handler = Self {
             methods: HashMap::new(),
             data: data.into(),
@@ -80,7 +245,7 @@ where
         };
 
         // Internally register the "schema" method to get all registered methods
-        handler.register_method_no_params_custom_return::<Vec<RpcMethodInfo>>("schema", async_handler!(schema::<T>, single));
+        handler.register_method_no_params_custom_return::<RpcSchemaResponse>("schema", async_handler!(schema::<T>, single));
         handler.register_method_no_params("batch_limit", async_handler!(batch_limit::<T>, single));
 
         handler
@@ -175,17 +340,33 @@ where
     }
 
     // register a new RPC method handler
-    pub fn register_method(&mut self, name: impl Into<Cow<'static, str>>, handler: MethodHandler) {
-        let name = name.into();
+    pub fn register_method(
+        &mut self,
+        method: impl Into<RpcMethod>,
+        handler: Handler,
+        params_schema: Option<Schema>,
+        returns_schema: Schema
+    ) {
+        let method = method.into();
+        let name = method.name;
         trace!("Registering RPC method: {}", name);
-        let v = self.methods.insert(name.clone(), handler);
-        assert!(v.is_none(), "RPC method '{}' is already registered", name);
+        assert!(!self.methods.contains_key(&name), "RPC method '{}' is already registered", name);
+
+        self.methods.insert(name, MethodHandler {
+            handler,
+            schema: RpcSchema {
+                description: method.description,
+                notes: method.notes,
+                params_schema,
+                returns_schema,
+            }
+        });
     }
 
     // Register a method with parameters
     pub fn register_method_with_params<P, R>(
         &mut self,
-        name: impl Into<Cow<'static, str>>,
+        name: impl Into<RpcMethod>,
         f: HandlerParams<P, R>,
     )
     where
@@ -203,19 +384,18 @@ where
             })
         });
 
-        self.register_method(name, MethodHandler {
+        self.register_method(
+            name,
             handler,
-            schema: RpcSchema {
-                params_schema: Some(schema_for!(P)),
-                returns_schema: schema_for!(R),
-            }
-        });
+            Some(schema_for!(P)),
+            schema_for!(R)
+        );
     }
 
     // Register a method with parameters with a return schema given
     pub fn register_method_with_params_and_return_schema<P, R>(
         &mut self,
-        name: impl Into<Cow<'static, str>>,
+        name: impl Into<RpcMethod>,
         f: HandlerParams<P, Value>,
     )
     where
@@ -232,19 +412,18 @@ where
             })
         });
 
-        self.register_method(name, MethodHandler {
+        self.register_method(
+            name,
             handler,
-            schema: RpcSchema {
-                params_schema: Some(schema_for!(P)),
-                returns_schema: schema_for!(R),
-            }
-        });
+            Some(schema_for!(P)),
+            schema_for!(R)
+        );
     }
 
     // Register a method with no parameters
     pub fn register_method_no_params<R>(
         &mut self,
-        name: impl Into<Cow<'static, str>>,
+        name: impl Into<RpcMethod>,
         f: HandlerNoParams<R>
     )
     where
@@ -261,19 +440,18 @@ where
             })
         });
 
-        self.register_method(name, MethodHandler {
+        self.register_method(
+            name,
             handler,
-            schema: RpcSchema {
-                params_schema: None,
-                returns_schema: schema_for!(R),
-            }
-        });
+            None,
+            schema_for!(R)
+        );
     }
 
     // Register a method with no parameters
     pub fn register_method_no_params_custom_return<R>(
         &mut self,
-        name: impl Into<Cow<'static, str>>,
+        name: impl Into<RpcMethod>,
         f: HandlerNoParams<Value>
     )
     where
@@ -289,19 +467,18 @@ where
             })
         });
 
-        self.register_method(name, MethodHandler {
+        self.register_method(
+            name,
             handler,
-            schema: RpcSchema {
-                params_schema: None,
-                returns_schema: schema_for!(R),
-            }
-        });
+            None,
+            schema_for!(R)
+        );
     }
 
     // Get a reference to the data associated with the RPC handler
     #[inline]
-    pub fn get_data(&self) -> Option<&T> {
-        self.data.as_ref()
+    pub fn get_data(&self) -> &T {
+        &self.data
     }
 }
 
@@ -310,13 +487,61 @@ async fn schema<'a, T: ShareableTid<'static>>(context: &'a Context<'_, '_>) -> R
     let rpc_handler: &RPCHandler<T> = context.get()
         .ok_or(InternalRpcError::InternalError("RPCHandler not found in context"))?;
 
-    let methods = rpc_handler.methods.iter()
-        .map(|(name, handler)| RpcMethodInfo {
-            name: Cow::Borrowed(name),
-            schema: Cow::Borrowed(&handler.schema)
-        }).collect::<Vec<_>>();
+    let mut handlers = rpc_handler.methods.iter().collect::<Vec<_>>();
+    handlers.sort_by(|(a, _), (b, _)| a.as_ref().cmp(b.as_ref()));
 
-    Ok(json!(methods))
+    let mut definitions = BTreeMap::new();
+    let mut methods = Vec::with_capacity(handlers.len());
+
+    for (name, handler) in handlers {
+        methods.push(RpcMethodInfo {
+            name: name.to_string(),
+            schema: normalize_rpc_schema(&handler.schema, &mut definitions)?,
+        });
+    }
+
+    Ok(json!(RpcSchemaResponse {
+        schema: "https://json-schema.org/draft/2020-12/schema".to_string(),
+        definitions,
+        methods,
+    }))
+}
+
+fn normalize_rpc_schema(schema: &RpcSchema, definitions: &mut BTreeMap<String, Value>) -> Result<RpcSchema, InternalRpcError> {
+    Ok(RpcSchema {
+        description: schema.description.clone(),
+        notes: schema.notes.clone(),
+        params_schema: schema.params_schema
+            .as_ref()
+            .map(|schema| normalize_schema(schema, definitions))
+            .transpose()?,
+        returns_schema: normalize_schema(&schema.returns_schema, definitions)?,
+    })
+}
+
+fn normalize_schema(schema: &Schema, definitions: &mut BTreeMap<String, Value>) -> Result<Schema, InternalRpcError> {
+    let mut value = schema.clone().to_value();
+
+    if let Value::Object(map) = &mut value {
+        map.remove("$schema");
+
+        if let Some(Value::Object(local_definitions)) = map.remove("$defs") {
+            for (name, definition) in local_definitions {
+                match definitions.get(&name) {
+                    Some(existing) if existing != &definition => {
+                        return Err(InternalRpcError::InternalError("Conflicting JSON schema definition"))
+                    },
+                    Some(_) => {},
+                    None => {
+                        definitions.insert(name, definition);
+                    }
+                }
+            }
+        }
+    }
+
+    Schema::try_from(value)
+        .map_err(|_| InternalRpcError::InternalError("Invalid JSON schema generated"))
 }
 
 // Get the batch limit from the RPC handler, if any
@@ -372,4 +597,122 @@ pub fn require_no_params(value: Value) -> Result<(), InternalRpcError> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::daemon::RPCBlockHeaderResponse;
+
+    struct TestData;
+
+    tid! { impl<'a> TidAble<'a> for TestData }
+
+    async fn dummy_header(_context: &Context<'_, '_>) -> Result<Value, InternalRpcError> {
+        Ok(Value::Null)
+    }
+
+    async fn dummy_u64(_context: &Context<'_, '_>) -> Result<u64, InternalRpcError> {
+        Ok(0)
+    }
+
+    #[tokio::test]
+    async fn schema_response_lifts_definitions_and_respects_custom_serializer_schema() {
+        let mut handler = RPCHandler::<TestData>::new(TestData, None);
+        handler.register_method_no_params_custom_return::<RPCBlockHeaderResponse<'static>>(
+            "block_header",
+            async_handler!(dummy_header, single)
+        );
+
+        let response = handler.handle_request(br#"{"jsonrpc":"2.0","id":1,"method":"schema"}"#).await
+            .expect("schema request should execute")
+            .expect("schema request should produce a response");
+        let result = response.get("result")
+            .expect("schema response should contain a result");
+        let definitions = result.get("$defs")
+            .and_then(Value::as_object)
+            .expect("schema response should contain shared definitions");
+        assert!(!definitions.is_empty());
+
+        let methods = result.get("methods")
+            .and_then(Value::as_array)
+            .expect("schema response should contain methods");
+        for method in methods {
+            if let Some(params_schema) = method["schema"].get("params_schema") {
+                assert!(params_schema.get("$defs").is_none());
+            }
+
+            assert!(method["schema"]["returns_schema"].get("$defs").is_none());
+        }
+
+        let block_header_method = methods.iter()
+            .find(|method| method.get("name").and_then(Value::as_str) == Some("block_header"))
+            .expect("block_header method should be present");
+        let returns_schema = &block_header_method["schema"]["returns_schema"];
+
+        assert_eq!(
+            returns_schema.pointer("/properties/extra_nonce/type").and_then(Value::as_str),
+            Some("string")
+        );
+    }
+
+    #[tokio::test]
+    async fn schema_response_includes_optional_method_description_and_notes() {
+        let mut handler = RPCHandler::<TestData>::new(TestData, None);
+        handler.register_method_no_params(
+            RpcMethod::with_descriptions_and_notes(
+                "described_method",
+                [
+                    "Returns a described test value.",
+                    "The description is represented as multiple entries.",
+                ],
+                [
+                    "This note is shown in the schema.",
+                    "Notes can provide extra method guidance.",
+                ]
+            ),
+            async_handler!(dummy_u64, single)
+        );
+        handler.register_method_no_params("plain_method", async_handler!(dummy_u64, single));
+
+        let response = handler.handle_request(br#"{"jsonrpc":"2.0","id":1,"method":"schema"}"#).await
+            .expect("schema request should execute")
+            .expect("schema request should produce a response");
+        let result = response.get("result")
+            .expect("schema response should contain a result");
+        let methods = result.get("methods")
+            .and_then(Value::as_array)
+            .expect("schema response should contain methods");
+
+        let described_method = methods.iter()
+            .find(|method| method.get("name").and_then(Value::as_str) == Some("described_method"))
+            .expect("described_method should be present");
+        assert!(described_method.get("description").is_none());
+        let description = described_method["schema"].get("description")
+            .and_then(Value::as_array)
+            .expect("described_method description should be present");
+        assert_eq!(
+            description.iter().map(Value::as_str).collect::<Option<Vec<_>>>(),
+            Some(vec![
+                "Returns a described test value.",
+                "The description is represented as multiple entries.",
+            ])
+        );
+        let notes = described_method["schema"].get("notes")
+            .and_then(Value::as_array)
+            .expect("described_method notes should be present");
+        assert_eq!(
+            notes.iter().map(Value::as_str).collect::<Option<Vec<_>>>(),
+            Some(vec![
+                "This note is shown in the schema.",
+                "Notes can provide extra method guidance.",
+            ])
+        );
+
+        let plain_method = methods.iter()
+            .find(|method| method.get("name").and_then(Value::as_str) == Some("plain_method"))
+            .expect("plain_method should be present");
+        assert!(plain_method["schema"].get("description").is_none());
+        assert!(plain_method["schema"].get("notes").is_none());
+    }
 }

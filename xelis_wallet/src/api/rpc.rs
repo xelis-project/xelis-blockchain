@@ -27,9 +27,11 @@ use xelis_common::{
     },
     network::Network,
     rpc::{
+        ShareableTid,
         Context,
         InternalRpcError,
         RPCHandler,
+        RpcMethod,
         tid,
     },
     serializer::Serializer,
@@ -52,71 +54,72 @@ use log::{debug, info, warn};
 tid!(Wallet);
 
 // Register all RPC methods
-pub fn register_methods(handler: &mut RPCHandler<Arc<Wallet>>) {
+pub fn register_methods<T: ShareableTid<'static>>(handler: &mut RPCHandler<T>) {
     info!("Registering RPC methods...");
-    handler.register_method_no_params("get_version", async_handler!(get_version, single));
-    handler.register_method_no_params("get_network", async_handler!(get_network, single));
-    handler.register_method_no_params("get_nonce", async_handler!(get_nonce, single));
-    handler.register_method_no_params("get_topoheight", async_handler!(get_topoheight, single));
-    handler.register_method_with_params("get_address", async_handler!(get_address));
-    handler.register_method_with_params("split_address", async_handler!(split_address));
-    handler.register_method_with_params("rescan", async_handler!(rescan));
-    handler.register_method_with_params("get_balance", async_handler!(get_balance));
-    handler.register_method_with_params("has_balance", async_handler!(has_balance));
-    handler.register_method_with_params("get_tracked_assets", async_handler!(get_tracked_assets));
-    handler.register_method_with_params("is_asset_tracked", async_handler!(is_asset_tracked));
-    handler.register_method_with_params("track_asset", async_handler!(track_asset));
-    handler.register_method_with_params("untrack_asset", async_handler!(untrack_asset));
-    handler.register_method_with_params("get_asset_precision", async_handler!(get_asset_precision));
-    handler.register_method_with_params("get_assets", async_handler!(get_assets));
-    handler.register_method_with_params("get_asset", async_handler!(get_asset));
-    handler.register_method_with_params("get_transaction", async_handler!(get_transaction));
-    handler.register_method_with_params("search_transaction", async_handler!(search_transaction));
-    handler.register_method_with_params("dump_transaction", async_handler!(dump_transaction));
-    handler.register_method_with_params("build_transaction", async_handler!(build_transaction));
-    handler.register_method_with_params("build_transaction_offline", async_handler!(build_transaction_offline));
-    handler.register_method_with_params("build_unsigned_transaction", async_handler!(build_unsigned_transaction));
-    handler.register_method_with_params("finalize_unsigned_transaction", async_handler!(finalize_unsigned_transaction));
-    handler.register_method_with_params("sign_unsigned_transaction", async_handler!(sign_unsigned_transaction));
-    handler.register_method_no_params("get_pending_transactions", async_handler!(get_pending_transactions, single));
+    handler.register_method_no_params(("get_version", "Retrieve current daemon version"), async_handler!(get_version, single));
+    handler.register_method_no_params(("get_network", "Retrieve network used by the wallet"), async_handler!(get_network, single));
+    handler.register_method_no_params(("get_nonce", "Retrieve account nonce saved in wallet"), async_handler!(get_nonce, single));
+    handler.register_method_no_params(("get_topoheight", "Retrieve daemon topoheight until which the wallet scanned transactions/balances."), async_handler!(get_topoheight, single));
+    handler.register_method_with_params(RpcMethod::with_descriptions_and_notes("get_address", ["Retrieve wallet address with or without integrated data in it. Without parameters set, it returns the normal wallet address.", "It is not mandatory and support any data formatted in JSON up to 1 KB in serialized format."], ["Integrated data can be useful for services like Exchanges to identify a user transaction by integrating an ID (or anything else) in the address (like PaymentID for Monero)."]), async_handler!(get_address));
+    handler.register_method_with_params(("split_address", "Split address and integrated data in two differents fields."), async_handler!(split_address));
+    handler.register_method_with_params(("rescan", "Request the wallet to rescan balances and transactions history until the specified topoheight. When no topoheight is set, it rescan until topoheight 0.", ["All balances and transactions will be deleted from wallet storage to be up-to-date with the chain of the node connected to."]), async_handler!(rescan));
+    handler.register_method_with_params(RpcMethod::with_descriptions_and_notes("get_balance", ["Get asset balance from wallet. When no parameter is set, default asset is XELIS.", "Balance is returned in atomic units."], ["By default, if no balance for the requested asset is found, it will returns 0. Use `has_balance` to determine if the wallet as an asset balance or not."]), async_handler!(get_balance));
+    handler.register_method_with_params(("has_balance", "Verify if wallet has the requested asset balance. When no parameter is set, default asset is XELIS."), async_handler!(has_balance));
+    handler.register_method_with_params(("get_tracked_assets", "Retrieve all assets that are tracked by the wallet."), async_handler!(get_tracked_assets));
+    handler.register_method_with_params(("is_asset_tracked", "Verify if the requested asset is tracked by the wallet."), async_handler!(is_asset_tracked));
+    handler.register_method_with_params(("track_asset", "Track a new asset on the wallet. If the wallet is in online mode it will fetch the balance for this asset from the daemon."), async_handler!(track_asset));
+    handler.register_method_with_params(("untrack_asset", "Untrack an asset from the wallet."), async_handler!(untrack_asset));
+    handler.register_method_with_params(RpcMethod::with_descriptions("get_asset_precision", ["Retrieve the decimals precision for the selected asset.", "This is useful to format correctly the atomic units coins to human readable."]), async_handler!(get_asset_precision));
+    handler.register_method_with_params(("get_assets", "Retrieve all assets with their data that the wallet is aware of."), async_handler!(get_assets));
+    handler.register_method_with_params(("get_asset", "Retrieve an asset data from the wallet storage using its hash."), async_handler!(get_asset));
+    handler.register_method_with_params(("get_transaction", "Get transaction by hash from wallet."), async_handler!(get_transaction));
+    handler.register_method_with_params(("search_transaction", "Perform a debug search across all entries for a transaction from the wallet storage using its hash. This is useful when a transaction may not be directly found but exists in the raw storage."), async_handler!(search_transaction));
+    handler.register_method_with_params(("dump_transaction", "Dump a transaction in hex format from the wallet storage using its hash."), async_handler!(dump_transaction));
+    handler.register_method_with_params(("build_transaction", "Build a transaction to be send by the wallet. It can be broadcasted or not to the network.", ["Amount set are in atomic units, for XELIS it would be `100000000` to represents 1 XELIS because of 8 decimals precision."]), async_handler!(build_transaction));
+    handler.register_method_with_params(("build_transaction_offline", "Build a transaction offline in the wallet by providing directly exact balances and reference. It cannot be broadcasted by the wallet directly.", ["Amount set are in atomic units, for XELIS it would be `100000000` to represents 1 XELIS because of 8 decimals precision."]), async_handler!(build_transaction_offline));
+    handler.register_method_with_params(("build_unsigned_transaction", "Build a transaction without signing it. This is useful in case of a MultiSig setup where you need to sign the transaction with other signers."), async_handler!(build_unsigned_transaction));
+    handler.register_method_with_params(("finalize_unsigned_transaction", "Finalize an unsigned transaction by signing it with the wallet key pair. Once signed, the transaction can be broadcasted to the network."), async_handler!(finalize_unsigned_transaction));
+    handler.register_method_with_params(("sign_unsigned_transaction", "Sign an unsigned transaction hash with the wallet key pair. This is useful in case you are a part of the multisig of another wallet and you need to sign a transaction."), async_handler!(sign_unsigned_transaction));
+    handler.register_method_no_params(("get_pending_transactions", "Retrieve locally-created transactions that are not confirmed yet."), async_handler!(get_pending_transactions, single));
 
-    handler.register_method_no_params("clear_tx_cache", async_handler!(clear_tx_cache, single));
-    handler.register_method_with_params("list_transactions", async_handler!(list_transactions));
-    handler.register_method_no_params("is_online", async_handler!(is_online, single));
-    handler.register_method_with_params("set_online_mode", async_handler!(set_online_mode));
-    handler.register_method_no_params("set_offline_mode", async_handler!(set_offline_mode, single));
-    handler.register_method_with_params("sign_data", async_handler!(sign_data));
-    handler.register_method_with_params("verify_signed_data", async_handler!(verify_signed_data));
-    handler.register_method_with_params("estimate_fees", async_handler!(estimate_fees));
-    handler.register_method_with_params("estimate_extra_data_size", async_handler!(estimate_extra_data_size));
-    handler.register_method_no_params("network_info", async_handler!(network_info, single));
-    handler.register_method_with_params("decrypt_extra_data", async_handler!(decrypt_extra_data));
-    handler.register_method_with_params("decrypt_ciphertext", async_handler!(decrypt_ciphertext));
+    handler.register_method_no_params(("clear_tx_cache", "In case of a failure while broadcasting a TX from this wallet by yourself, you can erase the TX cache stored in the wallet."), async_handler!(clear_tx_cache, single));
+    handler.register_method_with_params(RpcMethod::with_descriptions("list_transactions", ["Search transactions based on various parameters. By default it accepts every TXs.", "For `address` param, it is compared to the sender if it's an incoming TX, and to destination address for outgoing TX.", "Topoheight range if specified is inclusive. Meaning if you set max_topoheight at 10 and you have a TX at 10 its returned."]), async_handler!(list_transactions));
+    handler.register_method_no_params(("is_online", "Determine if the wallet is connected to a node or not (offline / online mode)."), async_handler!(is_online, single));
+    handler.register_method_with_params(("set_online_mode", "Connect the wallet to a daemon node. The wallet must not already be connected."), async_handler!(set_online_mode));
+    handler.register_method_no_params(("set_offline_mode", "Disconnect the wallet from the daemon and switch to offline mode. The wallet must be in online mode."), async_handler!(set_offline_mode, single));
+    handler.register_method_with_params(("sign_data", "Generate a signature for the input data using your wallet key pair."), async_handler!(sign_data));
+    handler.register_method_with_params(("verify_signed_data", "Verify a signature against a public key and the provided data."), async_handler!(verify_signed_data));
+    handler.register_method_with_params(("estimate_fees", "Estimate the minimum required fees for a future transaction. Returned fees are in atomic units."), async_handler!(estimate_fees));
+    handler.register_method_with_params(("estimate_extra_data_size", "Estimate the extra data size for a list of destinations using their integrated data."), async_handler!(estimate_extra_data_size));
+    handler.register_method_no_params(("network_info", "Fetch all information about the current node to which the wallet is connected to."), async_handler!(network_info, single));
+    handler.register_method_with_params(("decrypt_extra_data", "Decrypt the extra data from a transaction. This function is useful in case your wallet is offline and you want it to decrypt a extra data without having it in online mode."), async_handler!(decrypt_extra_data));
+    handler.register_method_with_params(RpcMethod::with_descriptions("decrypt_ciphertext", ["Decrypt a ciphertext from its compressed format.", "If you want to decrypt the ciphertext of a Transaction, you need to take the Transfer `commitment` field. For the `handle` field, you need to select either `receiver_handle` or `sender_handle` based on the flow of the transaction.", "Please note that the value returned is in atomic units."]), async_handler!(decrypt_ciphertext));
 
-    handler.register_method_with_params("create_ownership_proof", async_handler!(create_ownership_proof));
-    handler.register_method_with_params("create_balance_proof", async_handler!(create_balance_proof));
-    handler.register_method_with_params("verify_human_readable_proof", async_handler!(verify_human_readable_proof));
+    handler.register_method_with_params(RpcMethod::with_descriptions("create_ownership_proof", ["Create a cryptographic proof that you own at least a certain amount of an asset. The proof is returned as a bech32-encoded string that can be shared with other parties for verification.", "If `topoheight` is not provided, the current wallet balance topoheight is used. If `topoheight` is provided, the balance at the requested topoheight will be fetched from the daemon and used for proof creation."]), async_handler!(create_ownership_proof));
+    handler.register_method_with_params(RpcMethod::with_descriptions("create_balance_proof", ["Create a cryptographic proof of your balance for a specific asset. The proof is returned as a bech32-encoded string that can be shared with other parties for verification.", "If `topoheight` is not provided, the current wallet balance topoheight is used. If `topoheight` is provided, the balance at the requested topoheight will be fetched from the daemon and used for proof creation."]), async_handler!(create_balance_proof));
+    handler.register_method_with_params(RpcMethod::with_descriptions("verify_human_readable_proof", ["Verify a cryptographic proof (ownership or balance) against an address. The wallet must be in online mode to fetch the on-chain balance at the proof's topoheight.", "Returns `true` if the proof is valid."]), async_handler!(verify_human_readable_proof));
 
     // These functions allow to have an encrypted DB directly in the wallet storage
     // You can retrieve keys, values, have differents trees, and store values
     // It is restricted in XSWD context (each app access to their own trees), and open to everything in RPC
     // Keys and values can be anything
-    handler.register_method_with_params("get_matching_keys", async_handler!(get_matching_keys));
-    handler.register_method_with_params("count_matching_entries", async_handler!(count_matching_entries));
-    handler.register_method_with_params("get_value_from_key", async_handler!(get_value_from_key));
-    handler.register_method_with_params("store", async_handler!(store));
-    handler.register_method_with_params("delete", async_handler!(delete));
-    handler.register_method_with_params("delete_tree_entries", async_handler!(delete_tree_entries));
-    handler.register_method_with_params("has_key", async_handler!(has_key));
-    handler.register_method_with_params("query_db", async_handler!(query_db));
+    handler.register_method_with_params(("get_matching_keys", "Retrieve all keys available in the selected tree, with optional query filter."), async_handler!(get_matching_keys));
+    handler.register_method_with_params(("count_matching_entries", "Count all entries available in the selected tree, with optional query filters on key and value."), async_handler!(count_matching_entries));
+    handler.register_method_with_params(("get_value_from_key", "Get a value using its key in the requested Tree."), async_handler!(get_value_from_key));
+    handler.register_method_with_params(("store", "Store a new key / value entry in the requested Tree."), async_handler!(store));
+    handler.register_method_with_params(("delete", "Delete a key / value entry in the requested Tree."), async_handler!(delete));
+    handler.register_method_with_params(("delete_tree_entries", "Delete all entries in the requested tree."), async_handler!(delete_tree_entries));
+    handler.register_method_with_params(("has_key", "Verify if the key is present in the requested Tree."), async_handler!(has_key));
+    handler.register_method_with_params(("query_db", "Query the DB in the requested Tree with filters."), async_handler!(query_db));
 }
 
 // Helper to retrieve the wallet from the context
 #[inline]
 fn wallet_from_context<'a, 'ty, 'r>(context: &'a Context<'ty, 'r>) -> Result<&'a Arc<Wallet>, InternalRpcError> {
-    let handler: &RPCHandler<Arc<Wallet>> = context.get()
-        .context("Couldn't retrieve wallet from context")?;
-    handler.get_data().ok_or(InternalRpcError::InvalidContext)
+    context.get::<RPCHandler<Arc<Wallet>>>()
+        .context("Couldn't retrieve wallet from context")
+        .map(|handler| handler.get_data())
+        .map_err(InternalRpcError::from)
 }
 
 // Retrieve the version of the wallet

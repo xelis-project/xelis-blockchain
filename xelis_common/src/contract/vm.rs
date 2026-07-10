@@ -222,8 +222,8 @@ pub(crate) async fn run_virtual_machine<'a, 'ty, P: for<'x> ContractProvider<'x>
     // We need to handle the result of the VM
     let res = vm.run().await;
 
-    // To be sure that we don't have any overflow
-    // We take the minimum between the gas used and the max gas
+    // Gas usage is already capped by the VM context gas limit, which may have
+    // been increased by contract-funded gas injections.
     let context = vm.context_mut();
 
     let error_level = if debug_mode {
@@ -279,9 +279,7 @@ pub(crate) async fn run_virtual_machine<'a, 'ty, P: for<'x> ContractProvider<'x>
         }
     };
 
-    let gas_usage = context
-        .current_gas_usage()
-        .min(max_gas);
+    let gas_usage = context.current_gas_usage();
     let vm_max_gas = context.get_gas_limit();
 
     Ok((gas_usage, vm_max_gas, exit_code))
@@ -365,7 +363,7 @@ pub async fn invoke_contract<'a, 'ty, P: for<'x> ContractProvider<'x>, E, B: Blo
         // Some contract have injected gas to users
         if vm_max_gas > max_gas && !gas_injections.is_empty() {
             // Refund only based on the extra max gas
-            refund_extra_gas_injections(state, gas_injections, max_gas, vm_max_gas, &mut logs, &mut changes.caches).await?;
+            refund_extra_gas_injections(state, gas_injections, max_gas, used_gas, vm_max_gas, &mut logs, &mut changes.caches).await?;
         }
 
         state.merge_contract_changes(
@@ -477,51 +475,68 @@ pub async fn invoke_contract<'a, 'ty, P: for<'x> ContractProvider<'x>, E, B: Blo
     })
 }
 
-// We need to refund the extra (unused) gas
-// this is the tx max gas - used gas
-// We want to refund proportionally to the injections made
+fn sum_gas_sources(gas_sources: &IndexMap<Source, u64>) -> Result<u64, ContractError> {
+    gas_sources.values()
+        .try_fold(0u64, |sum, gas| sum.checked_add(*gas))
+        .ok_or(ContractError::GasOverflow)
+}
+
+// We need to refund the unused scheduled gas sources.
+// The provided max gas must equal the sum of all sources.
 pub async fn refund_gas_sources<'a, 'ty, P: for<'x> ContractProvider<'x>, E, B: BlockchainApplyState<'a, 'ty, P, E>>(
     state: &mut B,
     gas_sources: IndexMap<Source, u64>,
     used_gas: u64,
     tx_max_gas: u64,
 ) -> Result<(), ContractStateError<E>> {
-    let gas_refund = tx_max_gas.checked_sub(used_gas)
-        .ok_or(ContractError::GasOverflow)?;
+    let total_sources = sum_gas_sources(&gas_sources)?;
+    if total_sources != tx_max_gas {
+        return Err(ContractError::GasOverflow.into());
+    }
 
-    // Refund proportionally to the injections made
+    let gas_refund = tx_max_gas.saturating_sub(used_gas);
+
+    // Refund proportionally to the scheduled gas sources
     // examples:
     // available: 1000
-    // injected 1: 200
-    // injected 2: 200
+    // source 1: 200
+    // source 2: 200
     // used: 1200
     // refund 1: 100
     // refund 2: 100
-    let total_injected = gas_sources.values()
-        .try_fold(0u64, |sum, gas| sum.checked_add(*gas))
-        .ok_or(ContractError::GasOverflow)?;
-    if total_injected == 0 {
+    let target_refund = gas_refund.min(total_sources);
+    if target_refund == 0 {
         return Ok(());
     }
 
-    let mut gas_refund_left = gas_refund.min(total_injected);
-    let initial_gas_refund = gas_refund_left;
+    let mut total_refunded = 0u64;
     let mut refunds = Vec::new();
     for (source, gas) in gas_sources.into_iter() {
-        if gas_refund_left == 0 {
+        // Calculate the proportional part of the refund without float.
+        let refund = ((gas as u128 * target_refund as u128) / total_sources as u128) as u64;
+        let refund_amount = refund.min(gas);
+        total_refunded = total_refunded.checked_add(refund_amount)
+            .ok_or(ContractError::GasOverflow)?;
+        refunds.push((source, refund_amount, gas));
+    }
+
+    // Integer division can leave a remainder. Pay it to existing sources with
+    // remaining capacity so the total refund is exact and no source is overpaid.
+    let mut remaining_refund = target_refund.checked_sub(total_refunded)
+        .ok_or(ContractError::GasOverflow)?;
+    for (_, refund_amount, gas) in refunds.iter_mut() {
+        if remaining_refund == 0 {
             break;
         }
 
-        // Calculate the proportion of the injection without float
-        let proportion = (gas as u128 * initial_gas_refund as u128) / total_injected as u128;
-        let refund = proportion as u64;
-
-        let refund_amount = refund.min(gas_refund_left);
-        refunds.push((source, refund_amount));
-        gas_refund_left = gas_refund_left.saturating_sub(refund_amount);
+        let capacity = gas.saturating_sub(*refund_amount);
+        let extra = capacity.min(remaining_refund);
+        *refund_amount = refund_amount.checked_add(extra)
+            .ok_or(ContractError::GasOverflow)?;
+        remaining_refund -= extra;
     }
 
-    for (source, refund_amount) in refunds.iter() {
+    for (source, refund_amount, _) in refunds.iter() {
         if *refund_amount == 0 {
             continue;
         }
@@ -541,7 +556,7 @@ pub async fn refund_gas_sources<'a, 'ty, P: for<'x> ContractProvider<'x>, E, B: 
         }
     }
 
-    for (source, refund_amount) in refunds.into_iter() {
+    for (source, refund_amount, _) in refunds.into_iter() {
         if refund_amount == 0 {
             continue;
         }
@@ -576,11 +591,13 @@ pub async fn refund_extra_gas_injections<'a, 'ty, P: for<'x> ContractProvider<'x
     state: &mut B,
     gas_injections: IndexMap<Source, u64>,
     max_gas: u64,
+    used_gas: u64,
     vm_max_gas: u64,
     outputs: &mut Vec<ContractLog>,
     caches: &mut HashMap<Hash, ContractCache>,
 ) -> Result<(), ContractStateError<E>> {
-    let mut gas_refund_left = vm_max_gas.checked_sub(max_gas)
+    let gas_paid_by_invoke = max_gas.max(used_gas);
+    let mut gas_refund_left = vm_max_gas.checked_sub(gas_paid_by_invoke)
         .ok_or(ContractError::GasOverflow)?;
     let mut refunds = Vec::new();
 
@@ -728,6 +745,11 @@ pub async fn charge_gas_injections<'a, 'ty, P: for<'x> ContractProvider<'x>, E, 
     Ok(())
 }
 
+fn calculate_burned_gas(used_gas: u64) -> Result<u64, ContractError> {
+    Ok(used_gas.checked_mul(TX_GAS_BURN_PERCENT)
+        .ok_or(ContractError::GasOverflow)? / 100)
+}
+
 pub async fn handle_gas<'a, 'ty, P: for<'x> ContractProvider<'x>, E, B: BlockchainApplyState<'a, 'ty, P, E>>(
     caller: &ContractCaller<'a>,
     state: &mut B,
@@ -735,7 +757,7 @@ pub async fn handle_gas<'a, 'ty, P: for<'x> ContractProvider<'x>, E, B: Blockcha
     refund_gas: u64,
 ) -> Result<(u64, u64), ContractStateError<E>> {
     // Part of the gas is burned
-    let burned_gas = used_gas * TX_GAS_BURN_PERCENT / 100;
+    let burned_gas = calculate_burned_gas(used_gas)?;
     // Part of the gas is given to the miners as fees
     let gas_fee = used_gas.checked_sub(burned_gas)
         .ok_or(ContractError::GasOverflow)?;

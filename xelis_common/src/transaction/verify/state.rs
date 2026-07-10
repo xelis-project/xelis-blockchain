@@ -134,6 +134,14 @@ pub trait BlockchainVerificationState<'a, E> {
         hash: Cow<'a, Hash>
     ) -> Result<bool, E>;
 
+    /// Returns true when the contract module was created in the current
+    /// in-memory verification state and is not yet present in the committed
+    /// chain snapshot.
+    async fn is_contract_module_new(
+        &mut self,
+        hash: Cow<'a, Hash>
+    ) -> Result<bool, E>;
+
     /// Get the contract module with the environment
     /// This is used to verify that all parameters are correct
     async fn get_contract_module_with_environment(

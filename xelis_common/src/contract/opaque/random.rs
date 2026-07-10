@@ -36,8 +36,7 @@ fn random_fill_buffer(random: Option<&mut DeterministicRandom>, buffer: &mut [u8
 
 pub fn random_fn(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     // Create a deterministic random for the contract
-   let state = state_from_context(context)?;
-
+    let state = state_from_context(context)?;
     let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.cache_clone_refs);
 
     if cache.random.is_none() {

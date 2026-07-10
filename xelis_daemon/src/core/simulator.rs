@@ -6,10 +6,10 @@ use std::{
 };
 use serde::{Serialize, Deserialize};
 use log::{debug, error};
-use rand::{rngs::OsRng, Rng};
+use rand::RngExt;
 use xelis_common::{
     tokio::time::interval,
-    crypto::KeyPair,
+    crypto::{KeyPair, rng},
     config::TIPS_LIMIT,
     block::Block
 };
@@ -85,7 +85,6 @@ impl Simulator {
         };
 
         let mut interval = interval(Duration::from_millis(millis_interval));
-        let mut rng = OsRng;
         let mut keys: Vec<KeyPair> = Vec::new();
 
         // Generate 100 random keys for mining
@@ -96,14 +95,17 @@ impl Simulator {
         loop {
             interval.tick().await;
             // Number of blocks to generate
-            let blocks_count = match self {
-                Self::BlockDag => rng.gen_range(1..=TIPS_LIMIT),
-                Self::Stress => rng.gen_range(1..=10),
-                _ => 1
+            let blocks_count = {
+                let mut rng = rng();
+                match self {
+                    Self::BlockDag => rng.random_range(1..=TIPS_LIMIT),
+                    Self::Stress => rng.random_range(1..=10),
+                    _ => 1
+                }
             };
 
             // Generate blocks
-            let blocks = self.generate_blocks(blocks_count, &mut rng, &keys, &blockchain).await;
+            let blocks = self.generate_blocks(blocks_count, &keys, &blockchain).await;
 
             // Add all blocks to the chain
             for block in blocks {
@@ -125,14 +127,22 @@ impl Simulator {
         }
     }
 
-    async fn generate_blocks(&self, max_blocks: usize, rng: &mut OsRng, keys: &Vec<KeyPair>, blockchain: &Arc<Blockchain<impl Storage>>) -> Vec<Block> {
+    async fn generate_blocks(&self, max_blocks: usize, keys: &Vec<KeyPair>, blockchain: &Arc<Blockchain<impl Storage>>) -> Vec<Block> {
         debug!("Adding simulated blocks");
-        let n = rng.gen_range(1..=max_blocks);
-        let mut blocks = Vec::with_capacity(n);
-        for _ in 0..n {
-            let index = rng.gen_range(0..keys.len());
-            let selected_key = keys[index].get_public_key();
-            match blockchain.mine_block(&selected_key.compress()).await {
+        let selected_keys = {
+            let mut rng = rng();
+            let n = rng.random_range(1..=max_blocks);
+            (0..n)
+                .map(|_| {
+                    let index = rng.random_range(0..keys.len());
+                    keys[index].get_public_key().compress()
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let mut blocks = Vec::with_capacity(selected_keys.len());
+        for selected_key in selected_keys {
+            match blockchain.mine_block(&selected_key).await {
                 Ok(block) => {
                     blocks.push(block);
                 },
@@ -144,13 +154,13 @@ impl Simulator {
     }
 
     // TODO use transaction builder
-    // async fn generate_txs_in_mempool(&self, max_txs: usize, max_transfers: usize, max_amount: u64, rng: &mut OsRng, keys: &Vec<KeyPair>, blockchain: &Arc<Blockchain<impl Storage>>) {
+    // async fn generate_txs_in_mempool(&self, max_txs: usize, max_transfers: usize, max_amount: u64, rng: &mut impl rand::CryptoRng, keys: &Vec<KeyPair>, blockchain: &Arc<Blockchain<impl Storage>>) {
     //     info!("Adding simulated TXs in mempool");
-    //     let n = rng.gen_range(0..max_txs);
+    //     let n = rng.random_range(0..max_txs);
     //     let mut local_nonces = HashMap::new();
     //     let mut local_balances = HashMap::new();
     //     for _ in 0..n {
-    //         let index = rng.gen_range(0..keys.len());
+    //         let index = rng.random_range(0..keys.len());
     //         let keypair = &keys[index];
 
     //         let storage = blockchain.get_storage().read().await;
@@ -159,15 +169,15 @@ impl Simulator {
     //             // Total XEL spend for this tx
     //             let mut total_amount = FEE_PER_KB;
     //             // Generate all transfers
-    //             for _ in 0..rng.gen_range(1..=max_transfers) {
+    //             for _ in 0..rng.random_range(1..=max_transfers) {
 
     //                 // Prevent to send to ourself
-    //                 let mut n = rng.gen_range(0..keys.len());
+    //                 let mut n = rng.random_range(0..keys.len());
     //                 while n == index {
-    //                     n = rng.gen_range(0..keys.len());
+    //                     n = rng.random_range(0..keys.len());
     //                 }
 
-    //                 let amount = rng.gen_range(1..=max_amount);
+    //                 let amount = rng.random_range(1..=max_amount);
     //                 total_amount += amount;
 
     //                 transfers.push(Transfer {

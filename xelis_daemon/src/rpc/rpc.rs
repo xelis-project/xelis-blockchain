@@ -61,7 +61,7 @@ use xelis_common::{
         CumulativeDifficulty,
         Difficulty
     },
-    rpc::{Context, RPCHandler},
+    rpc::{ShareableTid, Context, RPCHandler, RpcMethod},
     serializer::Serializer,
     time::TimestampSeconds,
     transaction::{
@@ -327,143 +327,144 @@ pub async fn get_peer_entry<'a>(peer: &'a Peer) -> PeerEntry<'a> {
 }
 
 // This function is used to register all the RPC methods
-pub fn register_methods<S: Storage>(handler: &mut RPCHandler<Arc<Blockchain<S>>>, allow_mining_methods: bool, allow_private_methods: bool, allow_contract_vm_executions: bool) {
+pub fn register_methods<T: ShareableTid<'static>, S: Storage>(handler: &mut RPCHandler<T>, allow_mining_methods: bool, allow_private_methods: bool, allow_contract_vm_executions: bool) {
     info!("Registering RPC methods...");
 
-    handler.register_method_no_params("get_version", async_handler!(version::<S>, single));
-    handler.register_method_no_params("get_height", async_handler!(get_height::<S>, single));
-    handler.register_method_no_params("get_topoheight", async_handler!(get_topoheight::<S>, single));
-    handler.register_method_no_params("get_pruned_topoheight", async_handler!(get_pruned_topoheight::<S>, single));
-    handler.register_method_no_params("get_info", async_handler!(get_info::<S>, single));
-    handler.register_method_no_params("get_difficulty", async_handler!(get_difficulty::<S>, single));
-    handler.register_method_no_params("get_tips", async_handler!(get_tips::<S>, single));
-    handler.register_method_no_params("get_dev_fee_thresholds", async_handler!(get_dev_fee_thresholds::<S>, single));
-    handler.register_method_no_params("get_size_on_disk", async_handler!(get_size_on_disk::<S>, single));
+    handler.register_method_no_params(("get_version", "Retrieve current daemon version"), async_handler!(version::<S>, single));
+    handler.register_method_no_params(("get_height", "Retrieve current height of the chain"), async_handler!(get_height::<S>, single));
+    handler.register_method_no_params(("get_topoheight", "Retrieve current topological height of the chain"), async_handler!(get_topoheight::<S>, single));
+    handler.register_method_no_params(("get_pruned_topoheight", "Retrieve the pruned topoheight if the node has a pruned chain. Otherwise, returns `null` as value."), async_handler!(get_pruned_topoheight::<S>, single));
+    handler.register_method_no_params(("get_info", "Retrieve current info from chain"), async_handler!(get_info::<S>, single));
+    handler.register_method_no_params(("get_difficulty", "Retrieve current difficulty and associated network hashrate."), async_handler!(get_difficulty::<S>, single));
+    handler.register_method_no_params(("get_tips", "Retrieve Tips (highest blocks from blockDAG) from chain. This is the available blocks hashes to mine on to continue the chain and merge DAG branches in one chain."), async_handler!(get_tips::<S>, single));
+    handler.register_method_no_params(("get_dev_fee_thresholds", "Retrieve configured dev fees thresholds"), async_handler!(get_dev_fee_thresholds::<S>, single));
+    handler.register_method_no_params(("get_size_on_disk", "Retrieve blockchain size on disk"), async_handler!(get_size_on_disk::<S>, single));
 
     // Retro compatibility, use stable_height
-    handler.register_method_no_params("get_stableheight", async_handler!(get_stable_height::<S>, single));
-    handler.register_method_no_params("get_stable_height", async_handler!(get_stable_height::<S>, single));
-    handler.register_method_no_params("get_stable_topoheight", async_handler!(get_stable_topoheight::<S>, single));
-    handler.register_method_no_params("get_hard_forks", async_handler!(get_hard_forks::<S>, single));
+    handler.register_method_no_params(("get_stableheight", "Backward-compatible alias for `get_stable_height`."), async_handler!(get_stable_height::<S>, single));
+    handler.register_method_no_params(("get_stable_height", "Retrieve current stable height of the chain. `get_stableheight` is kept as a backward-compatible alias."), async_handler!(get_stable_height::<S>, single));
+    handler.register_method_no_params(("get_stable_topoheight", "Retrieve current stable topoheight of the chain."), async_handler!(get_stable_topoheight::<S>, single));
+    handler.register_method_no_params(("get_hard_forks", "Retrieve the list of configured hard forks with their activation heights and changelogs."), async_handler!(get_hard_forks::<S>, single));
 
     // Blocks
-    handler.register_method_with_params_and_return_schema::<_, RPCBlockResponse>("get_block_at_topoheight", async_handler!(get_block_at_topoheight::<S>));
-    handler.register_method_with_params_and_return_schema::<_, Vec<RPCBlockResponse>>("get_blocks_at_height", async_handler!(get_blocks_at_height::<S>));
-    handler.register_method_with_params_and_return_schema::<_, RPCBlockResponse>("get_block_by_hash", async_handler!(get_block_by_hash::<S>));
-    handler.register_method_with_params_and_return_schema::<_, RPCBlockResponse>("get_top_block", async_handler!(get_top_block::<S>));
-    handler.register_method_with_params("get_block_difficulty_by_hash", async_handler!(get_block_difficulty_by_hash::<S>));
-    handler.register_method_with_params("get_block_base_fee_by_hash", async_handler!(get_block_base_fee_by_hash::<S>));
-    handler.register_method_with_params_and_return_schema::<_, GetBlockSummaryResult>("get_block_summary_at_topoheight", async_handler!(get_block_summary_at_topoheight::<S>));
-    handler.register_method_with_params_and_return_schema::<_, GetBlockSummaryResult>("get_block_summary_by_hash", async_handler!(get_block_summary_by_hash::<S>));
+    handler.register_method_with_params_and_return_schema::<_, RPCBlockResponse>(("get_block_at_topoheight", "Retrieve a block at a specific topo height"), async_handler!(get_block_at_topoheight::<S>));
+    handler.register_method_with_params_and_return_schema::<_, Vec<RPCBlockResponse>>(("get_blocks_at_height", "Retrieve all blocks at a specific height"), async_handler!(get_blocks_at_height::<S>));
+    handler.register_method_with_params_and_return_schema::<_, RPCBlockResponse>(("get_block_by_hash", "Retrieve a block by its hash"), async_handler!(get_block_by_hash::<S>));
+    handler.register_method_with_params_and_return_schema::<_, RPCBlockResponse>(("get_top_block", "Retrieve the highest block based on the topological height"), async_handler!(get_top_block::<S>));
+    handler.register_method_with_params(("get_block_difficulty_by_hash", "Retrieve the difficulty and hashrate for a specific block by its hash."), async_handler!(get_block_difficulty_by_hash::<S>));
+    handler.register_method_with_params(("get_block_base_fee_by_hash", "Retrieve the base fee per KB and block size EMA for a specific block by its hash."), async_handler!(get_block_base_fee_by_hash::<S>));
+    handler.register_method_with_params_and_return_schema::<_, GetBlockSummaryResult>(("get_block_summary_at_topoheight", "Retrieve a summarized version of a block at a specific topoheight, including transaction summaries."), async_handler!(get_block_summary_at_topoheight::<S>));
+    handler.register_method_with_params_and_return_schema::<_, GetBlockSummaryResult>(("get_block_summary_by_hash", "Retrieve a summarized version of a block by its hash, including transaction summaries."), async_handler!(get_block_summary_by_hash::<S>));
 
     // Balances
-    handler.register_method_with_params("get_balance", async_handler!(get_balance::<S>));
-    handler.register_method_with_params("get_stable_balance", async_handler!(get_stable_balance::<S>));
-    handler.register_method_with_params("has_balance", async_handler!(has_balance::<S>));
-    handler.register_method_with_params("get_balance_at_topoheight", async_handler!(get_balance_at_topoheight::<S>));
-    handler.register_method_with_params("get_balances_at_maximum_topoheight", async_handler!(get_balances_at_maximum_topoheight::<S>));
+    handler.register_method_with_params(("get_balance", "Get up-to-date asset's balance for a specific address"), async_handler!(get_balance::<S>));
+    handler.register_method_with_params(RpcMethod::with_descriptions("get_stable_balance", ["Same as `get_balance`, Get up-to-date asset's balance for a specific address.", "The only difference is its searching first for: - the latest balance with a output included (even in in unstable height) - If not found, the latest available balance in stable height.", "This difference is made so that ZK Proofs are less likely to be invalidated. The reference (block hash, topoheight) is also included in the response."]), async_handler!(get_stable_balance::<S>));
+    handler.register_method_with_params(("has_balance", "Verify if address has a balance on-chain registered for requested asset."), async_handler!(has_balance::<S>));
+    handler.register_method_with_params(RpcMethod::with_descriptions("get_balance_at_topoheight", ["Get encrypted asset's balance from address at exact topoheight.", "An error his returned if account has no asset's balance at requested topoheight."]), async_handler!(get_balance_at_topoheight::<S>));
+    handler.register_method_with_params(("get_balances_at_maximum_topoheight", "Retrieve balances for multiple assets at a maximum topoheight for an account. This returns the last version of each balance that is at or below the specified topoheight."), async_handler!(get_balances_at_maximum_topoheight::<S>));
 
-    handler.register_method_with_params("get_nonce", async_handler!(get_nonce::<S>));
-    handler.register_method_with_params("has_nonce", async_handler!(has_nonce::<S>));
-    handler.register_method_with_params("get_nonce_at_topoheight", async_handler!(get_nonce_at_topoheight::<S>));
+    handler.register_method_with_params(RpcMethod::with_descriptions("get_nonce", ["Retrieve the nonce for address in request params.", "If no nonce is found for this address and its a valid one, it is safe to assume its nonce start at 0. Each nonce represents how many TX has been made by this address and prevent replay attacks."]), async_handler!(get_nonce::<S>));
+    handler.register_method_with_params(("has_nonce", "Verify if address has a nonce on-chain registered."), async_handler!(has_nonce::<S>));
+    handler.register_method_with_params(("get_nonce_at_topoheight", "Get nonce from address at exact topoheight"), async_handler!(get_nonce_at_topoheight::<S>));
 
     // Assets
-    handler.register_method_with_params_and_return_schema::<_, RPCAssetData>("get_asset", async_handler!(get_asset::<S>));
-    handler.register_method_with_params("get_asset_supply", async_handler!(get_asset_supply::<S>));
-    handler.register_method_with_params("get_asset_supply_at_topoheight", async_handler!(get_asset_supply_at_topoheight::<S>));
-    handler.register_method_with_params("get_assets", async_handler!(get_assets::<S>));
+    handler.register_method_with_params_and_return_schema::<_, RPCAssetData>(("get_asset", "Get registered topoheight and decimals data from a specific asset."), async_handler!(get_asset::<S>));
+    handler.register_method_with_params(("get_asset_supply", "Retrieve the current circulating supply for an asset."), async_handler!(get_asset_supply::<S>));
+    handler.register_method_with_params(("get_asset_supply_at_topoheight", "Retrieve the circulating supply for an asset at a specific topoheight."), async_handler!(get_asset_supply_at_topoheight::<S>));
+    handler.register_method_with_params(("get_assets", "Get all assets available on network with its registered topoheight and necessary decimals for a full coin."), async_handler!(get_assets::<S>));
 
-    handler.register_method_no_params("count_assets", async_handler!(count_assets::<S>, single));
-    handler.register_method_no_params("count_accounts", async_handler!(count_accounts::<S>, single));
-    handler.register_method_no_params("count_transactions", async_handler!(count_transactions::<S>, single));
-    handler.register_method_no_params("count_contracts", async_handler!(count_contracts::<S>, single));
+    handler.register_method_no_params(("count_assets", "Counts the number of assets saved on disk"), async_handler!(count_assets::<S>, single));
+    handler.register_method_no_params(("count_accounts", "Counts the number of accounts saved on disk"), async_handler!(count_accounts::<S>, single));
+    handler.register_method_no_params(("count_transactions", "Counts the number of transactions saved on disk"), async_handler!(count_transactions::<S>, single));
+    handler.register_method_no_params(("count_contracts", "Counts the number of contracts saved on disk"), async_handler!(count_contracts::<S>, single));
 
     // Transactions
-    handler.register_method_with_params("submit_transaction", async_handler!(submit_transaction::<S>));
-    handler.register_method_with_params("get_transaction_executor", async_handler!(get_transaction_executor::<S>));
-    handler.register_method_with_params_and_return_schema::<_, RPCTransaction>("get_transaction", async_handler!(get_transaction::<S>));
-    handler.register_method_with_params_and_return_schema::<_, Vec<RPCTransaction>>("get_transactions", async_handler!(get_transactions::<S>));
-    handler.register_method_with_params("get_transactions_summary", async_handler!(get_transactions_summary::<S>));
-    handler.register_method_with_params("is_tx_executed_in_block", async_handler!(is_tx_executed_in_block::<S>));
+    handler.register_method_with_params(("submit_transaction", "Submit a transaction in hex format to daemon mempool."), async_handler!(submit_transaction::<S>));
+    handler.register_method_with_params(("get_transaction_executor", "Fetch the block hash where the transaction was executed and its topoheight."), async_handler!(get_transaction_executor::<S>));
+    handler.register_method_with_params_and_return_schema::<_, GetTransactionResult>(("get_transaction", "Fetch a transaction on disk and in mempool by its hash from daemon.", ["result returned in `data` field can changes based on the Transaction Type (transfers, burn, Smart Contract call, Deploy Code..)"]), async_handler!(get_transaction::<S>));
+    handler.register_method_with_params_and_return_schema::<_, Vec<Option<GetTransactionResult>>>(("get_transactions", "Fetch transactions by theirs hashes from database and mempool of daemon and keep the same order in response If a transaction is not found, its position in the result array will be `null`."), async_handler!(get_transactions::<S>));
+    handler.register_method_with_params(("get_transactions_summary", "Fetch a summarized version of transactions by their hashes. Returns source, fee, size and hash for each transaction. If a transaction is not found, its position in the result array will be `null`."), async_handler!(get_transactions_summary::<S>));
+    handler.register_method_with_params(("is_tx_executed_in_block", "Verify if a transaction hash is executed in requested block hash."), async_handler!(is_tx_executed_in_block::<S>));
 
     // P2p
-    handler.register_method_no_params_custom_return::<P2pStatusResult>("p2p_status", async_handler!(p2p_status::<S>, single));
-    handler.register_method_no_params_custom_return::<Vec<PeerEntry>>("get_peers", async_handler!(get_peers::<S>, single));
-    handler.register_method_with_params("get_p2p_block_propagation", async_handler!(get_p2p_block_propagation::<S>));
+    handler.register_method_no_params_custom_return::<P2pStatusResult>(("p2p_status", "Retrieve some informations about P2p"), async_handler!(p2p_status::<S>, single));
+    handler.register_method_no_params_custom_return::<Vec<PeerEntry>>(("get_peers", "Retrieve all peers connected"), async_handler!(get_peers::<S>, single));
+    handler.register_method_with_params(("get_p2p_block_propagation", "Retrieve the P2P block propagation timing information, showing when each peer sent or received a specific block."), async_handler!(get_p2p_block_propagation::<S>));
 
     // Mempool
-    handler.register_method_with_params_and_return_schema::<_, GetMempoolResult>("get_mempool", async_handler!(get_mempool::<S>));
-    handler.register_method_with_params_and_return_schema::<_, GetMempoolSummaryResult>("get_mempool_summary", async_handler!(get_mempool_summary::<S>));
-    handler.register_method_with_params_and_return_schema::<_, AccountCache>("get_mempool_cache", async_handler!(get_mempool_cache::<S>));
-    handler.register_method_no_params("get_estimated_fee_rates", async_handler!(get_estimated_fee_rates::<S>, single));
-    handler.register_method_no_params("get_estimated_fee_per_kb", async_handler!(get_estimated_fee_per_kb::<S>, single));
+    handler.register_method_with_params_and_return_schema::<_, GetMempoolResult>(("get_mempool", "Fetch transactions presents in the mempool"), async_handler!(get_mempool::<S>));
+    handler.register_method_with_params_and_return_schema::<_, GetMempoolSummaryResult>(("get_mempool_summary", "Fetch transactions summary presents in the mempool"), async_handler!(get_mempool_summary::<S>));
+    handler.register_method_with_params_and_return_schema::<_, AccountCache>(RpcMethod::with_descriptions("get_mempool_cache", ["Retrieve the stored mempool cache for a requested address.", "This includes nonce range (min/max) used, final output balances expected per asset used, and all transactions hashes related to this account."]), async_handler!(get_mempool_cache::<S>));
+    handler.register_method_no_params(("get_estimated_fee_rates", "Retrieve estimated fee rates for low, medium, and high priority transactions based on current mempool state."), async_handler!(get_estimated_fee_rates::<S>, single));
+    handler.register_method_no_params(("get_estimated_fee_per_kb", "Retrieve the current base fee per KB and the predicted fee per KB."), async_handler!(get_estimated_fee_per_kb::<S>, single));
 
     // DAG
-    handler.register_method_with_params("get_dag_order", async_handler!(get_dag_order::<S>));
-    handler.register_method_with_params_and_return_schema::<_, RPCBlockHeaderResponse>("get_blocks_range_by_topoheight", async_handler!(get_blocks_range_by_topoheight::<S>));
-    handler.register_method_with_params_and_return_schema::<_, RPCBlockHeaderResponse>("get_blocks_range_by_height", async_handler!(get_blocks_range_by_height::<S>));
+    handler.register_method_with_params(("get_dag_order", "Retrieve the whole DAG order (all blocks hash ordered by topoheight). If no parameters are set, it will retrieve the last 64 blocks hash ordered descending. Maximum of 64 blocks hashes only per request."), async_handler!(get_dag_order::<S>));
+    handler.register_method_with_params_and_return_schema::<_, Vec<RPCBlockHeaderResponse>>(("get_blocks_range_by_topoheight", "Retrieve a specific range of blocks (up to 20 maximum) based on topoheight.", ["Bounds are inclusive."]), async_handler!(get_blocks_range_by_topoheight::<S>));
+    handler.register_method_with_params_and_return_schema::<_, Vec<RPCBlockHeaderResponse>>(("get_blocks_range_by_height", "Retrieve a specific range of blocks (up to 20 maximum) based on height.", ["Bounds are inclusive."]), async_handler!(get_blocks_range_by_height::<S>));
 
     // Accounts
-    handler.register_method_with_params("get_account_history", async_handler!(get_account_history::<S>));
-    handler.register_method_with_params("get_account_assets", async_handler!(get_account_assets::<S>));
-    handler.register_method_with_params("get_accounts", async_handler!(get_accounts::<S>));
-    handler.register_method_with_params("is_account_registered", async_handler!(is_account_registered::<S>));
-    handler.register_method_with_params("get_account_registration_topoheight", async_handler!(get_account_registration_topoheight::<S>));
+    handler.register_method_with_params(("get_account_history", "Fetch up to 20 history events for an account on a specific asset.", ["If no asset is provided, default is set to XELIS."]), async_handler!(get_account_history::<S>));
+    handler.register_method_with_params(("get_account_assets", "Retrieve all assets for an account"), async_handler!(get_account_assets::<S>));
+    handler.register_method_with_params(("get_accounts", "Retrieve a list of available accounts (each account returned had at least one interaction on-chain) The topoheight range in parameters search for all accounts having a on-chain interaction in this inclusive range."), async_handler!(get_accounts::<S>));
+    handler.register_method_with_params(RpcMethod::with_descriptions("is_account_registered", ["Verify if the account on chain is registered. This is useful to determine if we should pay additionnal fee or not.", "For transactions, it is recommended to verify that the account is already registered in stable height."]), async_handler!(is_account_registered::<S>));
+    handler.register_method_with_params(RpcMethod::with_descriptions("get_account_registration_topoheight", ["Retrieve the account registration topoheight.", "This is like its \"first time\" doing an action on the chain."]), async_handler!(get_account_registration_topoheight::<S>));
 
     // Useful methods
-    handler.register_method_with_params("validate_address", async_handler!(validate_address::<S>));
-    handler.register_method_with_params("split_address", async_handler!(split_address::<S>));
-    handler.register_method_with_params("extract_key_from_address", async_handler!(extract_key_from_address::<S>));
-    handler.register_method_with_params("key_to_address", async_handler!(key_to_address::<S>));
-    handler.register_method_with_params("make_integrated_address", async_handler!(make_integrated_address::<S>));
-    handler.register_method_with_params("decrypt_extra_data", async_handler!(decrypt_extra_data::<S>));
+    handler.register_method_with_params(("validate_address", "Validate a wallet address by accepting or not integrated address."), async_handler!(validate_address::<S>));
+    handler.register_method_with_params(("split_address", "Split address and integrated data in two differents fields."), async_handler!(split_address::<S>));
+    handler.register_method_with_params(("extract_key_from_address", "Extract public key from a wallet address"), async_handler!(extract_key_from_address::<S>));
+    handler.register_method_with_params(("key_to_address", "Convert a public key to an address."), async_handler!(key_to_address::<S>));
+    handler.register_method_with_params(RpcMethod::with_descriptions_and_notes("make_integrated_address", ["Create an integrated address using a wallet address and data to include.", "It is not mandatory and support any data formatted in JSON up to 1 KB in serialized format."], ["Integrated data can be useful for services like Exchanges to identify a user transaction by integrating an ID (or anything else) in the address (like PaymentID for Monero)."]), async_handler!(make_integrated_address::<S>));
+    handler.register_method_with_params(("decrypt_extra_data", "Decrypt the extra data from a transaction."), async_handler!(decrypt_extra_data::<S>));
 
     // Multisig
-    handler.register_method_with_params("get_multisig_at_topoheight", async_handler!(get_multisig_at_topoheight::<S>));
-    handler.register_method_with_params("get_multisig", async_handler!(get_multisig::<S>));
-    handler.register_method_with_params("has_multisig", async_handler!(has_multisig::<S>));
-    handler.register_method_with_params("has_multisig_at_topoheight", async_handler!(has_multisig_at_topoheight::<S>));
+    handler.register_method_with_params(("get_multisig_at_topoheight", "Retrieve the multisig information at a specific topoheight."), async_handler!(get_multisig_at_topoheight::<S>));
+    handler.register_method_with_params(("get_multisig", "Retrieve the latest multisig information for a specific address."), async_handler!(get_multisig::<S>));
+    handler.register_method_with_params(("has_multisig", "Verify if the address has a multisig setup."), async_handler!(has_multisig::<S>));
+    handler.register_method_with_params(("has_multisig_at_topoheight", "Verify if the address has a multisig setup at a specific topoheight."), async_handler!(has_multisig_at_topoheight::<S>));
 
     // Contracts
-    handler.register_method_with_params("get_contract_logs", async_handler!(get_contract_logs::<S>));
-    handler.register_method_with_params("get_contract_scheduled_executions_at_topoheight", async_handler!(get_contract_scheduled_executions_at_topoheight::<S>));
-    handler.register_method_with_params("get_contract_registered_executions_at_topoheight", async_handler!(get_contract_registered_executions_at_topoheight::<S>));
+    handler.register_method_with_params(RpcMethod::with_descriptions("get_contract_logs", ["Retrieve all contract logs for a specific caller (transaction hash).", "Logs include information about gas refunds, transfers, asset minting/burning, scheduled executions, events, and more."]), async_handler!(get_contract_logs::<S>));
+    handler.register_method_with_params(("get_contract_scheduled_executions_at_topoheight", "Retrieve the scheduled contract executions at a specific topoheight."), async_handler!(get_contract_scheduled_executions_at_topoheight::<S>));
+    handler.register_method_with_params(("get_contract_registered_executions_at_topoheight", "Retrieve the registered scheduled contract executions at a specific topoheight."), async_handler!(get_contract_registered_executions_at_topoheight::<S>));
 
-    handler.register_method_with_params("get_contracts_outputs", async_handler!(get_contracts_outputs::<S>));
-    handler.register_method_with_params_and_return_schema::<_, RPCVersioned<Versioned<Option<Cow<xelis_vm::Module>>>>>("get_contract_module", async_handler!(get_contract_module::<S>));
-    handler.register_method_with_params("get_contract_data", async_handler!(get_contract_data::<S>));
-    handler.register_method_with_params("get_contract_data_at_topoheight", async_handler!(get_contract_data_at_topoheight::<S>));
-    handler.register_method_with_params("get_contract_balance", async_handler!(get_contract_balance::<S>));
-    handler.register_method_with_params("get_contract_balance_at_topoheight", async_handler!(get_contract_balance_at_topoheight::<S>));
-    handler.register_method_with_params("get_contract_assets", async_handler!(get_contract_assets::<S>));
-    handler.register_method_with_params("get_contracts", async_handler!(get_contracts::<S>));
-    handler.register_method_with_params("get_contract_data_entries", async_handler!(get_contract_data_entries::<S>));
-    handler.register_method_with_params("get_contract_transactions", async_handler!(get_contract_transactions::<S>));
+    handler.register_method_with_params(("get_contracts_outputs", "Retrieve contract transfers made to an address at a specific topoheight."), async_handler!(get_contracts_outputs::<S>));
+    handler.register_method_with_params_and_return_schema::<_, RPCVersioned<Versioned<Option<Cow<xelis_vm::Module>>>>>(("get_contract_module", "Retrieve the contract module (compiled code) for a specific contract."), async_handler!(get_contract_module::<S>));
+    handler.register_method_with_params(("get_contract_data", "Retrieve the contract data with the requested key."), async_handler!(get_contract_data::<S>));
+    handler.register_method_with_params(("get_contract_data_at_topoheight", "Retrieve the contract data with the requested key at a specific topoheight."), async_handler!(get_contract_data_at_topoheight::<S>));
+    handler.register_method_with_params(("get_contract_balance", "Retrieve the contract balance"), async_handler!(get_contract_balance::<S>));
+    handler.register_method_with_params(("get_contract_balance_at_topoheight", "Retrieve the contract balance at a specific topoheight."), async_handler!(get_contract_balance_at_topoheight::<S>));
+    handler.register_method_with_params(("get_contract_assets", "Retrieve all asset hashes that a contract has balances for."), async_handler!(get_contract_assets::<S>));
+    handler.register_method_with_params(("get_contracts", "Retrieve all deployed contract hashes with optional pagination and topoheight filtering."), async_handler!(get_contracts::<S>));
+    handler.register_method_with_params(("get_contract_data_entries", "Retrieve multiple data entries from a contract's storage with optional pagination and topoheight filtering."), async_handler!(get_contract_data_entries::<S>));
+    handler.register_method_with_params(("get_contract_transactions", "Retrieve all transaction hashes that have interacted with the requested contract."), async_handler!(get_contract_transactions::<S>));
 
     if allow_contract_vm_executions {
-        handler.register_method_with_params("simulate_contract_invoke", async_handler!(simulate_contract_invoke::<S>));
+        handler.register_method_with_params(RpcMethod::with_descriptions("simulate_contract_invoke", ["Simulate a contract invocation without writing chain state.", "This method is only registered when the daemon is started with `--rpc-allow-contract-vm-executions`."]), async_handler!(simulate_contract_invoke::<S>));
     }
 
     if allow_mining_methods {
-        handler.register_method_with_params("get_block_template", async_handler!(get_block_template::<S>));
-        handler.register_method_with_params("get_miner_work", async_handler!(get_miner_work::<S>));
-        handler.register_method_with_params("submit_block", async_handler!(submit_block::<S>));
+        handler.register_method_with_params(RpcMethod::with_descriptions("get_block_template", ["Retrieve the block template (Block Header) for PoW work.", "Block Header can be serialized/deserialized using following order on byte array: - 1 byte for version - 8 bytes for height (u64) big endian format - 8 bytes for timestamp (u64) big endian format - 8 bytes for nonce (u64) big endian format - 32 bytes for extra nonce (this space is free and can be used to spread more the work or write anything) - 1 byte for tips count - 32 bytes per hash (count of elements is based on previous byte) - 2 bytes for txs hashes count (u16) big endian format - 32 bytes per hash (count of elements is based on previous value) - 32 bytes for miner public key"]), async_handler!(get_block_template::<S>));
+        handler.register_method_with_params(RpcMethod::with_descriptions_and_notes("get_miner_work", ["Get a miner work based on a block template set in parameter. It is working the same as GetWork Server", "A `MinerWork` struct is created from the block header work hash which represent the immutable part.", "For the mutable part that can be updated by the miner we have the following field: - timestamp (u64) big endian format - nonce (u64) big endian format - miner key (32 bytes) - extra nonce (32 bytes)", "Due to DAG, you are not mining on a topoheight (which is set later dynamically by DAG order) but on a height."], ["`topoheight` field is only the current node topoheight, it is included for visual only."]), async_handler!(get_miner_work::<S>));
+        handler.register_method_with_params(("submit_block", "Submit a block header in hexadecimal format to the daemon.", ["Parameter `miner_work` is optional has it is also supported to be directly applied on `block_template`."]), async_handler!(submit_block::<S>));
     }
 
     if allow_private_methods {
         warn!("Private RPC methods are enabled!");
-        handler.register_method_with_params("prune_chain", async_handler!(prune_chain::<S>));
-        handler.register_method_with_params("rewind_chain", async_handler!(rewind_chain::<S>));
-        handler.register_method_no_params("clear_caches", async_handler!(clear_caches::<S>, single));
+        handler.register_method_with_params(("prune_chain", "Prune the chain up to a specific topoheight. This reduces disk usage by removing old block data."), async_handler!(prune_chain::<S>));
+        handler.register_method_with_params(("rewind_chain", "Rewind the chain by a specific count of blocks."), async_handler!(rewind_chain::<S>));
+        handler.register_method_no_params(("clear_caches", "Clear the current caches used by the daemon."), async_handler!(clear_caches::<S>, single));
     }
 }
 
 // Helper to get the blockchain from the context
 #[inline]
 fn chain_from_context<'a, S: Storage>(context: &'a Context<'_, '_>) -> Result<&'a Arc<Blockchain<S>>, InternalRpcError> {
-    let handler: &RPCHandler<Arc<Blockchain<S>>> = context.get()
-        .context("Error while retrieving blockchain from context")?;
-    handler.get_data().ok_or(InternalRpcError::InvalidContext)
+    context.get::<RPCHandler<Arc<Blockchain<S>>>>()
+        .context("Error while retrieving blockchain from context")
+        .map(|handler| handler.get_data())
+        .map_err(InternalRpcError::from)
 }
 
 async fn version<S: Storage>(_: &Context<'_, '_>) -> Result<&'static str, InternalRpcError> {
@@ -1762,7 +1763,7 @@ async fn get_block_base_fee_by_hash<S: Storage>(context: &Context<'_, '_>, param
     })
 }
 
-async fn get_block_summary_at_topoheight<S: Storage>(context: &Context<'_, '_>, params: GetBlockAtTopoHeightParams) -> Result<Value, InternalRpcError> {
+async fn get_block_summary_at_topoheight<S: Storage>(context: &Context<'_, '_>, params: GetBlockSummaryAtTopoheightParams) -> Result<Value, InternalRpcError> {
     let blockchain = chain_from_context::<S>(context)?;
     let storage = blockchain.get_storage().read().await;
     let (hash, block_header) = storage.get_block_header_at_topoheight(params.topoheight).await

@@ -1,5 +1,7 @@
 ﻿# API
 
+All JSON-RPC handlers also expose `schema` (registered method schemas with shared `$defs`) and `batch_limit` (configured batch request limit).
+
 ## Daemon
 
 ### Events
@@ -68,7 +70,9 @@ When a new block has been accepted and included in the chain by the daemon.
         ],
         "topoheight": 107219,
         "total_fees": 0,
+        "total_fees_burned": 0,
         "total_size_in_bytes": 124,
+        "transactions": [],
         "txs_hashes": [],
         "version": 0
     }
@@ -228,11 +232,10 @@ If transaction couldn't be added back to the mempool, it is orphaned.
         "executed_in_block": null,
         "fee": 25000,
         "fee_limit": 30000,
-        "fee_paid": null,
-        "fee_refund": null,
-        "first_seen": 1723502900,
+        "first_seen": null,
         "hash": "4951a4d10b8921c8e08d3c380993305a1e4706cbba606e2e79ffdfc06c54eb5f",
         "in_mempool": false,
+        "multisig": null,
         "nonce": 46056,
         "range_proof": [...],
         "reference": {
@@ -275,11 +278,11 @@ When a valid transaction is added in the daemon mempool.
     "result": {
         "event": "transaction_added_in_mempool",
         "fee": 25000,
+        "fee_per_kb": 16479,
         "first_seen": 1723502900,
         "hash": "4951a4d10b8921c8e08d3c380993305a1e4706cbba606e2e79ffdfc06c54eb5f",
         "size": 1517,
-        "source": "xel:ntpjg269f0efkvft8rckyqd0dwq480jphngy0fujxal7ng6qmfxqqnp3r5l",
-        "version": 0
+        "source": "xel:ntpjg269f0efkvft8rckyqd0dwq480jphngy0fujxal7ng6qmfxqqnp3r5l"
     }
 }
 ```
@@ -363,7 +366,7 @@ Subscribe with `{"contract_transfers":{"address":"<address>"}}`.
                 }
             }
         ],
-        "block_timestamp": 1723503200,
+        "block_timestamp": 1723503200000,
         "block_hash": "a1b2c3d4e5f60718273645566778899aabbccddeeff00112233445566778899",
         "topoheight": 642000
     }
@@ -420,7 +423,7 @@ When a contract has been deployed.
         "event": "contract_deploy",
         "contract": "d4f7e8c3b2a1e6f5c4b3a2d1e0f9f8e7d6c5b4a3a2b1c0d9e8f7e6d5c4b3a2b1",
         "block_hash": "a1b2c3d4e5f60718273645566778899aabbccddeeff00112233445566778899",
-        "topoheight": 642000,
+        "topoheight": 642000
     }
 }
 ```
@@ -440,7 +443,7 @@ When a new asset has been registered.
         "event": "new_asset",
         "asset": "d4f7e8c3b2a1e6f5c4b3a2d1e0f9f8e7d6c5b4a3a2b1c0d9e8f7e6d5c4b3a2b1",
         "block_hash": "a1b2c3d4e5f60718273645566778899aabbccddeeff00112233445566778899",
-        "topoheight": 642000,
+        "topoheight": 642000
     }
 }
 ```
@@ -553,7 +556,7 @@ When a peer state has been updated due to a ping packet.
         "last_ping": 1723503479,
         "local_port": 2125,
         "peers": {
-            "0.0.0.0:2125": "Out",
+            "0.0.0.0:2125": "Out"
         },
         "pruned_topoheight": 449592,
         "tag": null,
@@ -604,8 +607,8 @@ Rewind the chain by a specific count of blocks.
     "id": 1,
     "method": "rewind_chain",
     "params": {
-        "address": "xel:vs3mfyywt0fjys0rgslue7mm4wr23xdgejsjk0ld7f2kxng4d4nqqnkdufz",
-        "allow_integrated": false
+        "count": 10,
+        "until_stable_height": false
     }
 }
 ```
@@ -711,7 +714,7 @@ No parameters
 ```
 
 #### Get Info
-Retrieve current info from chain
+Retrieve current info from chain
 
 ##### Method `get_info`
 
@@ -738,14 +741,18 @@ No parameters
         "miner_reward": 1313813232,
         "dev_reward": 14597924,
         "block_time_target": 15000,
+        "block_version": 6,
+        "burned_supply": 0,
         "circulating_supply": 3155962164200,
         "difficulty": "62283705000",
+        "emitted_supply": 3155962164200,
         "height": 21510,
         "maximum_supply": 1840000000000000,
         "mempool_size": 0,
         "network": "Testnet",
         "pruned_topoheight": null,
         "stableheight": 21502,
+        "stable_topoheight": 21796,
         "top_block_hash": "000000000b47de796f1c033a23ddeacd2321606b8f0b3e5b5e11ba23b1d59dbb",
         "topoheight": 21809,
         "version": "1.8.0-70169a8"
@@ -902,6 +909,7 @@ No parameters
 
 #### Get Stable Height
 Retrieve current stable height of the chain.
+`get_stableheight` is kept as a backward-compatible alias.
 
 ##### Method `get_stable_height`
 
@@ -913,6 +921,32 @@ No parameters
 {
     "jsonrpc": "2.0",
     "method": "get_stable_height",
+    "id": 1
+}
+```
+
+##### Response
+```json
+{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": 15
+}
+```
+
+#### Get StableHeight
+Backward-compatible alias for `get_stable_height`.
+
+##### Method `get_stableheight`
+
+##### Parameters
+No parameters
+
+##### Request
+```json
+{
+    "jsonrpc": "2.0",
+    "method": "get_stableheight",
     "id": 1
 }
 ```
@@ -1031,6 +1065,7 @@ Validate a wallet address by accepting or not integrated address.
 |:----------------:|:-------:|:--------:|:---------------------------------------------------:|
 |      address     | Address | Required |               wallet address to verify              |
 | allow_integrated | Boolean | Optional | Allow integrated addresses. By default set to false |
+| max_integrated_data_size | Integer | Optional | Maximum accepted integrated data size |
 
 ##### Request
 ```json
@@ -1040,7 +1075,8 @@ Validate a wallet address by accepting or not integrated address.
     "method": "validate_address",
     "params": {
         "address": "xel:vs3mfyywt0fjys0rgslue7mm4wr23xdgejsjk0ld7f2kxng4d4nqqnkdufz",
-        "allow_integrated": false
+        "allow_integrated": false,
+        "max_integrated_data_size": 1024
     }
 }
 ```
@@ -1097,7 +1133,8 @@ Split address and integrated data in two differents fields.
                 "from",
                 "XELIS"
             ]
-        }
+        },
+        "size": 55
     }
 }
 ```
@@ -1263,7 +1300,12 @@ Convert a public key to an address.
 ##### Method `key_to_address`
 
 ##### Parameters
-Parameter is either a hex string or a byte array representing the public key.
+| Name  |   Type   | Required |                    Note                    |
+|:-----:|:--------:|:--------:|:------------------------------------------:|
+|  hex  |  String  | One of   | Public key encoded as hexadecimal          |
+| bytes | Integer[]| One of   | Public key encoded as 32 raw byte integers |
+
+Parameter is either `{ "hex": "..." }` or `{ "bytes": [...] }`.
 
 ##### Request
 ```json
@@ -1271,7 +1313,9 @@ Parameter is either a hex string or a byte array representing the public key.
     "jsonrpc": "2.0",
     "method": "key_to_address",
     "id": 1,
-    "params": "6423b4908e5bd32241e3443fccfb7bab86a899a8cca12b3fedf255634d156d66"
+    "params": {
+        "hex": "6423b4908e5bd32241e3443fccfb7bab86a899a8cca12b3fedf255634d156d66"
+    }
 }
 ```
 
@@ -1465,14 +1509,15 @@ Retrieve a block at a specific topo height
             "000000263fc1172a2fdbbcf34334fd1853cc72618233be2b3bf247436f92ebea"
         ],
         "topoheight": 10,
-        "total_fees": null,
+        "total_fees": 0,
+        "total_fees_burned": 0,
         "total_size_in_bytes": 124,
         "txs_hashes": [],
         "version": 0
     }
 }
 ```
-NOTE: `total_fees` field is not `null` when TXs are fetched (`include_txs` is at `true`).
+NOTE: The `transactions` field is only included when `include_txs` is set to `true`.
 
 #### Get Blocks At Height
 Retrieve all blocks at a specific height
@@ -1521,7 +1566,8 @@ Retrieve all blocks at a specific height
                 "00000024f5688723a4afb000f49ed23b2a00bb25744b822700b82655c0df80b8"
             ],
             "topoheight": 23,
-            "total_fees": null,
+            "total_fees": 0,
+            "total_fees_burned": 0,
             "total_size_in_bytes": 124,
             "txs_hashes": [],
             "version": 0
@@ -1529,7 +1575,7 @@ Retrieve all blocks at a specific height
     ]
 }
 ```
-NOTE: `total_fees` field is not `null` when TXs are fetched (`include_txs` is at `true`).
+NOTE: The `transactions` field is only included when `include_txs` is set to `true`.
 
 #### Get Block By Hash
 Retrieve a block by its hash
@@ -1578,14 +1624,15 @@ Retrieve a block by its hash
             "00000003ca482c0b91e103c180f3ac675b4f4a1e061086d382ec8879b19f8d16"
         ],
         "topoheight": 70,
-        "total_fees": null,
+        "total_fees": 0,
+        "total_fees_burned": 0,
         "total_size_in_bytes": 124,
         "txs_hashes": [],
         "version": 0
     }
 }
 ```
-NOTE: `total_fees` field is not `null` when TXs are fetched (`include_txs` is at `true`).
+NOTE: The `transactions` field is only included when `include_txs` is set to `true`.
 
 #### Get Top Block
 Retrieve the highest block based on the topological height
@@ -1632,14 +1679,15 @@ Retrieve the highest block based on the topological height
             "0000000001ef6ad0bcc58afd8ffdd458ce262132b88211dcc0b6fd0f8505b858"
         ],
         "topoheight": 22177,
-        "total_fees": null,
+        "total_fees": 0,
+        "total_fees_burned": 0,
         "total_size_in_bytes": 124,
         "txs_hashes": [],
         "version": 0
     }
 }
 ```
-NOTE: `total_fees` field is not `null` when TXs are fetched (`include_txs` is at `true`).
+NOTE: The `transactions` field is only included when `include_txs` is set to `true`.
 
 #### Get Block Summary At TopoHeight
 Retrieve a summarized version of a block at a specific topoheight, including transaction summaries.
@@ -1744,10 +1792,9 @@ Each nonce represents how many TX has been made by this address and prevent repl
 ##### Method `get_nonce`
 
 ##### Parameters
-|    Name    |   Type  | Required |                    Note                    |
-|:----------:|:-------:|:--------:|:------------------------------------------:|
-|   address  | Address | Required |      Valid address registered on chain     |
-| topoheight | Integer | Optional |        nonce at specified topoheight       |
+|   Name  |   Type  | Required |                Note               |
+|:-------:|:-------:|:--------:|:---------------------------------:|
+| address | Address | Required | Valid address registered on chain |
 
 ##### Request
 ```json
@@ -1932,6 +1979,7 @@ The reference (block hash, topoheight) is also included in the response.
     "result": {
         "stable_topoheight": 21337,
         "stable_block_hash": "3a4584239039a9024e205c18a2f81b9f5d1eaa8a8e22a3e384aeada1124590f3",
+        "topoheight": 21337,
         "version": {
             "balance_type": "input",
             "final_balance": {
@@ -2037,7 +2085,7 @@ This returns the last version of each balance that is at or below the specified 
 |        Name        |     Type    | Required |                     Note                      |
 |:------------------:|:-----------:|:--------:|:---------------------------------------------:|
 |      address       |   Address   | Required |         Valid address registered on chain     |
-|       assets       |   Hash[]    | Required |    List of asset hashes to retrieve balances  |
+|       assets       |   Hash[]    | Required |    List of asset hashes to retrieve balances (max 64) |
 | maximum_topoheight |   Integer   | Required | Maximum topoheight to search for balances     |
 
 ##### Request
@@ -2064,6 +2112,11 @@ This returns the last version of each balance that is at or below the specified 
     "result": [
         {
             "topoheight": 22100,
+            "balance_type": "output",
+            "final_balance": {
+                "commitment": [...],
+                "handle": [...]
+            },
             "output_balance": {
                 "commitment": [...],
                 "handle": [...]
@@ -2083,7 +2136,9 @@ Get all assets available on network with its registered topoheight and necessary
 |   Name  |   Type  | Required |                   Note                   |
 |:-------:|:-------:|:--------:|:----------------------------------------:|
 |   skip  | Integer | Optional |          How many assets to skip         |
-| maximum | Integer | Optional | Maximum assets to fetch (limited to 100) |
+| maximum | Integer | Optional | Maximum assets to fetch (limited to 64) |
+| minimum_topoheight | Integer | Optional | Only include assets registered at or after this topoheight |
+| maximum_topoheight | Integer | Optional | Only include assets registered at or before this topoheight |
 
 ##### Request
 ```json
@@ -2100,14 +2155,19 @@ Get all assets available on network with its registered topoheight and necessary
 {
     "id": 1,
     "jsonrpc": "2.0",
-    "result": {
-        "0000000000000000000000000000000000000000000000000000000000000000": {
-            "contract": null,
+    "result": [
+        {
+            "asset": "0000000000000000000000000000000000000000000000000000000000000000",
             "decimals": 8,
-            "max_supply": 1840000000000000,
-            "name": "XELIS"
+            "max_supply": {
+                "fixed": 1840000000000000
+            },
+            "name": "XELIS",
+            "owner": "none",
+            "ticker": "XEL",
+            "topoheight": 0
         }
-    }
+    ]
 }
 ```
 
@@ -2139,7 +2199,14 @@ Get registered topoheight and decimals data from a specific asset.
     "id": 1,
     "jsonrpc": "2.0",
     "result": {
+        "asset": "0000000000000000000000000000000000000000000000000000000000000000",
         "decimals": 8,
+        "max_supply": {
+            "fixed": 1840000000000000
+        },
+        "name": "XELIS",
+        "owner": "none",
+        "ticker": "XEL",
         "topoheight": 0
     }
 }
@@ -2411,6 +2478,8 @@ No parameters
         "peers": [
             {
                 "addr": "162.19.249.100:2125",
+                "bytes_recv": 204800,
+                "bytes_sent": 102400,
                 "connected_on": 1711663198,
                 "cumulative_difficulty": "874788276435001",
                 "height": 21939,
@@ -2443,6 +2512,8 @@ No parameters
             },
             {
                 "addr": "74.208.251.149:2125",
+                "bytes_recv": 81920,
+                "bytes_sent": 40960,
                 "connected_on": 1711663199,
                 "cumulative_difficulty": "874788276435001",
                 "height": 21939,
@@ -2455,7 +2526,7 @@ No parameters
                 "top_block_hash": "0000000007eeed3fecdaedff82ad867a224826230c12465cf39186471e2e360e",
                 "topoheight": 22241,
                 "version": "1.8.0-58bb439"
-            },
+            }
         ],
         "total_peers": 4
     }
@@ -2495,7 +2566,7 @@ Retrieve the P2P block propagation timing information, showing when each peer se
     "result": {
         "peers": {
             "7542674138406502028": {
-                "In": {
+                "in": {
                     "received_at": 1711663576873
                 }
             }
@@ -2637,6 +2708,8 @@ NOTE: result returned in `data` field can changes based on the Transaction Type 
         "fee_refund": 4600,
         "hash": "dd693bad09cb03ba0bf9a6fa7b787f918748db869c1463b7fa16e20b498dea88",
         "in_mempool": false,
+        "first_seen": null,
+        "multisig": null,
         "nonce": 4,
         "range_proof": [...],
         "reference": {
@@ -2644,6 +2717,7 @@ NOTE: result returned in `data` field can changes based on the Transaction Type 
             "topoheight": 10656
         },
         "signature": "37a6b9bf89e524a7481b6427c2d5d026a212b230410cedbe46fedb615edbb107288663e24567485d4802659f0f03ca5e6b27e7ea35541d07b2c71ed2ad94f300",
+        "size": 1517,
         "source": "xet:dn3x9yspqtuzhm874m267a3g9fkdztr3uztyx534wdx3p9rkdspqqhpss5d",
         "source_commitments": [
             {
@@ -2714,11 +2788,10 @@ Fetch transactions presents in the mempool
                 "executed_in_block": null,
                 "fee": 25000,
                 "fee_limit": 30000,
-                "fee_paid": null,
-                "fee_refund": null,
                 "first_seen": 1711665284,
                 "hash": "5c0c4a0d58cf678015af2e10f79119ed6d969dd3d1e98ca4ffefbb4439765658",
                 "in_mempool": true,
+                "multisig": null,
                 "nonce": 1461,
                 "range_proof": [...],
                 "reference": {
@@ -2780,6 +2853,7 @@ Fetch transactions summary presents in the mempool
         "transactions": [
             {
                 "fee": 25000,
+                "fee_per_kb": 16479,
                 "first_seen": 1711665284,
                 "hash": "5c0c4a0d58cf678015af2e10f79119ed6d969dd3d1e98ca4ffefbb4439765658",
                 "source": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk",
@@ -2821,20 +2895,21 @@ Fetch the block hash where the transaction was executed and its topoheight.
     "result": {
         "block_topoheight": 22285,
         "block_hash": "000000000bc1070fda6b86eb31fbf3f15e89be9c10928415b2254fcab96088a8",
-        "block_timestamp": 1711665284
+        "block_timestamp": 1711665284000
     }
 }
 ```
 
 #### Get Transactions
 Fetch transactions by theirs hashes from database and mempool of daemon and keep the same order in response
+If a transaction is not found, its position in the result array will be `null`.
 
 ##### Method `get_transactions`
 
 ##### Parameters
-| Name | Type | Required |            Note           |
-|:----:|:----:|:--------:|:-------------------------:|
-| hash | Hash | Required | Transaction hash to fetch |
+|    Name   |  Type  | Required |             Note              |
+|:---------:|:------:|:--------:|:-----------------------------:|
+| tx_hashes | Hash[] | Required | Transaction hashes to fetch (max 20) |
 
 ##### Request
 ```json
@@ -2885,6 +2960,8 @@ Fetch transactions by theirs hashes from database and mempool of daemon and keep
             "fee_refund": 4600,
             "hash": "cb26c0a203cd75206ebd122213e442ffabf5dc21286fbe92e46c864ba723dcdd",
             "in_mempool": false,
+            "first_seen": null,
+            "multisig": null,
             "nonce": 1460,
             "range_proof": [...],
             "reference": {
@@ -2892,6 +2969,7 @@ Fetch transactions by theirs hashes from database and mempool of daemon and keep
                 "topoheight": 22284
             },
             "signature": "afe694d96aa7a4ea44e57e7f7090a19a84105fc49df40c35cb5c1bfe4a949303d8b918e2ccbc38c8058449edcb334883471265743c99be39180a574d2adbfd05",
+            "size": 1517,
             "source": "xet:6eadzwf5xdacts6fs4y3csmnsmy4mcxewqt3xyygwfx0hm0tm32sqxdy9zk",
             "source_commitments": [
                 {
@@ -2922,7 +3000,7 @@ If a transaction is not found, its position in the result array will be `null`.
 ##### Parameters
 |    Name   |   Type   | Required |              Note              |
 |:---------:|:--------:|:--------:|:------------------------------:|
-| tx_hashes | Hash[]   | Required | Transaction hashes to fetch    |
+| tx_hashes | Hash[]   | Required | Transaction hashes to fetch (max 64) |
 
 ##### Request
 ```json
@@ -3013,7 +3091,7 @@ NOTE: If no asset is provided, default is set to XELIS.
                 "to": "xet:t23w8pp90zsj04sp5r3r9sjpz3vq7rxcwhydf5ztlk6efhnusersqvf8sny"
             },
             "topoheight": 10659
-        },
+        }
     ]
 }
 ```
@@ -3027,8 +3105,8 @@ Retrieve all assets for an account
 |   Name  |   Type  | Required |                Note               |
 |:-------:|:-------:|:--------:|:---------------------------------:|
 | address | Address | Required |     Valid address registered on chain      |
-|  skip   | Integer | Optional |         How many accounts to skip          |
-| maximum | Integer | Optional | Maximum accounts to fetch (limited to 100) |
+|  skip   | Integer | Optional |          How many assets to skip           |
+| maximum | Integer | Optional | Maximum assets to fetch (limited to 64)    |
 
 ##### Request
 ```json
@@ -3225,7 +3303,8 @@ NOTE: Bounds are inclusive.
             "timestamp": 1708339574098,
             "tips": [],
             "topoheight": 0,
-            "total_fees": null,
+            "total_fees": 0,
+            "total_fees_burned": 0,
             "total_size_in_bytes": 92,
             "txs_hashes": [],
             "version": 0
@@ -3248,7 +3327,8 @@ NOTE: Bounds are inclusive.
                 "b715cb0229d13f5f540ae48adf03bc31b094b040b0756a2454631b2ddd899c3a"
             ],
             "topoheight": 1,
-            "total_fees": null,
+            "total_fees": 0,
+            "total_fees_burned": 0,
             "total_size_in_bytes": 124,
             "txs_hashes": [],
             "version": 0
@@ -3271,7 +3351,8 @@ NOTE: Bounds are inclusive.
                 "00000079f04345ac9e14116385dc845a77ad1d4f9f83d8b2b7a84ce3beaa4522"
             ],
             "topoheight": 2,
-            "total_fees": null,
+            "total_fees": 0,
+            "total_fees_burned": 0,
             "total_size_in_bytes": 124,
             "txs_hashes": [],
             "version": 0
@@ -3328,7 +3409,8 @@ NOTE: Bounds are inclusive.
             "timestamp": 1708339574098,
             "tips": [],
             "topoheight": 0,
-            "total_fees": null,
+            "total_fees": 0,
+            "total_fees_burned": 0,
             "total_size_in_bytes": 92,
             "txs_hashes": [],
             "version": 0
@@ -3351,7 +3433,8 @@ NOTE: Bounds are inclusive.
                 "b715cb0229d13f5f540ae48adf03bc31b094b040b0756a2454631b2ddd899c3a"
             ],
             "topoheight": 1,
-            "total_fees": null,
+            "total_fees": 0,
+            "total_fees_burned": 0,
             "total_size_in_bytes": 124,
             "txs_hashes": [],
             "version": 0
@@ -3374,7 +3457,8 @@ NOTE: Bounds are inclusive.
                 "00000079f04345ac9e14116385dc845a77ad1d4f9f83d8b2b7a84ce3beaa4522"
             ],
             "topoheight": 2,
-            "total_fees": null,
+            "total_fees": 0,
+            "total_fees_burned": 0,
             "total_size_in_bytes": 124,
             "txs_hashes": [],
             "version": 0
@@ -3554,8 +3638,10 @@ Retrieve the latest multisig information for a specific address.
     "jsonrpc": "2.0",
     "result": {
         "state": {
-            "participants": ["xet:yfxcjh7aua5lmpvmyh4fmhrjzlg9xx9p6uvel0248hxc42yja9usq27dz7s"],
-            "threshold": 1
+            "active": {
+                "participants": ["xet:yfxcjh7aua5lmpvmyh4fmhrjzlg9xx9p6uvel0248hxc42yja9usq27dz7s"],
+                "threshold": 1
+            }
         },
         "topoheight": 57
     }
@@ -3594,14 +3680,16 @@ Retrieve the multisig information at a specific topoheight.
     "jsonrpc": "2.0",
     "result": {
         "state": {
-            "participants": ["xet:yfxcjh7aua5lmpvmyh4fmhrjzlg9xx9p6uvel0248hxc42yja9usq27dz7s"],
-            "threshold": 1
+            "active": {
+                "participants": ["xet:yfxcjh7aua5lmpvmyh4fmhrjzlg9xx9p6uvel0248hxc42yja9usq27dz7s"],
+                "threshold": 1
+            }
         }
     }
 }
 ```
 
-**NOTE**: If the address has disabled its multig setup setup, a `state` with value `inactive` will be returned instead.
+**NOTE**: If the address has disabled its multisig setup, `state` will be `"deleted"` instead.
 
 
 #### Has Multisig
@@ -3638,7 +3726,7 @@ Verify if the address has a multisig setup.
 ```
 
 **NOTE**:
-- If the address has an inactive multisig state, it will returns `false`.
+- If the address has a deleted multisig state, it will returns `false`.
 
 #### Has Multisig at TopoHeight
 
@@ -3676,7 +3764,7 @@ Verify if the address has a multisig setup at a specific topoheight.
 ```
 
 **NOTE**:
-- If the address has an inactive multisig state, it will returns `false`.
+- If the address has a deleted multisig state, it will returns `false`.
 - If a version is not found at requested topoheight, an error will be returned.
 
 #### Decrypt Extra Data
@@ -3775,6 +3863,8 @@ Retrieve all transaction hashes that have interacted with the requested contract
 |    Name    |     Type    | Required |           Note           |
 |:----------:|:-----------:|:--------:|:------------------------:|
 |  contract  |     Hash    | Required | Contract hash for lookup |
+|    skip    |   Integer   | Optional | Number of hashes to skip |
+|  maximum   |   Integer   | Optional | Maximum number of hashes to return (max 20) |
 
 ##### Request
 ```json
@@ -3794,7 +3884,7 @@ Retrieve all transaction hashes that have interacted with the requested contract
     "id": 1,
     "jsonrpc": "2.0",
     "result": [
-        "a7e35dfcbc333772e7bb47ad3d86a981d485950e2e5b76d3fcdeeba2742c9593",
+        "a7e35dfcbc333772e7bb47ad3d86a981d485950e2e5b76d3fcdeeba2742c9593"
     ]
 }
 ```
@@ -4005,10 +4095,12 @@ Logs include information about gas refunds, transfers, asset minting/burning, sc
     "jsonrpc": "2.0",
     "result": [
         {
-            "exit_code": 0
+            "type": "exit_code",
+            "value": 0
         },
         {
-            "refund_gas": {
+            "type": "refund_gas",
+            "value": {
                 "amount": 99593
             }
         }
@@ -4025,7 +4117,7 @@ Retrieve the scheduled contract executions at a specific topoheight.
 |    Name    |   Type  | Required |                     Note                      |
 |:----------:|:-------:|:--------:|:---------------------------------------------:|
 | topoheight | Integer | Required | Topoheight to retrieve scheduled executions   |
-|    max     | Integer | Optional | Maximum number of results to return           |
+|    max     | Integer | Optional | Maximum number of results to return (max 64)  |
 |    skip    | Integer | Optional | Number of results to skip                     |
 
 ##### Request
@@ -4058,7 +4150,7 @@ Retrieve the registered scheduled contract executions at a specific topoheight.
 |    Name    |   Type  | Required |                     Note                          |
 |:----------:|:-------:|:--------:|:-------------------------------------------------:|
 | topoheight | Integer | Required | Topoheight to retrieve registered executions      |
-|    max     | Integer | Optional | Maximum number of results to return               |
+|    max     | Integer | Optional | Maximum number of results to return (max 64)      |
 |    skip    | Integer | Optional | Number of results to skip                         |
 
 ##### Request
@@ -4132,7 +4224,7 @@ Retrieve all asset hashes that a contract has balances for.
 |:--------:|:-------:|:--------:|:-------------------------------------:|
 | contract |   Hash  | Required | Contract hash to fetch assets for     |
 |   skip   | Integer | Optional | Number of assets to skip              |
-| maximum  | Integer | Optional | Maximum number of assets to return    |
+| maximum  | Integer | Optional | Maximum number of assets to return (max 64) |
 
 ##### Request
 ```json
@@ -4372,8 +4464,14 @@ When a new asset is detected by the wallet.
     "result": {
         "event": "new_asset",
         "asset": "0000000000000000000000000000000000000000000000000000000000000000",
-        "topoheight": 57,
-        "decimals": 8
+        "decimals": 8,
+        "max_supply": {
+            "fixed": 1840000000000000
+        },
+        "name": "XELIS",
+        "owner": "none",
+        "ticker": "XEL",
+        "topoheight": 57
     }
 }
 ```
@@ -4392,6 +4490,7 @@ When a new transaction is detected by the wallet.
     "result": {
         "event": "new_transaction",
         "hash": "b84adead7fe1c0499f92826c08f4f67f8e5133981465b7b9cf0b34649e11f1e0",
+        "timestamp": 1723503200000,
         "outgoing": {
             "fee": 125000,
             "nonce": 3530,
@@ -4780,7 +4879,8 @@ Split address and integrated data in two differents fields.
                 "from",
                 "XELIS"
             ]
-        }
+        },
+        "size": 55
     }
 }
 ```
@@ -4797,6 +4897,7 @@ When no topoheight is set, it rescan until topoheight 0.
 |       Name       |   Type  | Required |                     Note                     |
 |:----------------:|:-------:|:--------:|:--------------------------------------------:|
 | until_topoheight | Integer | Optional | Until which topoheight wallet have to rescan |
+| auto_reconnect   | Boolean | Optional | Reconnect to the daemon after rescan. Default false |
 
 ##### Request
 ```json
@@ -4805,7 +4906,8 @@ When no topoheight is set, it rescan until topoheight 0.
     "method": "rescan",
     "id": 1,
     "params": {
-        "until_topoheight": 1337
+        "until_topoheight": 1337,
+        "auto_reconnect": false
     }
 }
 ```
@@ -4891,14 +4993,18 @@ Retrieve all assets that are tracked by the wallet.
 ##### Method `get_tracked_assets`
 
 ##### Parameters
-No parameters
+|   Name  |   Type  | Required |               Note               |
+|:-------:|:-------:|:--------:|:--------------------------------:|
+|   skip  | Integer | Optional | Skip the first N assets          |
+| maximum | Integer | Optional | Maximum number of assets to return (max 100) |
 
 ##### Request
 ```json
 {
     "jsonrpc": "2.0",
     "method": "get_tracked_assets",
-    "id": 1
+    "id": 1,
+    "params": {}
 }
 ```
 
@@ -5073,8 +5179,10 @@ Retrieve all assets with their data that the wallet is aware of.
                 "decimals": 8,
                 "name": "XELIS",
                 "ticker": "XEL",
-                "max_supply": 1840000000000000,
-                "owner": "..."
+                "max_supply": {
+                    "fixed": 1840000000000000
+                },
+                "owner": "none"
             }
         }
     ]
@@ -5112,8 +5220,10 @@ Retrieve an asset data from the wallet storage using its hash.
         "decimals": 8,
         "name": "XELIS",
         "ticker": "XEL",
-        "max_supply": 1840000000000000,
-        "owner": "..."
+        "max_supply": {
+            "fixed": 1840000000000000
+        },
+        "owner": "none"
     }
 }
 ```
@@ -5148,6 +5258,7 @@ Get transaction by hash from wallet.
     "jsonrpc": "2.0",
     "result": {
         "hash": "6e4bbd77b305fb68e2cc7576b4846d2db3617e3cbc2eb851cb2ae69b879e9d0f",
+        "timestamp": 1711665303229,
         "outgoing": {
             "fee": 25000,
             "nonce": 1458,
@@ -5196,6 +5307,7 @@ This is useful when a transaction may not be directly found but exists in the ra
     "result": {
         "transaction": {
             "hash": "6e4bbd77b305fb68e2cc7576b4846d2db3617e3cbc2eb851cb2ae69b879e9d0f",
+            "timestamp": 1711665303229,
             "outgoing": {
                 "fee": 25000,
                 "nonce": 1458,
@@ -5266,7 +5378,7 @@ It can be broadcasted or not to the network.
 |<transaction_type> | TransactionType | Required |                     Transaction Type parameter, see below                  |
 |      signers      |	  Array       | Optional |              List of signers to use for the transaction multisig.          |
 |      fee_limit    |     Integer     | Optional |  Set a maximum fee limit to pay. If fee estimation is higher, TX fails.    |
-|      base_fee     |     Integer     | Optional |    Set a base fee to use for fee estimation instead of querying daemon.    |
+|      base_fee     |   BaseFeeMode   | Optional |    Set base fee selection mode. By default, query the connected daemon.    |
 
 ##### Fee Builder
 `fee` field has few variants:
@@ -5471,6 +5583,7 @@ This payload allows to call a contract entry chunk with parameters.
             }
         ],
         "max_gas": 1000000,
+        "permission": "none"
     }
 }
 ```
@@ -5484,7 +5597,8 @@ In case you want to send assets along the contract invocation, you can provide a
 {
     "deposits": {
         "0000000000000000000000000000000000000000000000000000000000000000": {
-            "amount": 1000000000
+            "amount": 1000000000,
+            "private": false
         }
     }
 }
@@ -5492,7 +5606,7 @@ In case you want to send assets along the contract invocation, you can provide a
 where `deposits` is a list of assets to deposit to the contract during its execution.
 
 If you want to allow the contract to call other contracts during on your behalf, you can provide a `permission` field.
-It is set to `none` by default, meaning the contract won't be able to call other contracts on your behalf during its execution.
+Set it to `none` when the contract must not call other contracts on your behalf during its execution.
 
 You can be precise on which contracts and which chunks the contract can call on your behalf.
 
@@ -5538,12 +5652,13 @@ Payload to deploy a contract on the network.
 ```json
 {
     "deploy_contract": {
+        "contract_version": 0,
         "module": "<contract bytecode in hexadecimal>",
     }
 }
 ```
 
-Where `module` is the compiled contract bytecode in hexadecimal format.
+Where `module` is the compiled contract bytecode in hexadecimal format. `contract_version` is optional and defaults to the current default contract environment version.
 
 In case your contract have a constructor hook, you can provide parameters to it during the deployment.
 ```json
@@ -5560,6 +5675,23 @@ In case your contract have a constructor hook, you can provide parameters to it 
 ```
 
 Where `invoke` is the invocation payload to call the constructor during deployment.
+
+###### Blob
+Payload to store encrypted or public data for one or more destinations.
+
+```json
+{
+    "blob": {
+        "data": {
+            "hello": "world"
+        },
+        "encrypt": true,
+        "destinations": [
+            "xet:t23w8pp90zsj04sp5r3r9sjpz3vq7rxcwhydf5ztlk6efhnusersqvf8sny"
+        ]
+    }
+}
+```
 
 ##### Request
 Replace `<transaction type>` by one of the transaction type explained above.
@@ -5638,23 +5770,15 @@ It cannot be broadcasted by the wallet directly.
 |       nonce       |     Integer     | Required | Set the nonce to use by the transaction. By default its provided by wallet |
 |     tx_version    |     Integer     | Optional | Set the transaction version to use. By default take the version from wallet|
 |     tx_as_hex     |     Boolean     | Optional |            Serialize TX to hexadecimal. By default set to false            |
-| transfers OR burn | TransactionType | Required |                         Transaction Type parameter                         |
+|      fee_limit    |     Integer     | Optional |  Set a maximum fee limit to pay. If fee estimation is higher, TX fails.    |
+|      base_fee     |     Integer     | Optional |    Set a fixed base fee per kB in atomic units.                            |
+|<transaction_type> | TransactionType | Required |                     Transaction Type parameter, see above                  |
 |      balances     |     Array       | Required |              Map of asset<->balance to use for the transaction.            |
 |	 reference      |    Reference    | Required | Reference to use for the transaction. It contains the hash and topoheight  |
 |      signers      |	  Array       | Optional |              List of signers to use for the transaction multisig.          |
 
 ###### Fee Builder
-Fee builder has two variants:
-- One to provide a multiplier applied on estimated fees.
-```json
-{"multiplier":1.0}
-```
-
-- One to provide a fixed amount of fee to pay
-```json
-{"value":100}
-```
-When it's not provided, Fee Builder is set by default to multiplier 1 to pay what is estimated.
+Same `FeeBuilder` format as `build_transaction`.
 
 ###### MultiSig Signers
 Signers is a list of `SignerId` to use to sign a transaction multisig.
@@ -5683,7 +5807,7 @@ where `id` is the index of the signer in the multisig setup.
         ],
         "tx_version": 0,
         "nonce": 1463,
-        "balances": {
+        "balances": {
             "0000000000000000000000000000000000000000000000000000000000000000": {
                 "commitment": [...],
                 "handle": [...]
@@ -5770,9 +5894,11 @@ This is useful in case of a MultiSig setup where you need to sign the transactio
 |       nonce       |     Integer     | Optional | Set the nonce to use by the transaction. By default its provided by wallet |
 |     tx_version    |     Integer     | Optional | Set the transaction version to use. By default take the version from wallet|
 |     tx_as_hex     |     Boolean     | Optional |            Serialize TX to hexadecimal. By default set to false            |
-| transfers OR burn | TransactionType | Required |                         Transaction Type parameter                         |
+|      fee_limit    |     Integer     | Optional |  Set a maximum fee limit to pay. If fee estimation is higher, TX fails.    |
+|      base_fee     |   BaseFeeMode   | Optional |    Set base fee selection mode. By default, query the connected daemon.    |
+|<transaction_type> | TransactionType | Required |                     Transaction Type parameter, see above                  |
 
-##### Request
+##### Request
 ```json
 {
     "jsonrpc": "2.0",
@@ -5816,6 +5942,7 @@ This is useful in case of a MultiSig setup where you need to sign the transactio
             ]
         },
         "fee": 25000,
+        "fee_limit": 30000,
         "hash": "f8bd7c15e3a94085f8130cc67e1fefd89192cdd208b68b10e1cc6e1a83afe5d6",
         "nonce": 1463,
         "range_proof": [...],
@@ -5841,13 +5968,12 @@ This is useful in case of a MultiSig setup where you need to sign the transactio
         "multisig": null,
         "tx_as_hex": "<hexadecimal transaction>",
         "version": 0,
-        "threshold": 0
+        "threshold": null
     }
 }
 ```
 
-**NOTE**: If the wallet is offline, it can't determine the exact `threshold` needed to sign the transaction.
-It will be set to 0.
+**NOTE**: `threshold` is `null` when no multisig threshold is active.
 
 #### Finalize Unsigned Transaction
 Finalize an unsigned transaction by signing it with the wallet key pair.
@@ -5947,7 +6073,7 @@ This is useful in case you are a part of the multisig of another wallet and you 
 
 |        Name       |        Type       | Required |                                    Note                                    |
 |:-----------------:|:-----------------:|:--------:|:--------------------------------------------------------------------------:|
-|        hash       |        Hash       | Required | Hash of the unsigned transaction to sign                                   |
+|        hash       |        Hash       | Required | Hash of the unsigned transaction to sign                                   |
 |     signer_id     |      Integer      | Required | Index of the signer in the multisig setup to use for signing               |
 
 #### Request
@@ -6072,6 +6198,8 @@ Meaning if you set max_topoheight at 10 and you have a TX at 10 its returned.
 |   accept_burn   | Boolean | Optional |                          Filter burn                          |
 |   accept_blob   | Boolean | Optional |                          Filter blob                          |
 |      query      |  Query  | Optional |                 Allow to filter on extra data                 |
+|      limit      | Integer | Optional |                 Maximum number of entries returned            |
+|      skip       | Integer | Optional |                 Skip the first N matching entries             |
 
 ##### Request
 ```json
@@ -6095,6 +6223,7 @@ Meaning if you set max_topoheight at 10 and you have a TX at 10 its returned.
     "result": [
         {
             "hash": "dd693bad09cb03ba0bf9a6fa7b787f918748db869c1463b7fa16e20b498dea88",
+            "timestamp": 1711665303229,
             "incoming": {
                 "from": "xet:dn3x9yspqtuzhm874m267a3g9fkdztr3uztyx534wdx3p9rkdspqqhpss5d",
                 "transfers": [
@@ -6186,7 +6315,9 @@ Returned fees are in atomic units.
 ##### Parameters
 |        Name       |       Type      | Required |             Note             |
 |:-----------------:|:---------------:|:--------:|:----------------------------:|
-| transfers OR burn | TransactionType | Required |  Transaction Type parameter  |
+|<transaction_type> | TransactionType | Required | Transaction Type parameter   |
+|        fee        |    FeeBuilder   | Optional | Fee mode to use for estimation |
+|      base_fee     |   BaseFeeMode   | Optional | Base fee selection mode      |
 
 
 ##### Request
@@ -6364,10 +6495,13 @@ No parameter
         "average_block_time": 15954,
         "block_reward": 137924147,
         "block_time_target": 15000,
+        "block_version": 0,
+        "burned_supply": 0,
         "circulating_supply": 104512595148870,
         "connected_to": "ws://127.0.0.1:8080/json_rpc",
         "dev_reward": 13792414,
         "difficulty": "107844053400",
+        "emitted_supply": 104512595148870,
         "height": 725025,
         "maximum_supply": 1840000000000000,
         "mempool_size": 0,
@@ -6375,6 +6509,7 @@ No parameter
         "network": "Mainnet",
         "pruned_topoheight": null,
         "stableheight": 725017,
+        "stable_topoheight": 761750,
         "top_block_hash": "1914802b64b28386adc37927081beb6ac4677b6f85ee2149f7a143339c99d309",
         "topoheight": 761761,
         "version": "1.13.4-d33986a"
@@ -6434,6 +6569,7 @@ Please note that the value returned is in atomic units.
 |    Name    |     Type    | Required |               Note                 |
 |:----------:|:-----------:|:--------:|:----------------------------------:|
 | ciphertext | Compressed  | Required |    Ciphertext compressed format    |
+| max_supply | Integer     | Optional |    Maximum amount to search while decrypting |
 
 ##### Request
 ```json
@@ -6445,7 +6581,8 @@ Please note that the value returned is in atomic units.
         "ciphertext": {
             "handle": [ ... ],
             "commitment": [ ... ]
-}
+        },
+        "max_supply": null
     }
 }
 ```
@@ -6711,7 +6848,11 @@ Store a new key / value entry in the requested Tree.
 ##### Method `store`
 
 ##### Parameters
-TODO
+|  Name |    Type     | Required |              Note              |
+|:-----:|:-----------:|:--------:|:------------------------------:|
+| tree  | String      | Required | Tree name to store in          |
+| key   | DataValue   | Required | Entry key                      |
+| value | DataElement | Required | Entry value                    |
 
 ##### Request
 ```json
@@ -6742,7 +6883,10 @@ Delete a key / value entry in the requested Tree.
 ##### Method `delete`
 
 ##### Parameters
-TODO
+| Name |   Type    | Required |              Note             |
+|:----:|:---------:|:--------:|:-----------------------------:|
+| tree | String    | Required | Tree name to delete from      |
+| key  | DataValue | Required | Entry key to delete           |
 
 ##### Request
 ```json
@@ -6772,7 +6916,10 @@ Verify if the key is present in the requested Tree.
 ##### Method `has_key`
 
 ##### Parameters
-TODO
+| Name |   Type    | Required |              Note             |
+|:----:|:---------:|:--------:|:-----------------------------:|
+| tree | String    | Required | Tree name to search in        |
+| key  | DataValue | Required | Entry key to check            |
 
 ##### Request
 ```json
@@ -6802,7 +6949,10 @@ Get a value using its key in the requested Tree.
 ##### Method `get_value_from_key`
 
 ##### Parameters
-TODO
+| Name |   Type    | Required |              Note             |
+|:----:|:---------:|:--------:|:-----------------------------:|
+| tree | String    | Required | Tree name to search in        |
+| key  | DataValue | Required | Entry key to retrieve         |
 
 ##### Request
 ```json
@@ -6837,7 +6987,13 @@ Query the DB in the requested Tree with filters.
 ##### Method `query_db`
 
 ##### Parameters
-TODO
+| Name  |  Type   | Required |                  Note                  |
+|:-----:|:-------:|:--------:|:--------------------------------------:|
+| tree  | String  | Required | Tree name to query                    |
+| key   | Query   | Optional | Optional query filter on keys         |
+| value | Query   | Optional | Optional query filter on values       |
+| limit | Integer | Optional | Maximum number of entries to return   |
+| skip  | Integer | Optional | Number of entries to skip             |
 
 ##### Request
 ```json

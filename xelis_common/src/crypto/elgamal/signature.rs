@@ -1,4 +1,4 @@
-use curve25519_dalek::{ristretto::CompressedRistretto, RistrettoPoint, Scalar};
+use curve25519_dalek::{RistrettoPoint, Scalar, ristretto::CompressedRistretto, traits::IsIdentity};
 use schemars::JsonSchema;
 use serde::{de::Error, Serialize};
 use sha3::{Digest, Sha3_512};
@@ -30,6 +30,10 @@ impl Signature {
 
     // Verify the signature using the Public Key and the hash of the message
     pub fn verify_internal(&self, message: &[u8], key: &RistrettoPoint, key_compressed: &CompressedRistretto) -> bool {
+        if key.is_identity() {
+            return false;
+        }
+
         let r = (*H) * &self.s + key * -self.e;
         let calculated = hash_and_point_to_scalar(&key_compressed, message, &r);
         self.e == calculated

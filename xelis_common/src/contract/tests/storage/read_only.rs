@@ -141,3 +141,61 @@ async fn test_read_only_storage_reads_own_cache_changes() {
 
     assert!(result.is_success(), "self read only storage should see cache changes: {:?}", result);
 }
+
+#[tokio::test]
+async fn test_read_only_storage_rejects_reserved_btree_keys() {
+    let target_code = r#"
+        entry main() {
+            return 0
+        }
+    "#;
+    let reader_code = r#"
+        entry check_has(target: Hash, key: any) {
+            let storage = ReadOnlyStorage::new(target).expect("read only storage");
+            storage.has(key);
+            return 0
+        }
+
+        entry check_load(target: Hash, key: any) {
+            let storage = ReadOnlyStorage::new(target).expect("read only storage");
+            storage.load(key);
+            return 0
+        }
+    "#;
+
+    let mut chain_state = MockChainState::with(BlockVersion::V6);
+    let target = deploy_contract(&mut chain_state, target_code, ContractVersion::V1)
+        .await
+        .expect("deploy target")
+        .0;
+    let reader = deploy_contract(&mut chain_state, reader_code, ContractVersion::V1)
+        .await
+        .expect("deploy reader")
+        .0;
+
+    let reserved_key = || {
+        let mut bytes = Vec::from([0u8]);
+        bytes.extend_from_slice(b"btree:orders:root");
+        ValueCell::Bytes(bytes)
+    };
+
+    let has = invoke_contract(
+        &mut chain_state,
+        &reader,
+        InvokeContract::Entry(0),
+        vec![Primitive::Opaque(target.clone().into()).into(), reserved_key()],
+    )
+    .await
+    .expect("read only has reserved key");
+    assert!(!has.is_success(), "read only has must reject reserved BTree keys: {:?}", has);
+
+    let load = invoke_contract(
+        &mut chain_state,
+        &reader,
+        InvokeContract::Entry(1),
+        vec![Primitive::Opaque(target.into()).into(), reserved_key()],
+    )
+    .await
+    .expect("read only load reserved key");
+    assert!(!load.is_success(), "read only load must reject reserved BTree keys: {:?}", load);
+}

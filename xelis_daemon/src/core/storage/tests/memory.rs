@@ -161,6 +161,18 @@ async fn test_memory_versioned_data_max_topoheight_boundary() -> Result<()> {
 }
 
 #[tokio::test]
+async fn test_memory_asset_data_at_maximum_topoheight_walks_previous_versions() -> Result<()> {
+    let storage = MemoryStorage::new(Network::Devnet, 1);
+    test_asset_data_at_maximum_topoheight(storage).await
+}
+
+#[tokio::test]
+async fn test_memory_asset_supply_at_maximum_topoheight_walks_previous_versions() -> Result<()> {
+    let storage = MemoryStorage::new(Network::Devnet, 1);
+    test_asset_supply_at_maximum_topoheight(storage).await
+}
+
+#[tokio::test]
 async fn test_memory_delete_versioned_data_at_topoheight_nonces() -> Result<()> {
     let data = TestData::new()?;
     let storage = MemoryStorage::new(data.network, 1);
@@ -228,6 +240,13 @@ async fn test_memory_delete_versioned_balances_above_topoheight() -> Result<()> 
 }
 
 #[tokio::test]
+async fn test_memory_delete_versioned_balances_below_topoheight_keeps_latest_output() -> Result<()> {
+    let data = TestData::new()?;
+    let storage = MemoryStorage::new(data.network, 1);
+    test_delete_versioned_balances_below_topoheight_keeps_latest_output(storage, &data).await
+}
+
+#[tokio::test]
 async fn test_memory_delete_versioned_balances_above_topoheight_multi_account() -> Result<()> {
     let storage = MemoryStorage::new(Network::Devnet, 1);
     test_delete_versioned_balances_above_topoheight_multi_account(storage).await
@@ -274,6 +293,12 @@ async fn test_memory_contract_module_rewind() -> Result<()> {
 async fn test_memory_scheduled_execution_lifecycle() -> Result<()> {
     let storage = MemoryStorage::new(Network::Devnet, 1);
     test_scheduled_execution_lifecycle(storage).await
+}
+
+#[tokio::test]
+async fn test_memory_scheduled_execution_prune_keeps_future_execution() -> Result<()> {
+    let storage = MemoryStorage::new(Network::Devnet, 1);
+    test_scheduled_execution_prune_keeps_future_execution(storage).await
 }
 
 #[tokio::test]

@@ -128,6 +128,16 @@ where
         .ok_or(BlockchainError::ExpectedTips)
 }
 
+fn is_newer_tip_by_timestamp(
+    hash: &Hash,
+    timestamp: TimestampMillis,
+    newest_hash: &Hash,
+    newest_timestamp: TimestampMillis,
+) -> bool {
+    timestamp.cmp(&newest_timestamp)
+        .then_with(|| hash.cmp(newest_hash)) == Ordering::Greater
+}
+
 // Find the newest tip based on the timestamp of the blocks
 pub async fn find_newest_tip_by_timestamp<'a, D, I>(provider: &D, tips: I) -> Result<(&'a Hash, TimestampMillis), BlockchainError>
 where
@@ -149,7 +159,7 @@ where
                 .try_fold(None, |newest, (hash, timestamp)| ready(
                     Ok::<_, BlockchainError>(Some(match newest {
                         None => (hash, timestamp),
-                        Some((_, newest_timestamp)) if timestamp > newest_timestamp => (hash, timestamp),
+                        Some((newest_hash, newest_timestamp)) if is_newer_tip_by_timestamp(hash, timestamp, newest_hash, newest_timestamp) => (hash, timestamp),
                         Some(current_newest) => current_newest,
                     }))
                 )).await? else {
@@ -1182,6 +1192,18 @@ mod tests {
         assert_eq!(ascending[2].0, h(9));
     }
 
+    #[test]
+    fn test_is_newer_tip_by_timestamp_is_strict_and_tiebreaks_by_hash() {
+        let lower_hash = h(1);
+        let higher_hash = h(2);
+
+        assert!(is_newer_tip_by_timestamp(&lower_hash, 101, &higher_hash, 100));
+        assert!(is_newer_tip_by_timestamp(&higher_hash, 100, &lower_hash, 100));
+        assert!(!is_newer_tip_by_timestamp(&lower_hash, 100, &higher_hash, 100));
+        assert!(!is_newer_tip_by_timestamp(&higher_hash, 99, &lower_hash, 100));
+        assert!(!is_newer_tip_by_timestamp(&higher_hash, 100, &higher_hash, 100));
+    }
+
     #[tokio::test]
     async fn test_sort_tips_and_best_tip_edges() {
         let mut storage = MemoryStorage::new(Network::Devnet, 1);
@@ -1213,9 +1235,11 @@ mod tests {
         let mut storage = MemoryStorage::new(Network::Devnet, 1);
         let a = h(10);
         let b = h(11);
+        let c = h(12);
 
         add_block(&mut storage, a.clone(), 5, 100, vec![], 1, 1, BlockVersion::V6, None).await;
         add_block(&mut storage, b.clone(), 7, 120, vec![], 1, 2, BlockVersion::V6, None).await;
+        add_block(&mut storage, c.clone(), 6, 120, vec![], 1, 3, BlockVersion::V6, None).await;
 
         let empty_height = calculate_height_at_tips(&storage, Vec::<&Hash>::new().into_iter())
             .await
@@ -1235,6 +1259,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(*tip, b);
+        assert_eq!(ts, 120);
+
+        let (tip, ts) = find_newest_tip_by_timestamp(&storage, vec![&b, &c].into_iter())
+            .await
+            .unwrap();
+        assert_eq!(*tip, c, "Equal timestamps must be tie-broken by hash");
         assert_eq!(ts, 120);
     }
 

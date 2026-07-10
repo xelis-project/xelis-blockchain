@@ -1,7 +1,6 @@
 use std::ops::{Add, AddAssign, Sub, SubAssign};
 
 use curve25519_dalek::{RistrettoPoint, Scalar};
-use rand::rngs::OsRng;
 
 use crate::crypto::{
     proofs::{G, PC_GENS},
@@ -21,7 +20,7 @@ impl PedersenOpening {
     }
 
     pub fn generate_new() -> Self {
-        PedersenOpening(Scalar::random(&mut OsRng))
+        PedersenOpening(Scalar::random(&mut rand::rng()))
     }
 
     pub fn as_scalar(&self) -> Scalar {

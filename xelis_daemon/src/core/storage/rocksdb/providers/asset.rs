@@ -86,7 +86,7 @@ impl AssetProvider for RocksStorage {
                     return Ok(Some((previous, data)))
                 }
 
-                let key = Self::get_asset_versioned_key(topoheight, metadata.id);
+                let key = Self::get_asset_versioned_key(previous, metadata.id);
                 topo = self.load_from_disk(Column::VersionedAssets, &key)?;
             }
 

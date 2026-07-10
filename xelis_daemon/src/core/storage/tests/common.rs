@@ -4,11 +4,11 @@ use std::sync::Arc;
 use std::borrow::Cow;
 use indexmap::IndexSet;
 use xelis_common::{
-    account::{VersionedBalance, VersionedNonce},
+    account::{BalanceType, VersionedBalance, VersionedNonce},
     asset::{AssetData, AssetOwner, MaxSupplyMode, VersionedAssetData},
     block::{BlockHeader, BlockVersion, EXTRA_NONCE_SIZE},
     config::XELIS_ASSET,
-    contract::{ContractModule, EventCallbackRegistration, ScheduledExecution, ScheduledExecutionKind},
+    contract::{ContractModule, EventCallbackRegistration, ScheduledExecution, ScheduledExecutionKind, Source},
     crypto::{Hash, KeyPair, PublicKey},
     difficulty::Difficulty,
     immutable::Immutable,
@@ -199,10 +199,7 @@ pub async fn test_contract_event_callback_storage<S: Storage>(mut storage: S) ->
     storage.set_last_contract_to(&listener_contract_hash, topoheight, &versioned2).await.context("Failed to create listener contract")?;
     
     // Create an event callback registration
-    let callback = EventCallbackRegistration {
-        chunk_id: 0,
-        max_gas: 100,
-    };
+    let callback = EventCallbackRegistration::new(0, 100, Source::Contract(listener_contract_hash.clone()));
     let versioned_callback = Versioned::new(Some(callback.clone()), None);
     
     // Set event callback
@@ -226,8 +223,9 @@ pub async fn test_contract_event_callback_storage<S: Storage>(mut storage: S) ->
     let (retrieved_topo, retrieved_versioned) = retrieved.unwrap();
     assert_eq!(retrieved_topo, topoheight, "Topoheight mismatch");
     assert!(retrieved_versioned.get().is_some(), "Callback registration should exist");
-    assert_eq!(retrieved_versioned.get().unwrap().chunk_id, 0, "Chunk ID mismatch");
-    assert_eq!(retrieved_versioned.get().unwrap().max_gas, 100, "Max gas mismatch");
+    let retrieved_callback = retrieved_versioned.get().as_ref().unwrap();
+    assert_eq!(retrieved_callback.chunk_id, 0, "Chunk ID mismatch");
+    assert_eq!(retrieved_callback.max_gas, 100, "Max gas mismatch");
     
     Ok(())
 }
@@ -260,10 +258,7 @@ pub async fn test_contract_event_callback_retrieval<S: Storage>(mut storage: S) 
     // Register multiple listeners for the same event
     let listeners = vec![(listener1_hash, 0u64), (listener2_hash, 1u64)];
     for (listener_hash, listener_idx) in listeners {
-        let callback = EventCallbackRegistration {
-            chunk_id: listener_idx as u16,
-            max_gas: 200u64 + listener_idx,
-        };
+        let callback = EventCallbackRegistration::new(listener_idx as u16, 200u64 + listener_idx, Source::Contract(listener_hash.clone()));
         let versioned = Versioned::new(Some(callback), None);
         storage.set_last_contract_event_callback(
             &contract_hash,
@@ -317,10 +312,7 @@ pub async fn test_contract_event_callback_versioning<S: Storage>(mut storage: S)
     storage.set_last_contract_to(&listener_hash, topoheight, &versioned2).await.context("Failed to create listener contract")?;
     
     // Register version 1 at topoheight 5
-    let callback_v1 = EventCallbackRegistration {
-        chunk_id: 0,
-        max_gas: 300,
-    };
+    let callback_v1 = EventCallbackRegistration::new(0, 300, Source::Contract(listener_hash.clone()));
     storage.set_last_contract_event_callback(
         &contract_hash,
         event_id,
@@ -330,10 +322,7 @@ pub async fn test_contract_event_callback_versioning<S: Storage>(mut storage: S)
     ).await.context("Failed to set callback v1")?;
     
     // Register version 2 at topoheight 10 (update)
-    let callback_v2 = EventCallbackRegistration {
-        chunk_id: 1,
-        max_gas: 400,
-    };
+    let callback_v2 = EventCallbackRegistration::new(1, 400, Source::Contract(listener_hash.clone()));
     storage.set_last_contract_event_callback(
         &contract_hash,
         event_id,
@@ -351,7 +340,8 @@ pub async fn test_contract_event_callback_versioning<S: Storage>(mut storage: S)
     ).await.context("Failed to get callback at topo 8")?;
     
     assert!(result_v1.is_some(), "Should find v1 at topoheight 8");
-    assert_eq!(result_v1.unwrap().1.get().unwrap().max_gas, 300, "v1 max_gas should be 300");
+    let result_v1 = result_v1.unwrap();
+    assert_eq!(result_v1.1.get().as_ref().unwrap().max_gas, 300, "v1 max_gas should be 300");
     
     // Get at topoheight 15 should return v2
     let result_v2 = storage.get_event_callback_for_contract_at_maximum_topoheight(
@@ -362,7 +352,8 @@ pub async fn test_contract_event_callback_versioning<S: Storage>(mut storage: S)
     ).await.context("Failed to get callback at topo 15")?;
     
     assert!(result_v2.is_some(), "Should find v2 at topoheight 15");
-    assert_eq!(result_v2.unwrap().1.get().unwrap().max_gas, 400, "v2 max_gas should be 400");
+    let result_v2 = result_v2.unwrap();
+    assert_eq!(result_v2.1.get().as_ref().unwrap().max_gas, 400, "v2 max_gas should be 400");
     
     Ok(())
 }
@@ -390,10 +381,7 @@ pub async fn test_event_callback_unregister<S: Storage>(mut storage: S) -> Resul
     storage.set_last_contract_to(&listener_hash, topoheight, &versioned2).await.context("Failed to create listener contract")?;
     
     // Register callback
-    let callback = EventCallbackRegistration {
-        chunk_id: 0,
-        max_gas: 500,
-    };
+    let callback = EventCallbackRegistration::new(0, 500, Source::Contract(listener_hash.clone()));
     storage.set_last_contract_event_callback(
         &contract_hash,
         event_id,
@@ -634,10 +622,7 @@ pub async fn test_cleanup_above_topoheight_with_mixed_data<S: Storage>(mut stora
     storage.set_last_contract_to(&listener_hash, 0u64, &versioned2).await.context("Failed to create listener contract")?;
     
     for topo in 0u64..5 {
-        let callback = EventCallbackRegistration {
-            chunk_id: topo as u16,
-            max_gas: 100 + topo,
-        };
+        let callback = EventCallbackRegistration::new(topo as u16, 100 + topo, Source::Contract(listener_hash.clone()));
         storage.set_last_contract_event_callback(
             &contract_hash,
             1u64,
@@ -739,10 +724,7 @@ pub async fn test_cleanup_all_data_types_at_topoheight<S: Storage>(mut storage: 
         .context("Failed to set nonce")?;
     
     // Set event callback at target topoheight
-    let callback = EventCallbackRegistration {
-        chunk_id: 1,
-        max_gas: 500,
-    };
+    let callback = EventCallbackRegistration::new(1, 500, Source::Contract(listener_hash.clone()));
     storage.set_last_contract_event_callback(
         &contract_hash,
         1u64,
@@ -862,10 +844,7 @@ pub async fn test_versioned_contract_event_callback_stream<S: Storage>(mut stora
         let versioned = Versioned::new(Some(Cow::Owned(contract_module)), None);
         storage.set_last_contract_to(&listener_hash, idx, &versioned).await.context("Failed to create listener contract")?;
         
-        let callback = EventCallbackRegistration {
-            chunk_id: idx as u16,
-            max_gas: 600 + idx,
-        };
+        let callback = EventCallbackRegistration::new(idx as u16, 600 + idx, Source::Contract(listener_hash.clone()));
         
         storage.set_last_contract_event_callback(
             &contract_hash,
@@ -974,10 +953,7 @@ pub async fn test_versioned_data_max_topoheight_boundary<S: Storage>(mut storage
         .context("Failed to set nonce")?;
     
     // Set event callback at topoheight 100
-    let callback = EventCallbackRegistration {
-        chunk_id: 10,
-        max_gas: 1000,
-    };
+    let callback = EventCallbackRegistration::new(10, 1000, Source::Contract(listener_hash.clone()));
     storage.set_last_contract_event_callback(
         &contract_hash,
         1u64,
@@ -1017,6 +993,123 @@ pub async fn test_versioned_data_max_topoheight_boundary<S: Storage>(mut storage
     ).await.context("Failed to get callback at 101")?;
     assert!(callback_at_101.is_some(), "Should find callback at higher topoheight");
     
+    Ok(())
+}
+
+pub async fn test_asset_data_at_maximum_topoheight<S: Storage>(mut storage: S) -> Result<()> {
+    let asset = Hash::new([182u8; 32]);
+    let origin = Hash::new([183u8; 32]);
+    let owner_at_10 = Hash::new([184u8; 32]);
+    let owner_at_20 = Hash::new([185u8; 32]);
+
+    let data_at_0 = AssetData::new(
+        8,
+        "Asset 0".to_owned(),
+        "A0".to_owned(),
+        MaxSupplyMode::Mintable(1_000),
+        AssetOwner::Creator {
+            contract: origin.clone(),
+            id: 0,
+        },
+    );
+    storage.add_asset(&asset, 0, VersionedAssetData::new(data_at_0, None)).await
+        .context("Failed to add asset at topo 0")?;
+
+    let data_at_10 = AssetData::new(
+        8,
+        "Asset 10".to_owned(),
+        "A10".to_owned(),
+        MaxSupplyMode::Mintable(1_000),
+        AssetOwner::Owner {
+            origin: origin.clone(),
+            origin_id: 0,
+            owner: owner_at_10,
+        },
+    );
+    storage.add_asset(&asset, 10, VersionedAssetData::new(data_at_10, Some(0))).await
+        .context("Failed to add asset at topo 10")?;
+
+    let data_at_20 = AssetData::new(
+        8,
+        "Asset 20".to_owned(),
+        "A20".to_owned(),
+        MaxSupplyMode::Mintable(1_000),
+        AssetOwner::Owner {
+            origin,
+            origin_id: 0,
+            owner: owner_at_20,
+        },
+    );
+    storage.add_asset(&asset, 20, VersionedAssetData::new(data_at_20, Some(10))).await
+        .context("Failed to add asset at topo 20")?;
+
+    let (topoheight, data) = storage.get_asset_at_maximum_topoheight(&asset, 15).await
+        .context("Failed to get asset at maximum topoheight 15")?
+        .context("Expected asset data at maximum topoheight 15")?;
+    assert_eq!(topoheight, 10, "Should walk back to the newest asset data <= 15");
+    assert_eq!(data.get().get_name(), "Asset 10", "Unexpected asset data at topoheight 15");
+    assert_eq!(data.get().get_ticker(), "A10", "Unexpected asset ticker at topoheight 15");
+
+    let (topoheight, data) = storage.get_asset_at_maximum_topoheight(&asset, 10).await
+        .context("Failed to get asset at maximum topoheight 10")?
+        .context("Expected asset data at maximum topoheight 10")?;
+    assert_eq!(topoheight, 10, "Should return exact asset data at topoheight 10");
+    assert_eq!(data.get().get_name(), "Asset 10", "Unexpected asset data at exact topoheight");
+
+    let (topoheight, data) = storage.get_asset_at_maximum_topoheight(&asset, 25).await
+        .context("Failed to get asset at maximum topoheight 25")?
+        .context("Expected asset data at maximum topoheight 25")?;
+    assert_eq!(topoheight, 20, "Should return latest asset data below topoheight 25");
+    assert_eq!(data.get().get_name(), "Asset 20", "Unexpected asset data at latest topoheight");
+
+    Ok(())
+}
+
+pub async fn test_asset_supply_at_maximum_topoheight<S: Storage>(mut storage: S) -> Result<()> {
+    let asset = Hash::new([186u8; 32]);
+    let origin = Hash::new([187u8; 32]);
+    let data = AssetData::new(
+        8,
+        "Supply Asset".to_owned(),
+        "SUP".to_owned(),
+        MaxSupplyMode::Mintable(1_000),
+        AssetOwner::Creator {
+            contract: origin,
+            id: 0,
+        },
+    );
+    storage.add_asset(&asset, 0, VersionedAssetData::new(data, None)).await
+        .context("Failed to add asset for supply test")?;
+
+    storage.set_last_circulating_supply_for_asset(&asset, 5, &Versioned::new(100u64, None)).await
+        .context("Failed to set supply at topo 5")?;
+    storage.set_last_circulating_supply_for_asset(&asset, 10, &Versioned::new(200u64, Some(5))).await
+        .context("Failed to set supply at topo 10")?;
+    storage.set_last_circulating_supply_for_asset(&asset, 20, &Versioned::new(300u64, Some(10))).await
+        .context("Failed to set supply at topo 20")?;
+
+    let supply_before_first = storage.get_circulating_supply_for_asset_at_maximum_topoheight(&asset, 3).await
+        .context("Failed to get supply at maximum topoheight 3")?;
+    assert!(supply_before_first.is_none(), "Should not find supply before its first version");
+
+    let (topoheight, supply) = storage.get_circulating_supply_for_asset_at_maximum_topoheight(&asset, 15).await
+        .context("Failed to get supply at maximum topoheight 15")?
+        .context("Expected supply at maximum topoheight 15")?;
+    assert_eq!(topoheight, 10, "Should walk back to the newest supply <= 15");
+    assert_eq!(*supply.get(), 200u64, "Unexpected supply at topoheight 15");
+
+    let (topoheight, supply) = storage.get_circulating_supply_for_asset_at_maximum_topoheight(&asset, 10).await
+        .context("Failed to get supply at maximum topoheight 10")?
+        .context("Expected supply at maximum topoheight 10")?;
+    assert_eq!(topoheight, 10, "Should return exact supply at topoheight 10");
+    assert_eq!(*supply.get(), 200u64, "Unexpected supply at exact topoheight");
+
+    let (topoheight, supply) = storage.get_circulating_supply_for_asset_at_maximum_topoheight(&asset, 25).await
+        .context("Failed to get supply at maximum topoheight 25")?
+        .context("Expected supply at maximum topoheight 25")?;
+    assert_eq!(topoheight, 20, "Should return latest supply below topoheight 25");
+    assert_eq!(*supply.get(), 300u64, "Unexpected supply at latest topoheight");
+
     Ok(())
 }
 
@@ -1341,6 +1434,68 @@ async fn setup_balance_storage<S: Storage>(
     Ok(())
 }
 
+pub async fn test_delete_versioned_balances_below_topoheight_keeps_latest_output<S: Storage>(
+    mut storage: S,
+    data: &TestData,
+) -> Result<()> {
+    let key = data.public_key_pair.get_public_key().compress();
+    setup_balance_storage(&mut storage, &key, &XELIS_ASSET).await?;
+
+    let mut balance = VersionedBalance::zero();
+    storage.set_last_balance_to(&key, &XELIS_ASSET, 0, &balance).await
+        .context("Failed to set balance at topo 0")?;
+
+    balance.set_previous_topoheight(Some(0));
+    balance.set_balance_type(BalanceType::Output);
+    storage.set_last_balance_to(&key, &XELIS_ASSET, 1, &balance).await
+        .context("Failed to set output balance at topo 1")?;
+
+    for topo in 2u64..=6 {
+        balance.set_previous_topoheight(Some(topo - 1));
+        balance.set_balance_type(BalanceType::Input);
+        storage.set_last_balance_to(&key, &XELIS_ASSET, topo, &balance).await
+            .with_context(|| format!("Failed to set input balance at topo {}", topo))?;
+    }
+
+    storage.delete_versioned_data_below_topoheight(5, true).await
+        .context("Failed to delete versioned data below topoheight 5")?;
+
+    let output_exists = storage.has_balance_at_exact_topoheight(&key, &XELIS_ASSET, 1).await
+        .context("Failed to check output balance existence")?;
+    assert!(output_exists, "Latest output-bearing balance below the cutoff must be kept");
+
+    let first_exists = storage.has_balance_at_exact_topoheight(&key, &XELIS_ASSET, 0).await
+        .context("Failed to check pruned balance existence")?;
+    assert!(!first_exists, "Balances below the retained output-bearing balance should be pruned");
+
+    let output_balance = storage.get_balance_at_exact_topoheight(&key, &XELIS_ASSET, 1).await
+        .context("Failed to get retained output balance")?;
+    assert_eq!(output_balance.get_previous_topoheight(), None, "Retained output balance should become the chain anchor");
+    assert!(output_balance.contains_output(), "Retained balance should still be output-bearing");
+
+    let (output_topoheight, _) = storage.get_output_balance_at_maximum_topoheight(&key, &XELIS_ASSET, 6).await
+        .context("Failed to get output balance")?
+        .context("Expected output balance to be found")?;
+    assert_eq!(output_topoheight, 1, "Latest output-bearing balance should be returned after pruning");
+
+    let (last_topoheight, mut last_balance) = storage.get_last_balance(&key, &XELIS_ASSET).await
+        .context("Failed to get last balance")?;
+    assert_eq!(last_topoheight, 6, "Latest balance pointer should remain unchanged");
+
+    let mut seen_output = false;
+    while let Some(prev) = last_balance.get_previous_topoheight() {
+        last_balance = storage.get_balance_at_exact_topoheight(&key, &XELIS_ASSET, prev).await
+            .with_context(|| format!("Failed to get balance at topoheight {}", prev))?;
+        if prev == 1 {
+            seen_output = true;
+        }
+    }
+
+    assert!(seen_output, "Last balance chain should still link back to the retained output balance");
+
+    Ok(())
+}
+
 // Single account, single asset: store balances at topoheights 0..=9, delete
 // above 5, then verify the pointer and the version chain.
 pub async fn test_delete_versioned_balances_above_topoheight<S: Storage>(
@@ -1560,7 +1715,7 @@ pub async fn test_event_callbacks_available_at_maximum_topoheight<S: Storage>(mu
 
     for (listener_hash, chunk_id, max_gas, topo) in &listeners {
         register_contract(&mut storage, listener_hash, *topo).await?;
-        let callback = EventCallbackRegistration { chunk_id: *chunk_id, max_gas: *max_gas };
+        let callback = EventCallbackRegistration::new(*chunk_id, *max_gas, Source::Contract(listener_hash.clone()));
         storage.set_last_contract_event_callback(
             &contract_hash,
             event_id,
@@ -1612,12 +1767,12 @@ pub async fn test_event_callbacks_available_after_rewind<S: Storage>(mut storage
     // listener_a registered at topo 2, listener_b registered at topo 8
     storage.set_last_contract_event_callback(
         &contract_hash, event_id, &listener_a,
-        Versioned::new(Some(EventCallbackRegistration { chunk_id: 0, max_gas: 500 }), None),
+        Versioned::new(Some(EventCallbackRegistration::new(0, 500, Source::Contract(listener_a.clone()))), None),
         2,
     ).await?;
     storage.set_last_contract_event_callback(
         &contract_hash, event_id, &listener_b,
-        Versioned::new(Some(EventCallbackRegistration { chunk_id: 1, max_gas: 600 }), None),
+        Versioned::new(Some(EventCallbackRegistration::new(1, 600, Source::Contract(listener_b.clone()))), None),
         8,
     ).await?;
 
@@ -1689,13 +1844,13 @@ pub async fn test_listeners_for_contract_events<S: Storage>(mut storage: S) -> R
     // listener_1 listens to event_a at topo 1
     storage.set_last_contract_event_callback(
         &contract_hash, event_a, &listener_1,
-        Versioned::new(Some(EventCallbackRegistration { chunk_id: 10, max_gas: 100 }), None),
+        Versioned::new(Some(EventCallbackRegistration::new(10, 100, Source::Contract(listener_1.clone()))), None),
         1,
     ).await?;
     // listener_2 listens to event_b at topo 2
     storage.set_last_contract_event_callback(
         &contract_hash, event_b, &listener_2,
-        Versioned::new(Some(EventCallbackRegistration { chunk_id: 20, max_gas: 200 }), None),
+        Versioned::new(Some(EventCallbackRegistration::new(20, 200, Source::Contract(listener_2.clone()))), None),
         2,
     ).await?;
 
@@ -1743,7 +1898,7 @@ pub async fn test_event_callback_consumed_versioning<S: Storage>(mut storage: S)
     // topo 2: register callback
     storage.set_last_contract_event_callback(
         &contract, event_id, &listener,
-        Versioned::new(Some(EventCallbackRegistration { chunk_id: 0, max_gas: 100 }), None),
+        Versioned::new(Some(EventCallbackRegistration::new(0, 100, Source::Contract(listener.clone()))), None),
         2,
     ).await?;
 
@@ -1783,7 +1938,7 @@ pub async fn test_event_callback_consumed_versioning<S: Storage>(mut storage: S)
     // topo 8: re-register after consumption
     storage.set_last_contract_event_callback(
         &contract, event_id, &listener,
-        Versioned::new(Some(EventCallbackRegistration { chunk_id: 1, max_gas: 200 }), Some(5)),
+        Versioned::new(Some(EventCallbackRegistration::new(1, 200, Source::Contract(listener.clone()))), Some(5)),
         8,
     ).await?;
 
@@ -2110,6 +2265,60 @@ pub async fn test_account_registration_topoheight<S: Storage>(mut storage: S) ->
     // After deletion, it should not exists anymore
     assert!(!storage.is_account_registered_for_topoheight(&key, 10).await?,
         "account should not be registered after deletion above topoheight 9");
+
+    Ok(())
+}
+
+// Pruning below a topoheight must remove executions that were already due, not
+// future executions merely because their registration block is old.
+pub async fn test_scheduled_execution_prune_keeps_future_execution<S: Storage>(mut storage: S) -> Result<()> {
+    let contract = Hash::new([251u8; 32]);
+    register_contract(&mut storage, &contract, 0).await?;
+
+    let future_execution = ScheduledExecution {
+        hash: Arc::new(Hash::new([250u8; 32])),
+        contract: contract.clone(),
+        kind: ScheduledExecutionKind::TopoHeight(100),
+        params: vec![],
+        chunk_id: 0,
+        max_gas: 1000,
+        gas_sources: Default::default(),
+    };
+    storage.set_contract_scheduled_execution_at_topoheight(
+        &contract, 1, &future_execution, 100,
+    ).await?;
+
+    let past_execution = ScheduledExecution {
+        hash: Arc::new(Hash::new([249u8; 32])),
+        contract: contract.clone(),
+        kind: ScheduledExecutionKind::TopoHeight(3),
+        params: vec![],
+        chunk_id: 0,
+        max_gas: 1000,
+        gas_sources: Default::default(),
+    };
+    storage.set_contract_scheduled_execution_at_topoheight(
+        &contract, 2, &past_execution, 3,
+    ).await?;
+
+    storage.delete_scheduled_executions_below_topoheight(10).await?;
+
+    assert!(storage.has_contract_scheduled_execution_at_topoheight(&contract, 100).await?,
+        "future execution must survive pruning below its execution topoheight");
+    assert!(!storage.has_contract_scheduled_execution_at_topoheight(&contract, 3).await?,
+        "past due execution should be pruned");
+
+    let retrieved = storage.get_contract_scheduled_execution_at_topoheight(&contract, 100).await?;
+    assert_eq!(retrieved.hash, future_execution.hash, "future execution payload should stay intact");
+
+    let due_contracts = storage.get_contract_scheduled_executions_for_execution_topoheight(100).await?;
+    let mut found = false;
+    for result in due_contracts {
+        if result? == contract {
+            found = true;
+        }
+    }
+    assert!(found, "future execution must remain indexed by execution topoheight");
 
     Ok(())
 }
