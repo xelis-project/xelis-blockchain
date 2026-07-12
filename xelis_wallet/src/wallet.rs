@@ -156,6 +156,7 @@ use crate::api::{
 
 // Recover option for wallet creation
 pub enum RecoverOption<'a> {
+    None,
     Seed(&'a str),
     PrivateKey(&'a str)
 }
@@ -401,62 +402,60 @@ impl Wallet {
     }
 
     // Create a new wallet on disk
-    pub async fn create<'a>(name: &'a str, password: &'a str, seed: Option<RecoverOption<'a>>, network: Network, precomputed_tables: PrecomputedTablesShared, n_threads: usize, concurrency: usize) -> Result<Arc<Self>, Error> {
+    pub async fn create<'a>(name: &'a str, password: &'a str, seed: RecoverOption<'a>, network: Network, precomputed_tables: PrecomputedTablesShared, n_threads: usize, concurrency: usize) -> Result<Arc<Self>, Error> {
         if name.is_empty() {
             return Err(WalletError::EmptyName.into())
         }
 
         // generate random keypair or recover it from seed
-        let keypair = if let Some(seed) = seed {
-            debug!("Retrieving keypair from seed...");
-            let key = match seed {
-                RecoverOption::PrivateKey(hex) => {
-                    PrivateKey::from_hex(hex).context("Invalid private key provided")?
-                },
-                RecoverOption::Seed(seed) => {
-                    let words: Vec<&str> = seed.trim().split_whitespace().collect();
-                    mnemonics::words_to_key(&words)?
-                }
-            };
-            KeyPair::from_private_key(key)
-        } else {
-            debug!("Generating a new keypair...");
-            KeyPair::new()
+        let keypair = match seed {
+            RecoverOption::None => KeyPair::new(),
+            RecoverOption::PrivateKey(hex) => {
+                let private_key = PrivateKey::from_hex(hex).context("Invalid private key provided")?;
+                KeyPair::from_private_key(private_key)
+            },
+            RecoverOption::Seed(seed) => {
+                let words: Vec<&str> = seed.trim().split_whitespace().collect();
+                let private_key = mnemonics::words_to_key(&words)?;
+                KeyPair::from_private_key(private_key)
+            }
         };
-
+ 
         // generate random salt for hashed password
         let mut salt: [u8; SALT_SIZE] = [0; SALT_SIZE];
-        
-        let mut rng = rng();
-        rng.try_fill_bytes(&mut salt)
-            .context("Error while generating new salt for password")?;
+        // generate the master key which is used for storage and then save it in encrypted form
+        let mut master_key: [u8; 32] = [0; 32];
+        // generate the storage salt and save it in encrypted form
+        let mut storage_salt = [0; SALT_SIZE];
+
+        {
+            let mut rng = rng();
+            rng.try_fill_bytes(&mut salt)
+                .context("Error while generating new salt for password")?;
+            rng.try_fill_bytes(&mut master_key)
+                .context("Error while generating new master key")?;
+            rng.try_fill_bytes(&mut storage_salt)
+                .context("Error while generating new storage salt")?;
+        }
 
         // generate hashed password which will be used as key to encrypt master_key
         debug!("hashing provided password");
         let hashed_password = hash_password(password, &salt)?;
 
-        debug!("Creating storage for {}", name);
-        let mut inner = Storage::new(name)?;
-
         // generate the Cipher
         let cipher = Cipher::new(&hashed_password, None)?;
+
+        debug!("Creating storage for {}", name);
+        let mut inner = Storage::new(name)?;
 
         // save the salt used for password
         debug!("Save password salt in public storage");
         inner.set_password_salt(&salt)?;
 
-        // generate the master key which is used for storage and then save it in encrypted form
-        let mut master_key: [u8; 32] = [0; 32];
-        rng.try_fill_bytes(&mut master_key)
-            .context("Error while generating new master key")?;
         let encrypted_master_key = cipher.encrypt_value(&master_key)?;
         debug!("Save encrypted master key in public storage");
         inner.set_encrypted_master_key(&encrypted_master_key)?;
 
-        // generate the storage salt and save it in encrypted form
-        let mut storage_salt = [0; SALT_SIZE];
-        rng.try_fill_bytes(&mut storage_salt)
-            .context("Error while generating new storage salt")?;
         let encrypted_storage_salt = cipher.encrypt_value(&storage_salt)?;
         inner.set_encrypted_storage_salt(&encrypted_storage_salt)?;
 
@@ -1749,5 +1748,25 @@ impl XSWDHandler for Arc<Wallet> {
         }
 
         Err(WalletError::NoHandlerAvailable.into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, RwLock};
+    use xelis_common::crypto::ecdlp::ECDLPTables;
+    use super::{Wallet, RecoverOption, Network};
+
+    #[test]
+    fn test_send() {
+        fn assert_send<T: Send>() {}
+
+        fn assert_send_param<T: Send>(_: T) {}
+
+        assert_send::<Wallet>();
+        assert_send::<Arc<Wallet>>();
+
+        let precomputed_tables = Arc::new(RwLock::new(ECDLPTables::empty(1)));
+        assert_send_param(Wallet::create("foo", "bar", RecoverOption::None, Network::Devnet, precomputed_tables, 1, 1));
     }
 }
