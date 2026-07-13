@@ -207,9 +207,10 @@ impl NetworkHandler {
                 debug!("Network handler is running, stopping it");
                 if let Err(e) = self.sender.send(NetworkHandlerMessage::Stop) {
                     debug!("Error while sending stop message to network handler: {}", e);
+                    handle.abort();
+                } else {
+                    handle.await??;
                 }
-
-                handle.await??;
 
                 // Notify that we are offline
                 self.wallet.propagate_event(Event::Offline).await;
