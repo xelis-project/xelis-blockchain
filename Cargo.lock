@@ -5058,7 +5058,6 @@ dependencies = [
  "hex",
  "indexmap 2.14.0",
  "itertools 0.14.0",
- "lazy_static",
  "linked-hash-table",
  "log",
  "lru",

@@ -50,6 +50,7 @@ use anyhow::{
 use crate::{
     cipher::Cipher,
     config::SALT_SIZE,
+    password_config::PasswordConfig,
     entry::{
         EntryData,
         TransactionEntry,
@@ -113,6 +114,7 @@ const NONCE_KEY: &[u8] = b"NONCE";
 const SALT_KEY: &[u8] = b"SALT";
 // Password + salt is necessary to decrypt master key
 const PASSWORD_SALT_KEY: &[u8] = b"PSALT";
+const PASSWORD_CONFIG_KEY: &[u8] = b"PCFG";
 // Master key to encrypt/decrypt while interacting with the storage 
 const MASTER_KEY: &[u8] = b"MKEY";
 const PRIVATE_KEY: &[u8] = b"PKEY";
@@ -1965,6 +1967,27 @@ impl Storage {
         trace!("set password salt");
         self.db.insert(PASSWORD_SALT_KEY, salt)?;
         Ok(())
+    }
+
+    // set the password config used to derive the password-based key
+    pub fn set_password_config(&mut self, config: &PasswordConfig) -> Result<()> {
+        trace!("set password config");
+        let encoded = config.to_bytes();
+        self.db.insert(PASSWORD_CONFIG_KEY, encoded.as_slice())?;
+        Ok(())
+    }
+
+    // retrieve the password config used to derive the password-based key
+    pub fn get_password_config(&self) -> Result<PasswordConfig> {
+        trace!("get password config");
+        match self.db.get(PASSWORD_CONFIG_KEY)? {
+            Some(value) => {
+                let config = PasswordConfig::from_bytes(&value)
+                    .context("Error while deserializing wallet password config")?;
+                Ok(config)
+            }
+            None => Ok(PasswordConfig::legacy_default()),
+        }
     }
 
     // retrieve password salt used to derive the password-based key

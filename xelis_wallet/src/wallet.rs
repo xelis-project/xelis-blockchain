@@ -73,11 +73,8 @@ use xelis_common::{
 
 use crate::{
     cipher::Cipher,
-    config::{
-        PASSWORD_ALGORITHM,
-        PASSWORD_HASH_SIZE,
-        SALT_SIZE
-    },
+    config::SALT_SIZE,
+    password_config::PasswordConfig,
     entry::{format_blob_data, EntryData, TransactionEntry as InnerTransactionEntry},
     error::WalletError,
     mnemonics,
@@ -371,12 +368,6 @@ impl Account {
     }
 }
 
-pub fn hash_password(password: &str, salt: &[u8]) -> Result<[u8; PASSWORD_HASH_SIZE], WalletError> {
-    let mut output = [0; PASSWORD_HASH_SIZE];
-    PASSWORD_ALGORITHM.hash_password_into(password.as_bytes(), salt, &mut output).map_err(|e| WalletError::AlgorithmHashingError(e.to_string()))?;
-    Ok(output)
-}
-
 impl Wallet {
     // Create a new wallet with the specificed storage, keypair and its network
     fn new(storage: EncryptedStorage, keypair: KeyPair, network: Network, precomputed_tables: PrecomputedTablesShared, n_threads: usize, concurrency: usize) -> Arc<Self> {
@@ -438,9 +429,11 @@ impl Wallet {
                 .context("Error while generating new storage salt")?;
         }
 
+        let password_config = PasswordConfig::default();
+
         // generate hashed password which will be used as key to encrypt master_key
         debug!("hashing provided password");
-        let hashed_password = hash_password(password, &salt)?;
+        let hashed_password = password_config.hash_password(password, &salt)?;
 
         // generate the Cipher
         let cipher = Cipher::new(&hashed_password, None)?;
@@ -451,6 +444,7 @@ impl Wallet {
         // save the salt used for password
         debug!("Save password salt in public storage");
         inner.set_password_salt(&salt)?;
+        inner.set_password_config(&password_config)?;
 
         let encrypted_master_key = cipher.encrypt_value(&master_key)?;
         debug!("Save encrypted master key in public storage");
@@ -480,7 +474,9 @@ impl Wallet {
         debug!("Creating storage for {}", name);
         let storage = Storage::new(name)?;
         
-        // get password salt for KDF
+        // get password config and password salt for KDF
+        debug!("Retrieving password config from public storage");
+        let password_config = storage.get_password_config()?;
         debug!("Retrieving password salt from public storage");
         let salt = storage.get_password_salt()?;
 
@@ -488,7 +484,7 @@ impl Wallet {
         debug!("Retrieving encrypted master key from public storage");
         let encrypted_master_key = storage.get_encrypted_master_key()?;
 
-        let hashed_password = hash_password(password, &salt)?;
+        let hashed_password = password_config.hash_password(password, &salt)?;
 
         // decrypt the encrypted master key using the hashed password (used as key)
         let cipher = Cipher::new(&hashed_password, None)?;
@@ -795,8 +791,9 @@ impl Wallet {
     pub async fn is_valid_password(&self, password: &str) -> Result<(), Error> {
         let mut encrypted_storage = self.storage.write().await;
         let storage = encrypted_storage.get_mutable_public_storage();
+        let password_config = storage.get_password_config()?;
         let salt = storage.get_password_salt()?;
-        let hashed_password = hash_password(password, &salt)?;
+        let hashed_password = password_config.hash_password(password, &salt)?;
         let cipher = Cipher::new(&hashed_password, None)?;
         let encrypted_master_key = storage.get_encrypted_master_key()?;
         let _ = cipher.decrypt_value(&encrypted_master_key).context("Invalid password provided")?;
@@ -807,10 +804,11 @@ impl Wallet {
     pub async fn set_password(&self, old_password: &str, password: &str) -> Result<(), Error> {
         let mut encrypted_storage = self.storage.write().await;
         let storage = encrypted_storage.get_mutable_public_storage();
+        let password_config = storage.get_password_config()?;
         let (master_key, storage_salt) = {
             // retrieve old salt to build key from current password
             let salt = storage.get_password_salt()?;
-            let hashed_password = hash_password(old_password, &salt)?;
+            let hashed_password = password_config.hash_password(old_password, &salt)?;
 
             let encrypted_master_key = storage.get_encrypted_master_key()?;
             let encrypted_storage_salt = storage.get_encrypted_storage_salt()?;
@@ -829,7 +827,7 @@ impl Wallet {
             .context("Error while generating new salt for password")?;
 
         // generate the password-based derivated key to encrypt the master key
-        let hashed_password = hash_password(password, &salt)?;
+        let hashed_password = password_config.hash_password(password, &salt)?;
         let cipher = Cipher::new(&hashed_password, None)?;
 
         // encrypt the master key using the new password
@@ -840,6 +838,7 @@ impl Wallet {
 
         // save on disk
         storage.set_password_salt(&salt)?;
+        storage.set_password_config(&password_config)?;
         storage.set_encrypted_master_key(&encrypted_key)?;
         storage.set_encrypted_storage_salt(&encrypted_storage_salt)?;
 
