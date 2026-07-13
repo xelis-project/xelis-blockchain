@@ -98,10 +98,12 @@ pub struct GetWorkServer<S: Storage> {
     notify_rate_limit_ms: TimestampMillis,
     // Current limit for the number of miners to notify at the same time
     notify_job_concurrency: usize,
+    // Check miner heartbeat every N ms, if a miner doesn't send a heartbeat in this time, we disconnect it
+    check_heartbeat: bool,
 }
 
 impl<S: Storage> GetWorkServer<S> {
-    pub fn new(blockchain: Arc<Blockchain<S>>, notify_rate_limit_ms: TimestampMillis, notify_job_concurrency: usize) -> Arc<Self> {
+    pub fn new(blockchain: Arc<Blockchain<S>>, notify_rate_limit_ms: TimestampMillis, notify_job_concurrency: usize, check_heartbeat: bool) -> Arc<Self> {
         let server = Arc::new(Self {
             miners: Mutex::new(HashMap::new()),
             blockchain,
@@ -110,7 +112,8 @@ impl<S: Storage> GetWorkServer<S> {
             last_notify: AtomicU64::new(0),
             is_job_dirty: AtomicBool::new(false),
             notify_rate_limit_ms,
-            notify_job_concurrency
+            notify_job_concurrency,
+            check_heartbeat
         });
 
         if notify_rate_limit_ms > 0 {
@@ -454,6 +457,10 @@ impl<S: Storage> GetWorkServer<S> {
 
 #[async_trait]
 impl<S: Storage> WebSocketHandler for GetWorkServer<S> {
+    async fn check_heartbeat(&self, _: &WebSocketSessionShared<Self>) -> bool {
+        self.check_heartbeat
+    }
+
     // For retro-compatibility with older miner versions,
     // we don't send any ping
     async fn on_connection(&self, session: &WebSocketSessionShared<Self>) -> Result<Option<actix_web::HttpResponse>, anyhow::Error> {

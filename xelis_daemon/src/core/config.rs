@@ -209,6 +209,10 @@ pub struct GetWorkConfig {
     #[clap(name = "disable-getwork-server", long)]
     #[serde(default)]
     pub disable: bool,
+    /// Disable heartbeat checks for GetWork miner websocket sessions.
+    #[clap(name = "disable-getwork-heartbeat", long)]
+    #[serde(default)]
+    pub disable_heartbeat: bool,
     /// Minimum delay, in milliseconds, between GetWork job notifications.
     ///
     /// New jobs can be produced quickly when the mempool changes. Use this to
@@ -230,6 +234,7 @@ impl Default for GetWorkConfig {
     fn default() -> Self {
         Self {
             disable: false,
+            disable_heartbeat: false,
             rate_limit_ms: default_getwork_rate_limit_ms(),
             notify_job_concurrency: detect_available_parallelism(),
         }
