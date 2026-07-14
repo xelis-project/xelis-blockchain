@@ -185,7 +185,12 @@ impl<'de> Deserialize<'de> for ExitError {
 pub fn runtime_error(msg: impl Into<Cow<'static, str>>) -> ExitError {
     let mut msg = msg.into();
     if msg.len() > 255 {
-        msg.to_mut().truncate(255);
+        let mut end = 255;
+        while !msg.is_char_boundary(end) {
+            end -= 1;
+        }
+
+        msg.to_mut().truncate(end);
     }
 
     ExitError::RuntimeError(msg.into())
