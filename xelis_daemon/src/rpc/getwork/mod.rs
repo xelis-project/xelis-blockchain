@@ -183,7 +183,7 @@ impl<S: Storage> GetWorkServer<S> {
 
             // if we have a job in cache, and we are rate limited, we can send it
             // otherwise, we generate a new job
-            if let Some(hash) = hash.as_ref().filter(|_| self.is_rate_limited()) {
+            if let Some(hash) = hash.as_ref() {
                 debug!("job found in cache, sending it");
                 let mining_jobs = self.mining_jobs.lock().await;
                 debug!("mining jobs locked for new job");
