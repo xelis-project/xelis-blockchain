@@ -337,7 +337,7 @@ impl Serializer for ValueCell {
                         if stack.len() >= MAX_DEPTH {
                             return Err(ReaderError::InvalidValue);
                         }
-                        stack.push(Pending::Object { remaining: len, values: Vec::with_capacity(len) });
+                        stack.push(Pending::Object { remaining: len, values: Vec::new() });
                     }
                 }
                 3 => {
@@ -456,7 +456,7 @@ impl Serializer for Module {
         }
 
         let chunks_len = reader.read_u16()?;
-        let mut chunks = Vec::with_capacity(chunks_len as usize);
+        let mut chunks = Vec::new();
         let mut hooks = IndexMap::new();
 
         let version = reader.context()
@@ -469,7 +469,7 @@ impl Serializer for Module {
             if version >= ContractVersion::V1 {
                 let params_len = Option::<u8>::read(reader)?;
                 if let Some(len) = params_len {
-                    let mut params = Vec::with_capacity(len as usize);
+                    let mut params = Vec::new();
                     for _ in 0..len {
                         params.push(TypePacked::read(reader)?);
                     }
