@@ -1045,7 +1045,7 @@ async fn get_mempool_summary<S: Storage>(context: &Context<'_, '_>, params: GetM
     let mempool = blockchain.get_mempool().read().await;
     let txs = mempool.get_txs();
     let total = txs.len();
-    let mut transactions = Vec::with_capacity(maximum.max(total));
+    let mut transactions = Vec::new();
 
     let mainnet = blockchain.get_network().is_mainnet();
     for (hash, sorted_tx) in txs.iter().skip(skip).take(maximum) {
