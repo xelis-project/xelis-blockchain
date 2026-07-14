@@ -120,7 +120,7 @@ pub fn transcript_challenge_bytes(zelf: FnInstance, params: FnParams, _: &Module
     Ok(SysCallResult::Return(ValueCell::Bytes(buffer).into()))
 }
 
-pub fn transcript_append_message(zelf: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn transcript_append_message(zelf: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let mut zelf = zelf?;
     let zelf: &mut OpaqueTranscript = zelf.as_opaque_type_mut()?;
 
@@ -131,6 +131,8 @@ pub fn transcript_append_message(zelf: FnInstance, params: FnParams, _: &ModuleM
     let message = params[1]
         .as_ref()
         .as_bytes()?;
+
+    context.increase_gas_usage((label.len() + message.len()) as u64 * 2)?;
 
     zelf.0.append_message(&label, &message);
 
