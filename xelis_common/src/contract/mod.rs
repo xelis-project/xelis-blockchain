@@ -1408,7 +1408,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             FunctionHandler::Sync(ciphertext_validity_proof_verify),
             150_000,
             Some(Type::Bool),
-            "Verifies that the ciphertext handles match the commitment and public keys."
+            "Verifies that the ciphertext handles match the commitment and public keys. It is up to the caller to ensure all inputs are passed into the transcript."
         );
     }
 
@@ -1427,7 +1427,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             FunctionHandler::Sync(commitment_eq_proof_verify),
             150_000,
             Some(Type::Bool),
-            "Verifies equality between a ciphertext commitment and a plain commitment."
+            "Verifies equality between a ciphertext commitment and a plain commitment. It is up to the caller to ensure all inputs are passed into the transcript."
         );
     }
 
@@ -1446,7 +1446,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             FunctionHandler::Sync(range_proof_verify_single),
             1_500_000,
             Some(Type::Bool),
-            "Verifies a range proof for a single commitment."
+            "Verifies a range proof for a single commitment. It is up to the caller to ensure all inputs are passed into the transcript."
         );
 
         // verify multiple
@@ -1462,7 +1462,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             FunctionHandler::Sync(range_proof_verify_multiple),
             1_515_000,
             Some(Type::Bool),
-            "Verifies a range proof for multiple commitments."
+            "Verifies a range proof for multiple commitments. It is up to the caller to ensure all inputs are passed into the transcript."
         );
     }
 
