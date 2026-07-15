@@ -186,11 +186,15 @@ pub fn runtime_error(msg: impl Into<Cow<'static, str>>) -> ExitError {
     let mut msg = msg.into();
     if msg.len() > 255 {
         let mut end = 255;
-        while !msg.is_char_boundary(end) {
+        while end > 0 && !msg.is_char_boundary(end) {
             end -= 1;
         }
 
-        msg.to_mut().truncate(end);
+        if end > 0 {
+            msg.to_mut().truncate(end);
+        } else {
+            msg = Cow::Borrowed("<invalid runtime error>");
+        }
     }
 
     ExitError::RuntimeError(msg.into())
