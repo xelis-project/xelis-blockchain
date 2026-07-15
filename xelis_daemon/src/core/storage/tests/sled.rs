@@ -379,3 +379,32 @@ async fn test_sled_account_registration_topoheight() -> Result<()> {
     let storage = new_sled_storage(Network::Devnet, temp_dir.path().to_str().unwrap())?;
     test_account_registration_topoheight(storage).await
 }
+
+#[tokio::test]
+async fn test_sled_multisig_operations() -> Result<()> {
+    let data = TestData::new()?;
+    let temp_dir = TempDir::with_prefix("storage_test")?;
+    let storage = new_sled_storage(data.network, temp_dir.path().to_str().unwrap())?;
+    test_multisig_operations(storage, &data).await
+}
+
+#[tokio::test]
+async fn test_sled_multisig_delete_versioned_at_topoheight() -> Result<()> {
+    let temp_dir = TempDir::with_prefix("storage_test")?;
+    let storage = new_sled_storage(Network::Devnet, temp_dir.path().to_str().unwrap())?;
+    test_multisig_delete_versioned_at_topoheight(storage).await
+}
+
+#[tokio::test]
+async fn test_sled_multisig_delete_versioned_above_topoheight() -> Result<()> {
+    let temp_dir = TempDir::with_prefix("storage_test")?;
+    let storage = new_sled_storage(Network::Devnet, temp_dir.path().to_str().unwrap())?;
+    test_multisig_delete_versioned_above_topoheight(storage).await
+}
+
+#[tokio::test]
+async fn test_sled_multisig_delete_versioned_below_topoheight() -> Result<()> {
+    let temp_dir = TempDir::with_prefix("storage_test")?;
+    let storage = new_sled_storage(Network::Devnet, temp_dir.path().to_str().unwrap())?;
+    test_multisig_delete_versioned_below_topoheight(storage).await
+}

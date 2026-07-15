@@ -135,24 +135,23 @@ impl SledStorage {
                 // If we are already below the threshold, we can directly erase without patching
                 let mut patched = false;
                 while let Some(prev_topo) = prev_version.take() {
-                    let key = Self::get_versioned_key(&key, prev_topo);
+                    let versioned_key = Self::get_versioned_key(&key, prev_topo);
 
-                    // Delete this version from DB if its below the threshold
                     if patched {
-                        prev_version = Self::remove_from_disk(snapshot.as_mut(), &tree_versioned, &key)?;
+                        let data: Versioned<RawBytes> = Self::load_from_disk_internal(snapshot.as_ref(), tree_versioned, &versioned_key, context)?;
+                        prev_version = data.get_previous_topoheight();
+                        Self::remove_from_disk_without_reading(snapshot.as_mut(), tree_versioned, versioned_key.as_ref())?;
                     } else {
-                        // Load it so we can continue to loop over all next versions
-                        prev_version = Self::load_from_disk_internal(snapshot.as_ref(), tree_versioned, &key, context)?;
+                        let mut data: Versioned<RawBytes> = Self::load_from_disk_internal(snapshot.as_ref(), tree_versioned, &versioned_key, context)?;
+                        prev_version = data.get_previous_topoheight();
 
                         // if we are below it, patch it
                         if prev_topo <= topoheight {
                             trace!("Patching versioned data at topoheight {}", topoheight);
                             patched = true;
-
-                            let mut data: Versioned<RawBytes> = Self::load_from_disk_internal(snapshot.as_ref(), tree_versioned, &key, context)?;
                             data.set_previous_topoheight(None);
 
-                            Self::insert_into_disk(snapshot.as_mut(), tree_versioned, &key, data.to_bytes())?;
+                            Self::insert_into_disk(snapshot.as_mut(), tree_versioned, &versioned_key, data.to_bytes())?;
                         }
                     }
                 }

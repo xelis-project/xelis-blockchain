@@ -312,3 +312,28 @@ async fn test_memory_account_registration_topoheight() -> Result<()> {
     let storage = MemoryStorage::new(Network::Devnet, 1);
     test_account_registration_topoheight(storage).await
 }
+
+#[tokio::test]
+async fn test_memory_multisig_operations() -> Result<()> {
+    let data = TestData::new()?;
+    let storage = MemoryStorage::new(data.network, 1);
+    test_multisig_operations(storage, &data).await
+}
+
+#[tokio::test]
+async fn test_memory_multisig_delete_versioned_at_topoheight() -> Result<()> {
+    let storage = MemoryStorage::new(Network::Devnet, 1);
+    test_multisig_delete_versioned_at_topoheight(storage).await
+}
+
+#[tokio::test]
+async fn test_memory_multisig_delete_versioned_above_topoheight() -> Result<()> {
+    let storage = MemoryStorage::new(Network::Devnet, 1);
+    test_multisig_delete_versioned_above_topoheight(storage).await
+}
+
+#[tokio::test]
+async fn test_memory_multisig_delete_versioned_below_topoheight() -> Result<()> {
+    let storage = MemoryStorage::new(Network::Devnet, 1);
+    test_multisig_delete_versioned_below_topoheight(storage).await
+}

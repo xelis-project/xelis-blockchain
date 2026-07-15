@@ -13,6 +13,7 @@ use xelis_common::{
     difficulty::Difficulty,
     immutable::Immutable,
     network::Network,
+    transaction::MultiSigPayload,
     varuint::VarUint,
     versioned::Versioned
 };
@@ -2265,6 +2266,205 @@ pub async fn test_account_registration_topoheight<S: Storage>(mut storage: S) ->
     // After deletion, it should not exists anymore
     assert!(!storage.is_account_registered_for_topoheight(&key, 10).await?,
         "account should not be registered after deletion above topoheight 9");
+
+    Ok(())
+}
+
+pub async fn test_multisig_operations<S: Storage>(mut storage: S, data: &TestData) -> Result<()> {
+    let account = data.public_key_pair.get_public_key().compress();
+    let participant1 = KeyPair::new().get_public_key().compress();
+    let participant2 = KeyPair::new().get_public_key().compress();
+
+    assert!(!storage.has_multisig(&account).await?,
+        "multisig should not exist initially");
+    assert!(!storage.has_multisig_at_exact_topoheight(&account, 3).await?,
+        "multisig should not exist at topoheight 3 initially");
+    assert!(storage.get_last_topoheight_for_multisig(&account).await?.is_none(),
+        "last multisig topoheight should be empty initially");
+
+    let payload_v1 = MultiSigPayload {
+        threshold: 2,
+        participants: [participant1.clone(), participant2.clone()].into_iter().collect(),
+    };
+    storage.set_last_multisig_to(
+        &account,
+        3,
+        Versioned::new(Some(Cow::Owned(payload_v1.clone())), None),
+    ).await?;
+
+    assert!(storage.has_multisig(&account).await?,
+        "multisig should exist after first insert");
+    assert!(storage.has_multisig_at_exact_topoheight(&account, 3).await?,
+        "multisig should exist at topoheight 3");
+    assert!(!storage.has_multisig_at_exact_topoheight(&account, 2).await?,
+        "multisig should not exist below first version");
+
+    let (topoheight_v1, versioned_v1) = storage.get_last_multisig(&account).await?;
+    assert_eq!(topoheight_v1, 3, "last multisig topoheight should be 3");
+    let stored_v1 = versioned_v1.get().as_ref().expect("multisig payload should exist");
+    assert_eq!(stored_v1.threshold, 2, "threshold mismatch for v1");
+    assert_eq!(stored_v1.participants.len(), 2, "participant count mismatch for v1");
+
+    let at_max_2 = storage.get_multisig_at_maximum_topoheight_for(&account, 2).await?;
+    assert!(at_max_2.is_none(), "no multisig should be visible below the first version");
+
+    let at_max_3 = storage.get_multisig_at_maximum_topoheight_for(&account, 3).await?;
+    assert_eq!(at_max_3.as_ref().map(|(topo, _)| *topo), Some(3), "topoheight mismatch at max 3");
+
+    let payload_v2 = MultiSigPayload {
+        threshold: 1,
+        participants: [participant1.clone()].into_iter().collect(),
+    };
+    storage.set_last_multisig_to(
+        &account,
+        7,
+        Versioned::new(Some(Cow::Owned(payload_v2.clone())), Some(3)),
+    ).await?;
+
+    let (topoheight_v2, versioned_v2) = storage.get_last_multisig(&account).await?;
+    assert_eq!(topoheight_v2, 7, "last multisig topoheight should be updated to 7");
+    let stored_v2 = versioned_v2.get().as_ref().expect("multisig payload should exist");
+    assert_eq!(stored_v2.threshold, 1, "threshold mismatch for v2");
+    assert_eq!(versioned_v2.get_previous_topoheight(), Some(3), "previous topoheight should be preserved");
+
+    let at_max_6 = storage.get_multisig_at_maximum_topoheight_for(&account, 6).await?;
+    assert_eq!(at_max_6.as_ref().map(|(topo, _)| *topo), Some(3), "max topoheight lookup should walk back to v1");
+
+    let at_max_7 = storage.get_multisig_at_maximum_topoheight_for(&account, 7).await?;
+    assert_eq!(at_max_7.as_ref().map(|(topo, _)| *topo), Some(7), "max topoheight lookup should return v2");
+
+    Ok(())
+}
+
+fn multisig_payload(threshold: u8) -> MultiSigPayload {
+    MultiSigPayload {
+        threshold,
+        participants: (0..threshold)
+            .map(|_| KeyPair::new().get_public_key().compress())
+            .collect(),
+    }
+}
+
+async fn set_multisig_version<S: Storage>(
+    storage: &mut S,
+    account: &PublicKey,
+    topoheight: u64,
+    previous_topoheight: Option<u64>,
+    threshold: u8,
+) -> Result<()> {
+    storage.set_last_multisig_to(
+        account,
+        topoheight,
+        Versioned::new(Some(Cow::Owned(multisig_payload(threshold))), previous_topoheight),
+    ).await?;
+
+    Ok(())
+}
+
+async fn seed_multisig_versions<S: Storage>(storage: &mut S, account: &PublicKey) -> Result<()> {
+    set_multisig_version(storage, account, 1, None, 1).await?;
+    set_multisig_version(storage, account, 4, Some(1), 2).await?;
+    set_multisig_version(storage, account, 8, Some(4), 3).await?;
+    set_multisig_version(storage, account, 12, Some(8), 1).await
+}
+
+async fn assert_last_multisig<S: Storage>(
+    storage: &S,
+    account: &PublicKey,
+    expected_topoheight: u64,
+    expected_threshold: u8,
+) -> Result<()> {
+    let (topoheight, version) = storage.get_last_multisig(account).await?;
+    assert_eq!(topoheight, expected_topoheight, "last multisig topoheight mismatch");
+    assert_eq!(
+        version.get().as_ref().expect("last multisig payload should exist").threshold,
+        expected_threshold,
+        "last multisig threshold mismatch",
+    );
+
+    Ok(())
+}
+
+async fn assert_multisig_at_maximum<S: Storage>(
+    storage: &S,
+    account: &PublicKey,
+    maximum_topoheight: u64,
+    expected_topoheight: Option<u64>,
+) -> Result<()> {
+    let result = storage.get_multisig_at_maximum_topoheight_for(account, maximum_topoheight).await?;
+    assert_eq!(
+        result.as_ref().map(|(topoheight, _)| *topoheight),
+        expected_topoheight,
+        "multisig maximum-topoheight lookup mismatch for maximum {}",
+        maximum_topoheight,
+    );
+
+    Ok(())
+}
+
+pub async fn test_multisig_delete_versioned_at_topoheight<S: Storage>(mut storage: S) -> Result<()> {
+    let account = KeyPair::new().get_public_key().compress();
+    seed_multisig_versions(&mut storage, &account).await?;
+
+    storage.delete_versioned_data_at_topoheight(12, false).await
+        .context("Failed to delete versioned multisig at topoheight 12")?;
+
+    assert!(!storage.has_multisig_at_exact_topoheight(&account, 12).await?,
+        "multisig version at deleted topoheight should be removed");
+    assert!(storage.has_multisig_at_exact_topoheight(&account, 8).await?,
+        "previous multisig version should remain after rollback");
+    assert_last_multisig(&storage, &account, 8, 3).await?;
+    assert_multisig_at_maximum(&storage, &account, 100, Some(8)).await?;
+
+    Ok(())
+}
+
+pub async fn test_multisig_delete_versioned_above_topoheight<S: Storage>(mut storage: S) -> Result<()> {
+    let account = KeyPair::new().get_public_key().compress();
+    seed_multisig_versions(&mut storage, &account).await?;
+
+    storage.delete_versioned_data_above_topoheight(8).await
+        .context("Failed to delete versioned multisig above topoheight 8")?;
+
+    assert!(!storage.has_multisig_at_exact_topoheight(&account, 12).await?,
+        "multisig version above cutoff should be removed");
+    assert!(storage.has_multisig_at_exact_topoheight(&account, 8).await?,
+        "cutoff multisig version should remain");
+    assert_last_multisig(&storage, &account, 8, 3).await?;
+    assert_multisig_at_maximum(&storage, &account, 100, Some(8)).await?;
+    assert_multisig_at_maximum(&storage, &account, 3, Some(1)).await?;
+
+    Ok(())
+}
+
+pub async fn test_multisig_delete_versioned_below_topoheight<S: Storage>(mut storage: S) -> Result<()> {
+    let account = KeyPair::new().get_public_key().compress();
+    seed_multisig_versions(&mut storage, &account).await?;
+
+    storage.delete_versioned_data_below_topoheight(8, true).await
+        .context("Failed to delete versioned multisig below topoheight 8")?;
+
+    assert!(!storage.has_multisig_at_exact_topoheight(&account, 1).await?,
+        "old multisig version below cutoff should be removed");
+    assert!(!storage.has_multisig_at_exact_topoheight(&account, 4).await?,
+        "old multisig version below cutoff should be removed");
+    assert!(storage.has_multisig_at_exact_topoheight(&account, 8).await?,
+        "last kept multisig version below the current pointer should remain");
+    assert!(storage.has_multisig_at_exact_topoheight(&account, 12).await?,
+        "latest multisig version should remain");
+
+    let version_at_8 = storage.get_multisig_at_topoheight_for(&account, 8).await?;
+    assert_eq!(version_at_8.get_previous_topoheight(), None,
+        "kept multisig version should be patched as the beginning of the chain");
+
+    let version_at_12 = storage.get_multisig_at_topoheight_for(&account, 12).await?;
+    assert_eq!(version_at_12.get_previous_topoheight(), Some(8),
+        "latest multisig version should still point to the kept version");
+
+    assert_last_multisig(&storage, &account, 12, 1).await?;
+    assert_multisig_at_maximum(&storage, &account, 7, None).await?;
+    assert_multisig_at_maximum(&storage, &account, 8, Some(8)).await?;
+    assert_multisig_at_maximum(&storage, &account, 100, Some(12)).await?;
 
     Ok(())
 }

@@ -22,12 +22,6 @@ impl MultiSigProvider for SledStorage {
         self.load_from_disk(&self.versioned_multisigs, &self.get_versioned_multisig_key(account, topoheight), DiskContext::MultisigAtTopoHeight(topoheight))
     }
 
-    async fn delete_last_topoheight_for_multisig(&mut self, account: &PublicKey) -> Result<(), BlockchainError> {
-        trace!("delete last topoheight for multisig");
-        Self::remove_from_disk_without_reading(self.snapshot.as_mut(), &self.multisig, account.as_bytes())?;
-        Ok(())
-    }
-
     async fn get_multisig_at_maximum_topoheight_for<'a>(&'a self, account: &PublicKey, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedMultiSig<'a>)>, BlockchainError> {
         trace!("get multisig at maximum topoheight {}", maximum_topoheight);
         let mut previous_topoheight = if self.has_multisig_at_exact_topoheight(account, maximum_topoheight).await? {
@@ -77,8 +71,8 @@ impl SledStorage {
     // Get the key for the multisig storage
     pub(super) fn get_versioned_multisig_key(&self, account: &PublicKey, topoheight: TopoHeight) -> [u8; 40] {
         let mut key = [0; 40];
-        key[..32].copy_from_slice(account.as_bytes());
-        key[32..].copy_from_slice(&topoheight.to_be_bytes());
+        key[..8].copy_from_slice(&topoheight.to_be_bytes());
+        key[8..].copy_from_slice(account.as_bytes());
         key
     }
 }
