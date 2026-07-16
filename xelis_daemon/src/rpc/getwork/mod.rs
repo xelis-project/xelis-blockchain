@@ -189,7 +189,7 @@ impl<S: Storage> GetWorkServer<S> {
                 debug!("mining jobs locked for new job");
 
                 let (header, diff) = mining_jobs.peek(hash)
-                    .ok_or(InternalRpcError::InternalError("No mining job found"))?;
+                    .ok_or(InternalRpcError::InternalError("No mining job found".into()))?;
 
                 let job = MinerWork::new(header.get_work_hash(), get_current_time_in_millis());
                 (header.get_version(), job, header.get_height(), *diff)
@@ -393,7 +393,7 @@ impl<S: Storage> GetWorkServer<S> {
             } else {
                 // really old job, or miner send invalid job
                 debug!("Job {} was not found in cache", job.get_header_work_hash());
-                return Err(InternalRpcError::InvalidParams("Job was not found in cache"))
+                return Err(InternalRpcError::InvalidParams("Job was not found in cache".into()))
             };
         }
 

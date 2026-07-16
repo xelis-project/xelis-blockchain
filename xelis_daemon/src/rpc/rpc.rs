@@ -638,7 +638,7 @@ async fn get_stable_balance<S: Storage>(context: &Context<'_, '_>, params: GetBa
         (topoheight, version)
     } else {
         storage.get_balance_at_maximum_topoheight(params.address.get_public_key(), &params.asset, stable_topoheight).await?
-            .ok_or(InternalRpcError::InvalidRequestStr("no stable balance found for this account"))?
+            .ok_or(InternalRpcError::InvalidRequest("no stable balance found for this account".into()))?
     };
 
     Ok(GetStableBalanceResult {
@@ -1259,7 +1259,7 @@ async fn get_account_history<S: Storage>(context: &Context<'_, '_>, params: GetA
     }
 
     if !params.incoming_flow && !params.outgoing_flow {
-        return Err(InternalRpcError::InvalidParams("No history type was selected"));
+        return Err(InternalRpcError::InvalidParams("No history type was selected".into()));
     }
 
     let key = params.address.get_public_key();
@@ -1271,7 +1271,7 @@ async fn get_account_history<S: Storage>(context: &Context<'_, '_>, params: GetA
 
     let mut version: Option<(u64, Option<u64>, _)> = if let Some(topo) = params.maximum_topoheight {
         if topo < pruned_topoheight {
-            return Err(InternalRpcError::InvalidParams("Maximum topoheight is lower than pruned topoheight"));
+            return Err(InternalRpcError::InvalidParams("Maximum topoheight is lower than pruned topoheight".into()));
         }
 
         // if incoming flows aren't accepted
@@ -1897,7 +1897,7 @@ async fn split_address<S: Storage>(context: &Context<'_, '_>, params: SplitAddre
     }
 
     let (data, address) = address.extract_data();
-    let integrated_data = data.ok_or(InternalRpcError::InvalidParams("Address is not an integrated address"))?;
+    let integrated_data = data.ok_or(InternalRpcError::InvalidParams("Address is not an integrated address".into()))?;
     let size = integrated_data.size();
     Ok(SplitAddressResult {
         address,
@@ -1913,7 +1913,7 @@ async fn make_integrated_address<S: Storage>(context: &Context<'_, '_>, params: 
     }
 
     if !params.address.is_normal() {
-        return Err(InternalRpcError::InvalidParams("Address is not a normal address"))
+        return Err(InternalRpcError::InvalidParams("Address is not a normal address".into()))
     }
 
     let address = Address::new(params.address.is_mainnet(), AddressType::Data(params.integrated_data.into_owned()), params.address.into_owned().to_public_key());
@@ -2125,7 +2125,7 @@ async fn get_contract_module<S: Storage>(context: &Context<'_, '_>, params: GetC
     let blockchain = chain_from_context::<S>(context)?;
     let storage = blockchain.get_storage().read().await;
     let Some(topoheight) = storage.get_last_topoheight_for_contract(&params.contract).await? else {
-        return Err(InternalRpcError::InvalidParams("no contract module available"));
+        return Err(InternalRpcError::InvalidParams("no contract module available".into()));
     };
     let version = storage.get_contract_at_topoheight_for(&params.contract, topoheight).await
         .context("Error while retrieving contract module")?;
