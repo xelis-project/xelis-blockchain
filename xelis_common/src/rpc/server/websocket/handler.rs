@@ -13,11 +13,13 @@ use runtime_context::{Context, ShareableTid};
 use crate::{
     api::EventResult,
     rpc::{
-        RpcResponseError,
+        Events,
+        InternalRpcError,
         RPCHandler,
         RpcResponse,
-        Events,
-    }
+        RpcResponseError,
+    },
+    tokio::sync::Semaphore,
 };
 use super::{WebSocketSessionShared, WebSocketHandler};
 
@@ -34,6 +36,8 @@ where
     handler: RPCHandler<T>,
     // the number of concurrent notifications to send
     notify_concurrency: usize,
+    // semaphore used to prevent too many RPC calls at once
+    semaphore: Semaphore
 }
 
 impl<T, E> EventWebSocketHandler<T, E>
@@ -48,7 +52,8 @@ where
         Self {
             events: Events::new(&mut handler),
             handler,
-            notify_concurrency
+            notify_concurrency,
+            semaphore: Semaphore::new(notify_concurrency),
         }
     }
 
@@ -93,6 +98,9 @@ where
 
     // Handle the message received on the websocket
     async fn on_message_internal<'a>(&'a self, session: &'a WebSocketSessionShared<Self>, message: &[u8]) -> Result<Option<Value>, RpcResponseError> {
+        let _permit = self.semaphore.acquire().await
+            .map_err(|e| RpcResponseError::new(None, InternalRpcError::InternalError(format!("failed to acquire semaphore: {}", e).into())))?;
+
         let mut context = Context::default();
         context.insert_ref(session);
         context.insert_ref(&self.handler);

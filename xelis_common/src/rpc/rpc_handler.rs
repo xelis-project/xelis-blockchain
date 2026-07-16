@@ -485,7 +485,7 @@ where
 // Built-in "schema" method to get all registered methods and their schemas
 async fn schema<'a, T: ShareableTid<'static>>(context: &'a Context<'_, '_>) -> Result<Value, InternalRpcError> {
     let rpc_handler: &RPCHandler<T> = context.get()
-        .ok_or(InternalRpcError::InternalError("RPCHandler not found in context"))?;
+        .ok_or(InternalRpcError::InternalError("RPCHandler not found in context".into()))?;
 
     let mut handlers = rpc_handler.methods.iter().collect::<Vec<_>>();
     handlers.sort_by(|(a, _), (b, _)| a.as_ref().cmp(b.as_ref()));
@@ -529,7 +529,7 @@ fn normalize_schema(schema: &Schema, definitions: &mut BTreeMap<String, Value>) 
             for (name, definition) in local_definitions {
                 match definitions.get(&name) {
                     Some(existing) if existing != &definition => {
-                        return Err(InternalRpcError::InternalError("Conflicting JSON schema definition"))
+                        return Err(InternalRpcError::InternalError("Conflicting JSON schema definition".into()))
                     },
                     Some(_) => {},
                     None => {
@@ -541,14 +541,14 @@ fn normalize_schema(schema: &Schema, definitions: &mut BTreeMap<String, Value>) 
     }
 
     Schema::try_from(value)
-        .map_err(|_| InternalRpcError::InternalError("Invalid JSON schema generated"))
+        .map_err(|e| InternalRpcError::InternalError(format!("Invalid JSON schema generated: {}", e).into()))
 }
 
 // Get the batch limit from the RPC handler, if any
 // This is used to limit the number of requests in a batch to prevent DoS attacks
 async fn batch_limit<'a, T: ShareableTid<'static>>(context: &'a Context<'_, '_>) -> Result<Option<usize>, InternalRpcError> {
     let rpc_handler: &RPCHandler<T> = context.get()
-        .ok_or(InternalRpcError::InternalError("RPCHandler not found in context"))?;
+        .ok_or(InternalRpcError::InternalError("RPCHandler not found in context".into()))?;
 
     Ok(rpc_handler.batch_limit)
 }
