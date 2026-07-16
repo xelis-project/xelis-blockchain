@@ -1673,7 +1673,7 @@ impl XSWDHandler for Arc<Wallet> {
                     if matches!(request.method.as_str(), "subscribe" | "unsubscribe") {
                         let params: SubscribeParams<DaemonNotifyEvent> = serde_json::from_value(
                             request.params.take()
-                                .ok_or_else(|| RpcResponseError::new(id.clone(), InternalRpcError::InvalidParams("Missing event parameter")))?
+                                .ok_or_else(|| RpcResponseError::new(id.clone(), InternalRpcError::InvalidParams("Missing event parameter".into())))?
                         ).map_err(|e| RpcResponseError::new(id.clone(), e))?;
 
                         let event = params.notify.into_owned();

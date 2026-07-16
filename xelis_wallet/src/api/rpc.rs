@@ -167,7 +167,7 @@ async fn split_address(_: &Context<'_, '_>, params: SplitAddressParams) -> Resul
     let address = params.address;
 
     let (data, address) = address.extract_data();
-    let integrated_data = data.ok_or(InternalRpcError::InvalidParams("Address is not an integrated address"))?;
+    let integrated_data = data.ok_or(InternalRpcError::InvalidParams("Address is not an integrated address".into()))?;
     let size = integrated_data.size();
 
     Ok(SplitAddressResult {
@@ -280,7 +280,7 @@ async fn get_tracked_assets(context: &Context<'_, '_>, params: GetAssetsParams) 
     let wallet = wallet_from_context(context)?;
     let maximum = if let Some(max) = params.maximum {
         if max > MAX_ASSETS {
-            return Err(InternalRpcError::InvalidParams("Maximum is bigger than limit"))
+            return Err(InternalRpcError::InvalidParams("Maximum is bigger than limit".into()))
         }
         max
     } else {
@@ -323,7 +323,7 @@ async fn get_assets(context: &Context<'_, '_>, params: GetAssetsParams) -> Resul
 
     let maximum = if let Some(max) = params.maximum {
         if max > MAX_ASSETS {
-            return Err(InternalRpcError::InvalidParams("Maximum is bigger than limit"))
+            return Err(InternalRpcError::InvalidParams("Maximum is bigger than limit".into()))
         }
         max
     } else {
@@ -356,7 +356,7 @@ async fn get_transaction(context: &Context<'_, '_>, params: GetTransactionParams
     let wallet = wallet_from_context(context)?;
     let storage = wallet.get_storage().read().await;
     if !storage.has_transaction(&params.hash)? {
-        return Err(InternalRpcError::InvalidParams("Transaction is not found in wallet"))
+        return Err(InternalRpcError::InvalidParams("Transaction is not found in wallet".into()))
     }
 
     let transaction = storage.get_transaction(&params.hash)?;
@@ -413,7 +413,7 @@ async fn build_transaction(context: &Context<'_, '_>, params: BuildTransactionPa
     let mut storage = wallet.get_storage().write().await;
 
     if params.signers.len() > u8::MAX as usize {
-        return Err(InternalRpcError::InvalidParams("Too many signers"))
+        return Err(InternalRpcError::InvalidParams("Too many signers".into()))
     }
 
     let version = if let Some(v) = params.tx_version {
@@ -488,7 +488,7 @@ async fn build_transaction_offline(context: &Context<'_, '_>, params: BuildTrans
     }
 
     if params.signers.len() > u8::MAX as usize {
-        return Err(InternalRpcError::InvalidParams("Too many signers"))
+        return Err(InternalRpcError::InvalidParams("Too many signers".into()))
     }
 
     let version = if let Some(v) = params.tx_version {
@@ -580,11 +580,11 @@ async fn finalize_unsigned_transaction(context: &Context<'_, '_>, params: Finali
 
     let mut unsigned = params.unsigned;
     if params.signatures.is_empty() != unsigned.multisig().is_some() {
-        return Err(InternalRpcError::InvalidParams("Invalid signatures"))
+        return Err(InternalRpcError::InvalidParams("Invalid signatures".into()))
     }
 
     if unsigned.source() != wallet.get_public_key() {
-        return Err(InternalRpcError::InvalidParams("Invalid source"))
+        return Err(InternalRpcError::InvalidParams("Invalid source".into()))
     }
 
     let keypair = wallet.get_keypair();
@@ -660,7 +660,7 @@ async fn estimate_fees(context: &Context<'_, '_>, params: EstimateFeesParams) ->
 async fn list_transactions(context: &Context<'_, '_>, params: ListTransactionsParams) -> Result<Vec<TransactionEntry<'static>>, InternalRpcError> {
     if let Some(addr) = &params.address {
         if !addr.is_normal() {
-            return Err(InternalRpcError::InvalidParams("Address should be in normal format (not integrated address)"))
+            return Err(InternalRpcError::InvalidParams("Address should be in normal format (not integrated address)".into()))
         }
     }
 
@@ -704,7 +704,7 @@ async fn is_online(context: &Context<'_, '_>) -> Result<bool, InternalRpcError> 
 async fn set_online_mode(context: &Context<'_, '_>, params: SetOnlineModeParams) -> Result<bool, InternalRpcError> {
     let wallet = wallet_from_context(context)?;
     if wallet.is_online().await {
-        return Err(InternalRpcError::InvalidRequestStr("Wallet is already connected to a daemon"))
+        return Err(InternalRpcError::InvalidRequest("Wallet is already connected to a daemon".into()))
     }
 
     cfg_if! {
@@ -721,7 +721,7 @@ async fn set_online_mode(context: &Context<'_, '_>, params: SetOnlineModeParams)
 async fn set_offline_mode(context: &Context<'_, '_>) -> Result<bool, InternalRpcError> {
     let wallet = wallet_from_context(context)?;
     if !wallet.is_online().await {
-        return Err(InternalRpcError::InvalidRequestStr("Wallet is already in offline mode"))
+        return Err(InternalRpcError::InvalidRequest("Wallet is already in offline mode".into()))
     }
 
     cfg_if! {
@@ -771,7 +771,7 @@ async fn get_tree_name(context: &Context<'_, '_>, tree: String) -> Result<String
 async fn get_matching_keys(context: &Context<'_, '_>, params: GetMatchingKeysParams) -> Result<Vec<DataValue>, InternalRpcError> {
     if let Some(query) = &params.query {
         if query.is_for_element() {
-            return Err(InternalRpcError::InvalidParams("Invalid key query, should be a QueryValue"))
+            return Err(InternalRpcError::InvalidParams("Invalid key query, should be a QueryValue".into()))
         }
     }
 
@@ -844,7 +844,7 @@ async fn has_key(context: &Context<'_, '_>, params: HasKeyParams) -> Result<bool
 async fn query_db(context: &Context<'_, '_>, params: QueryDBParams) -> Result<QueryResult, InternalRpcError> {
     if let Some(query) = &params.key {
         if query.is_for_element() {
-            return Err(InternalRpcError::InvalidParams("Invalid key query, should be a QueryValue"))
+            return Err(InternalRpcError::InvalidParams("Invalid key query, should be a QueryValue".into()))
         }
     }
 

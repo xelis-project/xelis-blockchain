@@ -266,7 +266,7 @@ where
         P: XSWDProvider,
     {
         let _permit = self.semaphore.acquire().await
-            .map_err(|_| InternalRpcError::InternalError("Permission handler semaphore error"))?;
+            .map_err(|_| InternalRpcError::InternalError("Permission handler semaphore error".into()))?;
 
         // We acquired the lock, lets check that the app is still registered
         if !provider.has_app_with_id(app.get_id()).await {
@@ -318,7 +318,7 @@ where
 /// To request in one time the permissions
 pub async fn prefetch_permissions<W: ShareableTid<'static> + XSWDHandler>(context: &Context<'_, '_>, params: XSWDPrefetchPermissions) -> Result<bool, InternalRpcError> {
     if params.permissions.is_empty() {
-        return Err(InternalRpcError::InvalidParams("Permissions list cannot be empty"))
+        return Err(InternalRpcError::InvalidParams("Permissions list cannot be empty".into()))
     }
 
     let handler: &RPCHandler<W> = context.get()
@@ -327,11 +327,11 @@ pub async fn prefetch_permissions<W: ShareableTid<'static> + XSWDHandler>(contex
         .context("XSWD App State not found in context")?;
 
     if params.permissions.is_empty() {
-        return Err(InternalRpcError::InvalidParams("No permissions requested"))
+        return Err(InternalRpcError::InvalidParams("No permissions requested".into()))
     }
 
     if params.permissions.len() > 255 {
-        return Err(InternalRpcError::InvalidParams("Too many permissions requested"))
+        return Err(InternalRpcError::InvalidParams("Too many permissions requested".into()))
     }
 
     {
@@ -339,7 +339,7 @@ pub async fn prefetch_permissions<W: ShareableTid<'static> + XSWDHandler>(contex
         for perm in params.permissions.iter() {
             if !lock.contains_key(perm) {
                 debug!("Permission '{}' is unknown", perm);
-                return Err(InternalRpcError::InvalidParams("Unknown method in permissions list"))
+                return Err(InternalRpcError::InvalidParams("Unknown method in permissions list".into()))
             }
         }
     }
