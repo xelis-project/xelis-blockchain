@@ -813,7 +813,11 @@ pub struct GetContractTransactionsParams<'a> {
     /// Number of entries to skip.
     pub skip: Option<usize>,
     /// Maximum number of entries to return.
-    pub maximum: Option<usize>
+    pub maximum: Option<usize>,
+    /// Minimum topoheight filter.
+    pub minimum_topoheight: Option<TopoHeight>,
+    /// Maximum topoheight filter.
+    pub maximum_topoheight: Option<TopoHeight>
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
