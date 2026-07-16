@@ -68,5 +68,5 @@ pub trait ContractProvider: ContractDataProvider + ContractLogsProvider + for<'t
     async fn add_tx_for_contract(&mut self, contract: &Hash, tx: &Hash) -> Result<(), BlockchainError>;
 
     // Get all the transactions for a contract
-    async fn get_contract_transactions<'a>(&'a self, contract: &Hash) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + 'a, BlockchainError>;
+    async fn get_contract_transactions<'a>(&'a self, contract: &Hash) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + Send + Sync + 'a, BlockchainError>;
 }

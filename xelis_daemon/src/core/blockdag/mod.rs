@@ -679,9 +679,8 @@ pub async fn is_tx_executed_for_topoheight<P>(provider: &P, tx_hash: &Hash, topo
 where
     P: DagOrderProvider + ClientProtocolProvider,
 {
-    if provider.is_tx_executed_in_a_block(tx_hash).await? {
-        debug!("TX {} from parent is executed, verifying its DAG relation", tx_hash);
-        let executor = provider.get_block_executor_for_tx(tx_hash).await?;
+    if let Some(executor) = provider.get_block_executor_for_tx(tx_hash).await? {
+        debug!("TX {} from parent is executed in {}, verifying its DAG relation", tx_hash, executor);
         let executor_topoheight = provider.get_topo_height_for_hash(&executor).await?;
         // This means its not part of the DAG of the current block being verified, we don't skip it
         Ok(executor_topoheight <= topoheight)

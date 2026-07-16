@@ -255,7 +255,7 @@ pub async fn get_transaction_response<'a, S: Storage>(blockchain: &Blockchain<S>
         None
     };
 
-    let executed_in_block = storage.get_block_executor_for_tx(&hash).await.ok();
+    let executed_in_block = storage.get_block_executor_for_tx(&hash).await?;
     let tx_size = tx.size();
 
     // Search the real fee paid if executed in block
@@ -950,7 +950,8 @@ async fn get_transaction_executor<S: Storage>(context: &Context<'_, '_>, params:
     let blockchain = chain_from_context::<S>(context)?;
     let storage = blockchain.get_storage().read().await;
 
-    let block_executor = storage.get_block_executor_for_tx(&params.hash).await?;
+    let block_executor = storage.get_block_executor_for_tx(&params.hash).await?
+        .context("Transaction not found in any block")?;
     let block_topoheight = storage.get_topo_height_for_hash(&block_executor).await?;
     let block_timestamp = storage.get_timestamp_for_block_hash(&block_executor).await?;
 
@@ -2279,9 +2280,26 @@ async fn get_contract_transactions<S: Storage>(context: &Context<'_, '_>, params
     let iter = storage.get_contract_transactions(&params.contract).await
         .context("Error while retrieving contract transactions")?;
 
-    let transactions = iter.skip(params.skip.unwrap_or_default())
-        .take(maximum)
-        .collect::<Result<Vec<_>, _>>()?;
+    let has_filter = params.minimum_topoheight.is_some() || params.maximum_topoheight.is_some();
+    let mut transactions = Vec::new();
+    for tx_hash in iter.skip(params.skip.unwrap_or_default()).take(maximum) {
+        let tx_hash = tx_hash.context("Error while retrieving contract transactions")?;
+
+        if has_filter {
+            let Some(block_executor) = storage.get_block_executor_for_tx(&tx_hash).await.context("Error while retrieving block executor for transaction")? else {
+                continue;
+            };
+
+            let topoheight = storage.get_topo_height_for_hash(&block_executor).await
+                .context("fetching topoheight for hash")?;
+
+            if params.minimum_topoheight.map_or(false, |min| topoheight < min) || params.maximum_topoheight.map_or(false, |max| topoheight > max) {
+                continue;
+            }
+        }
+
+        transactions.push(tx_hash);
+    }
 
     Ok(transactions)
 }

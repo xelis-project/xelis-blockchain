@@ -10,21 +10,14 @@ use super::super::MemoryStorage;
 
 #[async_trait]
 impl ClientProtocolProvider for MemoryStorage {
-    async fn get_block_executor_for_tx(&self, tx: &Hash) -> Result<Hash, BlockchainError> {
-        self.transactions.get(tx)
+    async fn get_block_executor_for_tx(&self, tx: &Hash) -> Result<Option<Hash>, BlockchainError> {
+        Ok(self.transactions.get(tx)
             .and_then(|entry| entry.executed_in_block.as_ref())
-            .map(|h| h.as_ref().clone())
-            .with_context(|| format!("Executed block not found for transaction {}", tx))
-            .map_err(|e| e.into())
+            .map(|h| h.as_ref().clone()))
     }
 
     async fn is_tx_executed_in_a_block(&self, tx: &Hash) -> Result<bool, BlockchainError> {
         Ok(self.transactions.get(tx).map_or(false, |entry| entry.executed_in_block.is_some()))
-    }
-
-    async fn is_tx_executed_in_block(&self, tx: &Hash, block: &Hash) -> Result<bool, BlockchainError> {
-        Ok(self.transactions.get(tx)
-            .map_or(false, |entry| entry.executed_in_block.as_ref().map_or(false, |h| h.as_ref() == block)))
     }
 
     async fn is_tx_linked_to_blocks(&self, hash: &Hash) -> Result<bool, BlockchainError> {

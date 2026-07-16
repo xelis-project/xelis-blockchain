@@ -1449,8 +1449,11 @@ async fn replay_tx<S: Storage>(manager: &CommandManager, mut arguments: Argument
         .await.context("Error while retrieving transaction")?;
 
     manager.message(format!("Replaying transaction {}...", hash));
-    let executed_at = storage.get_block_executor_for_tx(&hash).await
-        .context("Error while retrieving transaction execution block")?;
+    let Some(executed_at) = storage.get_block_executor_for_tx(&hash).await
+        .context("Error while retrieving transaction execution block")? else {
+            manager.message("Transaction was not executed in any block");
+            return Ok(());
+        };
 
     let block = storage.get_block_by_hash(&executed_at).await
         .context("Error while retrieving execution block")?;

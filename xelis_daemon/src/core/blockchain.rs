@@ -102,7 +102,7 @@ use crate::{
         config::BlockchainConfig,
         blockdag,
         difficulty,
-        error::BlockchainError,
+        error::{BlockchainError, DiskContext},
         mempool::Mempool,
         nonce_checker::NonceChecker,
         simulator::Simulator,
@@ -2181,7 +2181,9 @@ impl<S: Storage> Blockchain<S> {
                 };
 
                 if is_executed {
-                    let block_executor = storage.get_block_executor_for_tx(hash).await?;
+                    let block_executor = storage.get_block_executor_for_tx(hash).await?
+                        .ok_or(BlockchainError::NotFoundOnDisk(DiskContext::BlockExecutorForTx))?;
+
                     debug!("Tx {} was executed in {}", hash, block_executor);
                     let block_executor_height = storage.get_height_for_block_hash(&block_executor).await?;
                     // if the tx was executed below stable height, reject whole block!
@@ -3187,7 +3189,7 @@ impl<S: Storage> Blockchain<S> {
     // for this we get all tips and recursively retrieve all txs from tips until we reach height
     async fn get_all_txs_until_height<P>(&self, provider: &P, until_height: u64, tips: impl Iterator<Item = Hash>, txs_executed_only: bool, blocks_orphaned_only: bool) -> Result<LinkedHashSet<Hash>, BlockchainError>
     where
-        P: DifficultyProvider + ClientProtocolProvider + DagOrderProvider
+        P: DifficultyProvider + ClientProtocolProvider + DagOrderProvider + Sync
     {
         trace!("get all txs until height {}", until_height);
         // All transactions hashes found under the stable height

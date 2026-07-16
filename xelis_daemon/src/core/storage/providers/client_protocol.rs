@@ -8,13 +8,15 @@ use crate::core::{
 #[async_trait]
 pub trait ClientProtocolProvider {
     // Get the block hash that executed the transaction
-    async fn get_block_executor_for_tx(&self, tx: &Hash) -> Result<Hash, BlockchainError>;
+    async fn get_block_executor_for_tx(&self, tx: &Hash) -> Result<Option<Hash>, BlockchainError>;
 
     // Check if the transaction was executed
     async fn is_tx_executed_in_a_block(&self, tx: &Hash) -> Result<bool, BlockchainError>;
 
     // Check if the transaction was executed in a specific block
-    async fn is_tx_executed_in_block(&self, tx: &Hash, block: &Hash) -> Result<bool, BlockchainError>;
+    async fn is_tx_executed_in_block(&self, tx: &Hash, block: &Hash) -> Result<bool, BlockchainError> {
+        self.get_block_executor_for_tx(tx).await.map(|executor| executor.is_some_and(|h| h == *block))
+    }
 
     // Is the transaction included in at least a block
     async fn is_tx_linked_to_blocks(&self, hash: &Hash) -> Result<bool, BlockchainError>;
