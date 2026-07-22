@@ -672,6 +672,7 @@ async fn list_transactions(context: &Context<'_, '_>, params: ListTransactionsPa
     let filters = TransactionFilterOptions {
         address,
         asset: params.asset.map(Cow::Owned),
+        contract: params.contract.map(Cow::Owned),
         min_topoheight: params.min_topoheight,
         max_topoheight: params.max_topoheight,
         min_timestamp: params.min_timestamp,

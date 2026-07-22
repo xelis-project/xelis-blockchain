@@ -68,6 +68,7 @@ pub use types::*;
 pub struct TransactionFilterOptions<'a> {
     pub address: Option<Cow<'a, PublicKey>>,
     pub asset: Option<Cow<'a, Hash>>,
+    pub contract: Option<Cow<'a, Hash>>,
     pub min_topoheight: Option<u64>,
     pub max_topoheight: Option<u64>,
     pub min_timestamp: Option<TimestampMillis>,
@@ -87,6 +88,7 @@ impl<'a> Default for TransactionFilterOptions<'a> {
         Self {
             address: None,
             asset: None,
+            contract: None,
             min_topoheight: None,
             max_topoheight: None,
             min_timestamp: None,
@@ -1253,6 +1255,7 @@ impl EncryptedStorage {
         let TransactionFilterOptions {
             address,
             asset,
+            contract,
             min_topoheight,
             max_topoheight,
             min_timestamp,
@@ -1336,6 +1339,18 @@ impl EncryptedStorage {
                max_timestamp.is_some_and(|max| entry.get_timestamp() > max) {
                 debug!("entry timestamp {} out of bounds", entry.get_timestamp());
                 continue;
+            }
+
+            if let Some(contract_filter) = contract.as_ref() {
+                let matches = match entry.get_entry() {
+                    EntryData::InvokeContract { contract, .. } => contract == contract_filter.as_ref(),
+                    // A deployed contract uses its deployment transaction hash as its contract hash.
+                    EntryData::DeployContract { .. } => entry.get_hash() == contract_filter.as_ref(),
+                    _ => false,
+                };
+                if !matches {
+                    continue;
+                }
             }
 
             let mut transfers: Option<Vec<Transfer>> = None;

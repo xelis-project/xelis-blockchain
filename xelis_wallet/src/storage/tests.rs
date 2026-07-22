@@ -433,6 +433,53 @@ fn test_get_filtered_transactions_by_topoheight_range() {
 }
 
 #[test]
+fn test_get_filtered_transactions_by_contract() {
+    let mut storage = create_test_storage().unwrap();
+    let contract = Hash::new([42u8; 32]);
+    let other_contract = Hash::new([43u8; 32]);
+
+    let matching = create_test_tx_with_entry(
+        &Hash::new([1u8; 32]),
+        10,
+        EntryData::InvokeContract {
+            contract: contract.clone(),
+            deposits: Default::default(),
+            received: Default::default(),
+            entry_id: 0,
+            fee: 0,
+            max_gas: 0,
+            nonce: 0,
+        }
+    );
+    let non_matching = create_test_tx_with_entry(
+        &Hash::new([2u8; 32]),
+        20,
+        EntryData::InvokeContract {
+            contract: other_contract,
+            deposits: Default::default(),
+            received: Default::default(),
+            entry_id: 0,
+            fee: 0,
+            max_gas: 0,
+            nonce: 0,
+        }
+    );
+    let unrelated = create_test_tx(&Hash::new([3u8; 32]), 30);
+
+    for entry in [&matching, &non_matching, &unrelated] {
+        storage.save_transaction(entry.get_hash(), entry).unwrap();
+    }
+
+    let result = storage.get_filtered_transactions(TransactionFilterOptions {
+        contract: Some(Cow::Owned(contract)),
+        ..TransactionFilterOptions::default()
+    }).unwrap();
+
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].get_hash(), matching.get_hash());
+}
+
+#[test]
 fn test_get_filtered_transactions_with_limit() {
     let mut storage = create_test_storage().unwrap();
 
