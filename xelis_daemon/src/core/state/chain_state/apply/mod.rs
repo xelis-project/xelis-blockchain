@@ -800,6 +800,13 @@ impl<'s, 'b, P: ApplicableChainStateProvider> ApplicableChainState<'s, 'b, P> {
                 let execution = self.contract_manager.executions.executions.remove(&execution)
                     .ok_or(BlockchainError::ScheduledExecutionNotFound)?;
 
+                debug!(
+                    "executing block-end scheduled execution {} for contract {} at topoheight {}",
+                    execution.hash,
+                    execution.contract,
+                    self.inner.topoheight,
+                );
+
                 self.process_execution(
                     Cow::Owned(execution.contract.clone()),
                     ContractCaller::Scheduled(Cow::Owned(execution.hash.as_ref().clone()), Cow::Owned(execution.contract.clone())),
@@ -827,6 +834,13 @@ impl<'s, 'b, P: ApplicableChainStateProvider> ApplicableChainState<'s, 'b, P> {
 
         for hash in executions.iter() {
             let execution = self.inner.provider.get_contract_scheduled_execution_at_topoheight(hash, topoheight).await?;
+
+            debug!(
+                "executing scheduled execution {} for contract {} at execution topoheight {}",
+                execution.hash,
+                execution.contract,
+                topoheight,
+            );
 
             self.process_execution(
                 Cow::Owned(execution.contract.clone()),
