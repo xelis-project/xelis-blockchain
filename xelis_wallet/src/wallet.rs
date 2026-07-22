@@ -982,7 +982,8 @@ impl Wallet {
                         storage.get_last_coinbase_topoheight().is_some_and(|v| v > stable_topoheight)
                         && storage.get_tx_cache().is_none()
                     );
-                    info!("Stable topoheight is {}, should use stable balance: {}, last coinbase: {:?}", stable_topoheight, should_use_stable_balance, storage.get_last_coinbase_topoheight());
+
+                    debug!("Stable topoheight is {}, should use stable balance: {}, last coinbase: {:?}", stable_topoheight, should_use_stable_balance, storage.get_last_coinbase_topoheight());
 
                     // We also need to check if we have made an outgoing TX
                     // Because we need to keep the order of TX and use correct ciphertexts
