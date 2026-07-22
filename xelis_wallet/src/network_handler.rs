@@ -145,8 +145,9 @@ impl NetworkHandler {
 
                 let res =  zelf.start_syncing().await;
                 if let Err(e) = res.as_ref() {
-                    error!("Error while syncing: {}", e);
-                    zelf.wallet.propagate_event(Event::SyncError { message: e.to_string() }).await;
+                    let message = format!("{:#}", e);
+                    error!("Error while syncing: {:#}", message);
+                    zelf.wallet.propagate_event(Event::SyncError { message }).await;
                 }
 
                 // Notify that we are offline
@@ -1141,7 +1142,8 @@ impl NetworkHandler {
             // We can safely handle it by hand because `locate_sync_topoheight_and_clean` secure us from being on a wrong chain
             if let Some(topoheight) = block.header.metadata.as_ref().map(|m| m.topoheight) {
                 let block_hash = block.header.hash.as_ref().clone();
-                if let Some((detected_assets, mut nonce)) = self.process_block(address, block, topoheight, true, false).await? {
+                if let Some((detected_assets, mut nonce)) = self.process_block(address, block, topoheight, true, false).await
+                    .context("Failed to process block")? {
                     debug!("We must sync head state, assets: {}, nonce: {:?}", detected_assets.iter().map(|a| a.to_string()).collect::<Vec<String>>().join(", "), nonce);
                     {
                         let storage = self.wallet.get_storage().read().await;
@@ -1156,7 +1158,8 @@ impl NetworkHandler {
                     }
 
                     // A change happened in this block, lets update balance and nonce
-                    self.sync_head_state(&address, Some(&detected_assets), nonce, false, false).await?;
+                    self.sync_head_state(&address, Some(&detected_assets), nonce, false, false).await
+                        .context("Failed to sync head state")?;
 
                     if nonce.is_some() {
                         // Check if we have a tx cache and clean it
@@ -1187,12 +1190,14 @@ impl NetworkHandler {
         } else {
             debug!("No event received, verify that we are on the right chain");
             // First, locate the last topoheight valid for syncing
-            (daemon_topoheight, daemon_block_hash, wallet_topoheight) = self.locate_sync_topoheight_and_clean().await?;
+            (daemon_topoheight, daemon_block_hash, wallet_topoheight) = self.locate_sync_topoheight_and_clean().await
+                .context("Failed to locate sync topoheight")?;
             debug!("Daemon topoheight: {}, wallet topoheight: {}", daemon_topoheight, wallet_topoheight);
 
             trace!("sync head state");
             // Now sync head state, this will helps us to determinate if we should sync blocks or not
-            sync_new_blocks |= self.sync_head_state(&address, None, None, true, true).await?;
+            sync_new_blocks |= self.sync_head_state(&address, None, None, true, true).await
+                .context("Failed to sync head state")?;
         }
 
         // we have something that changed, sync transactions
@@ -1273,7 +1278,8 @@ impl NetworkHandler {
         // Generate only one time the address
         let address = self.wallet.get_address();
         // Do a first sync to be up-to-date with the daemon
-        self.sync(&address, None).await?;
+        self.sync(&address, None).await
+            .context("Failed to run first sync")?;
 
         // Thanks to websocket, we can be notified when a new block is added in chain
         // this allows us to have a instant sync of each new block instead of polling periodically
