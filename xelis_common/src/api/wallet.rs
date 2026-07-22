@@ -225,6 +225,8 @@ pub struct ListTransactionsParams {
     pub max_timestamp: Option<TimestampMillis>,
     /// Receiver address for outgoing txs, and owner/sender for incoming
     pub address: Option<Address>,
+    /// Contract hash for contract-related transactions.
+    pub contract: Option<Hash>,
     /// Whether incoming transactions are included.
     #[serde(default = "default_true_value")]
     pub accept_incoming: bool,
