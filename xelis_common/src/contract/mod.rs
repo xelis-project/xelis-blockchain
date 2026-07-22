@@ -27,7 +27,7 @@ use anyhow::Context as AnyhowContext;
 use curve25519_dalek::Scalar;
 use indexmap::IndexMap;
 use log::{debug, info};
-use xelis_builder::{EnvironmentBuilder, xstd::*};
+use silex_builder::{EnvironmentBuilder, xstd::*};
 use xelis_vm::{
     VMContext,
     EnvironmentError,

@@ -16,15 +16,15 @@ authors = ["Slixe <slixeprivate@gmail.com>"]
 [workspace.dependencies]
 xelis_common = { path = "xelis_common" }
 
-xelis-vm = { git = "https://github.com/xelis-project/xelis-vm", tag = "v1.0.0", features = ["logging"] }
-xelis-environment = { git = "https://github.com/xelis-project/xelis-vm", tag = "v1.0.0" }
-xelis-types = { git = "https://github.com/xelis-project/xelis-vm", tag = "v1.0.0" }
-xelis-builder = { git = "https://github.com/xelis-project/xelis-vm", tag = "v1.0.0" }
-xelis-bytecode = { git = "https://github.com/xelis-project/xelis-vm", tag = "v1.0.0" }
-xelis-assembler = { git = "https://github.com/xelis-project/xelis-vm", tag = "v1.0.0" }
-xelis_compiler = { git = "https://github.com/xelis-project/xelis-vm.git", tag = "v1.0.0", package = "xelis-compiler" }
-xelis_parser = { git = "https://github.com/xelis-project/xelis-vm.git", tag = "v1.0.0", package = "xelis-parser" }
-xelis_lexer = { git = "https://github.com/xelis-project/xelis-vm.git", tag = "v1.0.0", package = "xelis-lexer" }
+xelis-vm = { git = "https://github.com/xelis-project/xelis-vm", tag = "v1.1.0", features = ["logging"] }
+silex-environment = { git = "https://github.com/xelis-project/xelis-vm", tag = "v1.1.0" }
+silex-types = { git = "https://github.com/xelis-project/xelis-vm", tag = "v1.1.0" }
+silex-builder = { git = "https://github.com/xelis-project/xelis-vm", tag = "v1.1.0" }
+silex-bytecode = { git = "https://github.com/xelis-project/xelis-vm", tag = "v1.1.0" }
+silex-assembler = { git = "https://github.com/xelis-project/xelis-vm", tag = "v1.1.0" }
+silex-compiler = { git = "https://github.com/xelis-project/xelis-vm.git", tag = "v1.1.0" }
+silex-parser = { git = "https://github.com/xelis-project/xelis-vm.git", tag = "v1.1.0" }
+silex-lexer = { git = "https://github.com/xelis-project/xelis-vm.git", tag = "v1.1.0" }
 
 metrics = "0.24.2"
 anyhow = "1"

@@ -4,7 +4,7 @@ use humantime::{format_duration, Duration as HumanDuration};
 use log::{debug, error, info, trace, warn};
 use xelis_daemon::rpc::rpc::get_block_response_for_hash;
 use tokio::pin;
-use xelis_assembler::Disassembler;
+use silex_assembler::Disassembler;
 use xelis_common::{
     async_handler,
     config::{init, VERSION, XELIS_ASSET, FEE_PER_KB},

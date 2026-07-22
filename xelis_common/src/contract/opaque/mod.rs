@@ -11,7 +11,7 @@ mod contract;
 use bulletproofs::RangeProof;
 use curve25519_dalek::{ristretto::CompressedRistretto, Scalar};
 use log::debug;
-use xelis_types::{
+use silex_types::{
     register_opaque_json,
     impl_opaque
 };

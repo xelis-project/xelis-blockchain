@@ -881,7 +881,7 @@ mod tests {
     use std::{borrow::Cow, collections::HashMap, sync::Arc};
 
     use indexmap::IndexSet;
-    use xelis_assembler::Assembler;
+    use silex_assembler::Assembler;
     use xelis_common::{
         block::{Block, BlockHeader, BlockVersion, EXTRA_NONCE_SIZE},
         contract::{build_environment, CallbackEvent, ContractLog, ContractModule, ContractVersion, EventCallbackRegistration, Source},

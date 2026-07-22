@@ -52,7 +52,7 @@ dependencies = [
  "derive_more",
  "encoding_rs",
  "flate2",
- "foldhash 0.2.0",
+ "foldhash",
  "futures-core",
  "h2 0.3.27",
  "http 0.2.12",
@@ -167,7 +167,7 @@ dependencies = [
  "cookie",
  "derive_more",
  "encoding_rs",
- "foldhash 0.2.0",
+ "foldhash",
  "futures-core",
  "futures-util",
  "impl-more",
@@ -1512,12 +1512,6 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
 name = "foldhash"
-version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
-
-[[package]]
-name = "foldhash"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
@@ -1788,24 +1782,13 @@ checksum = "8a9ee70c43aaf417c914396645a0fa852624801b24ebb7ae78fe8272889ac888"
 
 [[package]]
 name = "hashbrown"
-version = "0.15.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
-dependencies = [
- "allocator-api2",
- "equivalent",
- "foldhash 0.1.5",
-]
-
-[[package]]
-name = "hashbrown"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
 dependencies = [
  "allocator-api2",
  "equivalent",
- "foldhash 0.2.0",
+ "foldhash",
 ]
 
 [[package]]
@@ -1813,6 +1796,11 @@ name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
+dependencies = [
+ "allocator-api2",
+ "equivalent",
+ "foldhash",
+]
 
 [[package]]
 name = "hdrhistogram"
@@ -2271,6 +2259,15 @@ name = "itertools"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
+dependencies = [
+ "either",
+]
+
+[[package]]
+name = "itertools"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b4baf93f58d4425749ca49a51c50ebab072c5df6994d08fed93541c331481dc"
 dependencies = [
  "either",
 ]
@@ -3576,6 +3573,126 @@ dependencies = [
 ]
 
 [[package]]
+name = "silex-assembler"
+version = "0.1.0"
+source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.1.0#28d8da7723bf10f0a6ce28b795b6ccb2c56a976d"
+dependencies = [
+ "log",
+ "silex-bytecode",
+ "silex-types",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "silex-ast"
+version = "0.1.0"
+source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.1.0#28d8da7723bf10f0a6ce28b795b6ccb2c56a976d"
+dependencies = [
+ "indexmap 2.14.0",
+ "silex-types",
+]
+
+[[package]]
+name = "silex-builder"
+version = "0.1.0"
+source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.1.0#28d8da7723bf10f0a6ce28b795b6ccb2c56a976d"
+dependencies = [
+ "anyhow",
+ "hex",
+ "log",
+ "paste",
+ "silex-ast",
+ "silex-environment",
+ "silex-types",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "silex-bytecode"
+version = "0.1.0"
+source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.1.0#28d8da7723bf10f0a6ce28b795b6ccb2c56a976d"
+dependencies = [
+ "hex",
+ "indexmap 2.14.0",
+ "schemars",
+ "serde",
+ "silex-types",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "silex-compiler"
+version = "0.1.0"
+source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.1.0#28d8da7723bf10f0a6ce28b795b6ccb2c56a976d"
+dependencies = [
+ "log",
+ "silex-ast",
+ "silex-bytecode",
+ "silex-environment",
+ "silex-types",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "silex-environment"
+version = "0.1.0"
+source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.1.0#28d8da7723bf10f0a6ce28b795b6ccb2c56a976d"
+dependencies = [
+ "anyhow",
+ "better_any",
+ "futures",
+ "hashbrown 0.17.1",
+ "indexmap 2.14.0",
+ "runtime-context",
+ "silex-bytecode",
+ "silex-types",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "silex-lexer"
+version = "0.1.0"
+source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.1.0#28d8da7723bf10f0a6ce28b795b6ccb2c56a976d"
+dependencies = [
+ "log",
+ "silex-ast",
+ "silex-types",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "silex-parser"
+version = "0.1.0"
+source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.1.0#28d8da7723bf10f0a6ce28b795b6ccb2c56a976d"
+dependencies = [
+ "anyhow",
+ "indexmap 2.14.0",
+ "log",
+ "paste",
+ "silex-ast",
+ "silex-builder",
+ "silex-environment",
+ "silex-types",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "silex-types"
+version = "0.1.0"
+source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.1.0#28d8da7723bf10f0a6ce28b795b6ccb2c56a976d"
+dependencies = [
+ "anyhow",
+ "hex",
+ "indexmap 2.14.0",
+ "itertools 0.15.0",
+ "lazy_static",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "simd-adler32"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4765,83 +4882,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "xelis-assembler"
-version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.0.0#2cb1faeb24f0fe46cc6b7f26fb47a6235f895ee2"
-dependencies = [
- "log",
- "thiserror 2.0.18",
- "xelis-bytecode",
- "xelis-types",
-]
-
-[[package]]
-name = "xelis-ast"
-version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.0.0#2cb1faeb24f0fe46cc6b7f26fb47a6235f895ee2"
-dependencies = [
- "indexmap 2.14.0",
- "xelis-types",
-]
-
-[[package]]
-name = "xelis-builder"
-version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.0.0#2cb1faeb24f0fe46cc6b7f26fb47a6235f895ee2"
-dependencies = [
- "anyhow",
- "hex",
- "log",
- "paste",
- "thiserror 2.0.18",
- "xelis-ast",
- "xelis-environment",
- "xelis-types",
-]
-
-[[package]]
-name = "xelis-bytecode"
-version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.0.0#2cb1faeb24f0fe46cc6b7f26fb47a6235f895ee2"
-dependencies = [
- "hex",
- "indexmap 2.14.0",
- "schemars",
- "serde",
- "thiserror 2.0.18",
- "xelis-types",
-]
-
-[[package]]
-name = "xelis-compiler"
-version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.0.0#2cb1faeb24f0fe46cc6b7f26fb47a6235f895ee2"
-dependencies = [
- "log",
- "thiserror 2.0.18",
- "xelis-ast",
- "xelis-bytecode",
- "xelis-environment",
- "xelis-types",
-]
-
-[[package]]
-name = "xelis-environment"
-version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.0.0#2cb1faeb24f0fe46cc6b7f26fb47a6235f895ee2"
-dependencies = [
- "anyhow",
- "better_any",
- "futures",
- "hashbrown 0.15.5",
- "indexmap 2.14.0",
- "runtime-context",
- "thiserror 2.0.18",
- "xelis-bytecode",
- "xelis-types",
-]
-
-[[package]]
 name = "xelis-hash"
 version = "0.1.0"
 source = "git+https://github.com/xelis-project/xelis-hash?tag=v3.1.0#f48262b931438fdbf2932711613e020c02f1ea04"
@@ -4855,61 +4895,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "xelis-lexer"
-version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.0.0#2cb1faeb24f0fe46cc6b7f26fb47a6235f895ee2"
-dependencies = [
- "log",
- "thiserror 2.0.18",
- "xelis-ast",
- "xelis-types",
-]
-
-[[package]]
-name = "xelis-parser"
-version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.0.0#2cb1faeb24f0fe46cc6b7f26fb47a6235f895ee2"
-dependencies = [
- "anyhow",
- "indexmap 2.14.0",
- "log",
- "paste",
- "thiserror 2.0.18",
- "xelis-ast",
- "xelis-builder",
- "xelis-environment",
- "xelis-types",
-]
-
-[[package]]
-name = "xelis-types"
-version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.0.0#2cb1faeb24f0fe46cc6b7f26fb47a6235f895ee2"
-dependencies = [
- "anyhow",
- "hex",
- "indexmap 2.14.0",
- "itertools 0.14.0",
- "lazy_static",
- "schemars",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
-]
-
-[[package]]
 name = "xelis-vm"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.0.0#2cb1faeb24f0fe46cc6b7f26fb47a6235f895ee2"
+source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.1.0#28d8da7723bf10f0a6ce28b795b6ccb2c56a976d"
 dependencies = [
  "anyhow",
  "futures",
  "indexmap 2.14.0",
  "log",
+ "silex-bytecode",
+ "silex-environment",
+ "silex-types",
  "thiserror 2.0.18",
- "xelis-bytecode",
- "xelis-environment",
- "xelis-types",
 ]
 
 [[package]]
@@ -4957,6 +4954,12 @@ dependencies = [
  "serde_json",
  "serde_regex",
  "sha3",
+ "silex-builder",
+ "silex-bytecode",
+ "silex-compiler",
+ "silex-lexer",
+ "silex-parser",
+ "silex-types",
  "strum",
  "thiserror 2.0.18",
  "tokio",
@@ -4964,13 +4967,7 @@ dependencies = [
  "tokio_with_wasm",
  "web-time",
  "win32console",
- "xelis-builder",
- "xelis-bytecode",
- "xelis-compiler",
  "xelis-hash",
- "xelis-lexer",
- "xelis-parser",
- "xelis-types",
  "xelis-vm",
  "zeroize",
  "zip",
@@ -5006,6 +5003,8 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
+ "silex-assembler",
+ "silex-environment",
  "sled",
  "snap",
  "strum",
@@ -5014,8 +5013,6 @@ dependencies = [
  "tokio",
  "tokio-socks",
  "x25519-dalek",
- "xelis-assembler",
- "xelis-environment",
  "xelis-vm",
  "xelis_common",
 ]
