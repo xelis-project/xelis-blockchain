@@ -550,27 +550,31 @@ impl NetworkHandler {
         let assets = self.handle_contracts_outputs(outputs.executions, topoheight, timestamp, true).await?;
         trace!("Contract outputs at topoheight {} affected {} assets", topoheight, assets.len());
 
-        // Check if a change occured, we are the highest version and update balances is requested
-        if let Some((_, nonce)) = changes.filter(|_| balances && highest_version) {
+        // Contract outputs can be the only change in a block. They still require
+        // persisting the fetched balance version, even when process_block found
+        // no regular transaction changes.
+        if balances && highest_version && (changes.is_some() || assets.contains(&asset)) {
             let mut storage = self.wallet.get_storage().write().await;
 
-            // Set the highest nonce we know
-            let mut highest_nonce_guard = highest_nonce.lock().await;
-            if highest_nonce_guard.is_none() {
-                // Get the highest nonce from storage
-                debug!("Highest nonce is not set, fetching it from storage");
-                *highest_nonce_guard = Some(storage.get_nonce()?);
-            }
 
             // Store only the highest nonce
             // Because if we are building queued transactions, it may break our queue
             // Our we couldn't submit new txs before they get removed from mempool
-            if let Some(nonce) = nonce.filter(|n| highest_nonce_guard.as_ref().map(|h| *h < *n).unwrap_or(true)) {
-                debug!("Storing new highest nonce {}", nonce);
-                storage.set_nonce(nonce)?;
-                *highest_nonce_guard = Some(nonce);
+            if let Some((_, nonce)) = changes {
+                // Set the highest nonce we know
+                let mut highest_nonce_guard = highest_nonce.lock().await;
+                if highest_nonce_guard.is_none() {
+                    // Get the highest nonce from storage
+                    debug!("Highest nonce is not set, fetching it from storage");
+                    *highest_nonce_guard = Some(storage.get_nonce()?);
+                }
+
+                if let Some(nonce) = nonce.filter(|n| highest_nonce_guard.as_ref().map(|h| *h < *n).unwrap_or(true)) {
+                    debug!("Storing new highest nonce {}", nonce);
+                    storage.set_nonce(nonce)?;
+                    *highest_nonce_guard = Some(nonce);
+                }
             }
-            drop(highest_nonce_guard);
 
             // If we have no balance in storage OR the stored ciphertext isn't the same, we should store it
             let store = storage.get_balance_for(&asset).await.map(|b| b.ciphertext != balance).unwrap_or(true);

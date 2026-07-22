@@ -480,6 +480,26 @@ fn test_get_filtered_transactions_by_contract() {
 }
 
 #[test]
+fn test_get_filtered_transactions_includes_incoming_contract() {
+    let mut storage = create_test_storage().unwrap();
+    let asset = Hash::new([42u8; 32]);
+    let tx_hash = Hash::new([1u8; 32]);
+    let entry = create_test_tx_with_entry(
+        &tx_hash,
+        10,
+        EntryData::IncomingContract {
+            transfers: [(asset.clone(), 100u64)].into_iter().collect(),
+        },
+    );
+    storage.save_transaction(&tx_hash, &entry).unwrap();
+
+    let result = storage.get_filtered_transactions(TransactionFilterOptions::default()).unwrap();
+
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].get_hash(), &tx_hash);
+}
+
+#[test]
 fn test_get_filtered_transactions_with_limit() {
     let mut storage = create_test_storage().unwrap();
 

@@ -1413,6 +1413,15 @@ impl EncryptedStorage {
                     }
                 },
                 EntryData::DeployContract { .. } if accept_outgoing => {},
+                EntryData::IncomingContract { transfers: t } if accept_incoming => {
+                    if let Some(asset) = asset.as_ref() {
+                        t.retain(|transfer, _| *transfer == *asset.as_ref());
+                    }
+
+                    if t.is_empty() {
+                        continue;
+                    }
+                },
                 EntryData::OutgoingBlob { destinations, data, .. } if accept_blob => {
                     if asset.is_some() {
                         continue;
