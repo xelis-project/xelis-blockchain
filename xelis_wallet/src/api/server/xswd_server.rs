@@ -190,7 +190,6 @@ where
             applications.insert(session.clone(), state.clone());
         }
 
-        debug!("Application {} has been added to the applications list", state.get_name());
         Ok(response)
     }
 

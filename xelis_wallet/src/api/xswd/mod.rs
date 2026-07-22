@@ -187,6 +187,8 @@ where
             return Err(XSWDError::PermissionDenied)
         }
 
+        info!("Application {} is now connected", state.get_name());
+
         Ok(json!({
             "jsonrpc": "2.0",
             "id": state.get_id(),
