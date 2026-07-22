@@ -29,12 +29,14 @@ use crate::{
     p2p::Peer,
 };
 use super::{InternalRpcError, ApiError};
+use linked_hash_table::LinkedHashSet;
 use xelis_common::{
     account::{VersionedBalance, VersionedNonce},
     api::{
         daemon::*,
         *
     },
+    immutable::Immutable,
     asset::RPCAssetData,
     async_handler,
     block::{
@@ -76,7 +78,6 @@ use xelis_common::{
 };
 use xelis_vm::ValueCell;
 use futures::{stream, StreamExt, TryStreamExt};
-use itertools::Itertools;
 use anyhow::Context as AnyContext;
 use human_bytes::human_bytes;
 use serde_json::{json, Value};
@@ -2039,15 +2040,21 @@ async fn get_contract_registered_executions_at_topoheight<S: Storage>(context: &
     let max = params.max.unwrap_or(MAX_SCHEDULED_EXECUTIONS);
 
     let storage = blockchain.get_storage().read().await;
-    let executions = storage.get_registered_contract_scheduled_executions_at_topoheight(params.topoheight).await
+    let mut executions = Vec::new();
+    for res in storage.get_registered_contract_scheduled_executions_at_topoheight(params.topoheight).await
         .context("Error while retrieving contract registered executions")?
         .skip(params.skip.unwrap_or(0))
-        .take(max)
-        .map_ok(|(topoheight, execution_hash)| RegisteredExecution {
-            execution_hash: Cow::Owned(execution_hash),
+        .take(max) {
+        let (topoheight, execution_contract) = res?;
+
+        let scheduled_execution = storage.get_contract_scheduled_execution_at_topoheight(&execution_contract, topoheight).await?;
+
+        executions.push(RegisteredExecution {
+            execution_hash: Cow::Owned(scheduled_execution.hash.as_ref().clone()),
+            execution_contract: Cow::Owned(execution_contract),
             execution_topoheight: topoheight,
         })
-        .collect::<Result<Vec<_>, _>>()?;
+    }
 
     Ok(executions)
 }
@@ -2060,7 +2067,7 @@ async fn get_contracts_outputs<S: Storage>(context: &Context<'_, '_>, params: Ge
         .context("Error while retrieving block header at topoheight")?;
 
     let mut executions = HashMap::new();
-    let mut scheduled_executions = Vec::new();
+    let mut scheduled_executions = LinkedHashSet::new();
     for tx_hash in header.get_transactions() {
         let is_executed = storage.is_tx_executed_in_block(tx_hash, &block_hash).await
             .context("Error while checking if TX is executed in block")?;
@@ -2086,14 +2093,21 @@ async fn get_contracts_outputs<S: Storage>(context: &Context<'_, '_>, params: Ge
                                 .transfers
                                 .entry(Cow::Owned(asset.clone()))
                                 .or_insert(0) += *amount;
-                        },
-                    ContractLog::ScheduledExecution { .. } => {
-                        scheduled_executions.push(tx_hash.clone());
+                    },
+                    ContractLog::ScheduledExecution { hash, kind: ScheduledExecutionKindLog::BlockEnd { .. }, .. } => {
+                        scheduled_executions.insert(Immutable::Owned(hash.clone()));
                     },
                     _ => {}
                 }
             }
         }
+    }
+
+    // Scheduled executions at a target topoheight do not have a transaction
+    // in the block header, so discover their caller hashes from the execution index.
+    for res in storage.get_contract_scheduled_executions_at_topoheight(params.topoheight).await? {
+        let entry = res?;
+        scheduled_executions.insert(Immutable::Arc(entry.hash));
     }
 
     // Also handle the scheduled executions that were triggered at block end
@@ -2103,13 +2117,19 @@ async fn get_contracts_outputs<S: Storage>(context: &Context<'_, '_>, params: Ge
 
         for log in logs {
             match &log {
-                ContractLog::Transfer { destination, contract, .. }
-                | ContractLog::TransferPayload { destination, contract, .. }
+                ContractLog::Transfer { destination, contract, amount, asset }
+                | ContractLog::TransferPayload { destination, contract, amount, asset, .. }
                     if destination == params.address.get_public_key() => {
-                        executions.entry(ContractTransfersEntryKey {
-                            caller: Cow::Owned(hash.clone()),
+                        *executions.entry(ContractTransfersEntryKey {
+                            caller: Cow::Owned(hash.as_ref().clone()),
                             contract: Cow::Owned(contract.clone()),
-                        });
+                        })
+                            .or_insert_with(|| ContractTransfersEntry {
+                                transfers: HashMap::new(),
+                            })
+                            .transfers
+                            .entry(Cow::Owned(asset.clone()))
+                            .or_insert(0) += *amount;
                     },
                 _ => {}
             }
