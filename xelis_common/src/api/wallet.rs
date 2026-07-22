@@ -614,8 +614,8 @@ pub enum EntryType<'a> {
         contract: Cow<'a, Hash>,
         /// Deposits made.
         deposits: Cow<'a, IndexMap<Hash, u64>>,
-        /// Assets received from that call.
-        received: Cow<'a, IndexMap<Hash, u64>>,
+        /// Assets received from each contract, grouped by asset.
+        received: Cow<'a, IndexMap<Hash, IndexMap<Hash, u64>>>,
         /// Invoked chunk identifier.
         chunk_id: u16,
         /// Fee paid.
@@ -634,8 +634,8 @@ pub enum EntryType<'a> {
         invoke: Option<Cow<'a, DeployInvoke>>
     },
     IncomingContract {
-        /// Transfers received from the contract.
-        transfers: Cow<'a, IndexMap<Hash, u64>>,
+        /// Transfers received from each contract, grouped by asset.
+        transfers: Cow<'a, IndexMap<Hash, IndexMap<Hash, u64>>>,
     },
     OutgoingBlob {
         /// Blob destination addresses.
