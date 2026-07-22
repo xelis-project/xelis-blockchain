@@ -7,9 +7,7 @@ use std::{
     borrow::Cow
 };
 use cfg_if::cfg_if;
-use indexmap::IndexSet;
-#[cfg(feature = "xswd")]
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use rand::TryRng;
 use log::{
     debug,
@@ -1319,9 +1317,15 @@ impl Wallet {
                         extra.push("Received".to_owned());
                     }
 
-                    for (asset, amount) in received {
+                    let mut totals = IndexMap::<Hash, u64>::new();
+                    for contract_transfers in received.values() {
+                        for (asset, amount) in contract_transfers {
+                            *totals.entry(asset.clone()).or_insert(0) += amount;
+                        }
+                    }
+                    for (asset, amount) in totals {
                         let data = storage.get_asset(&asset).await?;
-                        extra.push(format!("{}:{}", data.get_name(), format_coin(*amount, data.get_decimals())));
+                        extra.push(format!("{}:{}", data.get_name(), format_coin(amount, data.get_decimals())));
                     }
 
                     writeln!(w, "{},{},{},{},{},{},{},{},{}", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "InvokeContract", contract, extra.join("|"), chunk_id, format_xelis(*fee), nonce).context("Error while writing csv line")?;
@@ -1340,9 +1344,15 @@ impl Wallet {
                 },
                 EntryData::IncomingContract { transfers } => {
                     let mut assets = Vec::new();
-                    for (asset, amount) in transfers {
+                    let mut totals = IndexMap::<Hash, u64>::new();
+                    for contract_transfers in transfers.values() {
+                        for (asset, amount) in contract_transfers {
+                            *totals.entry(asset.clone()).or_insert(0) += amount;
+                        }
+                    }
+                    for (asset, amount) in totals {
                         let data = storage.get_asset(&asset).await?;
-                        assets.push(format!("{}:{}", data.get_name(), format_coin(*amount, data.get_decimals())));
+                        assets.push(format!("{}:{}", data.get_name(), format_coin(amount, data.get_decimals())));
                     }
 
                     writeln!(w, "{},{},{},{},{},-,-,-,-", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "IncomingContract", assets.join("|")).context("Error while writing csv line")?;

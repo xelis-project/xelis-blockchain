@@ -488,12 +488,17 @@ fn test_get_filtered_transactions_includes_incoming_contract() {
         &tx_hash,
         10,
         EntryData::IncomingContract {
-            transfers: [(asset.clone(), 100u64)].into_iter().collect(),
+            transfers: [(Hash::new([99u8; 32]), [(asset.clone(), 100u64)].into_iter().collect())]
+                .into_iter()
+                .collect(),
         },
     );
     storage.save_transaction(&tx_hash, &entry).unwrap();
 
-    let result = storage.get_filtered_transactions(TransactionFilterOptions::default()).unwrap();
+    let result = storage.get_filtered_transactions(TransactionFilterOptions {
+        contract: Some(Cow::Owned(Hash::new([99u8; 32]))),
+        ..TransactionFilterOptions::default()
+    }).unwrap();
 
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].get_hash(), &tx_hash);

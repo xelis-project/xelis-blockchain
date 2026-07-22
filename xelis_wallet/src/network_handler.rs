@@ -471,7 +471,7 @@ impl NetworkHandler {
         debug!("Handling contracts outputs at topoheight {}", topoheight);
         // Aggregate all transfers per transaction caller
         let mut assets = HashSet::new();
-        let mut calls: HashMap<Hash, HashMap<Hash, u64>> = HashMap::new();
+        let mut calls: HashMap<Hash, HashMap<Hash, HashMap<Hash, u64>>> = HashMap::new();
         for (key, entry) in outputs.into_iter() {
             debug!("Processing contract execution from caller {}", key.caller);
 
@@ -479,6 +479,8 @@ impl NetworkHandler {
 
             let tx_hash = key.caller.into_owned();
             let transfers = calls.entry(tx_hash)
+                .or_insert_with(HashMap::new)
+                .entry(key.contract.into_owned())
                 .or_insert_with(HashMap::new);
             for (asset, amount) in entry.transfers.into_iter() {
                 debug!("Contract transfer detected: asset {}, amount {}", asset, amount);
@@ -1423,7 +1425,7 @@ impl NetworkHandler {
         }
     }
 
-    async fn create_or_update_transaction_contract(&self, tx_hash: &Hash, topoheight: u64, block_timestamp: TimestampMillis, new_transfers: impl Iterator<Item = (Hash, u64)>, is_rescan: bool) -> Result<(), Error> {
+    async fn create_or_update_transaction_contract(&self, tx_hash: &Hash, topoheight: u64, block_timestamp: TimestampMillis, new_transfers: impl Iterator<Item = (Hash, HashMap<Hash, u64>)>, is_rescan: bool) -> Result<(), Error> {
         debug!("create_or_update_transaction_contract for tx {} at topoheight {}", tx_hash, topoheight);
         let mut storage = self.wallet.get_storage().write().await;
         let (mut tx, update) = if storage.has_transaction(tx_hash)? {
@@ -1440,22 +1442,37 @@ impl NetworkHandler {
         };
 
         match tx.get_mut_entry() {
-            EntryData::IncomingContract { transfers, .. } | EntryData::InvokeContract { received: transfers, .. } => {
-                if !transfers.is_empty() {
-                    debug!("transfers isn't empty, skipping existing transfers update");
-                } else {
-                    for (asset, amount) in new_transfers {    
-                        *transfers.entry(asset.clone())
-                            .or_insert(0) += amount;
+            EntryData::IncomingContract { transfers } => {
+                for (contract, assets) in new_transfers {
+                    let contract_transfers = transfers.entry(contract).or_insert_with(IndexMap::new);
+                    for (asset, amount) in assets {
+                        *contract_transfers.entry(asset).or_insert(0) += amount;
                     }
-    
-                    if update {
-                        storage.update_transaction(&tx_hash, &tx)?;
-                    } else {
-                        storage.save_transaction(&tx_hash, &tx)?;
-                        if !is_rescan {
-                            self.wallet.propagate_event(Event::NewTransaction(tx.serializable(self.wallet.get_network().is_mainnet()))).await;
-                        }
+                }
+
+                if update {
+                    storage.update_transaction(&tx_hash, &tx)?;
+                } else {
+                    storage.save_transaction(&tx_hash, &tx)?;
+                    if !is_rescan {
+                        self.wallet.propagate_event(Event::NewTransaction(tx.serializable(self.wallet.get_network().is_mainnet()))).await;
+                    }
+                }
+            },
+            EntryData::InvokeContract { received, .. } => {
+                for (source_contract, assets) in new_transfers {
+                    let contract_received = received.entry(source_contract).or_insert_with(IndexMap::new);
+                    for (asset, amount) in assets {
+                        *contract_received.entry(asset).or_insert(0) += amount;
+                    }
+                }
+
+                if update {
+                    storage.update_transaction(&tx_hash, &tx)?;
+                } else {
+                    storage.save_transaction(&tx_hash, &tx)?;
+                    if !is_rescan {
+                        self.wallet.propagate_event(Event::NewTransaction(tx.serializable(self.wallet.get_network().is_mainnet()))).await;
                     }
                 }
             },

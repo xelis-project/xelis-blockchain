@@ -1343,9 +1343,12 @@ impl EncryptedStorage {
 
             if let Some(contract_filter) = contract.as_ref() {
                 let matches = match entry.get_entry() {
-                    EntryData::InvokeContract { contract, .. } => contract == contract_filter.as_ref(),
+                    EntryData::InvokeContract { contract, received, .. } => {
+                        contract == contract_filter.as_ref() || received.contains_key(contract_filter.as_ref())
+                    },
                     // A deployed contract uses its deployment transaction hash as its contract hash.
                     EntryData::DeployContract { .. } => entry.get_hash() == contract_filter.as_ref(),
+                    EntryData::IncomingContract { transfers } => transfers.contains_key(contract_filter.as_ref()),
                     _ => false,
                 };
                 if !matches {
@@ -1402,20 +1405,34 @@ impl EncryptedStorage {
                         }
                     }
                 },
-                EntryData::InvokeContract { deposits, .. } if accept_outgoing => {
+                EntryData::InvokeContract { deposits, received, .. } if accept_outgoing => {
+                    if let Some(contract_filter) = contract.as_ref() {
+                        received.retain(|source_contract, _| source_contract == contract_filter.as_ref());
+                    }
+
                     // Filter by asset
                     if let Some(asset) = asset.as_ref() {
-                        if !deposits.contains_key(asset.as_ref()) {
+                        deposits.retain(|deposit, _| *deposit == *asset.as_ref());
+                        for assets in received.values_mut() {
+                            assets.retain(|received_asset, _| *received_asset == *asset.as_ref());
+                        }
+                        received.retain(|_, assets| !assets.is_empty());
+                        if deposits.is_empty() && received.is_empty() {
                             continue;
                         }
-
-                        deposits.retain(|deposit, _| *deposit == *asset.as_ref());
                     }
                 },
                 EntryData::DeployContract { .. } if accept_outgoing => {},
                 EntryData::IncomingContract { transfers: t } if accept_incoming => {
+                    if let Some(contract_filter) = contract.as_ref() {
+                        t.retain(|source_contract, _| source_contract == contract_filter.as_ref());
+                    }
+
                     if let Some(asset) = asset.as_ref() {
-                        t.retain(|transfer, _| *transfer == *asset.as_ref());
+                        for assets in t.values_mut() {
+                            assets.retain(|transfer, _| *transfer == *asset.as_ref());
+                        }
+                        t.retain(|_, assets| !assets.is_empty());
                     }
 
                     if t.is_empty() {
