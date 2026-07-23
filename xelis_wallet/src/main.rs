@@ -2186,6 +2186,12 @@ async fn add_xswd_relayer(manager: &CommandManager, mut args: ArgumentManager) -
     let context = manager.get_context().lock()?;
     let wallet: &Arc<Wallet> = context.get()?;
 
+    if let Some(receiver) = wallet.init_xswd_relayer().await? {
+        let prompt = manager.get_prompt().clone();
+        spawn_task("xswd", xswd_handler(receiver, prompt));
+        manager.message("XSWD Server has been enabled");
+    }
+
     let app_data = if args.has_argument("app_data") {
         args.get_value("app_data")?.to_string_value()?
     } else {
@@ -2197,17 +2203,9 @@ async fn add_xswd_relayer(manager: &CommandManager, mut args: ArgumentManager) -
     let app_data = serde_json::from_str(&app_data)
         .context("Error while parsing app data as JSON")?;
 
-    match wallet.add_xswd_relayer_application(app_data).await {
-        Ok(receiver) => {
-            if let Some(receiver) = receiver {
-                let prompt = manager.get_prompt().clone();
-                spawn_task("xswd", xswd_handler(receiver, prompt));
-            }
-
-            manager.message("XSWD Server has been enabled");
-        },
-        Err(e) => manager.error(format!("Error while enabling XSWD Server: {}", e))
-    };
+    if let Err(e) = wallet.add_xswd_relayer_application(app_data).await {
+        manager.error(format!("Error while enabling XSWD Server: {}", e))
+    }
 
     Ok(())
 }

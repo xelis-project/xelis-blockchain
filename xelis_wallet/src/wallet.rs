@@ -108,6 +108,7 @@ use {
         ApplicationDataRelayer,
         XSWDRelayer,
         XSWDRelayerShared,
+        XSWDError,
         register_rpc_methods,
         AppStateShared,
         PermissionResult,
@@ -763,21 +764,22 @@ impl Wallet {
         if xswd.is_none() {
             let mut handler = RPCHandler::new(Arc::clone(self), None);
             register_rpc_methods(&mut handler);
+
             *xswd = Some(XSWDRelayer::new(handler, self.concurrency));
         }
+
         Ok(receiver)
     }
 
     // Add application to XSWD relayer - requires handler to be running
     #[cfg(feature = "xswd")]
-    pub async fn add_xswd_relayer_application(self: &Arc<Self>, app_data: ApplicationDataRelayer) -> Result<Option<UnboundedReceiver<XSWDEvent>>, Error> {
-        let channel = self.init_xswd_relayer().await?;
+    pub async fn add_xswd_relayer_application(self: &Arc<Self>, app_data: ApplicationDataRelayer) -> Result<(), Error> {
         let xswd = self.xswd_relayer.lock().await;
         if let Some(xswd) = xswd.as_ref() {
-            xswd.add_application(app_data).await?;
+            xswd.add_application(app_data).await
+        } else {
+            Err(XSWDError::NotReady.into())
         }
-
-        Ok(channel)
     }
 
     #[cfg(feature = "xswd")]
