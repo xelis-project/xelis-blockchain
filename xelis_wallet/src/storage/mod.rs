@@ -1330,28 +1330,28 @@ impl EncryptedStorage {
             // We double check topoheight bounds here as well
             if min_topoheight.is_some_and(|min| entry.get_topoheight() < min) ||
                max_topoheight.is_some_and(|max| entry.get_topoheight() > max) {
-                debug!("entry topoheight {} out of bounds", entry.get_topoheight());
+                trace!("entry topoheight {} out of bounds", entry.get_topoheight());
                 continue;
             }
 
             // We also check timestamp bounds here
             if min_timestamp.is_some_and(|min| entry.get_timestamp() < min) ||
                max_timestamp.is_some_and(|max| entry.get_timestamp() > max) {
-                debug!("entry timestamp {} out of bounds", entry.get_timestamp());
+                trace!("entry timestamp {} out of bounds", entry.get_timestamp());
                 continue;
             }
 
             if let Some(contract_filter) = contract.as_ref() {
                 let matches = match entry.get_entry() {
-                    EntryData::InvokeContract { contract, received, .. } => {
-                        contract == contract_filter.as_ref() || received.contains_key(contract_filter.as_ref())
-                    },
+                    EntryData::InvokeContract { contract, .. } => contract == contract_filter.as_ref(),
                     // A deployed contract uses its deployment transaction hash as its contract hash.
                     EntryData::DeployContract { .. } => entry.get_hash() == contract_filter.as_ref(),
                     EntryData::IncomingContract { transfers } => transfers.contains_key(contract_filter.as_ref()),
                     _ => false,
                 };
+
                 if !matches {
+                    trace!("entry is not related to requested contract");
                     continue;
                 }
             }
@@ -1406,10 +1406,6 @@ impl EncryptedStorage {
                     }
                 },
                 EntryData::InvokeContract { deposits, received, .. } if accept_outgoing => {
-                    if let Some(contract_filter) = contract.as_ref() {
-                        received.retain(|source_contract, _| source_contract == contract_filter.as_ref());
-                    }
-
                     // Filter by asset
                     if let Some(asset) = asset.as_ref() {
                         deposits.retain(|deposit, _| *deposit == *asset.as_ref());
@@ -1424,10 +1420,6 @@ impl EncryptedStorage {
                 },
                 EntryData::DeployContract { .. } if accept_outgoing => {},
                 EntryData::IncomingContract { transfers: t } if accept_incoming => {
-                    if let Some(contract_filter) = contract.as_ref() {
-                        t.retain(|source_contract, _| source_contract == contract_filter.as_ref());
-                    }
-
                     if let Some(asset) = asset.as_ref() {
                         for assets in t.values_mut() {
                             assets.retain(|transfer, _| *transfer == *asset.as_ref());
