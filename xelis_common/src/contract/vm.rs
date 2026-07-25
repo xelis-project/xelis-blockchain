@@ -19,6 +19,7 @@ use crate::{
         ChainState,
         ContractCache,
         ContractLog,
+        ContractLogs,
         ContractMetadata,
         ContractProvider,
         ContractVersion,
@@ -593,7 +594,7 @@ pub async fn refund_extra_gas_injections<'a, 'ty, P: for<'x> ContractProvider<'x
     max_gas: u64,
     used_gas: u64,
     vm_max_gas: u64,
-    outputs: &mut Vec<ContractLog>,
+    outputs: &mut ContractLogs,
     caches: &mut HashMap<Hash, ContractCache>,
 ) -> Result<(), ContractStateError<E>> {
     let gas_paid_by_invoke = max_gas.max(used_gas);
@@ -686,7 +687,7 @@ pub async fn charge_gas_injections<'a, 'ty, P: for<'x> ContractProvider<'x>, E, 
     state: &mut B,
     gas_injections: IndexMap<Source, u64>,
     mut extra_used_gas: u64,
-    outputs: &mut Vec<ContractLog>,
+    outputs: &mut ContractLogs,
 ) -> Result<(), ContractStateError<E>> {
     let mut charges = Vec::new();
 

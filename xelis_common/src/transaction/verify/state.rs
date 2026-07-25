@@ -11,7 +11,7 @@ use crate::{
         ExecutionsChanges,
         ChainStateChanges,
         ChainState,
-        ContractLog,
+        ContractLogs,
         ContractProvider,
         InterContractPermission,
         ContractMetadata,
@@ -168,7 +168,7 @@ pub trait BlockchainContractState<'a, 'ty, P: ContractProvider<'ty>, E> {
     async fn set_contract_logs(
         &mut self,
         caller: ContractCaller<'a>,
-        logs: Vec<ContractLog>
+        logs: ContractLogs,
     ) -> Result<(), E>;
 
     /// Get the contract environment

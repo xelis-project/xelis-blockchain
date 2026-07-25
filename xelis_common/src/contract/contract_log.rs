@@ -1,3 +1,5 @@
+use std::ops::{Deref, DerefMut};
+
 use xelis_vm::ValueCell;
 
 use crate::{
@@ -97,6 +99,98 @@ pub enum ContractLog {
         contract: Hash,
         // Event id
         event_id: u64,
+    }
+}
+
+/// Serialized contract logs use a u16 count, unlike the generic Vec serializer
+/// which limits deserialized vectors to DEFAULT_MAX_ITEMS.
+#[derive(Debug, Clone, Default)]
+pub struct ContractLogs(pub Vec<ContractLog>);
+
+impl Deref for ContractLogs {
+    type Target = Vec<ContractLog>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for ContractLogs {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl IntoIterator for ContractLogs {
+    type Item = ContractLog;
+    type IntoIter = std::vec::IntoIter<ContractLog>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a ContractLogs {
+    type Item = &'a ContractLog;
+    type IntoIter = std::slice::Iter<'a, ContractLog>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a mut ContractLogs {
+    type Item = &'a mut ContractLog;
+    type IntoIter = std::slice::IterMut<'a, ContractLog>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter_mut()
+    }
+}
+
+impl Extend<ContractLog> for ContractLogs {
+    fn extend<T: IntoIterator<Item = ContractLog>>(&mut self, iter: T) {
+        self.0.extend(iter);
+    }
+}
+
+impl FromIterator<ContractLog> for ContractLogs {
+    fn from_iter<T: IntoIterator<Item = ContractLog>>(iter: T) -> Self {
+        Self(iter.into_iter().collect())
+    }
+}
+
+impl From<Vec<ContractLog>> for ContractLogs {
+    fn from(logs: Vec<ContractLog>) -> Self {
+        Self(logs)
+    }
+}
+
+impl From<ContractLogs> for Vec<ContractLog> {
+    fn from(logs: ContractLogs) -> Self {
+        logs.0
+    }
+}
+
+impl Serializer for ContractLogs {
+    fn write(&self, writer: &mut Writer) {
+        writer.write_u16(self.0.len() as u16);
+        for log in &self.0 {
+            log.write(writer);
+        }
+    }
+
+    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
+        let count = reader.read_u16()? as usize;
+        let mut logs = Vec::with_capacity(count);
+        for _ in 0..count {
+            logs.push(ContractLog::read(reader)?);
+        }
+        Ok(Self(logs))
+    }
+
+    fn size(&self) -> usize {
+        2 + self.0.iter().map(Serializer::size).sum::<usize>()
     }
 }
 
@@ -270,5 +364,20 @@ impl Serializer for ContractLog {
             ContractLog::ExitError(err) => err.size(),
             ContractLog::Event { contract, event_id } => contract.size() + event_id.size(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn contract_logs_support_more_than_default_vec_limit() {
+        let logs = ContractLogs((0..1025).map(|_| ContractLog::RefundDeposits).collect());
+        let bytes = logs.to_bytes();
+        let decoded = ContractLogs::from_bytes(&bytes).unwrap();
+
+        assert_eq!(decoded.0.len(), 1025);
+        assert_eq!(decoded.size(), bytes.len());
     }
 }

@@ -68,7 +68,7 @@ pub struct ChainState<'a> {
     pub injected_gas: IndexMap<Source, u64>,
     // The contract logs
     // This is similar to an event log
-    pub logs: Vec<ContractLog>,
+    pub logs: ContractLogs,
     // executions manager
     pub executions: ExecutionsManager<'a>,
     // Changes made during the execution

@@ -14,6 +14,7 @@ use crate::{
     contract::{
         ContractCache,
         ContractLog,
+        ContractLogs,
         ContractVersion,
         InterContractPermission,
         Source,
@@ -2666,7 +2667,7 @@ async fn test_refund_extra_gas_injections_refunds_latest_sources_first() {
     let mut gas_injections = IndexMap::new();
     gas_injections.insert(Source::Contract(first.clone()), 100);
     gas_injections.insert(Source::Contract(second.clone()), 50);
-    let mut outputs = Vec::new();
+    let mut outputs = ContractLogs::default();
 
     vm::refund_extra_gas_injections(
         &mut state,
@@ -2706,7 +2707,7 @@ async fn test_refund_extra_gas_injections_all_unused_refunds_all_sources_without
     let mut gas_injections = IndexMap::new();
     gas_injections.insert(Source::Contract(first.clone()), 100);
     gas_injections.insert(Source::Contract(second.clone()), 50);
-    let mut outputs = Vec::new();
+    let mut outputs = ContractLogs::default();
 
     vm::refund_extra_gas_injections(
         &mut state,
@@ -2751,7 +2752,7 @@ async fn test_refund_extra_gas_injections_all_consumed_refunds_nothing_and_logs_
     let mut gas_injections = IndexMap::new();
     gas_injections.insert(Source::Contract(first.clone()), 100);
     gas_injections.insert(Source::Contract(second.clone()), 50);
-    let mut outputs = Vec::new();
+    let mut outputs = ContractLogs::default();
 
     vm::refund_extra_gas_injections(
         &mut state,
@@ -2804,7 +2805,7 @@ async fn test_refund_extra_gas_injections_mixed_account_contract_pays_correct_so
     let mut gas_injections = IndexMap::new();
     gas_injections.insert(Source::Contract(contract.clone()), 100);
     gas_injections.insert(Source::Account(account.clone()), 50);
-    let mut outputs = Vec::new();
+    let mut outputs = ContractLogs::default();
 
     vm::refund_extra_gas_injections(
         &mut state,
@@ -2854,7 +2855,7 @@ async fn test_refund_extra_gas_injections_rejects_missing_cache_without_outputs(
     let contract = Hash::zero();
     let mut gas_injections = IndexMap::new();
     gas_injections.insert(Source::Contract(contract), 100);
-    let mut outputs = Vec::new();
+    let mut outputs = ContractLogs::default();
     let mut caches = std::collections::HashMap::new();
 
     let result = vm::refund_extra_gas_injections(
@@ -2885,7 +2886,7 @@ async fn test_refund_extra_gas_injections_late_missing_cache_does_not_partially_
     let mut gas_injections = IndexMap::new();
     gas_injections.insert(Source::Contract(missing), 50);
     gas_injections.insert(Source::Contract(first.clone()), 50);
-    let mut outputs = Vec::new();
+    let mut outputs = ContractLogs::default();
 
     let result = vm::refund_extra_gas_injections(
         &mut state,
@@ -2930,7 +2931,7 @@ async fn test_refund_extra_gas_injections_late_overflow_does_not_partially_refun
     let mut gas_injections = IndexMap::new();
     gas_injections.insert(Source::Contract(overflowing.clone()), 50);
     gas_injections.insert(Source::Contract(first.clone()), 50);
-    let mut outputs = Vec::new();
+    let mut outputs = ContractLogs::default();
 
     let result = vm::refund_extra_gas_injections(
         &mut state,
@@ -2974,7 +2975,7 @@ async fn test_charge_gas_injections_consumes_in_order_and_logs_only_consumed() {
     let mut gas_injections = IndexMap::new();
     gas_injections.insert(Source::Contract(first.clone()), 100);
     gas_injections.insert(Source::Contract(second.clone()), 100);
-    let mut outputs = Vec::new();
+    let mut outputs = ContractLogs::default();
 
     vm::charge_gas_injections(
         &mut state,
@@ -3012,7 +3013,7 @@ async fn test_charge_gas_injections_rejects_account_source_without_mutating_cont
     let mut gas_injections = IndexMap::new();
     gas_injections.insert(Source::Account(account), 50);
     gas_injections.insert(Source::Contract(contract.clone()), 50);
-    let mut outputs = Vec::new();
+    let mut outputs = ContractLogs::default();
 
     let result = vm::charge_gas_injections(
         &mut state,
@@ -3041,7 +3042,7 @@ async fn test_charge_gas_injections_rejects_insufficient_sources() {
 
     let mut gas_injections = IndexMap::new();
     gas_injections.insert(Source::Contract(contract.clone()), 50);
-    let mut outputs = Vec::new();
+    let mut outputs = ContractLogs::default();
 
     let result = vm::charge_gas_injections(
         &mut state,
