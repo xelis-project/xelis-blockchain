@@ -11,21 +11,6 @@ impl VersionedContractProvider for MemoryStorage {
         self.contracts.iter_mut()
             .for_each(|(_, entry)| {
                 entry.modules.split_off(&topoheight);
-                entry.data.retain(|_, data_map| {
-                    data_map.split_off(&topoheight);
-                    !data_map.is_empty()
-                });
-                entry.balances.retain(|_, balance_map| {
-                    balance_map.split_off(&topoheight);
-                    !balance_map.is_empty()
-                });
-                entry.events_callbacks.retain(|_, event_map| {
-                    event_map.retain(|_, listeners_map| {
-                        listeners_map.split_off(&topoheight);
-                        !listeners_map.is_empty()
-                    });
-                    !event_map.is_empty()
-                });
             });
         Ok(())
     }
@@ -35,21 +20,6 @@ impl VersionedContractProvider for MemoryStorage {
         self.contracts.iter_mut()
             .for_each(|(_, entry)| {
                 entry.modules.split_off(&topoheight);
-                entry.data.retain(|_, data_map| {
-                    data_map.split_off(&topoheight);
-                    !data_map.is_empty()
-                });
-                entry.balances.retain(|_, balance_map| {
-                    balance_map.split_off(&topoheight);
-                    !balance_map.is_empty()
-                });
-                entry.events_callbacks.retain(|_, event_map| {
-                    event_map.retain(|_, listeners_map| {
-                        listeners_map.split_off(&topoheight);
-                        !listeners_map.is_empty()
-                    });
-                    !event_map.is_empty()
-                });
             });
         Ok(())
     }
@@ -58,24 +28,6 @@ impl VersionedContractProvider for MemoryStorage {
         self.contracts.iter_mut()
             .for_each(|(_, entry)| {
                 Self::delete_versioned_data_below_topoheight(&mut entry.modules, topoheight, keep_last);
-                entry.data.retain(|_, data_map| {
-                    Self::delete_versioned_data_below_topoheight(data_map, topoheight, keep_last);
-
-                    !data_map.is_empty()
-                });
-                entry.balances.retain(|_, balance_map| {
-                    Self::delete_versioned_data_below_topoheight(balance_map, topoheight, keep_last);
-                    !balance_map.is_empty()
-                });
-
-                entry.events_callbacks.retain(|_, event_map| {
-                    event_map.retain(|_, listeners_map| {
-                        Self::delete_versioned_data_below_topoheight(listeners_map, topoheight, keep_last);
-
-                        !listeners_map.is_empty()
-                    });
-                    !event_map.is_empty()
-                });
             });
 
         Ok(())

@@ -117,6 +117,12 @@ async fn test_memory_cleanup_all_data_types_at_topoheight() -> Result<()> {
 }
 
 #[tokio::test]
+async fn test_memory_contract_logs_cleanup() -> Result<()> {
+    let storage = MemoryStorage::new(Network::Devnet, 1);
+    test_contract_logs_cleanup(storage).await
+}
+
+#[tokio::test]
 async fn test_memory_versioned_nonce_at_max_topoheight() -> Result<()> {
     let data = TestData::new()?;
     let storage = MemoryStorage::new(Network::Devnet, 1);
@@ -139,6 +145,12 @@ async fn test_memory_event_callbacks_available_at_maximum_topoheight() -> Result
 async fn test_memory_event_callbacks_available_after_rewind() -> Result<()> {
     let storage = MemoryStorage::new(Network::Devnet, 1);
     test_event_callbacks_available_after_rewind(storage).await
+}
+
+#[tokio::test]
+async fn test_memory_event_callback_cleanup() -> Result<()> {
+    let storage = MemoryStorage::new(Network::Devnet, 1);
+    test_event_callback_cleanup(storage).await
 }
 
 #[tokio::test]

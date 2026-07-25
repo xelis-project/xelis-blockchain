@@ -151,6 +151,20 @@ async fn test_sled_cleanup_all_data_types_at_topoheight() -> Result<()> {
     test_cleanup_all_data_types_at_topoheight(storage, &data).await
 }
 
+#[tokio::test]
+async fn test_sled_contract_logs_cleanup() -> Result<()> {
+    let temp_dir = TempDir::with_prefix("storage_test")?;
+    let storage = new_sled_storage(Network::Devnet, temp_dir.path().to_str().unwrap())?;
+    test_contract_logs_cleanup(storage).await
+}
+
+#[tokio::test]
+async fn test_sled_event_callback_cleanup() -> Result<()> {
+    let temp_dir = TempDir::with_prefix("storage_test")?;
+    let storage = new_sled_storage(Network::Devnet, temp_dir.path().to_str().unwrap())?;
+    test_event_callback_cleanup(storage).await
+}
+
 // Versioned data tests
 #[tokio::test]
 async fn test_sled_versioned_nonce_at_max_topoheight() -> Result<()> {
