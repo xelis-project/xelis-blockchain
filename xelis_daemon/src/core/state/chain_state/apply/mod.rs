@@ -583,9 +583,9 @@ impl<'s, 'b, P: ApplicableChainStateProvider> ApplicableChainState<'s, 'b, P> {
         }
     }
 
-    // Is v7 pre-enabled
+    // Is v7
     fn is_v7_pre_enabled(&self) -> bool {
-        self.block_version >= BlockVersion::V7 || self.topoheight >= 7973161
+        self.block_version >= BlockVersion::V7
     }
 
     // Returns if the TX was already executed
