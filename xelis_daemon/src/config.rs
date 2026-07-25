@@ -206,7 +206,7 @@ pub const PEER_PACKET_CHANNEL_SIZE: usize = 1024;
 pub const PEER_SEND_BYTES_TIMEOUT: u64 = 3_000;
 
 // Hard Forks configured
-const HARD_FORKS: [HardFork; 7] = [
+const HARD_FORKS: [HardFork; 8] = [
     HardFork {
         height: 0,
         version: BlockVersion::V0,
@@ -254,6 +254,13 @@ const HARD_FORKS: [HardFork; 7] = [
         version: BlockVersion::V6,
         changelog: "BlockDAG improvements, new smart contracts features",
         version_requirement: Some(">=1.22.1")
+    },
+    HardFork {
+        // Expected date: around 26/07/2026
+        height: 6909122,
+        version: BlockVersion::V7,
+        changelog: "Emergency hard fork",
+        version_requirement: Some(">=1.24.0")
     }
 ];
 
