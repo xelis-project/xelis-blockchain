@@ -10,6 +10,7 @@ use xelis_vm::{
 };
 use crate::{
     asset::{AssetData, AssetOwner, MaxSupplyMode},
+    block::BlockVersion,
     config::{COST_PER_ASSET, XELIS_ASSET},
     contract::{
         from_context,
@@ -162,7 +163,7 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'
     // If we have a fixed max supply, we need to mint it to the contract
     if let MaxSupplyMode::Fixed(max_supply) = max_supply {
         // We don't bother to check if it already exists, because it shouldn't exist before we create it.
-        get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.cache_clone_refs)
+        get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.block_version < BlockVersion::V6)
             .balances
             .insert(asset_hash.clone(), Some((VersionedState::New, max_supply)));
     }

@@ -2384,7 +2384,7 @@ pub fn from_context<'a, 'ty, 'r, P: ContractProvider<'ty>>(context: &'a mut VMCo
 // Function helper to get the balance for the given asset
 // This will first check in our current changes, then in the previous execution cache
 pub async fn get_balance_from_cache<'a, 'b: 'a, 'ty, P: ContractProvider<'ty>>(provider: &P, state: &'a mut ChainState<'b>, contract: Hash, asset: Hash) -> Result<&'a mut Option<(VersionedState, u64)>, anyhow::Error> {
-    Ok(match get_cache_for_contract(&mut state.changes.caches, state.global_caches, contract.clone(), state.cache_clone_refs).balances.entry(asset.clone()) {
+    Ok(match get_cache_for_contract(&mut state.changes.caches, state.global_caches, contract.clone(), state.block_version < BlockVersion::V6).balances.entry(asset.clone()) {
         Entry::Occupied(entry) => entry.into_mut(),
         Entry::Vacant(entry) => {
             let v = get_balance_from_provider(provider, state.topoheight, &contract, &asset).await?;
@@ -2395,7 +2395,7 @@ pub async fn get_balance_from_cache<'a, 'b: 'a, 'ty, P: ContractProvider<'ty>>(p
 
 // Function helper to get the mutable balance for the given asset
 pub async fn get_mut_balance_for_contract<'a, 'b: 'a, 'ty, P: ContractProvider<'ty>>(provider: &P, state: &'a mut ChainState<'b>, contract: Hash, asset: Hash) -> Result<&'a mut (VersionedState, u64), anyhow::Error> {
-    Ok(match get_cache_for_contract(&mut state.changes.caches, state.global_caches, contract.clone(), state.cache_clone_refs).balances.entry(asset.clone()) {
+    Ok(match get_cache_for_contract(&mut state.changes.caches, state.global_caches, contract.clone(), state.block_version < BlockVersion::V6).balances.entry(asset.clone()) {
         Entry::Occupied(entry) => entry.into_mut()
             .get_or_insert((VersionedState::New, 0)),
         Entry::Vacant(entry) => {
@@ -2577,7 +2577,7 @@ pub fn record_gas_allowance<'ty, 'r>(context: &mut VMContext<'ty, 'r>, amount: u
         let current_gas_limit = context.get_gas_limit();
 
         let state = state_from_context(context)?;
-        if state.block.get_version() >= BlockVersion::V7 {
+        if state.block_version >= BlockVersion::V7 {
             // Contract-funded gas injections may increase the VM limit, but they
             // cannot fund a future liability attributed to the transaction account.
             // Restrict allowances to the execution's original, account-funded pool.
@@ -2636,7 +2636,7 @@ fn rpc_event_fn(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'
     }
 
     let state = state_from_context(context)?;
-    let entry = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.cache_clone_refs)
+    let entry = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.block_version < BlockVersion::V6)
         .events.entry(id)
         .or_insert_with(Vec::new);
 
@@ -2705,7 +2705,7 @@ async fn listen_event_fn<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance
 
     let (provider, state) = from_context::<P>(context)?;
     let account_source = state.caller.get_source().cloned();
-    let block_version = state.block.get_version();
+    let block_version = state.block_version;
 
     // check from storage that we're not already registered
     if provider.has_contract_callback_for_event(
@@ -2717,7 +2717,7 @@ async fn listen_event_fn<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance
         return Ok(Primitive::Boolean(false).into());
     }
 
-    let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.cache_clone_refs);
+    let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.block_version < BlockVersion::V6);
 
     // Event is already registered in our cache
     if cache.events_listeners.contains(&(contract.clone(), event_id)) {
@@ -2768,7 +2768,7 @@ async fn listen_event_fn<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance
     };
 
     let (_, state) = from_context::<P>(context)?;
-    let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.cache_clone_refs);
+    let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.block_version < BlockVersion::V6);
     if !cache.events_listeners.insert((contract.clone(), event_id)) {
         return Err(EnvironmentError::Static("event listener registration changed during funding"))
     }

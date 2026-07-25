@@ -18,7 +18,7 @@ use xelis_vm::{
     ValueCell
 };
 use crate::{
-    block::TopoHeight,
+    block::{TopoHeight, BlockVersion},
     config::FEE_PER_BYTE_STORED_CONTRACT,
     contract::{
         from_context,
@@ -127,11 +127,11 @@ pub async fn storage_load<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'
 
     check_storage_key(&key)?;
 
-    let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.cache_clone_refs);
+    let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.block_version < BlockVersion::V6);
     let value = match cache.storage.entry(key.clone_ref()) {
         Entry::Occupied(v) => v.get()
             .as_ref()
-            .and_then(|(_, v)| v.as_ref().map(|v| if state.cache_clone_refs {
+            .and_then(|(_, v)| v.as_ref().map(|v| if state.block_version < BlockVersion::V6 {
                 v.clone_ref()
             } else {
                 v.clone()
@@ -139,7 +139,7 @@ pub async fn storage_load<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'
         Entry::Vacant(v) => match storage.load_data(&metadata.metadata.contract_executor, &key, state.topoheight).await? {
             Some((topoheight, constant)) => {
                 debug!("storage load cache missed for key {}, fetched at topoheight {}: {:?}", key, topoheight, constant);
-                let stored = constant.as_ref().map(|v| if state.cache_clone_refs {
+                let stored = constant.as_ref().map(|v| if state.block_version < BlockVersion::V6 {
                     v.clone_ref()
                 } else {
                     v.clone()
@@ -165,7 +165,7 @@ pub async fn storage_has<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a
 
     check_storage_key(&key)?;
 
-    let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.cache_clone_refs);
+    let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.block_version < BlockVersion::V6);
     let contains = match cache.storage.entry(key.clone()) {
         Entry::Occupied(v) => v.get()
             .as_ref()
@@ -201,7 +201,7 @@ pub async fn storage_store<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<
 
     let (storage, state) = from_context::<P>(context)?;
 
-    let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.cache_clone_refs);
+    let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.block_version < BlockVersion::V6);
 
     // We do it in two times: first we retrieve the VersionedState to update it
     let data_state = match cache.storage.get(&key) {
@@ -236,7 +236,7 @@ pub async fn storage_delete<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance
 
     check_storage_key(&key)?;
 
-    let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.cache_clone_refs);
+    let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.block_version < BlockVersion::V6);
     let data_state = match cache.storage.get(&key) {
         Some(Some((s, _))) => match s {
             VersionedState::New => {

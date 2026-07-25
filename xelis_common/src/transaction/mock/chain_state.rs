@@ -458,6 +458,7 @@ impl<'a, 'ty> BlockchainContractState<'a, 'ty, MockStorageProvider, anyhow::Erro
             topoheight: 1,
             block_hash: &self.block_hash,
             block: &self.block,
+            block_version: self.block.get_version(),
             caller,
             logs: ContractLogs::default(),
             global_caches: &self.contract_caches,
@@ -477,7 +478,6 @@ impl<'a, 'ty> BlockchainContractState<'a, 'ty, MockStorageProvider, anyhow::Erro
             gas_fee_allowance: 0,
             environments: Cow::Owned(HashMap::new()),
             loaded_modules: Default::default(),
-            cache_clone_refs: self.block.get_version() < BlockVersion::V6,
         };
 
         Ok((environment, chain_state))

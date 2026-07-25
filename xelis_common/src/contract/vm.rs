@@ -309,7 +309,7 @@ pub async fn invoke_contract<'a, 'ty, P: for<'x> ContractProvider<'x>, E, B: Blo
     // Deposits are actually added to each balance
     let (contract_environment, mut chain_state) = state.get_contract_environment_for(contract.clone(), deposits.map(|(d, _)| d), caller.clone(), permission).await
         .map_err(ContractStateError::State)?;
-    let block_version = chain_state.block.get_version();
+    let block_version = chain_state.block_version;
 
     if block_version >= BlockVersion::V7 {
         validate_delayed_gas_sources(&caller, contract.as_ref(), &gas_sources, max_gas)?;

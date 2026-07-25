@@ -199,7 +199,7 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider<'ty>>(
         return Err(EnvironmentError::Static("max_gas exceeds allowed limit"))
     }
 
-    if state.block.get_version() >= BlockVersion::V7 && max_gas < SCHEDULED_EXECUTION_MIN_GAS {
+    if state.block_version >= BlockVersion::V7 && max_gas < SCHEDULED_EXECUTION_MIN_GAS {
         return Ok(SysCallResult::Return(Primitive::Null.into()));
     }
 
@@ -248,7 +248,7 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider<'ty>>(
             .cloned()
             .ok_or(EnvironmentError::Static("cannot pay from non transaction call"))?;
 
-        let source = if state.block.get_version() >= BlockVersion::V7 {
+        let source = if state.block_version >= BlockVersion::V7 {
             Source::AccountBalance(account)
         } else {
             Source::Account(account)
@@ -297,7 +297,7 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider<'ty>>(
         record_burned_asset(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET, burned_part).await?;
 
         // add the part for the miners
-        let fee_part = if state.block.get_version() >= BlockVersion::V6 {
+        let fee_part = if state.block_version >= BlockVersion::V6 {
             extra_cost - burned_part
         } else {
             total_cost - burned_part
@@ -452,7 +452,7 @@ pub async fn scheduled_execution_increase_max_gas<'a, 'ty, 'r, P: ContractProvid
             .cloned()
             .ok_or(EnvironmentError::Static("cannot pay from non transaction call"))?;
 
-        if state.block.get_version() >= BlockVersion::V7 {
+        if state.block_version >= BlockVersion::V7 {
             Source::AccountBalance(account)
         } else {
             Source::Account(account)
