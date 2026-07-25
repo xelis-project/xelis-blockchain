@@ -26,9 +26,11 @@ use xelis_common::{
         ContractMetadata,
         ContractModule,
         ContractVersion,
+        EventCallbackRegistration,
         ExecutionsChanges,
         ExecutionsManager,
         InterContractPermission,
+        ScheduledExecution,
         Source,
         vm::{self, ContractCaller, ContractError, InvokeContract}
     },
@@ -723,8 +725,19 @@ impl<'s, 'b, P: ApplicableChainStateProvider> ApplicableChainState<'s, 'b, P> {
                 }
             };
 
-            for (listener_contract, callback) in callbacks {
+            for (listener_contract, mut callback) in callbacks {
                 debug!("processing event callback of {}", listener_contract);
+                if self.inner.block_version >= BlockVersion::V7
+                    && !self.collateralize_legacy_event_callback(&listener_contract, &mut callback).await?
+                {
+                    warn!(
+                        "skipping unfunded or invalid legacy event callback of {} with max gas {}",
+                        listener_contract,
+                        callback.max_gas,
+                    );
+                    continue;
+                }
+
                 self.process_execution(
                     Cow::Owned(listener_contract.clone()),
                     ContractCaller::EventCallback(Cow::Owned(caller.clone()), Cow::Owned(event.contract.clone())),
@@ -739,6 +752,122 @@ impl<'s, 'b, P: ApplicableChainStateProvider> ApplicableChainState<'s, 'b, P> {
         }
 
         Ok(())
+    }
+
+    // Event callback registrations made by a non-transaction caller before V7
+    // recorded Source::Contract without reserving the corresponding balance.
+    // At V7, collateralize those pending legacy registrations before execution.
+    // New V7 registrations use Source::ContractBalance and were already debited.
+    async fn collateralize_legacy_event_callback(
+        &mut self,
+        listener_contract: &Hash,
+        callback: &mut EventCallbackRegistration,
+    ) -> Result<bool, BlockchainError> {
+        if callback.gas_sources.len() != 1 {
+            return Ok(false);
+        }
+
+        let Some((source, gas)) = callback.gas_sources.first().map(|(source, gas)| (source.clone(), *gas)) else {
+            return Ok(false);
+        };
+
+        if gas == 0 || gas != callback.max_gas {
+            return Ok(false);
+        }
+
+        match source {
+            Source::Contract(contract) => {
+                if &contract != listener_contract {
+                    return Ok(false);
+                }
+
+                let (state, balance) = self.get_contract_balance_for_gas(&contract).await?;
+                if *balance < gas {
+                    return Ok(false);
+                }
+
+                state.mark_updated();
+                *balance = balance.checked_sub(gas)
+                    .ok_or(BlockchainError::GasOverflow)?;
+
+                callback.gas_sources = [(
+                    Source::ContractBalance(contract),
+                    gas,
+                )].into();
+                Ok(true)
+            },
+            Source::ContractBalance(contract) => Ok(&contract == listener_contract),
+            Source::AccountBalance(_) => Ok(true),
+            Source::Account(_) => Ok(false),
+        }
+    }
+
+    // V7 account-funded liabilities carry Source::AccountBalance. An unmarked
+    // Source::Account may have been created before V7 from unbacked injected
+    // headroom, so it cannot safely execute or refund after the fork. When such
+    // a legacy execution also has contract-funded sources, return only those
+    // independently collateralized contract amounts.
+    async fn prepare_scheduled_execution_for_v7(
+        &mut self,
+        execution: &ScheduledExecution,
+    ) -> Result<bool, BlockchainError> {
+        if self.inner.block_version < BlockVersion::V7 {
+            return Ok(true);
+        }
+
+        let mut total_sources = 0u64;
+        let mut has_legacy_account_source = false;
+        let mut contract_refunds = HashMap::<Hash, u64>::new();
+
+        for (source, gas) in execution.gas_sources.iter() {
+            total_sources = match total_sources.checked_add(*gas) {
+                Some(total) => total,
+                None => return Ok(false),
+            };
+
+            match source {
+                Source::Account(_) => {
+                    has_legacy_account_source = true;
+                },
+                Source::AccountBalance(_) => {},
+                Source::Contract(contract) => {
+                    if contract != &execution.contract {
+                        return Ok(false);
+                    }
+
+                    let refund = contract_refunds.entry(contract.clone()).or_insert(0);
+                    *refund = match refund.checked_add(*gas) {
+                        Some(refund) => refund,
+                        None => return Ok(false),
+                    };
+                },
+                Source::ContractBalance(_) => return Ok(false),
+            }
+        }
+
+        if total_sources != execution.max_gas {
+            return Ok(false);
+        }
+
+        if !has_legacy_account_source {
+            return Ok(true);
+        }
+
+        for (contract, refund) in contract_refunds.iter() {
+            let (_, balance) = self.get_contract_balance_for_gas(contract).await?;
+            if balance.checked_add(*refund).is_none() {
+                return Ok(false);
+            }
+        }
+
+        for (contract, refund) in contract_refunds {
+            let (state, balance) = self.get_contract_balance_for_gas(&contract).await?;
+            state.mark_updated();
+            *balance = balance.checked_add(refund)
+                .ok_or(BlockchainError::GasOverflow)?;
+        }
+
+        Ok(false)
     }
 
     // Execute the given list of scheduled executions
@@ -807,6 +936,14 @@ impl<'s, 'b, P: ApplicableChainStateProvider> ApplicableChainState<'s, 'b, P> {
                     self.inner.topoheight,
                 );
 
+                if !self.prepare_scheduled_execution_for_v7(&execution).await? {
+                    warn!(
+                        "skipping invalid or legacy-unmarked block-end scheduled execution {}",
+                        execution.hash,
+                    );
+                    continue;
+                }
+
                 self.process_execution(
                     Cow::Owned(execution.contract.clone()),
                     ContractCaller::Scheduled(Cow::Owned(execution.hash.as_ref().clone()), Cow::Owned(execution.contract.clone())),
@@ -841,6 +978,15 @@ impl<'s, 'b, P: ApplicableChainStateProvider> ApplicableChainState<'s, 'b, P> {
                 execution.contract,
                 topoheight,
             );
+
+            if !self.prepare_scheduled_execution_for_v7(&execution).await? {
+                warn!(
+                    "skipping invalid or legacy-unmarked scheduled execution {} at topoheight {}",
+                    execution.hash,
+                    topoheight,
+                );
+                continue;
+            }
 
             self.process_execution(
                 Cow::Owned(execution.contract.clone()),
@@ -898,7 +1044,17 @@ mod tests {
     use xelis_assembler::Assembler;
     use xelis_common::{
         block::{Block, BlockHeader, BlockVersion, EXTRA_NONCE_SIZE},
-        contract::{build_environment, CallbackEvent, ContractLog, ContractModule, ContractVersion, EventCallbackRegistration, Source},
+        contract::{
+            build_environment,
+            CallbackEvent,
+            ContractLog,
+            ContractModule,
+            ContractVersion,
+            EventCallbackRegistration,
+            ScheduledExecution,
+            ScheduledExecutionKind,
+            Source,
+        },
         crypto::{Hash, KeyPair},
         network::Network,
         versioned::VersionedState,
@@ -1069,6 +1225,266 @@ mod tests {
         assert!(
             state.contract_manager.logs.get(&Cow::Owned(caller)).is_none(),
             "missing module should not emit callback logs"
+        );
+    }
+
+    #[tokio::test]
+    async fn v7_legacy_contract_callback_requires_collateral_before_execution() {
+        let storage = MemoryStorage::new(Network::Devnet, 1);
+        let environments = HashMap::from([(
+            ContractVersion::V1,
+            Arc::new(build_environment::<MemoryStorage>(ContractVersion::V1).build()),
+        )]);
+        let block_hash = Hash::new([1u8; 32]);
+        let miner = KeyPair::new().get_public_key().compress();
+        let block_header = BlockHeader::new(
+            BlockVersion::V7,
+            0,
+            0,
+            IndexSet::new(),
+            [0u8; EXTRA_NONCE_SIZE],
+            miner,
+            IndexSet::new(),
+        );
+        let block = Block::new(block_header, Vec::new());
+
+        let mut state = ApplicableChainState::new(
+            &storage,
+            &environments,
+            0,
+            1,
+            BlockVersion::V7,
+            &block_hash,
+            &block,
+            false,
+            0,
+            0,
+            false,
+        );
+
+        let emitter = Hash::new([2u8; 32]);
+        let listener = Hash::new([3u8; 32]);
+        state.inner.contracts.insert(
+            Cow::Owned(listener.clone()),
+            Some((VersionedState::New, Some(Cow::Owned(module_returning(0))))),
+        );
+
+        state.contract_manager.events.push_back(CallbackEvent {
+            contract: emitter.clone(),
+            event_id: 7,
+            params: Vec::new(),
+        });
+        state.contract_manager.events_listeners.insert(
+            (emitter.clone(), 7),
+            vec![(
+                listener.clone(),
+                EventCallbackRegistration::new(0, 1_000, Source::Contract(listener.clone())),
+            )],
+        );
+
+        let unfunded_caller = Hash::new([4u8; 32]);
+        state.execute_callback_events(&unfunded_caller)
+            .await
+            .expect("process unfunded legacy callback");
+        assert!(
+            state.contract_manager.logs.get(&Cow::Owned(unfunded_caller)).is_none(),
+            "an unfunded legacy callback must be consumed without execution or refund"
+        );
+
+        {
+            let (_, balance) = state.get_contract_balance_for_gas(&listener)
+                .await
+                .expect("listener balance");
+            *balance = 1_000;
+        }
+
+        state.contract_manager.events.push_back(CallbackEvent {
+            contract: emitter.clone(),
+            event_id: 7,
+            params: Vec::new(),
+        });
+        state.contract_manager.events_listeners.insert(
+            (emitter, 7),
+            vec![(
+                listener.clone(),
+                EventCallbackRegistration::new(0, 1_000, Source::Contract(listener.clone())),
+            )],
+        );
+
+        let funded_caller = Hash::new([5u8; 32]);
+        state.execute_callback_events(&funded_caller)
+            .await
+            .expect("execute funded legacy callback");
+        assert!(
+            state.contract_manager.logs.get(&Cow::Owned(funded_caller)).is_some(),
+            "a collateralized legacy callback must execute"
+        );
+
+        let remaining_balance = {
+            let (_, balance) = state.get_contract_balance_for_gas(&listener)
+                .await
+                .expect("listener balance after callback");
+            *balance
+        };
+        assert_eq!(
+            remaining_balance + state.inner.get_gas_fee() + state.total_fees_burned,
+            1_000,
+            "legacy callback collateral must conserve across refund, fee, and burn"
+        );
+
+        let legacy_account = KeyPair::new().get_public_key().compress();
+        let mut legacy_account_callback = EventCallbackRegistration::new(
+            0,
+            1_000,
+            Source::Account(legacy_account),
+        );
+        assert!(
+            !state.collateralize_legacy_event_callback(&listener, &mut legacy_account_callback)
+                .await
+                .expect("validate legacy account callback"),
+            "legacy account callbacks cannot be proven funded and must be rejected at V7"
+        );
+
+        let mut v7_callback = EventCallbackRegistration::new(
+            0,
+            1_000,
+            Source::ContractBalance(listener.clone()),
+        );
+        let balance_before_validation = {
+            let (_, balance) = state.get_contract_balance_for_gas(&listener)
+                .await
+                .expect("listener balance before v7 validation");
+            *balance
+        };
+        assert!(
+            state.collateralize_legacy_event_callback(&listener, &mut v7_callback)
+                .await
+                .expect("validate v7 callback"),
+            "a marked V7 callback must not require collateralization again"
+        );
+        let balance_after_validation = {
+            let (_, balance) = state.get_contract_balance_for_gas(&listener)
+                .await
+                .expect("listener balance after v7 validation");
+            *balance
+        };
+        assert_eq!(
+            balance_after_validation,
+            balance_before_validation,
+            "validating a marked V7 callback must not debit its contract twice"
+        );
+    }
+
+    #[tokio::test]
+    async fn v7_rejects_legacy_account_scheduled_execution_and_refunds_backed_contract_part() {
+        let storage = MemoryStorage::new(Network::Devnet, 1);
+        let environments = HashMap::from([(
+            ContractVersion::V1,
+            Arc::new(build_environment::<MemoryStorage>(ContractVersion::V1).build()),
+        )]);
+        let block_hash = Hash::new([1u8; 32]);
+        let miner = KeyPair::new().get_public_key().compress();
+        let block_header = BlockHeader::new(
+            BlockVersion::V7,
+            0,
+            0,
+            IndexSet::new(),
+            [0u8; EXTRA_NONCE_SIZE],
+            miner,
+            IndexSet::new(),
+        );
+        let block = Block::new(block_header, Vec::new());
+
+        let mut state = ApplicableChainState::new(
+            &storage,
+            &environments,
+            0,
+            1,
+            BlockVersion::V7,
+            &block_hash,
+            &block,
+            false,
+            0,
+            0,
+            false,
+        );
+
+        let contract = Hash::new([2u8; 32]);
+        let legacy_account = KeyPair::new().get_public_key().compress();
+        let execution_hash = Arc::new(Hash::new([3u8; 32]));
+        let legacy_execution = ScheduledExecution {
+            hash: execution_hash,
+            contract: contract.clone(),
+            chunk_id: 0,
+            params: Vec::new(),
+            max_gas: 1_000,
+            kind: ScheduledExecutionKind::TopoHeight(1),
+            gas_sources: [
+                (Source::Account(legacy_account), 600),
+                (Source::Contract(contract.clone()), 400),
+            ].into(),
+        };
+
+        assert!(
+            !state.prepare_scheduled_execution_for_v7(&legacy_execution)
+                .await
+                .expect("prepare legacy scheduled execution"),
+            "a legacy account source must make the execution ineligible at V7"
+        );
+        let refunded_contract_balance = {
+            let (_, balance) = state.get_contract_balance_for_gas(&contract)
+                .await
+                .expect("contract refund balance");
+            *balance
+        };
+        assert_eq!(
+            refunded_contract_balance,
+            400,
+            "the independently backed contract portion must be returned exactly once"
+        );
+
+        let wrong_domain_execution = ScheduledExecution {
+            hash: Arc::new(Hash::new([5u8; 32])),
+            contract: contract.clone(),
+            chunk_id: 0,
+            params: Vec::new(),
+            max_gas: 250,
+            kind: ScheduledExecutionKind::TopoHeight(1),
+            gas_sources: [(Source::ContractBalance(contract.clone()), 250)].into(),
+        };
+        assert!(
+            !state.prepare_scheduled_execution_for_v7(&wrong_domain_execution)
+                .await
+                .expect("reject event-only marker on scheduled execution"),
+            "scheduled executions must reject the event-callback funding marker"
+        );
+        let balance_after_wrong_marker = {
+            let (_, balance) = state.get_contract_balance_for_gas(&contract)
+                .await
+                .expect("contract balance after wrong marker");
+            *balance
+        };
+        assert_eq!(
+            balance_after_wrong_marker,
+            400,
+            "rejecting an unbacked marker must not issue a refund"
+        );
+
+        let marked_account = KeyPair::new().get_public_key().compress();
+        let v7_execution = ScheduledExecution {
+            hash: Arc::new(Hash::new([4u8; 32])),
+            contract,
+            chunk_id: 0,
+            params: Vec::new(),
+            max_gas: 1_000,
+            kind: ScheduledExecutionKind::TopoHeight(1),
+            gas_sources: [(Source::AccountBalance(marked_account), 1_000)].into(),
+        };
+        assert!(
+            state.prepare_scheduled_execution_for_v7(&v7_execution)
+                .await
+                .expect("prepare v7 scheduled execution"),
+            "a marked V7 account reservation must remain executable"
         );
     }
 }
