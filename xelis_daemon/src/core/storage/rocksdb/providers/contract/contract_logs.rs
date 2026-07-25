@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use log::trace;
 use xelis_common::{
-    contract::ContractLog,
+    contract::ContractLogs,
     crypto::Hash
 };
 use crate::core::{
@@ -18,13 +18,13 @@ impl ContractLogsProvider for RocksStorage {
     }
 
     // Get the contract logs for a transaction
-    async fn get_contract_logs_for_caller(&self, tx_hash: &Hash) -> Result<Vec<ContractLog>, BlockchainError> {
+    async fn get_contract_logs_for_caller(&self, tx_hash: &Hash) -> Result<ContractLogs, BlockchainError> {
         trace!("get contract logs for caller {}", tx_hash);
         self.load_from_disk(Column::ContractLogs, tx_hash)
     }
 
     // Set the contract logs for a transaction
-    async fn set_contract_logs_for_caller(&mut self, tx_hash: &Hash, contract_output: &Vec<ContractLog>) -> Result<(), BlockchainError> {
+    async fn set_contract_logs_for_caller(&mut self, tx_hash: &Hash, contract_output: &ContractLogs) -> Result<(), BlockchainError> {
         trace!("set contract logs for caller {}", tx_hash);
         self.insert_into_disk(Column::ContractLogs, tx_hash, contract_output)
     }

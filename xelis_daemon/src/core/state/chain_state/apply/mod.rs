@@ -22,7 +22,7 @@ use xelis_common::{
         ChainStateChanges,
         ContractCache,
         ContractEventTracker,
-        ContractLog,
+        ContractLogs,
         ContractMetadata,
         ContractModule,
         ContractVersion,
@@ -278,7 +278,7 @@ impl<'s, 'b, 'ty, P: ApplicableChainStateProvider> BlockchainContractState<'b, '
     async fn set_contract_logs(
         &mut self,
         caller: ContractCaller<'b>,
-        logs: Vec<ContractLog>
+        logs: ContractLogs
     ) -> Result<(), BlockchainError> {
         match self.contract_manager.logs.entry(caller.get_hash()) {
             Entry::Occupied(mut o) => {
@@ -364,7 +364,7 @@ impl<'s, 'b, 'ty, P: ApplicableChainStateProvider> BlockchainContractState<'b, '
             block_hash: self.block_hash,
             block: self.block,
             caller,
-            logs: Vec::new(),
+            logs: ContractLogs::default(),
             changes: ChainStateChanges {
                 caches,
                 // Event trackers
@@ -659,7 +659,7 @@ impl<'s, 'b, P: ApplicableChainStateProvider> ApplicableChainState<'s, 'b, P> {
     } 
 
     // Get the contract outputs for TX
-    pub fn get_contract_logs_for_tx(&self, tx_hash: &Hash) -> Option<&Vec<ContractLog>> {
+    pub fn get_contract_logs_for_tx(&self, tx_hash: &Hash) -> Option<&ContractLogs> {
         self.contract_manager.logs.get(tx_hash)
     }
 

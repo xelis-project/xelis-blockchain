@@ -2,7 +2,7 @@ use pooled_arc::PooledArc;
 use async_trait::async_trait;
 use anyhow::Context;
 use xelis_common::{
-    contract::ContractLog,
+    contract::ContractLogs,
     crypto::Hash,
 };
 use crate::core::{
@@ -17,14 +17,14 @@ impl ContractLogsProvider for MemoryStorage {
         Ok(self.contract_logs.contains_key(tx_hash))
     }
 
-    async fn get_contract_logs_for_caller(&self, tx_hash: &Hash) -> Result<Vec<ContractLog>, BlockchainError> {
+    async fn get_contract_logs_for_caller(&self, tx_hash: &Hash) -> Result<ContractLogs, BlockchainError> {
         self.contract_logs.get(tx_hash)
             .cloned()
             .with_context(|| format!("Contract logs not found for transaction {:?}", tx_hash))
             .map_err(|e| e.into())
     }
 
-    async fn set_contract_logs_for_caller(&mut self, tx_hash: &Hash, logs: &Vec<ContractLog>) -> Result<(), BlockchainError> {
+    async fn set_contract_logs_for_caller(&mut self, tx_hash: &Hash, logs: &ContractLogs) -> Result<(), BlockchainError> {
         self.contract_logs.insert(PooledArc::from_ref(tx_hash), logs.clone());
         Ok(())
     }

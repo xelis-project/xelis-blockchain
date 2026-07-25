@@ -12,7 +12,7 @@ use xelis_common::{
     account::{VersionedBalance, VersionedNonce},
     asset::VersionedAssetData,
     block::{BlockHeader, TopoHeight},
-    contract::{ContractLog, ScheduledExecution},
+    contract::{ContractLogs, ScheduledExecution},
     crypto::{Hash, PublicKey},
     difficulty::{CumulativeDifficulty, Difficulty},
     immutable::Immutable,
@@ -131,7 +131,7 @@ pub struct MemoryStorageState {
     contracts: HashMap<PooledArc<Hash>, ContractEntry>,
 
     // Contract logs per caller (TX or Scheduled Execution hash): contract -> logs
-    contract_logs: HashMap<PooledArc<Hash>, Vec<ContractLog>>,
+    contract_logs: HashMap<PooledArc<Hash>, ContractLogs>,
 
     // All scheduled executions: execution_topoheight -> contracts -> registration topoheight
     // This is used to quickly retrieve all scheduled executions to execute at a given topoheight
@@ -257,4 +257,3 @@ impl Storage for MemoryStorage {
         Ok(())
     }
 }
-
