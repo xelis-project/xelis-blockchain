@@ -1,7 +1,7 @@
 use log::trace;
 use async_trait::async_trait;
 use xelis_common::{
-    contract::ContractLog,
+    contract::ContractLogs,
     crypto::Hash,
     serializer::Serializer
 };
@@ -17,12 +17,12 @@ impl ContractLogsProvider for SledStorage {
         self.contains_data(&self.contracts_logs, tx_hash.as_bytes())
     }
 
-    async fn get_contract_logs_for_caller(&self, tx_hash: &Hash) -> Result<Vec<ContractLog>, BlockchainError> {
+    async fn get_contract_logs_for_caller(&self, tx_hash: &Hash) -> Result<ContractLogs, BlockchainError> {
         trace!("get contract logs for caller {}", tx_hash);
         self.load_from_disk(&self.contracts_logs, tx_hash.as_bytes(), DiskContext::ContractOutputs)
     }
 
-    async fn set_contract_logs_for_caller(&mut self, tx_hash: &Hash, contract_output: &Vec<ContractLog>) -> Result<(), BlockchainError> {
+    async fn set_contract_logs_for_caller(&mut self, tx_hash: &Hash, contract_output: &ContractLogs) -> Result<(), BlockchainError> {
         trace!("set contract logs for caller {}", tx_hash);
         Self::insert_into_disk(self.snapshot.as_mut(), &self.contracts_logs, tx_hash.as_bytes(), contract_output.to_bytes())?;
         Ok(())

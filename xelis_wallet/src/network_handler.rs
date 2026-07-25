@@ -145,8 +145,9 @@ impl NetworkHandler {
 
                 let res =  zelf.start_syncing().await;
                 if let Err(e) = res.as_ref() {
-                    error!("Error while syncing: {}", e);
-                    zelf.wallet.propagate_event(Event::SyncError { message: e.to_string() }).await;
+                    let message = format!("{:#}", e);
+                    error!("Error while syncing: {:#}", message);
+                    zelf.wallet.propagate_event(Event::SyncError { message }).await;
                 }
 
                 // Notify that we are offline
@@ -207,9 +208,10 @@ impl NetworkHandler {
                 debug!("Network handler is running, stopping it");
                 if let Err(e) = self.sender.send(NetworkHandlerMessage::Stop) {
                     debug!("Error while sending stop message to network handler: {}", e);
+                    handle.abort();
+                } else {
+                    handle.await??;
                 }
-
-                handle.await??;
 
                 // Notify that we are offline
                 self.wallet.propagate_event(Event::Offline).await;
@@ -469,7 +471,7 @@ impl NetworkHandler {
         debug!("Handling contracts outputs at topoheight {}", topoheight);
         // Aggregate all transfers per transaction caller
         let mut assets = HashSet::new();
-        let mut calls: HashMap<Hash, HashMap<Hash, u64>> = HashMap::new();
+        let mut calls: HashMap<Hash, HashMap<Hash, HashMap<Hash, u64>>> = HashMap::new();
         for (key, entry) in outputs.into_iter() {
             debug!("Processing contract execution from caller {}", key.caller);
 
@@ -477,6 +479,8 @@ impl NetworkHandler {
 
             let tx_hash = key.caller.into_owned();
             let transfers = calls.entry(tx_hash)
+                .or_insert_with(HashMap::new)
+                .entry(key.contract.into_owned())
                 .or_insert_with(HashMap::new);
             for (asset, amount) in entry.transfers.into_iter() {
                 debug!("Contract transfer detected: asset {}, amount {}", asset, amount);
@@ -548,27 +552,31 @@ impl NetworkHandler {
         let assets = self.handle_contracts_outputs(outputs.executions, topoheight, timestamp, true).await?;
         trace!("Contract outputs at topoheight {} affected {} assets", topoheight, assets.len());
 
-        // Check if a change occured, we are the highest version and update balances is requested
-        if let Some((_, nonce)) = changes.filter(|_| balances && highest_version) {
+        // Contract outputs can be the only change in a block. They still require
+        // persisting the fetched balance version, even when process_block found
+        // no regular transaction changes.
+        if balances && highest_version && (changes.is_some() || assets.contains(&asset)) {
             let mut storage = self.wallet.get_storage().write().await;
 
-            // Set the highest nonce we know
-            let mut highest_nonce_guard = highest_nonce.lock().await;
-            if highest_nonce_guard.is_none() {
-                // Get the highest nonce from storage
-                debug!("Highest nonce is not set, fetching it from storage");
-                *highest_nonce_guard = Some(storage.get_nonce()?);
-            }
 
             // Store only the highest nonce
             // Because if we are building queued transactions, it may break our queue
             // Our we couldn't submit new txs before they get removed from mempool
-            if let Some(nonce) = nonce.filter(|n| highest_nonce_guard.as_ref().map(|h| *h < *n).unwrap_or(true)) {
-                debug!("Storing new highest nonce {}", nonce);
-                storage.set_nonce(nonce)?;
-                *highest_nonce_guard = Some(nonce);
+            if let Some((_, nonce)) = changes {
+                // Set the highest nonce we know
+                let mut highest_nonce_guard = highest_nonce.lock().await;
+                if highest_nonce_guard.is_none() {
+                    // Get the highest nonce from storage
+                    debug!("Highest nonce is not set, fetching it from storage");
+                    *highest_nonce_guard = Some(storage.get_nonce()?);
+                }
+
+                if let Some(nonce) = nonce.filter(|n| highest_nonce_guard.as_ref().map(|h| *h < *n).unwrap_or(true)) {
+                    debug!("Storing new highest nonce {}", nonce);
+                    storage.set_nonce(nonce)?;
+                    *highest_nonce_guard = Some(nonce);
+                }
             }
-            drop(highest_nonce_guard);
 
             // If we have no balance in storage OR the stored ciphertext isn't the same, we should store it
             let store = storage.get_balance_for(&asset).await.map(|b| b.ciphertext != balance).unwrap_or(true);
@@ -1140,7 +1148,8 @@ impl NetworkHandler {
             // We can safely handle it by hand because `locate_sync_topoheight_and_clean` secure us from being on a wrong chain
             if let Some(topoheight) = block.header.metadata.as_ref().map(|m| m.topoheight) {
                 let block_hash = block.header.hash.as_ref().clone();
-                if let Some((detected_assets, mut nonce)) = self.process_block(address, block, topoheight, true, false).await? {
+                if let Some((detected_assets, mut nonce)) = self.process_block(address, block, topoheight, true, false).await
+                    .context("Failed to process block")? {
                     debug!("We must sync head state, assets: {}, nonce: {:?}", detected_assets.iter().map(|a| a.to_string()).collect::<Vec<String>>().join(", "), nonce);
                     {
                         let storage = self.wallet.get_storage().read().await;
@@ -1155,7 +1164,8 @@ impl NetworkHandler {
                     }
 
                     // A change happened in this block, lets update balance and nonce
-                    self.sync_head_state(&address, Some(&detected_assets), nonce, false, false).await?;
+                    self.sync_head_state(&address, Some(&detected_assets), nonce, false, false).await
+                        .context("Failed to sync head state")?;
 
                     if nonce.is_some() {
                         // Check if we have a tx cache and clean it
@@ -1186,12 +1196,14 @@ impl NetworkHandler {
         } else {
             debug!("No event received, verify that we are on the right chain");
             // First, locate the last topoheight valid for syncing
-            (daemon_topoheight, daemon_block_hash, wallet_topoheight) = self.locate_sync_topoheight_and_clean().await?;
+            (daemon_topoheight, daemon_block_hash, wallet_topoheight) = self.locate_sync_topoheight_and_clean().await
+                .context("Failed to locate sync topoheight")?;
             debug!("Daemon topoheight: {}, wallet topoheight: {}", daemon_topoheight, wallet_topoheight);
 
             trace!("sync head state");
             // Now sync head state, this will helps us to determinate if we should sync blocks or not
-            sync_new_blocks |= self.sync_head_state(&address, None, None, true, true).await?;
+            sync_new_blocks |= self.sync_head_state(&address, None, None, true, true).await
+                .context("Failed to sync head state")?;
         }
 
         // we have something that changed, sync transactions
@@ -1272,7 +1284,8 @@ impl NetworkHandler {
         // Generate only one time the address
         let address = self.wallet.get_address();
         // Do a first sync to be up-to-date with the daemon
-        self.sync(&address, None).await?;
+        self.sync(&address, None).await
+            .context("Failed to run first sync")?;
 
         // Thanks to websocket, we can be notified when a new block is added in chain
         // this allows us to have a instant sync of each new block instead of polling periodically
@@ -1412,7 +1425,7 @@ impl NetworkHandler {
         }
     }
 
-    async fn create_or_update_transaction_contract(&self, tx_hash: &Hash, topoheight: u64, block_timestamp: TimestampMillis, new_transfers: impl Iterator<Item = (Hash, u64)>, is_rescan: bool) -> Result<(), Error> {
+    async fn create_or_update_transaction_contract(&self, tx_hash: &Hash, topoheight: u64, block_timestamp: TimestampMillis, new_transfers: impl Iterator<Item = (Hash, HashMap<Hash, u64>)>, is_rescan: bool) -> Result<(), Error> {
         debug!("create_or_update_transaction_contract for tx {} at topoheight {}", tx_hash, topoheight);
         let mut storage = self.wallet.get_storage().write().await;
         let (mut tx, update) = if storage.has_transaction(tx_hash)? {
@@ -1429,22 +1442,37 @@ impl NetworkHandler {
         };
 
         match tx.get_mut_entry() {
-            EntryData::IncomingContract { transfers, .. } | EntryData::InvokeContract { received: transfers, .. } => {
-                if !transfers.is_empty() {
-                    debug!("transfers isn't empty, skipping existing transfers update");
-                } else {
-                    for (asset, amount) in new_transfers {    
-                        *transfers.entry(asset.clone())
-                            .or_insert(0) += amount;
+            EntryData::IncomingContract { transfers } => {
+                for (contract, assets) in new_transfers {
+                    let contract_transfers = transfers.entry(contract).or_insert_with(IndexMap::new);
+                    for (asset, amount) in assets {
+                        *contract_transfers.entry(asset).or_insert(0) += amount;
                     }
-    
-                    if update {
-                        storage.update_transaction(&tx_hash, &tx)?;
-                    } else {
-                        storage.save_transaction(&tx_hash, &tx)?;
-                        if !is_rescan {
-                            self.wallet.propagate_event(Event::NewTransaction(tx.serializable(self.wallet.get_network().is_mainnet()))).await;
-                        }
+                }
+
+                if update {
+                    storage.update_transaction(&tx_hash, &tx)?;
+                } else {
+                    storage.save_transaction(&tx_hash, &tx)?;
+                    if !is_rescan {
+                        self.wallet.propagate_event(Event::NewTransaction(tx.serializable(self.wallet.get_network().is_mainnet()))).await;
+                    }
+                }
+            },
+            EntryData::InvokeContract { received, .. } => {
+                for (source_contract, assets) in new_transfers {
+                    let contract_received = received.entry(source_contract).or_insert_with(IndexMap::new);
+                    for (asset, amount) in assets {
+                        *contract_received.entry(asset).or_insert(0) += amount;
+                    }
+                }
+
+                if update {
+                    storage.update_transaction(&tx_hash, &tx)?;
+                } else {
+                    storage.save_transaction(&tx_hash, &tx)?;
+                    if !is_rescan {
+                        self.wallet.propagate_event(Event::NewTransaction(tx.serializable(self.wallet.get_network().is_mainnet()))).await;
                     }
                 }
             },

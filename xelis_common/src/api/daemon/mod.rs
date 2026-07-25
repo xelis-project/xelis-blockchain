@@ -813,7 +813,11 @@ pub struct GetContractTransactionsParams<'a> {
     /// Number of entries to skip.
     pub skip: Option<usize>,
     /// Maximum number of entries to return.
-    pub maximum: Option<usize>
+    pub maximum: Option<usize>,
+    /// Minimum topoheight filter.
+    pub minimum_topoheight: Option<TopoHeight>,
+    /// Maximum topoheight filter.
+    pub maximum_topoheight: Option<TopoHeight>
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
@@ -1244,6 +1248,8 @@ pub struct GetP2pBlockPropagationParams<'a> {
 pub struct RegisteredExecution<'a> {
     /// Hash of the caller for the registered execution
     pub execution_hash: Cow<'a, Hash>,
+    /// Contract hash that is invoked
+    pub execution_contract: Cow<'a, Hash>,
     /// Topoheight at which the execution is scheduled
     pub execution_topoheight: TopoHeight,
 }

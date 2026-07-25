@@ -5,7 +5,9 @@ use xelis_common::rpc::InternalRpcError;
 #[derive(Error, Debug, Clone, IntoStaticStr)]
 #[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum XSWDError {
-    #[error("semaphore error")]
+    #[error("XSWD is not ready yet")]
+    NotReady,
+    #[error("Semaphore error")]
     SemaphoreError,
     #[error("Permission denied")]
     PermissionDenied,

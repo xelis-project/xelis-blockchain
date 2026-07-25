@@ -118,4 +118,17 @@ for target in "${targets[@]}"; do
 done
 cd ..
 
+read -r -p "Sign the checksums file with GPG? [y/N] " sign_checksums
+if [[ "$sign_checksums" =~ ^([yY][eE][sS]|[yY]) ]]; then
+    if ! command -v gpg &> /dev/null; then
+        echo "gpg could not be found, please install it to sign the checksums file"
+        exit 1
+    fi
+
+    gpg --armor --detach-sign --output "build/checksums.txt.asc" "build/checksums.txt"
+    echo "Signed checksums file: build/checksums.txt.asc"
+else
+    echo "Skipping GPG signing of checksums file"
+fi
+
 echo "Done"

@@ -98,10 +98,12 @@ pub struct GetWorkServer<S: Storage> {
     notify_rate_limit_ms: TimestampMillis,
     // Current limit for the number of miners to notify at the same time
     notify_job_concurrency: usize,
+    // Check miner heartbeat every N ms, if a miner doesn't send a heartbeat in this time, we disconnect it
+    check_heartbeat: bool,
 }
 
 impl<S: Storage> GetWorkServer<S> {
-    pub fn new(blockchain: Arc<Blockchain<S>>, notify_rate_limit_ms: TimestampMillis, notify_job_concurrency: usize) -> Arc<Self> {
+    pub fn new(blockchain: Arc<Blockchain<S>>, notify_rate_limit_ms: TimestampMillis, notify_job_concurrency: usize, check_heartbeat: bool) -> Arc<Self> {
         let server = Arc::new(Self {
             miners: Mutex::new(HashMap::new()),
             blockchain,
@@ -110,7 +112,8 @@ impl<S: Storage> GetWorkServer<S> {
             last_notify: AtomicU64::new(0),
             is_job_dirty: AtomicBool::new(false),
             notify_rate_limit_ms,
-            notify_job_concurrency
+            notify_job_concurrency,
+            check_heartbeat
         });
 
         if notify_rate_limit_ms > 0 {
@@ -180,13 +183,13 @@ impl<S: Storage> GetWorkServer<S> {
 
             // if we have a job in cache, and we are rate limited, we can send it
             // otherwise, we generate a new job
-            if let Some(hash) = hash.as_ref().filter(|_| self.is_rate_limited()) {
+            if let Some(hash) = hash.as_ref() {
                 debug!("job found in cache, sending it");
                 let mining_jobs = self.mining_jobs.lock().await;
                 debug!("mining jobs locked for new job");
 
                 let (header, diff) = mining_jobs.peek(hash)
-                    .ok_or(InternalRpcError::InternalError("No mining job found"))?;
+                    .ok_or(InternalRpcError::InternalError("No mining job found".into()))?;
 
                 let job = MinerWork::new(header.get_work_hash(), get_current_time_in_millis());
                 (header.get_version(), job, header.get_height(), *diff)
@@ -390,7 +393,7 @@ impl<S: Storage> GetWorkServer<S> {
             } else {
                 // really old job, or miner send invalid job
                 debug!("Job {} was not found in cache", job.get_header_work_hash());
-                return Err(InternalRpcError::InvalidParams("Job was not found in cache"))
+                return Err(InternalRpcError::InvalidParams("Job was not found in cache".into()))
             };
         }
 
@@ -454,6 +457,10 @@ impl<S: Storage> GetWorkServer<S> {
 
 #[async_trait]
 impl<S: Storage> WebSocketHandler for GetWorkServer<S> {
+    async fn check_heartbeat(&self, _: &WebSocketSessionShared<Self>) -> bool {
+        self.check_heartbeat
+    }
+
     // For retro-compatibility with older miner versions,
     // we don't send any ping
     async fn on_connection(&self, session: &WebSocketSessionShared<Self>) -> Result<Option<actix_web::HttpResponse>, anyhow::Error> {

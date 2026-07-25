@@ -39,6 +39,5 @@ pub const L1_MEDIUM: usize = 18;
 // L1 at 26 is around ~330 MB of RAM and support up to 2^48 values
 pub const L1_FULL: usize = 26;
 
-
 // Allows to be used in several wallets at the same time
 pub type PrecomputedTablesShared = Arc<RwLock<ecdlp::ECDLPTables>>;

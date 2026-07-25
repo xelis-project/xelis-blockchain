@@ -51,6 +51,10 @@ pub const COST_PER_SCHEDULED_EXECUTION: u64 = 50_000;
 // This is set to 0.00005
 pub const COST_PER_SCHEDULED_EXECUTION_AT_BLOCK_END: u64 = 5_000;
 
+// Minimum gas to allocate to schedule an execution
+// This is set to 0.00000250
+pub const SCHEDULED_EXECUTION_MIN_GAS: u64 = 250;
+
 // 30% of the transaction fee is burned
 // This is to reduce the supply over time
 // and also to prevent spamming the network with low fee transactions

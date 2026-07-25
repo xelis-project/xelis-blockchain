@@ -612,3 +612,81 @@ async fn asset_transfer_ownership_rejects_missing_contract() {
     let asset = created_asset_hash(&state);
     assert_eq!(state.get_contract_balance(&contract, &asset), 10);
 }
+
+#[tokio::test]
+async fn asset_transfer_and_burn_conserve_supply_and_rollback_atomically() {
+    let code = r#"
+        entry create() {
+            let asset = Asset::create(12, "Conservation Token", "CONS", 8, MaxSupplyMode::Mintable { max_supply: 100 }).expect("asset created");
+            require(asset.mint(100), "mint failed");
+            return 0
+        }
+
+        entry move_and_burn(destination: Hash, fail: bool) {
+            let asset = Asset::get_by_id(12).expect("asset by id");
+            require(transfer_contract(destination, 40, asset.get_hash()), "contract transfer failed");
+            require(burn(10, asset.get_hash()), "burn failed");
+            if fail {
+                return 1
+            }
+            return 0
+        }
+    "#;
+
+    let mut state = MockChainState::new();
+    let owner = funded_contract(&mut state, code);
+    let destination = create_contract(
+        &mut state,
+        "entry main() { return 0 }",
+        ContractVersion::V1,
+    ).expect("create destination");
+    state.provider.contracts.entry(destination.clone()).or_default();
+
+    let create = invoke_contract(&mut state, &owner, InvokeContract::Entry(0), vec![])
+        .await
+        .expect("create asset");
+    assert!(create.is_success(), "asset setup failed: {:?}", create);
+
+    let asset = created_asset_hash(&state);
+    let failed = invoke_contract(
+        &mut state,
+        &owner,
+        InvokeContract::Entry(1),
+        vec![
+            Primitive::Opaque(destination.clone().into()).into(),
+            Primitive::Boolean(true).into(),
+        ],
+    ).await
+        .expect("failed mutation");
+    assert!(!failed.is_success(), "mutation requested to fail must rollback");
+    assert_eq!(state.get_contract_balance(&owner, &asset), 100);
+    assert_eq!(state.get_contract_balance(&destination, &asset), 0);
+    assert_eq!(
+        state.assets[&asset].as_ref().expect("asset changes").circulating_supply.1,
+        100,
+    );
+
+    let succeeded = invoke_contract(
+        &mut state,
+        &owner,
+        InvokeContract::Entry(1),
+        vec![
+            Primitive::Opaque(destination.clone().into()).into(),
+            Primitive::Boolean(false).into(),
+        ],
+    ).await
+        .expect("successful mutation");
+    assert!(succeeded.is_success(), "conserving mutation failed: {:?}", succeeded);
+
+    let owner_balance = state.get_contract_balance(&owner, &asset);
+    let destination_balance = state.get_contract_balance(&destination, &asset);
+    let supply = state.assets[&asset].as_ref().expect("asset changes").circulating_supply.1;
+    assert_eq!(owner_balance, 50);
+    assert_eq!(destination_balance, 40);
+    assert_eq!(supply, 90);
+    assert_eq!(
+        owner_balance.checked_add(destination_balance),
+        Some(supply),
+        "minted supply must equal the sum of contract balances after transfer and burn"
+    );
+}

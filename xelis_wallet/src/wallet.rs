@@ -7,9 +7,7 @@ use std::{
     borrow::Cow
 };
 use cfg_if::cfg_if;
-use indexmap::IndexSet;
-#[cfg(feature = "xswd")]
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use rand::TryRng;
 use log::{
     debug,
@@ -73,11 +71,8 @@ use xelis_common::{
 
 use crate::{
     cipher::Cipher,
-    config::{
-        PASSWORD_ALGORITHM,
-        PASSWORD_HASH_SIZE,
-        SALT_SIZE
-    },
+    config::SALT_SIZE,
+    password_config::PasswordConfig,
     entry::{format_blob_data, EntryData, TransactionEntry as InnerTransactionEntry},
     error::WalletError,
     mnemonics,
@@ -113,6 +108,7 @@ use {
         ApplicationDataRelayer,
         XSWDRelayer,
         XSWDRelayerShared,
+        XSWDError,
         register_rpc_methods,
         AppStateShared,
         PermissionResult,
@@ -156,6 +152,7 @@ use crate::api::{
 
 // Recover option for wallet creation
 pub enum RecoverOption<'a> {
+    None,
     Seed(&'a str),
     PrivateKey(&'a str)
 }
@@ -370,12 +367,6 @@ impl Account {
     }
 }
 
-pub fn hash_password(password: &str, salt: &[u8]) -> Result<[u8; PASSWORD_HASH_SIZE], WalletError> {
-    let mut output = [0; PASSWORD_HASH_SIZE];
-    PASSWORD_ALGORITHM.hash_password_into(password.as_bytes(), salt, &mut output).map_err(|e| WalletError::AlgorithmHashingError(e.to_string()))?;
-    Ok(output)
-}
-
 impl Wallet {
     // Create a new wallet with the specificed storage, keypair and its network
     fn new(storage: EncryptedStorage, keypair: KeyPair, network: Network, precomputed_tables: PrecomputedTablesShared, n_threads: usize, concurrency: usize) -> Arc<Self> {
@@ -401,62 +392,63 @@ impl Wallet {
     }
 
     // Create a new wallet on disk
-    pub async fn create<'a>(name: &'a str, password: &'a str, seed: Option<RecoverOption<'a>>, network: Network, precomputed_tables: PrecomputedTablesShared, n_threads: usize, concurrency: usize) -> Result<Arc<Self>, Error> {
+    pub async fn create<'a>(name: &'a str, password: &'a str, seed: RecoverOption<'a>, network: Network, precomputed_tables: PrecomputedTablesShared, n_threads: usize, concurrency: usize) -> Result<Arc<Self>, Error> {
         if name.is_empty() {
             return Err(WalletError::EmptyName.into())
         }
 
         // generate random keypair or recover it from seed
-        let keypair = if let Some(seed) = seed {
-            debug!("Retrieving keypair from seed...");
-            let key = match seed {
-                RecoverOption::PrivateKey(hex) => {
-                    PrivateKey::from_hex(hex).context("Invalid private key provided")?
-                },
-                RecoverOption::Seed(seed) => {
-                    let words: Vec<&str> = seed.trim().split_whitespace().collect();
-                    mnemonics::words_to_key(&words)?
-                }
-            };
-            KeyPair::from_private_key(key)
-        } else {
-            debug!("Generating a new keypair...");
-            KeyPair::new()
+        let keypair = match seed {
+            RecoverOption::None => KeyPair::new(),
+            RecoverOption::PrivateKey(hex) => {
+                let private_key = PrivateKey::from_hex(hex).context("Invalid private key provided")?;
+                KeyPair::from_private_key(private_key)
+            },
+            RecoverOption::Seed(seed) => {
+                let words: Vec<&str> = seed.trim().split_whitespace().collect();
+                let private_key = mnemonics::words_to_key(&words)?;
+                KeyPair::from_private_key(private_key)
+            }
         };
-
+ 
         // generate random salt for hashed password
         let mut salt: [u8; SALT_SIZE] = [0; SALT_SIZE];
-        
-        let mut rng = rng();
-        rng.try_fill_bytes(&mut salt)
-            .context("Error while generating new salt for password")?;
+        // generate the master key which is used for storage and then save it in encrypted form
+        let mut master_key: [u8; 32] = [0; 32];
+        // generate the storage salt and save it in encrypted form
+        let mut storage_salt = [0; SALT_SIZE];
+
+        {
+            let mut rng = rng();
+            rng.try_fill_bytes(&mut salt)
+                .context("Error while generating new salt for password")?;
+            rng.try_fill_bytes(&mut master_key)
+                .context("Error while generating new master key")?;
+            rng.try_fill_bytes(&mut storage_salt)
+                .context("Error while generating new storage salt")?;
+        }
+
+        let password_config = PasswordConfig::default();
 
         // generate hashed password which will be used as key to encrypt master_key
         debug!("hashing provided password");
-        let hashed_password = hash_password(password, &salt)?;
-
-        debug!("Creating storage for {}", name);
-        let mut inner = Storage::new(name)?;
+        let hashed_password = password_config.hash_password(password, &salt)?;
 
         // generate the Cipher
         let cipher = Cipher::new(&hashed_password, None)?;
 
+        debug!("Creating storage for {}", name);
+        let mut inner = Storage::new(name)?;
+
         // save the salt used for password
         debug!("Save password salt in public storage");
         inner.set_password_salt(&salt)?;
+        inner.set_password_config(&password_config)?;
 
-        // generate the master key which is used for storage and then save it in encrypted form
-        let mut master_key: [u8; 32] = [0; 32];
-        rng.try_fill_bytes(&mut master_key)
-            .context("Error while generating new master key")?;
         let encrypted_master_key = cipher.encrypt_value(&master_key)?;
         debug!("Save encrypted master key in public storage");
         inner.set_encrypted_master_key(&encrypted_master_key)?;
 
-        // generate the storage salt and save it in encrypted form
-        let mut storage_salt = [0; SALT_SIZE];
-        rng.try_fill_bytes(&mut storage_salt)
-            .context("Error while generating new storage salt")?;
         let encrypted_storage_salt = cipher.encrypt_value(&storage_salt)?;
         inner.set_encrypted_storage_salt(&encrypted_storage_salt)?;
 
@@ -481,7 +473,9 @@ impl Wallet {
         debug!("Creating storage for {}", name);
         let storage = Storage::new(name)?;
         
-        // get password salt for KDF
+        // get password config and password salt for KDF
+        debug!("Retrieving password config from public storage");
+        let password_config = storage.get_password_config()?;
         debug!("Retrieving password salt from public storage");
         let salt = storage.get_password_salt()?;
 
@@ -489,7 +483,7 @@ impl Wallet {
         debug!("Retrieving encrypted master key from public storage");
         let encrypted_master_key = storage.get_encrypted_master_key()?;
 
-        let hashed_password = hash_password(password, &salt)?;
+        let hashed_password = password_config.hash_password(password, &salt)?;
 
         // decrypt the encrypted master key using the hashed password (used as key)
         let cipher = Cipher::new(&hashed_password, None)?;
@@ -770,21 +764,22 @@ impl Wallet {
         if xswd.is_none() {
             let mut handler = RPCHandler::new(Arc::clone(self), None);
             register_rpc_methods(&mut handler);
+
             *xswd = Some(XSWDRelayer::new(handler, self.concurrency));
         }
+
         Ok(receiver)
     }
 
     // Add application to XSWD relayer - requires handler to be running
     #[cfg(feature = "xswd")]
-    pub async fn add_xswd_relayer_application(self: &Arc<Self>, app_data: ApplicationDataRelayer) -> Result<Option<UnboundedReceiver<XSWDEvent>>, Error> {
-        let channel = self.init_xswd_relayer().await?;
+    pub async fn add_xswd_relayer_application(self: &Arc<Self>, app_data: ApplicationDataRelayer) -> Result<(), Error> {
         let xswd = self.xswd_relayer.lock().await;
         if let Some(xswd) = xswd.as_ref() {
-            xswd.add_application(app_data).await?;
+            xswd.add_application(app_data).await
+        } else {
+            Err(XSWDError::NotReady.into())
         }
-
-        Ok(channel)
     }
 
     #[cfg(feature = "xswd")]
@@ -796,8 +791,9 @@ impl Wallet {
     pub async fn is_valid_password(&self, password: &str) -> Result<(), Error> {
         let mut encrypted_storage = self.storage.write().await;
         let storage = encrypted_storage.get_mutable_public_storage();
+        let password_config = storage.get_password_config()?;
         let salt = storage.get_password_salt()?;
-        let hashed_password = hash_password(password, &salt)?;
+        let hashed_password = password_config.hash_password(password, &salt)?;
         let cipher = Cipher::new(&hashed_password, None)?;
         let encrypted_master_key = storage.get_encrypted_master_key()?;
         let _ = cipher.decrypt_value(&encrypted_master_key).context("Invalid password provided")?;
@@ -808,10 +804,11 @@ impl Wallet {
     pub async fn set_password(&self, old_password: &str, password: &str) -> Result<(), Error> {
         let mut encrypted_storage = self.storage.write().await;
         let storage = encrypted_storage.get_mutable_public_storage();
+        let password_config = storage.get_password_config()?;
         let (master_key, storage_salt) = {
             // retrieve old salt to build key from current password
             let salt = storage.get_password_salt()?;
-            let hashed_password = hash_password(old_password, &salt)?;
+            let hashed_password = password_config.hash_password(old_password, &salt)?;
 
             let encrypted_master_key = storage.get_encrypted_master_key()?;
             let encrypted_storage_salt = storage.get_encrypted_storage_salt()?;
@@ -830,7 +827,7 @@ impl Wallet {
             .context("Error while generating new salt for password")?;
 
         // generate the password-based derivated key to encrypt the master key
-        let hashed_password = hash_password(password, &salt)?;
+        let hashed_password = password_config.hash_password(password, &salt)?;
         let cipher = Cipher::new(&hashed_password, None)?;
 
         // encrypt the master key using the new password
@@ -841,6 +838,7 @@ impl Wallet {
 
         // save on disk
         storage.set_password_salt(&salt)?;
+        storage.set_password_config(&password_config)?;
         storage.set_encrypted_master_key(&encrypted_key)?;
         storage.set_encrypted_storage_salt(&encrypted_storage_salt)?;
 
@@ -984,7 +982,8 @@ impl Wallet {
                         storage.get_last_coinbase_topoheight().is_some_and(|v| v > stable_topoheight)
                         && storage.get_tx_cache().is_none()
                     );
-                    info!("Stable topoheight is {}, should use stable balance: {}, last coinbase: {:?}", stable_topoheight, should_use_stable_balance, storage.get_last_coinbase_topoheight());
+
+                    debug!("Stable topoheight is {}, should use stable balance: {}, last coinbase: {:?}", stable_topoheight, should_use_stable_balance, storage.get_last_coinbase_topoheight());
 
                     // We also need to check if we have made an outgoing TX
                     // Because we need to keep the order of TX and use correct ciphertexts
@@ -1320,9 +1319,15 @@ impl Wallet {
                         extra.push("Received".to_owned());
                     }
 
-                    for (asset, amount) in received {
+                    let mut totals = IndexMap::<Hash, u64>::new();
+                    for contract_transfers in received.values() {
+                        for (asset, amount) in contract_transfers {
+                            *totals.entry(asset.clone()).or_insert(0) += amount;
+                        }
+                    }
+                    for (asset, amount) in totals {
                         let data = storage.get_asset(&asset).await?;
-                        extra.push(format!("{}:{}", data.get_name(), format_coin(*amount, data.get_decimals())));
+                        extra.push(format!("{}:{}", data.get_name(), format_coin(amount, data.get_decimals())));
                     }
 
                     writeln!(w, "{},{},{},{},{},{},{},{},{}", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "InvokeContract", contract, extra.join("|"), chunk_id, format_xelis(*fee), nonce).context("Error while writing csv line")?;
@@ -1341,9 +1346,15 @@ impl Wallet {
                 },
                 EntryData::IncomingContract { transfers } => {
                     let mut assets = Vec::new();
-                    for (asset, amount) in transfers {
+                    let mut totals = IndexMap::<Hash, u64>::new();
+                    for contract_transfers in transfers.values() {
+                        for (asset, amount) in contract_transfers {
+                            *totals.entry(asset.clone()).or_insert(0) += amount;
+                        }
+                    }
+                    for (asset, amount) in totals {
                         let data = storage.get_asset(&asset).await?;
-                        assets.push(format!("{}:{}", data.get_name(), format_coin(*amount, data.get_decimals())));
+                        assets.push(format!("{}:{}", data.get_name(), format_coin(amount, data.get_decimals())));
                     }
 
                     writeln!(w, "{},{},{},{},{},-,-,-,-", datetime_from_timestamp(tx.get_timestamp())?, tx.get_topoheight(), tx.get_hash(), "IncomingContract", assets.join("|")).context("Error while writing csv line")?;
@@ -1675,7 +1686,7 @@ impl XSWDHandler for Arc<Wallet> {
                     if matches!(request.method.as_str(), "subscribe" | "unsubscribe") {
                         let params: SubscribeParams<DaemonNotifyEvent> = serde_json::from_value(
                             request.params.take()
-                                .ok_or_else(|| RpcResponseError::new(id.clone(), InternalRpcError::InvalidParams("Missing event parameter")))?
+                                .ok_or_else(|| RpcResponseError::new(id.clone(), InternalRpcError::InvalidParams("Missing event parameter".into())))?
                         ).map_err(|e| RpcResponseError::new(id.clone(), e))?;
 
                         let event = params.notify.into_owned();
@@ -1749,5 +1760,25 @@ impl XSWDHandler for Arc<Wallet> {
         }
 
         Err(WalletError::NoHandlerAvailable.into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, RwLock};
+    use xelis_common::crypto::ecdlp::ECDLPTables;
+    use super::{Wallet, RecoverOption, Network};
+
+    #[test]
+    fn test_send() {
+        fn assert_send<T: Send>() {}
+
+        fn assert_send_param<T: Send>(_: T) {}
+
+        assert_send::<Wallet>();
+        assert_send::<Arc<Wallet>>();
+
+        let precomputed_tables = Arc::new(RwLock::new(ECDLPTables::empty(1)));
+        assert_send_param(Wallet::create("foo", "bar", RecoverOption::None, Network::Devnet, precomputed_tables, 1, 1));
     }
 }

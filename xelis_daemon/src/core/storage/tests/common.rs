@@ -8,11 +8,12 @@ use xelis_common::{
     asset::{AssetData, AssetOwner, MaxSupplyMode, VersionedAssetData},
     block::{BlockHeader, BlockVersion, EXTRA_NONCE_SIZE},
     config::XELIS_ASSET,
-    contract::{ContractModule, EventCallbackRegistration, ScheduledExecution, ScheduledExecutionKind, Source},
+    contract::{ContractLog, ContractLogs, ContractModule, EventCallbackRegistration, ScheduledExecution, ScheduledExecutionKind, Source},
     crypto::{Hash, KeyPair, PublicKey},
     difficulty::Difficulty,
     immutable::Immutable,
     network::Network,
+    transaction::MultiSigPayload,
     varuint::VarUint,
     versioned::Versioned
 };
@@ -791,7 +792,31 @@ pub async fn test_cleanup_all_data_types_at_topoheight<S: Storage>(mut storage: 
     let block_exists = storage.has_block_with_hash(&block_hash_for_check).await
         .context("Failed to check block")?;
     assert!(block_exists, "Block should exist");
-    
+
+    storage.delete_versioned_data_at_topoheight(target_topo, false).await
+        .context("Failed to clean all contract data at target topoheight")?;
+    assert!(!storage.has_contract_at_exact_topoheight(&contract_hash, target_topo).await?,
+        "contract module should be removed at cleaned topoheight");
+    assert!(storage.get_event_callback_for_contract_at_maximum_topoheight(
+        &contract_hash, 1, &listener_hash, target_topo,
+    ).await?.is_none(), "event callback should be removed at cleaned topoheight");
+    assert!(!storage.has_contract_scheduled_execution_at_topoheight(
+        &contract_hash, 60,
+    ).await?, "scheduled execution should be removed at cleaned topoheight");
+
+    Ok(())
+}
+
+pub async fn test_contract_logs_cleanup<S: Storage>(mut storage: S) -> Result<()> {
+    let caller = Hash::new([230u8; 32]);
+    let logs = ContractLogs::from(vec![ContractLog::RefundGas { amount: 10 }]);
+
+    storage.set_contract_logs_for_caller(&caller, &logs).await?;
+    assert!(storage.has_contract_logs_for_caller(&caller).await?, "contract logs should exist before cleanup");
+
+    storage.delete_contract_logs_for_caller(&caller).await?;
+    assert!(!storage.has_contract_logs_for_caller(&caller).await?, "contract logs should be deleted");
+
     Ok(())
 }
 
@@ -1189,6 +1214,7 @@ pub async fn test_delete_versioned_data_below_topoheight_nonces<S: Storage>(mut 
 
 pub async fn test_delete_versioned_data_above_topoheight_nonces<S: Storage>(mut storage: S, data: &TestData) -> Result<()> {
     let public_key = data.public_key_pair.get_public_key().compress();
+    setup_asset(&mut storage, &XELIS_ASSET).await?;
     
     // Store nonces at multiple topoheights with proper versioning
     let nonce0 = VersionedNonce::new(0, None);
@@ -1224,6 +1250,7 @@ pub async fn test_delete_versioned_data_above_topoheight_nonces<S: Storage>(mut 
 
 pub async fn test_delete_versioned_data_at_topoheight_contracts<S: Storage>(mut storage: S) -> Result<()> {
     let contract_hash = Hash::new([200u8; 32]);
+    setup_asset(&mut storage, &XELIS_ASSET).await?;
     
     // Store contract at multiple topoheights
     for topo in 0u64..5 {
@@ -1232,24 +1259,38 @@ pub async fn test_delete_versioned_data_at_topoheight_contracts<S: Storage>(mut 
             version: Default::default(),
             module,
         };
-        let versioned = Versioned::new(Some(Cow::Owned(contract_module)), None);
+        let versioned = Versioned::new(Some(Cow::Owned(contract_module)), if topo == 0 { None } else { Some(topo - 1) });
         storage.set_last_contract_to(&contract_hash, topo, &versioned).await
             .context(format!("Failed to set contract at topo {}", topo))?;
+        storage.set_last_contract_balance_to(
+            &contract_hash,
+            &XELIS_ASSET,
+            topo,
+            Versioned::new(topo * 100, if topo == 0 { None } else { Some(topo - 1) }),
+        ).await.context(format!("Failed to set contract balance at topo {}", topo))?;
     }
     
-    // Delete data at topoheight 2
-    storage.delete_versioned_data_at_topoheight(2u64, false).await
-        .context("Failed to delete versioned data at topoheight 2")?;
+    // Delete the latest data at topoheight 4
+    storage.delete_versioned_data_at_topoheight(4u64, false).await
+        .context("Failed to delete versioned data at topoheight 4")?;
     
-    // Verify storage is still usable
-    let _ = storage.has_contract_at_maximum_topoheight(&contract_hash, 4u64).await?;
+    assert!(!storage.has_contract_at_exact_topoheight(&contract_hash, 4).await?,
+        "latest contract version at deleted topoheight must be removed");
+    assert!(storage.has_contract_at_exact_topoheight(&contract_hash, 3).await?,
+        "contract version below deleted topoheight must remain");
+    assert!(!storage.has_contract_balance_at_exact_topoheight(&contract_hash, &XELIS_ASSET, 4).await?,
+        "latest contract balance at deleted topoheight must be removed");
+    assert!(storage.has_contract_balance_at_exact_topoheight(&contract_hash, &XELIS_ASSET, 3).await?,
+        "contract balance below deleted topoheight must remain");
     
     Ok(())
 }
 
 pub async fn test_delete_versioned_data_below_topoheight_contracts<S: Storage>(mut storage: S) -> Result<()> {
     let contract_hash = Hash::new([201u8; 32]);
-    
+
+    setup_asset(&mut storage, &XELIS_ASSET).await?;
+
     // Store contract at multiple topoheights
     for topo in 0u64..8 {
         let module = Arc::new(Module::new());
@@ -1257,24 +1298,41 @@ pub async fn test_delete_versioned_data_below_topoheight_contracts<S: Storage>(m
             version: Default::default(),
             module,
         };
-        let versioned = Versioned::new(Some(Cow::Owned(contract_module)), None);
+        let versioned = Versioned::new(Some(Cow::Owned(contract_module)), if topo == 0 { None } else { Some(topo - 1) });
         storage.set_last_contract_to(&contract_hash, topo, &versioned).await
             .context(format!("Failed to set contract at topo {}", topo))?;
+        storage.set_last_contract_balance_to(
+            &contract_hash,
+            &XELIS_ASSET,
+            topo,
+            Versioned::new(topo * 100, if topo == 0 { None } else { Some(topo - 1) }),
+        ).await.context(format!("Failed to set contract balance at topo {}", topo))?;
     }
     
     // Delete data below topoheight 4
     storage.delete_versioned_data_below_topoheight(4u64, true).await
         .context("Failed to delete versioned data below topoheight 4")?;
     
-    // Verify storage is still usable
-    let _ = storage.has_contract_at_exact_topoheight(&contract_hash, 4u64).await?;
-    
+    for topo in 0..4 {
+        assert!(!storage.has_contract_at_exact_topoheight(&contract_hash, topo).await?,
+            "contract version below prune cutoff {} must be removed", topo);
+        assert!(!storage.has_contract_balance_at_exact_topoheight(&contract_hash, &XELIS_ASSET, topo).await?,
+            "contract balance below prune cutoff {} must be removed", topo);
+    }
+    for topo in [4u64, 7u64] {
+        assert!(storage.has_contract_at_exact_topoheight(&contract_hash, topo).await?,
+            "contract version at/above prune cutoff {} must remain", topo);
+        assert!(storage.has_contract_balance_at_exact_topoheight(&contract_hash, &XELIS_ASSET, topo).await?,
+            "contract balance at/above prune cutoff {} must remain", topo);
+    }
+
     Ok(())
 }
 
 pub async fn test_delete_versioned_data_above_topoheight_contracts<S: Storage>(mut storage: S) -> Result<()> {
     let contract_hash = Hash::new([202u8; 32]);
-    
+    setup_asset(&mut storage, &XELIS_ASSET).await?;
+
     // Store contract at multiple topoheights
     for topo in 0u64..8 {
         let module = Arc::new(Module::new());
@@ -1282,17 +1340,31 @@ pub async fn test_delete_versioned_data_above_topoheight_contracts<S: Storage>(m
             version: Default::default(),
             module,
         };
-        let versioned = Versioned::new(Some(Cow::Owned(contract_module)), None);
+        let versioned = Versioned::new(Some(Cow::Owned(contract_module)), if topo == 0 { None } else { Some(topo - 1) });
         storage.set_last_contract_to(&contract_hash, topo, &versioned).await
             .context(format!("Failed to set contract at topo {}", topo))?;
+        storage.set_last_contract_balance_to(
+            &contract_hash,
+            &XELIS_ASSET,
+            topo,
+            Versioned::new(topo * 100, if topo == 0 { None } else { Some(topo - 1) }),
+        ).await.context(format!("Failed to set contract balance at topo {}", topo))?;
     }
     
     // Delete data above topoheight 4
     storage.delete_versioned_data_above_topoheight(4u64).await
         .context("Failed to delete versioned data above topoheight 4")?;
     
-    // Verify storage is still usable
-    let _ = storage.has_contract_at_exact_topoheight(&contract_hash, 4u64).await?;
+    for topo in 5..8 {
+        assert!(!storage.has_contract_at_exact_topoheight(&contract_hash, topo).await?,
+            "contract version above rollback cutoff {} must be removed", topo);
+        assert!(!storage.has_contract_balance_at_exact_topoheight(&contract_hash, &XELIS_ASSET, topo).await?,
+            "contract balance above rollback cutoff {} must be removed", topo);
+    }
+    assert!(storage.has_contract_at_exact_topoheight(&contract_hash, 4).await?,
+        "contract version at rollback cutoff must remain");
+    assert!(storage.has_contract_balance_at_exact_topoheight(&contract_hash, &XELIS_ASSET, 4).await?,
+        "contract balance at rollback cutoff must remain");
     
     Ok(())
 }
@@ -1410,6 +1482,18 @@ pub async fn test_delete_versioned_data_above_topoheight_mixed<S: Storage>(mut s
     Ok(())
 }
 
+async fn setup_asset<S: Storage>(storage: &mut S, asset: &Hash) -> Result<()> {
+    // Register the asset (no-op for MemoryStorage, required for RocksDB).
+    storage.add_asset(
+        asset,
+        0,
+        VersionedAssetData::new(
+            AssetData::new(8, "TEST".to_owned(), "TST".to_owned(), MaxSupplyMode::Fixed(u64::MAX), AssetOwner::None),
+            None,
+        ),
+    ).await.context("Failed to add asset")
+}
+
 /// Helper: register an account and asset so that RocksDB's ID-mapping layer is
 /// satisfied before calling any balance APIs.
 async fn setup_balance_storage<S: Storage>(
@@ -1421,17 +1505,7 @@ async fn setup_balance_storage<S: Storage>(
     storage.set_account_registration_topoheight(key, 0).await
         .context("Failed to register account")?;
 
-    // Register the asset (no-op for MemoryStorage, required for RocksDB).
-    storage.add_asset(
-        asset,
-        0,
-        VersionedAssetData::new(
-            AssetData::new(8, "Test".to_owned(), "TST".to_owned(), MaxSupplyMode::Fixed(u64::MAX), AssetOwner::None),
-            None,
-        ),
-    ).await.context("Failed to add asset")?;
-
-    Ok(())
+    setup_asset(storage, asset).await
 }
 
 pub async fn test_delete_versioned_balances_below_topoheight_keeps_latest_output<S: Storage>(
@@ -1822,6 +1896,147 @@ pub async fn test_event_callbacks_available_after_rewind<S: Storage>(mut storage
             count += 1;
         }
         assert_eq!(count, 1, "After rewind to topo 5: expected 1 callback, got {}", count);
+    }
+
+    Ok(())
+}
+
+pub async fn test_event_callback_cleanup<S: Storage>(mut storage: S) -> Result<()> {
+    let listener_hash = Hash::new([214u8; 32]);
+    register_contract(&mut storage, &listener_hash, 0).await?;
+
+    let contracts = [
+        (Hash::new([213u8; 32]), 1u64, [(1u64, None), (5u64, Some(1u64)), (10u64, Some(5u64))]),
+        (Hash::new([215u8; 32]), 2u64, [(1u64, None), (7u64, Some(1u64)), (10u64, Some(7u64))]),
+        (Hash::new([217u8; 32]), 3u64, [(3u64, None), (8u64, Some(3u64)), (13u64, Some(8u64))]),
+    ];
+    for (contract_hash, event_id, versions) in &contracts {
+        register_contract(&mut storage, contract_hash, 0).await?;
+        for (topoheight, previous_topoheight) in versions {
+            let callback = EventCallbackRegistration::new(
+                *topoheight as u16,
+                100,
+                Source::Contract(listener_hash.clone()),
+            );
+            storage.set_last_contract_event_callback(
+                &contract_hash,
+                *event_id,
+                &listener_hash,
+                Versioned::new(Some(callback), *previous_topoheight),
+                *topoheight,
+            ).await?;
+        }
+    }
+
+    // Pruning below a topoheight must retain the latest version and detach its history.
+    storage.delete_versioned_data_below_topoheight(3, true).await?;
+    let (topoheight, version) = storage.get_event_callback_for_contract_at_maximum_topoheight(
+        &contracts[2].0, contracts[2].1, &listener_hash, 13,
+    ).await?.context("Expected callback after prune cleanup")?;
+    assert_eq!(topoheight, 13);
+    assert_eq!(version.get_previous_topoheight(), Some(8));
+    let (topoheight, version) = storage.get_event_callback_for_contract_at_maximum_topoheight(
+        &contracts[2].0, contracts[2].1, &listener_hash, 3,
+    ).await?.context("Expected first retained callback after prune cleanup")?;
+    assert_eq!(topoheight, 3);
+    assert_eq!(version.get_previous_topoheight(), None);
+    assert!(storage.get_event_callback_for_contract_at_maximum_topoheight(
+        &contracts[2].0, contracts[2].1, &listener_hash, 2,
+    ).await?.is_none(), "Pruned callback history must not be visible below the cutoff");
+
+    // Set up a fresh history so pruning above does not alter this chain.
+    let exact_contract = Hash::new([219u8; 32]);
+    register_contract(&mut storage, &exact_contract, 0).await?;
+    for (topoheight, previous_topoheight) in [(1u64, None), (5u64, Some(1u64)), (10u64, Some(5u64))] {
+        let callback = EventCallbackRegistration::new(
+            topoheight as u16,
+            100,
+            Source::Contract(listener_hash.clone()),
+        );
+        storage.set_last_contract_event_callback(
+            &exact_contract,
+            4,
+            &listener_hash,
+            Versioned::new(Some(callback), previous_topoheight),
+            topoheight,
+        ).await?;
+    }
+
+    // Removing the latest version at a topoheight must restore the previous version.
+    storage.delete_versioned_data_at_topoheight(10, false).await?;
+    let (topoheight, version) = storage.get_event_callback_for_contract_at_maximum_topoheight(
+        &exact_contract, 4, &listener_hash, 10,
+    ).await?.context("Expected callback after exact-topo cleanup")?;
+    assert_eq!(topoheight, 5);
+    assert_eq!(version.get_previous_topoheight(), Some(1));
+    let (topoheight, _) = storage.get_event_callback_for_contract_at_maximum_topoheight(
+        &exact_contract, 4, &listener_hash, 5,
+    ).await?.context("Expected callback before removed topoheight")?;
+    assert_eq!(topoheight, 5);
+
+    // Rewinding above a topoheight must remove only versions after it.
+    storage.delete_versioned_data_above_topoheight(7).await?;
+    let (topoheight, _) = storage.get_event_callback_for_contract_at_maximum_topoheight(
+        &contracts[1].0, contracts[1].1, &listener_hash, 10,
+    ).await?.context("Expected callback after rewind cleanup")?;
+    assert_eq!(topoheight, 7);
+
+    // Multiple event IDs on the same contract must be cleaned independently.
+    let multi_event_contract = Hash::new([221u8; 32]);
+    register_contract(&mut storage, &multi_event_contract, 0).await?;
+    for event_id in [11u64, 12u64] {
+        for (topoheight, previous_topoheight) in [(20u64, None), (25u64, Some(20u64))] {
+            let callback = EventCallbackRegistration::new(
+                event_id as u16,
+                100,
+                Source::Contract(listener_hash.clone()),
+            );
+            storage.set_last_contract_event_callback(
+                &multi_event_contract,
+                event_id,
+                &listener_hash,
+                Versioned::new(Some(callback), previous_topoheight),
+                topoheight,
+            ).await?;
+        }
+    }
+
+    storage.delete_versioned_data_at_topoheight(25, false).await?;
+    for event_id in [11u64, 12u64] {
+        let (topoheight, _) = storage.get_event_callback_for_contract_at_maximum_topoheight(
+            &multi_event_contract, event_id, &listener_hash, 25,
+        ).await?.context("Expected callback for event ID after cleanup")?;
+        assert_eq!(topoheight, 20, "Event ID {} should retain its previous version", event_id);
+    }
+
+    // Multiple listeners for the same event must be cleaned independently.
+    let multi_listener_contract = Hash::new([222u8; 32]);
+    let listeners = [Hash::new([223u8; 32]), Hash::new([224u8; 32])];
+    register_contract(&mut storage, &multi_listener_contract, 0).await?;
+    for listener in &listeners {
+        register_contract(&mut storage, listener, 0).await?;
+        for (topoheight, previous_topoheight) in [(30u64, None), (35u64, Some(30u64))] {
+            let callback = EventCallbackRegistration::new(
+                listener.as_bytes()[0] as u16,
+                100,
+                Source::Contract(listener.clone()),
+            );
+            storage.set_last_contract_event_callback(
+                &multi_listener_contract,
+                13,
+                listener,
+                Versioned::new(Some(callback), previous_topoheight),
+                topoheight,
+            ).await?;
+        }
+    }
+
+    storage.delete_versioned_data_at_topoheight(35, false).await?;
+    for listener in &listeners {
+        let (topoheight, _) = storage.get_event_callback_for_contract_at_maximum_topoheight(
+            &multi_listener_contract, 13, listener, 35,
+        ).await?.context("Expected listener callback after cleanup")?;
+        assert_eq!(topoheight, 30, "Listener should retain its previous version");
     }
 
     Ok(())
@@ -2265,6 +2480,205 @@ pub async fn test_account_registration_topoheight<S: Storage>(mut storage: S) ->
     // After deletion, it should not exists anymore
     assert!(!storage.is_account_registered_for_topoheight(&key, 10).await?,
         "account should not be registered after deletion above topoheight 9");
+
+    Ok(())
+}
+
+pub async fn test_multisig_operations<S: Storage>(mut storage: S, data: &TestData) -> Result<()> {
+    let account = data.public_key_pair.get_public_key().compress();
+    let participant1 = KeyPair::new().get_public_key().compress();
+    let participant2 = KeyPair::new().get_public_key().compress();
+
+    assert!(!storage.has_multisig(&account).await?,
+        "multisig should not exist initially");
+    assert!(!storage.has_multisig_at_exact_topoheight(&account, 3).await?,
+        "multisig should not exist at topoheight 3 initially");
+    assert!(storage.get_last_topoheight_for_multisig(&account).await?.is_none(),
+        "last multisig topoheight should be empty initially");
+
+    let payload_v1 = MultiSigPayload {
+        threshold: 2,
+        participants: [participant1.clone(), participant2.clone()].into_iter().collect(),
+    };
+    storage.set_last_multisig_to(
+        &account,
+        3,
+        Versioned::new(Some(Cow::Owned(payload_v1.clone())), None),
+    ).await?;
+
+    assert!(storage.has_multisig(&account).await?,
+        "multisig should exist after first insert");
+    assert!(storage.has_multisig_at_exact_topoheight(&account, 3).await?,
+        "multisig should exist at topoheight 3");
+    assert!(!storage.has_multisig_at_exact_topoheight(&account, 2).await?,
+        "multisig should not exist below first version");
+
+    let (topoheight_v1, versioned_v1) = storage.get_last_multisig(&account).await?;
+    assert_eq!(topoheight_v1, 3, "last multisig topoheight should be 3");
+    let stored_v1 = versioned_v1.get().as_ref().expect("multisig payload should exist");
+    assert_eq!(stored_v1.threshold, 2, "threshold mismatch for v1");
+    assert_eq!(stored_v1.participants.len(), 2, "participant count mismatch for v1");
+
+    let at_max_2 = storage.get_multisig_at_maximum_topoheight_for(&account, 2).await?;
+    assert!(at_max_2.is_none(), "no multisig should be visible below the first version");
+
+    let at_max_3 = storage.get_multisig_at_maximum_topoheight_for(&account, 3).await?;
+    assert_eq!(at_max_3.as_ref().map(|(topo, _)| *topo), Some(3), "topoheight mismatch at max 3");
+
+    let payload_v2 = MultiSigPayload {
+        threshold: 1,
+        participants: [participant1.clone()].into_iter().collect(),
+    };
+    storage.set_last_multisig_to(
+        &account,
+        7,
+        Versioned::new(Some(Cow::Owned(payload_v2.clone())), Some(3)),
+    ).await?;
+
+    let (topoheight_v2, versioned_v2) = storage.get_last_multisig(&account).await?;
+    assert_eq!(topoheight_v2, 7, "last multisig topoheight should be updated to 7");
+    let stored_v2 = versioned_v2.get().as_ref().expect("multisig payload should exist");
+    assert_eq!(stored_v2.threshold, 1, "threshold mismatch for v2");
+    assert_eq!(versioned_v2.get_previous_topoheight(), Some(3), "previous topoheight should be preserved");
+
+    let at_max_6 = storage.get_multisig_at_maximum_topoheight_for(&account, 6).await?;
+    assert_eq!(at_max_6.as_ref().map(|(topo, _)| *topo), Some(3), "max topoheight lookup should walk back to v1");
+
+    let at_max_7 = storage.get_multisig_at_maximum_topoheight_for(&account, 7).await?;
+    assert_eq!(at_max_7.as_ref().map(|(topo, _)| *topo), Some(7), "max topoheight lookup should return v2");
+
+    Ok(())
+}
+
+fn multisig_payload(threshold: u8) -> MultiSigPayload {
+    MultiSigPayload {
+        threshold,
+        participants: (0..threshold)
+            .map(|_| KeyPair::new().get_public_key().compress())
+            .collect(),
+    }
+}
+
+async fn set_multisig_version<S: Storage>(
+    storage: &mut S,
+    account: &PublicKey,
+    topoheight: u64,
+    previous_topoheight: Option<u64>,
+    threshold: u8,
+) -> Result<()> {
+    storage.set_last_multisig_to(
+        account,
+        topoheight,
+        Versioned::new(Some(Cow::Owned(multisig_payload(threshold))), previous_topoheight),
+    ).await?;
+
+    Ok(())
+}
+
+async fn seed_multisig_versions<S: Storage>(storage: &mut S, account: &PublicKey) -> Result<()> {
+    set_multisig_version(storage, account, 1, None, 1).await?;
+    set_multisig_version(storage, account, 4, Some(1), 2).await?;
+    set_multisig_version(storage, account, 8, Some(4), 3).await?;
+    set_multisig_version(storage, account, 12, Some(8), 1).await
+}
+
+async fn assert_last_multisig<S: Storage>(
+    storage: &S,
+    account: &PublicKey,
+    expected_topoheight: u64,
+    expected_threshold: u8,
+) -> Result<()> {
+    let (topoheight, version) = storage.get_last_multisig(account).await?;
+    assert_eq!(topoheight, expected_topoheight, "last multisig topoheight mismatch");
+    assert_eq!(
+        version.get().as_ref().expect("last multisig payload should exist").threshold,
+        expected_threshold,
+        "last multisig threshold mismatch",
+    );
+
+    Ok(())
+}
+
+async fn assert_multisig_at_maximum<S: Storage>(
+    storage: &S,
+    account: &PublicKey,
+    maximum_topoheight: u64,
+    expected_topoheight: Option<u64>,
+) -> Result<()> {
+    let result = storage.get_multisig_at_maximum_topoheight_for(account, maximum_topoheight).await?;
+    assert_eq!(
+        result.as_ref().map(|(topoheight, _)| *topoheight),
+        expected_topoheight,
+        "multisig maximum-topoheight lookup mismatch for maximum {}",
+        maximum_topoheight,
+    );
+
+    Ok(())
+}
+
+pub async fn test_multisig_delete_versioned_at_topoheight<S: Storage>(mut storage: S) -> Result<()> {
+    let account = KeyPair::new().get_public_key().compress();
+    seed_multisig_versions(&mut storage, &account).await?;
+
+    storage.delete_versioned_data_at_topoheight(12, false).await
+        .context("Failed to delete versioned multisig at topoheight 12")?;
+
+    assert!(!storage.has_multisig_at_exact_topoheight(&account, 12).await?,
+        "multisig version at deleted topoheight should be removed");
+    assert!(storage.has_multisig_at_exact_topoheight(&account, 8).await?,
+        "previous multisig version should remain after rollback");
+    assert_last_multisig(&storage, &account, 8, 3).await?;
+    assert_multisig_at_maximum(&storage, &account, 100, Some(8)).await?;
+
+    Ok(())
+}
+
+pub async fn test_multisig_delete_versioned_above_topoheight<S: Storage>(mut storage: S) -> Result<()> {
+    let account = KeyPair::new().get_public_key().compress();
+    seed_multisig_versions(&mut storage, &account).await?;
+
+    storage.delete_versioned_data_above_topoheight(8).await
+        .context("Failed to delete versioned multisig above topoheight 8")?;
+
+    assert!(!storage.has_multisig_at_exact_topoheight(&account, 12).await?,
+        "multisig version above cutoff should be removed");
+    assert!(storage.has_multisig_at_exact_topoheight(&account, 8).await?,
+        "cutoff multisig version should remain");
+    assert_last_multisig(&storage, &account, 8, 3).await?;
+    assert_multisig_at_maximum(&storage, &account, 100, Some(8)).await?;
+    assert_multisig_at_maximum(&storage, &account, 3, Some(1)).await?;
+
+    Ok(())
+}
+
+pub async fn test_multisig_delete_versioned_below_topoheight<S: Storage>(mut storage: S) -> Result<()> {
+    let account = KeyPair::new().get_public_key().compress();
+    seed_multisig_versions(&mut storage, &account).await?;
+
+    storage.delete_versioned_data_below_topoheight(8, true).await
+        .context("Failed to delete versioned multisig below topoheight 8")?;
+
+    assert!(!storage.has_multisig_at_exact_topoheight(&account, 1).await?,
+        "old multisig version below cutoff should be removed");
+    assert!(!storage.has_multisig_at_exact_topoheight(&account, 4).await?,
+        "old multisig version below cutoff should be removed");
+    assert!(storage.has_multisig_at_exact_topoheight(&account, 8).await?,
+        "last kept multisig version below the current pointer should remain");
+    assert!(storage.has_multisig_at_exact_topoheight(&account, 12).await?,
+        "latest multisig version should remain");
+
+    let version_at_8 = storage.get_multisig_at_topoheight_for(&account, 8).await?;
+    assert_eq!(version_at_8.get_previous_topoheight(), None,
+        "kept multisig version should be patched as the beginning of the chain");
+
+    let version_at_12 = storage.get_multisig_at_topoheight_for(&account, 12).await?;
+    assert_eq!(version_at_12.get_previous_topoheight(), Some(8),
+        "latest multisig version should still point to the kept version");
+
+    assert_last_multisig(&storage, &account, 12, 1).await?;
+    assert_multisig_at_maximum(&storage, &account, 7, None).await?;
+    assert_multisig_at_maximum(&storage, &account, 8, Some(8)).await?;
+    assert_multisig_at_maximum(&storage, &account, 100, Some(12)).await?;
 
     Ok(())
 }

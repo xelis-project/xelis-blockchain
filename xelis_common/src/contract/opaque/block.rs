@@ -75,7 +75,9 @@ pub fn block_transactions_hashes(_: FnInstance, _: FnParams, _: &ModuleMetadata<
     let hashes = state.block.get_txs_hashes()
         .iter()
         .map(|hash| Primitive::Opaque(OpaqueWrapper::new(hash.clone())).into())
-        .collect();
+        .collect::<Vec<_>>();
+
+    context.increase_gas_usage(hashes.len() as u64 * 5)?;
 
     Ok(SysCallResult::Return(ValueCell::Object(hashes).into()))
 }
@@ -90,7 +92,9 @@ pub fn block_transactions(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, co
             inner: tx.clone(),
             hash: hash.clone()
         })).into())
-        .collect();
+        .collect::<Vec<_>>();
+
+    context.increase_gas_usage(txs.len() as u64 * 10)?;
 
     Ok(SysCallResult::Return(ValueCell::Object(txs).into()))
 }

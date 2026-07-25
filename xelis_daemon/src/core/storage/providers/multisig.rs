@@ -19,9 +19,6 @@ pub trait MultiSigProvider {
     // Retrieve a multisig setup for a given account
     async fn get_multisig_at_topoheight_for<'a>(&'a self, account: &PublicKey, topoheight: TopoHeight) -> Result<VersionedMultiSig<'a>, BlockchainError>;
 
-    // Delete the last topoheight for a given account
-    async fn delete_last_topoheight_for_multisig(&mut self, account: &PublicKey) -> Result<(), BlockchainError>;
-
     // Retrieve the multisig setup at the maximum topoheight for a given account
     async fn get_multisig_at_maximum_topoheight_for<'a>(&'a self, account: &PublicKey, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedMultiSig<'a>)>, BlockchainError>;
 

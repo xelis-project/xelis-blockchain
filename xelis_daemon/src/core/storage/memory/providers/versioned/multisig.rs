@@ -10,7 +10,7 @@ impl VersionedMultiSigProvider for MemoryStorage {
     async fn delete_versioned_multisigs_at_topoheight(&mut self, topoheight: TopoHeight) -> Result<(), BlockchainError> {
         self.accounts.values_mut()
             .for_each(|acc| {
-                acc.multisig.split_off(&topoheight);
+                acc.multisig.remove(&topoheight);
             });
         Ok(())
     }
@@ -23,9 +23,9 @@ impl VersionedMultiSigProvider for MemoryStorage {
         Ok(())
     }
 
-    async fn delete_versioned_multisigs_below_topoheight(&mut self, topoheight: TopoHeight, _keep_last: bool) -> Result<(), BlockchainError> {
+    async fn delete_versioned_multisigs_below_topoheight(&mut self, topoheight: TopoHeight, keep_last: bool) -> Result<(), BlockchainError> {
         self.accounts.values_mut()
-            .for_each(|acc| Self::delete_versioned_data_below_topoheight(&mut acc.multisig, topoheight, true));
+            .for_each(|acc| Self::delete_versioned_data_below_topoheight(&mut acc.multisig, topoheight, keep_last));
 
         Ok(())
     }

@@ -197,7 +197,10 @@ async fn main() -> Result<()> {
             Wallet::open(path, &password, config.network, precomputed_tables, config.n_decryption_threads, config.network_concurrency)?
         } else {
             info!("Creating a new wallet at {}", path);
-            Wallet::create(path, &password, config.seed.as_deref().map(RecoverOption::Seed), config.network, precomputed_tables, config.n_decryption_threads, config.network_concurrency).await?
+            let recover = config.seed
+                .as_deref()
+                .map_or(RecoverOption::None, RecoverOption::Seed);
+            Wallet::create(path, &password, recover, config.network, precomputed_tables, config.n_decryption_threads, config.network_concurrency).await?
         };
 
         command_manager.register_default_commands()?;
@@ -899,7 +902,7 @@ async fn create_wallet(manager: &CommandManager, _: ArgumentManager) -> Result<(
         let context = manager.get_context().lock()?;
         let network = context.get::<Network>()?;
         let precomputed_tables = precomputed_tables::read_or_generate_precomputed_tables(config.precomputed_tables.precomputed_tables_path.as_deref(), precomputed_tables::L1_FULL, LogProgressTableGenerationReportFunction, true).await?;
-        Wallet::create(&dir, &password, None, *network, precomputed_tables, config.n_decryption_threads, config.network_concurrency).await?
+        Wallet::create(&dir, &password, RecoverOption::None, *network, precomputed_tables, config.n_decryption_threads, config.network_concurrency).await?
     };
  
     manager.message("Wallet sucessfully created");
@@ -981,7 +984,7 @@ async fn recover_wallet(manager: &CommandManager, _: ArgumentManager, seed: bool
         } else {
             RecoverOption::PrivateKey(&content)
         };
-        Wallet::create(&dir, &password, Some(recover), *network, precomputed_tables, config.n_decryption_threads, config.network_concurrency).await?
+        Wallet::create(&dir, &password, recover, *network, precomputed_tables, config.n_decryption_threads, config.network_concurrency).await?
     };
 
     manager.message("Wallet sucessfully recovered");
@@ -2183,6 +2186,12 @@ async fn add_xswd_relayer(manager: &CommandManager, mut args: ArgumentManager) -
     let context = manager.get_context().lock()?;
     let wallet: &Arc<Wallet> = context.get()?;
 
+    if let Some(receiver) = wallet.init_xswd_relayer().await? {
+        let prompt = manager.get_prompt().clone();
+        spawn_task("xswd", xswd_handler(receiver, prompt));
+        manager.message("XSWD Server has been enabled");
+    }
+
     let app_data = if args.has_argument("app_data") {
         args.get_value("app_data")?.to_string_value()?
     } else {
@@ -2194,17 +2203,9 @@ async fn add_xswd_relayer(manager: &CommandManager, mut args: ArgumentManager) -
     let app_data = serde_json::from_str(&app_data)
         .context("Error while parsing app data as JSON")?;
 
-    match wallet.add_xswd_relayer_application(app_data).await {
-        Ok(receiver) => {
-            if let Some(receiver) = receiver {
-                let prompt = manager.get_prompt().clone();
-                spawn_task("xswd", xswd_handler(receiver, prompt));
-            }
-
-            manager.message("XSWD Server has been enabled");
-        },
-        Err(e) => manager.error(format!("Error while enabling XSWD Server: {}", e))
-    };
+    if let Err(e) = wallet.add_xswd_relayer_application(app_data).await {
+        manager.error(format!("Error while enabling XSWD Server: {}", e))
+    }
 
     Ok(())
 }

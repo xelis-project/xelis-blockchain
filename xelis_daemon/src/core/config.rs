@@ -94,9 +94,9 @@ fn default_mempool_tx_expiration_time() -> HumanDuration {
     HumanDuration::from(Duration::from_secs(24 * 3600))
 }
 
-// Default maximum mempool memory usage (800 MB).
+// Default maximum mempool memory usage (512 MiB).
 const fn default_mempool_max_memory_usage() -> u64 {
-    800 * 1000 * 1000
+    512 * 1024 * 1024
 }
 
 fn parse_human_bytes(value: &str) -> Result<u64, String> {
@@ -209,6 +209,10 @@ pub struct GetWorkConfig {
     #[clap(name = "disable-getwork-server", long)]
     #[serde(default)]
     pub disable: bool,
+    /// Disable heartbeat checks for GetWork miner websocket sessions.
+    #[clap(name = "disable-getwork-heartbeat", long)]
+    #[serde(default)]
+    pub disable_heartbeat: bool,
     /// Minimum delay, in milliseconds, between GetWork job notifications.
     ///
     /// New jobs can be produced quickly when the mempool changes. Use this to
@@ -230,6 +234,7 @@ impl Default for GetWorkConfig {
     fn default() -> Self {
         Self {
             disable: false,
+            disable_heartbeat: false,
             rate_limit_ms: default_getwork_rate_limit_ms(),
             notify_job_concurrency: detect_available_parallelism(),
         }
@@ -628,7 +633,7 @@ pub struct MempoolConfig {
     pub tx_expiration_time: HumanDuration,
     /// Maximum memory the mempool may use before evicting transactions.
     ///
-    /// Accepts raw bytes or human-readable values such as `800 MB` or `1.5 GiB`.
+    /// Accepts raw bytes or human-readable values such as `512 MiB` or `1.5 GiB`.
     #[clap(long = "mempool-max-memory-usage", value_parser = parse_human_bytes, default_value_t = default_mempool_max_memory_usage())]
     #[serde(
         default = "default_mempool_max_memory_usage",

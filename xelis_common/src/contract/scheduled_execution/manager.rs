@@ -30,20 +30,24 @@ impl<'a> ExecutionsManager<'a> {
     }
 
     pub fn get(&self, hash: &Hash) -> Result<&ScheduledExecution, EnvironmentError> {
-        if let Some(execution) = self.global_executions.get(hash) {
+        if let Some(execution) = self.changes.executions.get(hash) {
             Ok(execution)
         } else {
-            self.changes.executions.get(hash)
+            self.global_executions.get(hash)
                 .ok_or(EnvironmentError::Static("scheduled execution not found in cache"))
         }
     }
 
     pub fn get_mut(&mut self, hash: &Hash) -> Result<&mut ScheduledExecution, EnvironmentError> {
-        if let Some(execution) = self.changes.executions.get_mut(hash) {
-            Ok(execution)
-        } else {
-            Err(EnvironmentError::Static("scheduled execution not found in cache"))
+        if !self.changes.executions.contains_key(hash) {
+            let execution = self.global_executions.get(hash)
+                .cloned()
+                .ok_or(EnvironmentError::Static("scheduled execution not found in global cache"))?;
+            self.changes.executions.insert(execution.hash.clone(), execution);
         }
+
+        self.changes.executions.get_mut(hash)
+            .ok_or(EnvironmentError::Static("scheduled execution not found in cache"))
     }
 
     pub fn insert(&mut self, execution: ScheduledExecution) -> bool {
@@ -57,5 +61,36 @@ impl<'a> ExecutionsManager<'a> {
         };
 
         self.changes.executions.insert(execution.hash.clone(), execution).is_none()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn global_execution_is_copied_before_mutation() {
+        let hash = Arc::new(Hash::zero());
+        let execution = ScheduledExecution {
+            hash: hash.clone(),
+            contract: Hash::zero(),
+            chunk_id: 0,
+            params: Vec::new(),
+            max_gas: 10,
+            kind: ScheduledExecutionKind::BlockEnd,
+            gas_sources: Default::default(),
+        };
+        let global_executions = [(hash.clone(), execution)].into_iter().collect();
+        let mut manager = ExecutionsManager {
+            allow_executions: true,
+            global_executions: &global_executions,
+            changes: Default::default(),
+        };
+
+        manager.get_mut(hash.as_ref()).unwrap().max_gas = 20;
+
+        assert_eq!(global_executions.get(hash.as_ref()).unwrap().max_gas, 10);
+        assert_eq!(manager.get(hash.as_ref()).unwrap().max_gas, 20);
+        assert_eq!(manager.changes.executions.get(hash.as_ref()).unwrap().max_gas, 20);
     }
 }

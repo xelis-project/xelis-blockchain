@@ -14,11 +14,13 @@ use indexmap::IndexMap;
 use xelis_vm::{ModuleMetadata, Reference, VM, VMError, ValueCell};
 
 use crate::{
+    block::BlockVersion,
     config::{TX_GAS_BURN_PERCENT, XELIS_ASSET, CONTRACT_MAX_PAYLOAD_SIZE, CONTRACT_PAYLOAD_FEE_PER_BYTE},
     contract::{
         ChainState,
         ContractCache,
         ContractLog,
+        ContractLogs,
         ContractMetadata,
         ContractProvider,
         ContractVersion,
@@ -98,6 +100,8 @@ pub enum ContractError {
     ContractCache,
     #[error("gas balance not found for contract")]
     GasBalance,
+    #[error("invalid gas funding sources")]
+    InvalidGasSources,
     #[error("Deposit decompressed not found")]
     DepositNotFound,
 }
@@ -305,6 +309,11 @@ pub async fn invoke_contract<'a, 'ty, P: for<'x> ContractProvider<'x>, E, B: Blo
     // Deposits are actually added to each balance
     let (contract_environment, mut chain_state) = state.get_contract_environment_for(contract.clone(), deposits.map(|(d, _)| d), caller.clone(), permission).await
         .map_err(ContractStateError::State)?;
+    let block_version = chain_state.block_version;
+
+    if block_version >= BlockVersion::V7 {
+        validate_delayed_gas_sources(&caller, contract.as_ref(), &gas_sources, max_gas)?;
+    }
 
     // Total used gas by the VM
     let (mut used_gas, vm_max_gas, exit_value) = run_virtual_machine(
@@ -324,6 +333,19 @@ pub async fn invoke_contract<'a, 'ty, P: for<'x> ContractProvider<'x>, E, B: Blo
 
     let gas_injections = chain_state.injected_gas;
     let modules = chain_state.loaded_modules;
+
+    if block_version >= BlockVersion::V7 {
+        let injected_gas = sum_gas_sources(&gas_injections)?;
+        let injected_limit = vm_max_gas.checked_sub(max_gas)
+            .ok_or(ContractError::GasOverflow)?;
+        let valid_sources = gas_injections.iter().all(|(source, gas)| {
+            *gas > 0 && matches!(source, Source::Contract(_))
+        });
+
+        if injected_gas != injected_limit || !valid_sources {
+            return Err(ContractError::InvalidGasSources.into());
+        }
+    }
 
     // On success: it is well allocated to either burned coins or scheduled execution
     // On failure: it is included in the gas refund
@@ -362,8 +384,17 @@ pub async fn invoke_contract<'a, 'ty, P: for<'x> ContractProvider<'x>, E, B: Blo
 
         // Some contract have injected gas to users
         if vm_max_gas > max_gas && !gas_injections.is_empty() {
+            let injection_refund_gas_usage = if block_version >= BlockVersion::V7 {
+                // Successful gas allowances are future liabilities. Starting at V7,
+                // count them when deciding how much injected gas remains refundable,
+                // while keeping them excluded from the gas charged as execution fees.
+                refund_gas_usage
+            } else {
+                used_gas
+            };
+
             // Refund only based on the extra max gas
-            refund_extra_gas_injections(state, gas_injections, max_gas, used_gas, vm_max_gas, &mut logs, &mut changes.caches).await?;
+            refund_extra_gas_injections(state, gas_injections, max_gas, injection_refund_gas_usage, vm_max_gas, &mut logs, &mut changes.caches).await?;
         }
 
         state.merge_contract_changes(
@@ -481,6 +512,54 @@ fn sum_gas_sources(gas_sources: &IndexMap<Source, u64>) -> Result<u64, ContractE
         .ok_or(ContractError::GasOverflow)
 }
 
+fn validate_delayed_gas_sources(
+    caller: &ContractCaller<'_>,
+    contract: &Hash,
+    gas_sources: &IndexMap<Source, u64>,
+    max_gas: u64,
+) -> Result<(), ContractError> {
+    match caller {
+        ContractCaller::Scheduled(_, scheduled_contract) => {
+            if scheduled_contract.as_ref() != contract
+                || gas_sources.is_empty()
+                || sum_gas_sources(gas_sources)? != max_gas
+                || gas_sources.iter().any(|(source, gas)| {
+                    *gas == 0 || match source {
+                        Source::Contract(source_contract) => source_contract != contract,
+                        Source::AccountBalance(_) => false,
+                        Source::Account(_) | Source::ContractBalance(_) => true,
+                    }
+                })
+            {
+                return Err(ContractError::InvalidGasSources);
+            }
+        },
+        ContractCaller::EventCallback(_, _) => {
+            if gas_sources.len() != 1
+                || sum_gas_sources(gas_sources)? != max_gas
+                || gas_sources.iter().any(|(source, gas)| {
+                    *gas == 0 || match source {
+                        Source::ContractBalance(source_contract) => source_contract != contract,
+                        Source::AccountBalance(_) => false,
+                        Source::Contract(_) | Source::Account(_) => true,
+                    }
+                })
+            {
+                return Err(ContractError::InvalidGasSources);
+            }
+        },
+        ContractCaller::Transaction(_, _)
+        | ContractCaller::System
+        | ContractCaller::Impersonate(_) => {
+            if !gas_sources.is_empty() {
+                return Err(ContractError::InvalidGasSources);
+            }
+        }
+    }
+
+    Ok(())
+}
+
 // We need to refund the unused scheduled gas sources.
 // The provided max gas must equal the sum of all sources.
 pub async fn refund_gas_sources<'a, 'ty, P: for<'x> ContractProvider<'x>, E, B: BlockchainApplyState<'a, 'ty, P, E>>(
@@ -542,14 +621,14 @@ pub async fn refund_gas_sources<'a, 'ty, P: for<'x> ContractProvider<'x>, E, B: 
         }
 
         match source {
-            Source::Contract(contract) => {
+            Source::Contract(contract) | Source::ContractBalance(contract) => {
                 let (_, balance) = state.get_contract_balance_for_gas(contract).await
                     .map_err(ContractStateError::State)?;
 
                 balance.checked_add(*refund_amount)
                     .ok_or(ContractError::BalanceOverflow)?;
             },
-            Source::Account(account) => {
+            Source::Account(account) | Source::AccountBalance(account) => {
                 state.get_receiver_balance(Cow::Owned(account.clone()), Cow::Owned(XELIS_ASSET)).await
                     .map_err(ContractStateError::State)?;
             }
@@ -562,7 +641,7 @@ pub async fn refund_gas_sources<'a, 'ty, P: for<'x> ContractProvider<'x>, E, B: 
         }
 
         match source {
-            Source::Contract(contract) => {
+            Source::Contract(contract) | Source::ContractBalance(contract) => {
                 let (versioned_state, balance) = state.get_contract_balance_for_gas(&contract).await
                     .map_err(ContractStateError::State)?;
 
@@ -572,7 +651,7 @@ pub async fn refund_gas_sources<'a, 'ty, P: for<'x> ContractProvider<'x>, E, B: 
                     .ok_or(ContractError::BalanceOverflow)?;
                 debug!("Refund {} XEL to contract {} for gas fee", refund_amount, contract);
             },
-            Source::Account(account) => {
+            Source::Account(account) | Source::AccountBalance(account) => {
                 debug!("Refund {} XEL to account {} for gas fee", refund_amount, account.as_address(state.is_mainnet()));
                 let balance = state.get_receiver_balance(Cow::Owned(account), Cow::Owned(XELIS_ASSET)).await
                     .map_err(ContractStateError::State)?;
@@ -593,7 +672,7 @@ pub async fn refund_extra_gas_injections<'a, 'ty, P: for<'x> ContractProvider<'x
     max_gas: u64,
     used_gas: u64,
     vm_max_gas: u64,
-    outputs: &mut Vec<ContractLog>,
+    outputs: &mut ContractLogs,
     caches: &mut HashMap<Hash, ContractCache>,
 ) -> Result<(), ContractStateError<E>> {
     let gas_paid_by_invoke = max_gas.max(used_gas);
@@ -621,7 +700,7 @@ pub async fn refund_extra_gas_injections<'a, 'ty, P: for<'x> ContractProvider<'x
         }
 
         match source {
-            Source::Contract(contract) => {
+            Source::Contract(contract) | Source::ContractBalance(contract) => {
                 let cache = caches.get(contract)
                     .ok_or(ContractError::ContractCache)?;
 
@@ -633,7 +712,7 @@ pub async fn refund_extra_gas_injections<'a, 'ty, P: for<'x> ContractProvider<'x
                 balance.checked_add(*refund)
                     .ok_or(ContractError::BalanceOverflow)?;
             },
-            Source::Account(account) => {
+            Source::Account(account) | Source::AccountBalance(account) => {
                 state.get_receiver_balance(Cow::Owned(account.clone()), Cow::Owned(XELIS_ASSET)).await
                     .map_err(ContractStateError::State)?;
             }
@@ -642,7 +721,7 @@ pub async fn refund_extra_gas_injections<'a, 'ty, P: for<'x> ContractProvider<'x
 
     for (source, refund, consumed) in refunds {
         match source {
-            Source::Contract(contract) => {
+            Source::Contract(contract) | Source::ContractBalance(contract) => {
                 if refund > 0 {
                     let cache = caches.get_mut(&contract)
                         .ok_or(ContractError::ContractCache)?;
@@ -664,7 +743,7 @@ pub async fn refund_extra_gas_injections<'a, 'ty, P: for<'x> ContractProvider<'x
                     outputs.push(ContractLog::GasInjection { contract, amount: consumed });
                 }
             },
-            Source::Account(account) => {
+            Source::Account(account) | Source::AccountBalance(account) => {
                 if refund > 0 {
                     debug!("Refund {} XEL to account {} for gas fee", refund, account.as_address(state.is_mainnet()));
 
@@ -686,7 +765,7 @@ pub async fn charge_gas_injections<'a, 'ty, P: for<'x> ContractProvider<'x>, E, 
     state: &mut B,
     gas_injections: IndexMap<Source, u64>,
     mut extra_used_gas: u64,
-    outputs: &mut Vec<ContractLog>,
+    outputs: &mut ContractLogs,
 ) -> Result<(), ContractStateError<E>> {
     let mut charges = Vec::new();
 
@@ -706,7 +785,7 @@ pub async fn charge_gas_injections<'a, 'ty, P: for<'x> ContractProvider<'x>, E, 
 
         // Consume the used gas from the source balance
         match source {
-            Source::Contract(contract) => {
+            Source::Contract(contract) | Source::ContractBalance(contract) => {
                 let (_, balance) = state.get_contract_balance_for_gas(&contract).await
                     .map_err(ContractStateError::State)?;
 
@@ -715,7 +794,7 @@ pub async fn charge_gas_injections<'a, 'ty, P: for<'x> ContractProvider<'x>, E, 
 
                 charges.push((contract, consumed));
             },
-            Source::Account(account) => {
+            Source::Account(account) | Source::AccountBalance(account) => {
                 // Nothing to do, because it was taken from the gas usage directly
                 warn!("Consume gas injection of {} from account {}, this is not possible in current protocol", gas, account.as_address(state.is_mainnet()));
                 return Err(ContractError::GasOverflow.into());

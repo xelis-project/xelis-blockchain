@@ -21,6 +21,7 @@ use xelis_vm::{
 
 use crate::{
     config::FEE_PER_STORE_CONTRACT,
+    block::BlockVersion,
     contract::{
         ChainState,
         ContractMetadata,
@@ -182,7 +183,7 @@ impl<'ctx, 'ty, P: ContractProvider<'ty>> TreeContext<'ctx, 'ty, P> {
 
     #[inline]
     fn cached_value<'a>(&'a mut self, key: &ValueCell) -> Option<&'a ValueCell> {
-        let cache = get_cache_for_contract(&mut self.state.changes.caches, self.state.global_caches, self.contract.clone(), self.state.cache_clone_refs);
+        let cache = get_cache_for_contract(&mut self.state.changes.caches, self.state.global_caches, self.contract.clone(), self.state.block_version < BlockVersion::V6);
         cache
             .storage
             .get(key)
@@ -193,13 +194,13 @@ impl<'ctx, 'ty, P: ContractProvider<'ty>> TreeContext<'ctx, 'ty, P> {
     /// regardless of whether it is a valid value or a tombstone (deleted).
     #[inline]
     fn cache_has_entry(&mut self, key: &ValueCell) -> bool {
-        let cache = get_cache_for_contract(&mut self.state.changes.caches, self.state.global_caches, self.contract.clone(), self.state.cache_clone_refs);
+        let cache = get_cache_for_contract(&mut self.state.changes.caches, self.state.global_caches, self.contract.clone(), self.state.block_version < BlockVersion::V6);
         cache.storage.contains_key(key)
     }
 
     #[inline]
     fn cache_insert_entry(&mut self, key: ValueCell, entry: Option<(VersionedState, Option<ValueCell>)>) {
-        let cache = get_cache_for_contract(&mut self.state.changes.caches, self.state.global_caches, self.contract.clone(), self.state.cache_clone_refs);
+        let cache = get_cache_for_contract(&mut self.state.changes.caches, self.state.global_caches, self.contract.clone(), self.state.block_version < BlockVersion::V6);
         cache.storage.insert(key, entry);
     }
 }
@@ -1162,7 +1163,7 @@ async fn write_storage_value<'ty, P: ContractProvider<'ty>>(
     let size = data_size_in_bytes(&key) + value.as_ref().map_or(0, |v| data_size_in_bytes(v));
     ctx.charge_write(size)?;
 
-    let cache = get_cache_for_contract(&mut ctx.state.changes.caches, ctx.state.global_caches, ctx.contract.clone(), ctx.state.cache_clone_refs);
+    let cache = get_cache_for_contract(&mut ctx.state.changes.caches, ctx.state.global_caches, ctx.contract.clone(), ctx.state.block_version < BlockVersion::V6);
     Ok(match cache.storage.entry(key.clone_ref()) {
         Entry::Occupied(mut occ) => {
             let slot = occ.get_mut();

@@ -90,7 +90,8 @@ impl<S: Storage> DaemonRpcServer<S> {
                 GetWorkServer::new(
                     blockchain.clone(),
                     config.getwork.rate_limit_ms,
-                    config.getwork.notify_job_concurrency
+                    config.getwork.notify_job_concurrency,
+                    !config.getwork.disable_heartbeat
                 ),
                 config.max_websocket_sessions,
                 config.websocket_session_channel_size,

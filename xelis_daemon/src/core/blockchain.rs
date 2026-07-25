@@ -102,7 +102,7 @@ use crate::{
         config::BlockchainConfig,
         blockdag,
         difficulty,
-        error::BlockchainError,
+        error::{BlockchainError, DiskContext},
         mempool::Mempool,
         nonce_checker::NonceChecker,
         simulator::Simulator,
@@ -1590,8 +1590,15 @@ impl<S: Storage> Blockchain<S> {
             // This is required in order to include the next TXs
             // We will compute the exact expected balances/nonces after the orphaned TXs
             if !self.skip_block_template_txs_verification && is_v3_enabled {
+                let is_v6_enabled = block.get_version() >= BlockVersion::V6;
                 for hash in processed_txs.iter() {
-                    if storage.is_tx_executed_in_a_block(&hash).await? {
+                    let is_executed = if is_v6_enabled {
+                        blockdag::is_tx_executed_for_topoheight(&*storage, hash, nearest_base_topoheight).await?
+                    } else {
+                        storage.is_tx_executed_in_a_block(hash).await?
+                    };
+
+                    if is_executed {
                         // If the TX is executed in a block, we can skip it
                         debug!("Skipping TX {} because it is already executed in a block", hash);
                         continue;
@@ -1625,7 +1632,7 @@ impl<S: Storage> Blockchain<S> {
                 let source = tx.get_source();
                 // TODO: rework priority based on fee limit per kb
                 if fee_per_kb < base_fee && fee_limit_per_kb < base_fee {
-                    debug!("Skipping TX {} because it has a lower fee per kb ({}, limit {}) than required base fee ({})", hash, format_xelis(fee_per_kb), format_xelis(fee_limit_per_kb), format_xelis(base_fee));
+                    warn!("Skipping TX {} because it has a lower fee per kb ({}, limit {}) than required base fee ({})", hash, format_xelis(fee_per_kb), format_xelis(fee_limit_per_kb), format_xelis(base_fee));
 
                     // Source is marked as failed because if we can't select
                     // the first TX with a lower fee, we can't select any
@@ -1635,7 +1642,7 @@ impl<S: Storage> Blockchain<S> {
                 }
 
                 if failed_sources.contains(source) {
-                    debug!("Skipping TX {} because its source has failed before", hash);
+                    warn!("Skipping TX {} because its source has failed before", hash);
                     continue;
                 }
 
@@ -2181,7 +2188,9 @@ impl<S: Storage> Blockchain<S> {
                 };
 
                 if is_executed {
-                    let block_executor = storage.get_block_executor_for_tx(hash).await?;
+                    let block_executor = storage.get_block_executor_for_tx(hash).await?
+                        .ok_or(BlockchainError::NotFoundOnDisk(DiskContext::BlockExecutorForTx))?;
+
                     debug!("Tx {} was executed in {}", hash, block_executor);
                     let block_executor_height = storage.get_height_for_block_hash(&block_executor).await?;
                     // if the tx was executed below stable height, reject whole block!
@@ -3187,7 +3196,7 @@ impl<S: Storage> Blockchain<S> {
     // for this we get all tips and recursively retrieve all txs from tips until we reach height
     async fn get_all_txs_until_height<P>(&self, provider: &P, until_height: u64, tips: impl Iterator<Item = Hash>, txs_executed_only: bool, blocks_orphaned_only: bool) -> Result<LinkedHashSet<Hash>, BlockchainError>
     where
-        P: DifficultyProvider + ClientProtocolProvider + DagOrderProvider
+        P: DifficultyProvider + ClientProtocolProvider + DagOrderProvider + Sync
     {
         trace!("get all txs until height {}", until_height);
         // All transactions hashes found under the stable height

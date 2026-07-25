@@ -237,8 +237,8 @@ pub enum EntryData {
         contract: Hash,
         // Deposits made
         deposits: IndexMap<Hash, u64>,
-        // Any transfers received from the call
-        received: IndexMap<Hash, u64>,
+        // Transfers received from each contract, grouped by asset
+        received: IndexMap<Hash, IndexMap<Hash, u64>>,
         // Entry id invoked
         entry_id: u16,
         // Fee paid
@@ -257,8 +257,8 @@ pub enum EntryData {
         invoke: Option<DeployInvoke>
     },
     IncomingContract {
-        // Transfers received from the contract
-        transfers: IndexMap<Hash, u64>,
+        // Transfers received from each contract, grouped by asset
+        transfers: IndexMap<Hash, IndexMap<Hash, u64>>,
     },
     OutgoingBlob {
         destinations: IndexSet<PublicKey>,
@@ -310,7 +310,6 @@ impl EntryData {
                 RPCEntryType::DeployContract { fee, nonce, invoke: invoke.map(Cow::Owned) }
             },
             EntryData::IncomingContract { transfers } => {
-                let transfers = transfers.into_iter().map(|(asset, amount)| (asset, amount)).collect();
                 RPCEntryType::IncomingContract { transfers: Cow::Owned(transfers) }
             },
             EntryData::OutgoingBlob { destinations, fee, nonce, data } => {
@@ -388,12 +387,18 @@ impl Serializer for EntryData {
                     deposits.insert(asset, amount);
                 }
 
-                let received_size = reader.read_u16()? as usize;
+                let received_contracts_size = reader.read_u16()? as usize;
                 let mut received = IndexMap::new();
-                for _ in 0..received_size {
-                    let asset = reader.read_hash()?;
-                    let amount = reader.read_u64()?;
-                    received.insert(asset, amount);
+                for _ in 0..received_contracts_size {
+                    let contract = reader.read_hash()?;
+                    let assets_size = reader.read_u16()? as usize;
+                    let mut assets = IndexMap::new();
+                    for _ in 0..assets_size {
+                        let asset = reader.read_hash()?;
+                        let amount = reader.read_u64()?;
+                        assets.insert(asset, amount);
+                    }
+                    received.insert(contract, assets);
                 }
 
                 let fee = reader.read_u64()?;
@@ -408,12 +413,18 @@ impl Serializer for EntryData {
                 Self::DeployContract { fee, nonce, invoke }
             }
             7 => {
-                let transfers_size = reader.read_u16()? as usize;
+                let contracts_size = reader.read_u16()? as usize;
                 let mut transfers = IndexMap::new();
-                for _ in 0..transfers_size {
-                    let asset = reader.read_hash()?;
-                    let amount = reader.read_u64()?;
-                    transfers.insert(asset, amount);
+                for _ in 0..contracts_size {
+                    let contract = reader.read_hash()?;
+                    let assets_size = reader.read_u16()? as usize;
+                    let mut assets = IndexMap::new();
+                    for _ in 0..assets_size {
+                        let asset = reader.read_hash()?;
+                        let amount = reader.read_u64()?;
+                        assets.insert(asset, amount);
+                    }
+                    transfers.insert(contract, assets);
                 }
                 Self::IncomingContract { transfers }
             }
@@ -505,9 +516,13 @@ impl Serializer for EntryData {
                 }
 
                 writer.write_u16(received.len() as u16);
-                for (asset, amount) in received {
-                    asset.write(writer);
-                    amount.write(writer);
+                for (contract, assets) in received {
+                    contract.write(writer);
+                    writer.write_u16(assets.len() as u16);
+                    for (asset, amount) in assets {
+                        asset.write(writer);
+                        amount.write(writer);
+                    }
                 }
 
                 fee.write(writer);
@@ -523,9 +538,13 @@ impl Serializer for EntryData {
             Self::IncomingContract { transfers } => {
                 writer.write_u8(7);
                 writer.write_u16(transfers.len() as u16);
-                for (asset, amount) in transfers {
-                    asset.write(writer);
-                    amount.write(writer);
+                for (contract, assets) in transfers {
+                    contract.write(writer);
+                    writer.write_u16(assets.len() as u16);
+                    for (asset, amount) in assets {
+                        asset.write(writer);
+                        amount.write(writer);
+                    }
                 }
             },
             Self::IncomingBlob { from, destinations, data } => {
@@ -569,7 +588,7 @@ impl Serializer for EntryData {
                     .map(|(a, b)| a.size() + b.size())
                     .sum::<usize>()
                 + 2 + received.iter()
-                    .map(|(a, b)| a.size() + b.size())
+                    .map(|(contract, assets)| contract.size() + 2 + assets.iter().map(|(a, b)| a.size() + b.size()).sum::<usize>())
                     .sum::<usize>()
                 + chunk_id.size()
                 + fee.size()
@@ -580,7 +599,9 @@ impl Serializer for EntryData {
                 fee.size() + nonce.size() + invoke.size()
             },
             Self::IncomingContract { transfers } => {
-                2 + transfers.iter().map(|(a, b)| a.size() + b.size()).sum::<usize>()
+                2 + transfers.iter().map(|(contract, assets)| {
+                    contract.size() + 2 + assets.iter().map(|(asset, amount)| asset.size() + amount.size()).sum::<usize>()
+                }).sum::<usize>()
             },
             Self::OutgoingBlob { destinations, fee, nonce, data } => {
                 1
@@ -737,14 +758,29 @@ impl TransactionEntry {
             EntryData::InvokeContract { contract, deposits, received, entry_id: chunk_id, fee, max_gas, nonce } => {
                 let mut str = format!("Fee: {}, Nonce: {} ", format_xelis(*fee), nonce);
                 str.push_str(&format!("Invoke contract {} with chunk id {} (max gas: {})", contract, chunk_id, format_xelis(*max_gas)));
+                if !deposits.is_empty() {
+                    str.push_str(" ");
+                }
+
                 for (asset, amount) in deposits {
                     let data = storage.get_asset(&asset).await?;
                     str.push_str(&format!("Deposit {} {} ({}) to contract", format_coin(*amount, data.get_decimals()), data.get_name(), asset));
                 }
 
-                for (asset, amount) in received {
+                let mut totals = IndexMap::<Hash, u64>::new();
+                for assets in received.values() {
+                    for (asset, amount) in assets {
+                        *totals.entry(asset.clone()).or_insert(0) += amount;
+                    }
+                }
+
+                if !totals.is_empty() {
+                    str.push_str(" ");
+                }
+
+                for (asset, amount) in totals {
                     let data = storage.get_asset(&asset).await?;
-                    str.push_str(&format!("Received {} {} ({}) from contract", format_coin(*amount, data.get_decimals()), data.get_name(), asset));
+                    str.push_str(&format!("Received {} {} ({}) from contract", format_coin(amount, data.get_decimals()), data.get_name(), asset));
                 }
 
                 str
@@ -770,10 +806,17 @@ impl TransactionEntry {
                 format!("Fee: {}, Nonce: {} Deploy contract{}", format_xelis(*fee), nonce, invoke)
             },
             EntryData::IncomingContract { transfers } => {
-                let mut str = format!("Incoming from contract:");
-                for (asset, amount) in transfers {
+                let mut str = format!("Incoming from contract: ");
+                let mut totals = IndexMap::<Hash, u64>::new();
+                for assets in transfers.values() {
+                    for (asset, amount) in assets {
+                        *totals.entry(asset.clone()).or_insert(0) += amount;
+                    }
+                }
+
+                for (asset, amount) in totals {
                     let data = storage.get_asset(&asset).await?;
-                    str.push_str(&format!("Received {} {} ({}) ", format_coin(*amount, data.get_decimals()), data.get_name(), asset));
+                    str.push_str(&format!("Received {} {} ({}) ", format_coin(amount, data.get_decimals()), data.get_name(), asset));
                 }
                 str
             },

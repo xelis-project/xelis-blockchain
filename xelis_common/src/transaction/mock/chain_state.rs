@@ -29,7 +29,7 @@ use crate::{
         ContractCache,
         ContractEnvironments,
         ContractEventTracker,
-        ContractLog,
+        ContractLogs,
         ContractMetadata,
         ContractModule,
         ContractVersion,
@@ -73,7 +73,7 @@ pub struct MockChainState {
     pub accounts: HashMap<PublicKey, MockAccount>,
     pub multisig: HashMap<PublicKey, MultiSigPayload>,
     pub contracts: HashMap<Cow<'static, Hash>, Option<(VersionedState, Option<Cow<'static, ContractModule>>)>>,
-    pub contract_logs: HashMap<Hash, Vec<ContractLog>>,
+    pub contract_logs: HashMap<Hash, ContractLogs>,
     pub burned_coins: HashMap<Hash, u64>,
     pub gas_fee: u64,
     pub burned_fee: u64,
@@ -391,12 +391,12 @@ impl<'a, 'ty> BlockchainContractState<'a, 'ty, MockStorageProvider, anyhow::Erro
     async fn set_contract_logs(
         &mut self,
         caller: ContractCaller<'a>,
-        logs: Vec<ContractLog>,
+        logs: ContractLogs,
     ) -> Result<(), anyhow::Error> {
         let hash = caller.get_hash().into_owned();
         match self.contract_logs.entry(hash) {
             Entry::Occupied(mut o) => {
-                o.get_mut().extend(logs);
+                o.get_mut().extend(logs.into_iter());
             }
             Entry::Vacant(e) => {
                 e.insert(logs);
@@ -458,8 +458,9 @@ impl<'a, 'ty> BlockchainContractState<'a, 'ty, MockStorageProvider, anyhow::Erro
             topoheight: 1,
             block_hash: &self.block_hash,
             block: &self.block,
+            block_version: self.block.get_version(),
             caller,
-            logs: Vec::new(),
+            logs: ContractLogs::default(),
             global_caches: &self.contract_caches,
             global_modules: &self.contracts,
             injected_gas: IndexMap::new(),
@@ -477,7 +478,6 @@ impl<'a, 'ty> BlockchainContractState<'a, 'ty, MockStorageProvider, anyhow::Erro
             gas_fee_allowance: 0,
             environments: Cow::Owned(HashMap::new()),
             loaded_modules: Default::default(),
-            cache_clone_refs: self.block.get_version() < BlockVersion::V6,
         };
 
         Ok((environment, chain_state))

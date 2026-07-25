@@ -4914,7 +4914,7 @@ dependencies = [
 
 [[package]]
 name = "xelis_common"
-version = "1.23.0"
+version = "1.24.0"
 dependencies = [
  "actix-rt",
  "actix-web",
@@ -4978,7 +4978,7 @@ dependencies = [
 
 [[package]]
 name = "xelis_daemon"
-version = "1.23.0"
+version = "1.24.0"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -5022,7 +5022,7 @@ dependencies = [
 
 [[package]]
 name = "xelis_miner"
-version = "1.23.0"
+version = "1.24.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -5039,7 +5039,7 @@ dependencies = [
 
 [[package]]
 name = "xelis_wallet"
-version = "1.23.0"
+version = "1.24.0"
 dependencies = [
  "actix-web",
  "actix-web-httpauth",
@@ -5058,7 +5058,6 @@ dependencies = [
  "hex",
  "indexmap 2.14.0",
  "itertools 0.14.0",
- "lazy_static",
  "linked-hash-table",
  "log",
  "lru",

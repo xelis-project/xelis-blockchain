@@ -1,8 +1,9 @@
 use std::{borrow::Cow, collections::HashMap, sync::Arc, time::Duration};
 use std::sync::atomic::{AtomicBool, Ordering};
+use anyhow::Context;
 
 use futures::{SinkExt, StreamExt};
-use log::{error, debug};
+use log::{debug, error};
 use serde_json::json;
 use tokio_tungstenite_wasm::{
     WebSocketStream,
@@ -16,7 +17,7 @@ use xelis_common::{
         select,
         spawn_task,
         time::sleep,
-        sync::{RwLock, mpsc},
+        sync::{Mutex, mpsc},
         task
     }
 };
@@ -31,23 +32,33 @@ use crate::api::{
     XSWDResponse,
 };
 
-enum InternalMessage {
-    Send(String),
-    Close,
-}
-
 pub struct ClientImpl {
     target: String,
-    sender: mpsc::Sender<InternalMessage>,
-    events: RwLock<HashMap<NotifyEvent, task::JoinHandle<()>>>,
+    sender: Mutex<Option<mpsc::Sender<String>>>,
+    events: Mutex<HashMap<NotifyEvent, task::JoinHandle<()>>>,
     connected: AtomicBool,
     auto_reconnect: bool,
+    task_handle: Mutex<Option<task::JoinHandle<()>>>
 }
 
 pub type Client = Arc<ClientImpl>;
 
 impl ClientImpl {
-    pub async fn new<W>(target: String, relayer: XSWDRelayerShared<W>, encryption_mode: Option<EncryptionMode>, state: AppStateShared, auto_reconnect: bool) -> Result<Client, anyhow::Error>
+    async fn clear_event_listeners(&self) {
+        let mut events = self.events.lock().await;
+        for (_, handle) in events.drain() {
+            handle.abort();
+        }
+    }
+
+    pub async fn new<W>(
+        target: String,
+        relayer: XSWDRelayerShared<W>,
+        encryption_mode: Option<EncryptionMode>,
+        state: AppStateShared,
+        registration: String,
+        auto_reconnect: bool,
+    ) -> Result<Client, anyhow::Error>
     where
         W: ShareableTid<'static> + XSWDHandler
     {
@@ -59,52 +70,61 @@ impl ClientImpl {
 
         let client = Arc::new(Self {
             target,
-            sender,
-            events: RwLock::new(HashMap::new()),
+            sender: Mutex::new(Some(sender)),
+            events: Mutex::new(HashMap::new()),
             connected: AtomicBool::new(true),
             auto_reconnect,
+            task_handle: Mutex::new(None),
         });
 
-        {
+        let task = {
             let client = client.clone();
             spawn_task(format!("xswd-relayer-{}", state.get_id()), async move {
                 loop {
-                    match Self::background_task(&client, ws, &state, &relayer, &mut receiver, &mut cipher).await {
-                        Ok(()) => {
-                            client.connected.store(false, Ordering::SeqCst);
-                            break;
+                    if let Err(e) = Self::background_task(&client, ws, &state, &relayer, &mut receiver, &mut cipher).await {
+                        debug!("Error on xswd relayer #{}: {:#}", state.get_id(), e);
+                    }
+
+                    client.connected.store(false, Ordering::SeqCst);
+                    // A closed sender means ClientImpl::close() requested shutdown.
+                    if client.sender.lock().await.is_none() || !client.auto_reconnect {
+                        break;
+                    }
+
+                    debug!("Reconnecting to xswd relayer in 5 seconds #{}...", state.get_id());
+                    sleep(Duration::from_secs(5)).await;
+
+                    match connect(&client.target).await {
+                        Ok(new_ws) => {
+                            ws = new_ws;
+                            let output = match cipher.encrypt(registration.as_bytes()) {
+                                Ok(output) => output.into_owned(),
+                                Err(e) => {
+                                    error!("Failed to encrypt XSWD relayer registration: {}", e);
+                                    break;
+                                }
+                            };
+                            if let Err(e) = ws.send(Message::Binary(output.into())).await {
+                                error!("Failed to send XSWD relayer registration: {}", e);
+                                break;
+                            }
+                            client.connected.store(true, Ordering::SeqCst);
+                            debug!("Reconnected to xswd relayer #{}", state.get_id());
                         },
                         Err(e) => {
-                            client.connected.store(false, Ordering::SeqCst);
-                            debug!("Error on xswd relayer #{}: {}", state.get_id(), e);
-
-                            if client.auto_reconnect {
-                                debug!("Reconnecting to xswd relayer in 5 seconds #{}...", state.get_id());
-                                sleep(Duration::from_secs(5)).await;
-
-                                match connect(&client.target).await {
-                                    Ok(new_ws) => {
-                                        debug!("Reconnected to xswd relayer #{}", state.get_id());
-                                        ws = new_ws;
-                                        client.connected.store(true, Ordering::SeqCst);
-
-                                        // Loop to try again
-                                        continue;
-                                    },
-                                    Err(e) => {
-                                        error!("Failed to reconnect to xswd relayer #{}: {}", state.get_id(), e);
-                                    }
-                                }
-                            }
-
+                            error!("Failed to reconnect to xswd relayer #{}: {}", state.get_id(), e);
                             break;
                         }
                     }
                 }
 
+                client.clear_event_listeners().await;
                 relayer.on_close(state).await;
-            });
-        }
+
+                client.task_handle.lock().await.take();
+            })
+        };
+        client.task_handle.lock().await.replace(task);
 
         Ok(client)
     }
@@ -123,7 +143,12 @@ impl ClientImpl {
 
     /// Send a message to the relayer
     pub async fn send_message<V: ToString>(&self, msg: V) -> bool {
-        if let Err(e) = self.sender.send(InternalMessage::Send(msg.to_string())).await {
+        let lock = self.sender.lock().await;
+        let Some(sender) = lock.as_ref() else {
+            return false;
+        };
+
+        if let Err(e) = sender.send(msg.to_string()).await {
             error!("Error while sending message: {}", e);
             return false;
         }
@@ -133,8 +158,27 @@ impl ClientImpl {
 
     /// Close the connection to the relayer
     pub async fn close(&self) {
-        if let Err(e) = self.sender.send(InternalMessage::Close).await {
-            error!("Error while sending close message: {}", e);
+        debug!("Closing relayer client {}", self.target);
+
+        // Dropping the last sender closes the channel. The receiver side uses
+        // that closure as the shutdown signal, so no control message or
+        // additional shutdown state is needed.
+        if self.sender.lock().await.take().is_none() {
+            debug!("Relayer client {} already closed", self.target);
+            return;
+        }
+
+        let task = { self.task_handle.lock().await.take() };
+
+        match task {
+            Some(handle) => if let Err(e) = handle.await {
+                error!("Error while waiting for background task to finish: {}", e);
+            } else {
+                debug!("Background task for relayer client {} finished", self.target);
+            },
+            None => {
+                debug!("No background task to close for relayer client {}", self.target);
+            }
         }
     }
 
@@ -144,7 +188,7 @@ impl ClientImpl {
         mut ws: WebSocketStream,
         state: &AppStateShared,
         relayer: &XSWDRelayerShared<W>,
-        receiver: &mut mpsc::Receiver<InternalMessage>,
+        receiver: &mut mpsc::Receiver<String>,
         cipher: &mut Cipher
     ) -> Result<(), anyhow::Error>
     where
@@ -153,14 +197,16 @@ impl ClientImpl {
         loop {
             select! {
                 msg = ws.next() => {
-                    let Some(Ok(msg)) = msg else {
-                        break;
+                    let msg = match msg {
+                        Some(msg) => msg.context("Failed to receive message from XSWD relayer")?,
+                        None => break,
                     };
 
                     let bytes: &[u8] = match &msg {
                         Message::Text(bytes) => bytes.as_ref(),
                         Message::Binary(bytes) => &bytes,
-                        Message::Close(_) => {
+                        Message::Close(reason) => {
+                            debug!("XSWD relayer connection closed: {:?}", reason);
                             break;
                         }
                     };
@@ -173,7 +219,7 @@ impl ClientImpl {
                                 None => continue,
                             },
                             XSWDResponse::Event(event, stream, value) => {
-                                let mut lock = client.events.write().await;
+                                let mut lock = client.events.lock().await;
 
                                 match stream {
                                     Some((mut stream, id)) => {
@@ -218,14 +264,9 @@ impl ClientImpl {
                         break;
                     };
 
-                    match msg {
-                        InternalMessage::Send(msg) => {
-                            let output = cipher.encrypt(msg.as_bytes())?
-                                .into_owned();
-                            ws.send(Message::Binary(output.into())).await?;
-                        },
-                        InternalMessage::Close => break,
-                    }
+                    let output = cipher.encrypt(msg.as_bytes())?
+                        .into_owned();
+                    ws.send(Message::Binary(output.into())).await?;
                 },
                 else => break,
             };

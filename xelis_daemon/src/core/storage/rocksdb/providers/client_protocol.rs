@@ -16,25 +16,15 @@ use crate::core::{
 #[async_trait]
 impl ClientProtocolProvider for RocksStorage {
     // Get the block hash that executed the transaction
-    async fn get_block_executor_for_tx(&self, tx: &Hash) -> Result<Hash, BlockchainError> {
+    async fn get_block_executor_for_tx(&self, tx: &Hash) -> Result<Option<Hash>, BlockchainError> {
         trace!("get block executor for tx {}", tx);
-        self.load_from_disk(Column::TransactionsExecuted, tx)
+        self.load_optional_from_disk(Column::TransactionsExecuted, tx)
     }
 
     // Check if the transaction was executed
     async fn is_tx_executed_in_a_block(&self, tx: &Hash) -> Result<bool, BlockchainError> {
         trace!("is tx executed in a block {}", tx);
         self.contains_data(Column::TransactionsExecuted, tx)
-    }
-
-    // Check if the transaction was executed in a specific block
-    async fn is_tx_executed_in_block(&self, tx: &Hash, block: &Hash) -> Result<bool, BlockchainError> {
-        trace!("is tx executed in block {} in block {}", tx, block);
-        if let Ok(hash) = self.get_block_executor_for_tx(tx).await {
-            return Ok(hash == *block)
-        }
-
-        Ok(false)
     }
 
     // Is the transaction included in at least a block

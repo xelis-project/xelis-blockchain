@@ -17,9 +17,9 @@ use crate::core::{
 
 #[async_trait]
 impl ClientProtocolProvider for SledStorage {
-    async fn get_block_executor_for_tx(&self, tx: &Hash) -> Result<Hash, BlockchainError> {
+    async fn get_block_executor_for_tx(&self, tx: &Hash) -> Result<Option<Hash>, BlockchainError> {
         trace!("get block executer for tx {}", tx);
-        self.load_from_disk(&self.txs_executed, tx.as_bytes(), DiskContext::BlockExecutorForTx)
+        self.load_optional_from_disk(&self.txs_executed, tx.as_bytes())
     }
 
     async fn mark_tx_as_executed_in_block(&mut self, tx: &Hash, block: &Hash) -> Result<(), BlockchainError> {
@@ -56,14 +56,6 @@ impl ClientProtocolProvider for SledStorage {
     async fn is_tx_executed_in_a_block(&self, tx: &Hash) -> Result<bool, BlockchainError> {
         trace!("is tx {} executed in a block", tx);
         self.contains_data(&self.txs_executed, tx.as_bytes())
-    }
-
-    async fn is_tx_executed_in_block(&self, tx: &Hash, block: &Hash) -> Result<bool, BlockchainError> {
-        trace!("is tx {} executed in block {}", tx, block);
-        if let Ok(hash) = self.get_block_executor_for_tx(tx).await {
-            return Ok(hash == *block)
-        }
-        Ok(false)
     }
 
     async fn is_tx_linked_to_blocks(&self, hash: &Hash) -> Result<bool, BlockchainError> {

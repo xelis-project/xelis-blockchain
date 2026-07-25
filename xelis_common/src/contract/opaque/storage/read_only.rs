@@ -11,6 +11,7 @@ use xelis_vm::{
     SysCallResult
 };
 use crate::{
+    block::BlockVersion,
     contract::{
         from_context,
         get_cache_for_contract,
@@ -58,12 +59,12 @@ pub async fn read_only_storage_load<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf:
     check_storage_key(&key)?;
 
     // Read from global cache first, then fallback to provider
-    let value = match get_cache_for_contract(&mut state.changes.caches, state.global_caches, zelf.0.clone(), state.cache_clone_refs)
+    let value = match get_cache_for_contract(&mut state.changes.caches, state.global_caches, zelf.0.clone(), state.block_version < BlockVersion::V6)
         .storage
         .entry(key.clone_ref()) {
             Entry::Occupied(v) => v.get()
                 .as_ref()
-                .and_then(|(_, v)| v.as_ref().map(|v| if state.cache_clone_refs {
+                .and_then(|(_, v)| v.as_ref().map(|v| if state.block_version < BlockVersion::V6 {
                     v.clone_ref()
                 } else {
                     v.clone()
@@ -74,7 +75,7 @@ pub async fn read_only_storage_load<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf:
 
                 v.insert(data)
                     .as_ref()
-                    .and_then(|(_, v)| v.as_ref().map(|v| if state.cache_clone_refs {
+                    .and_then(|(_, v)| v.as_ref().map(|v| if state.block_version < BlockVersion::V6 {
                         v.clone_ref()
                     } else {
                         v.clone()
@@ -99,7 +100,7 @@ pub async fn read_only_storage_has<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: 
     check_storage_key(&key)?;
 
     // Read from global cache first, then fallback to provider
-    let contains = match get_cache_for_contract(&mut state.changes.caches, state.global_caches, zelf.0.clone(), state.cache_clone_refs)
+    let contains = match get_cache_for_contract(&mut state.changes.caches, state.global_caches, zelf.0.clone(), state.block_version < BlockVersion::V6)
         .storage
         .entry(key.clone_ref()) {
             Entry::Occupied(v) => v.get()

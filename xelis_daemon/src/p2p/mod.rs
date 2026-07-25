@@ -1447,10 +1447,14 @@ impl<S: Storage> P2pServer<S> {
                                     let seed_nodes = get_seed_nodes(self.blockchain.get_network());
                                     let mut addresses = Vec::new();
                                     for node in seed_nodes {
-                                        let iter = self.parse_target(node).await
-                                            .expect("Error while parsing seed node address");
-
-                                        addresses.push(iter);
+                                        match self.parse_target(node).await {
+                                            Ok(iter) => {
+                                                addresses.push(iter);
+                                            },
+                                            Err(e) => {
+                                                error!("Error while parsing seed node {}: {}", node, e);
+                                            }
+                                        }
                                     }
 
                                     self.select_random_socket_address(addresses.into_iter().flatten()).await

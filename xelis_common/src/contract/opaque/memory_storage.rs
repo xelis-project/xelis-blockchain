@@ -10,6 +10,7 @@ use xelis_vm::{
     EnvironmentError
 };
 use crate::{
+    block::BlockVersion,
     config::FEE_PER_BYTE_IN_CONTRACT_MEMORY,
     contract::{
         ContractMetadata,
@@ -69,7 +70,7 @@ pub fn memory_storage_load<'ty, P: ContractProvider<'ty>>(instance: FnInstance, 
             } else {
                 &cache.memory
             }.get(&key)
-            .map(|v| if state.cache_clone_refs {
+            .map(|v| if state.block_version < BlockVersion::V6 {
                 v.clone_ref()
             } else {
                 v.clone()
@@ -127,7 +128,7 @@ pub fn memory_storage_store<'ty, P: ContractProvider<'ty>>(instance: FnInstance,
         &mut state.changes.caches,
         state.global_caches,
         metadata.metadata.contract_executor.clone(),
-        state.cache_clone_refs,
+        state.block_version < BlockVersion::V6,
     );
     let memory = if storage.shared {
         &mut cache.memory_shared
@@ -158,7 +159,7 @@ pub fn memory_storage_delete<'ty, P: ContractProvider<'ty>>(instance: FnInstance
         &mut state.changes.caches,
         state.global_caches,
         metadata.metadata.contract_executor.clone(),
-        state.cache_clone_refs,
+        state.block_version < BlockVersion::V6,
     );
     let memory = if storage.shared {
         &mut cache.memory_shared

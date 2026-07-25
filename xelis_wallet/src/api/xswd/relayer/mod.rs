@@ -65,10 +65,19 @@ where
 
     // On close delete all clients
     pub async fn close(&self) {
-        let mut applications = self.applications.write().await;
+        let applications = {
+            let mut applications = self.applications.write().await;
+            applications.drain().collect::<Vec<_>>()
+        };
 
-        stream::iter(applications.drain())
-            .for_each_concurrent(self.concurrency, |(_, client)| async move { client.close().await })
+        stream::iter(applications)
+            .for_each_concurrent(self.concurrency, |(state, client)| async move {
+                client.close().await;
+
+                if let Err(e) = self.xswd.on_close(state).await {
+                    error!("Error while closing a XSWD Relayer: {}", e);
+                }
+            })
             .await;
     }
 
@@ -103,9 +112,15 @@ where
         self.xswd.verify_application(self.as_ref(), &app_data.app_data).await?;
 
         let state = Arc::new(AppState::new(app_data.app_data));
-        let client = ClientImpl::new(app_data.relayer, Arc::clone(self), app_data.encryption_mode, state.clone(), true).await?;
-
         let response = self.xswd.add_application(&state).await?;
+        let registration = response.to_string();
+        let client = match ClientImpl::new(app_data.relayer, Arc::clone(self), app_data.encryption_mode, state.clone(), registration.clone(), true).await {
+            Ok(client) => client,
+            Err(e) => {
+                let _ = self.xswd.on_close(state).await;
+                return Err(e);
+            }
+        };
         client.send_message(response).await;
 
         {
@@ -123,13 +138,13 @@ where
     }
 
     pub async fn on_close(&self, state: AppStateShared) {
-        {
+        let removed = {
             let mut applications = self.applications.write().await;
-            if let Some(client) = applications.remove(&state) {
-                client.close().await;
-            } else {
-                return;
-            }
+            applications.remove(&state).is_some()
+        };
+
+        if !removed {
+            return;
         }
 
         if let Err(e) = self.xswd.on_close(state).await {

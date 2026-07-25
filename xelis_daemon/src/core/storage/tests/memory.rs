@@ -117,6 +117,12 @@ async fn test_memory_cleanup_all_data_types_at_topoheight() -> Result<()> {
 }
 
 #[tokio::test]
+async fn test_memory_contract_logs_cleanup() -> Result<()> {
+    let storage = MemoryStorage::new(Network::Devnet, 1);
+    test_contract_logs_cleanup(storage).await
+}
+
+#[tokio::test]
 async fn test_memory_versioned_nonce_at_max_topoheight() -> Result<()> {
     let data = TestData::new()?;
     let storage = MemoryStorage::new(Network::Devnet, 1);
@@ -139,6 +145,12 @@ async fn test_memory_event_callbacks_available_at_maximum_topoheight() -> Result
 async fn test_memory_event_callbacks_available_after_rewind() -> Result<()> {
     let storage = MemoryStorage::new(Network::Devnet, 1);
     test_event_callbacks_available_after_rewind(storage).await
+}
+
+#[tokio::test]
+async fn test_memory_event_callback_cleanup() -> Result<()> {
+    let storage = MemoryStorage::new(Network::Devnet, 1);
+    test_event_callback_cleanup(storage).await
 }
 
 #[tokio::test]
@@ -311,4 +323,29 @@ async fn test_memory_scheduled_execution_range_query() -> Result<()> {
 async fn test_memory_account_registration_topoheight() -> Result<()> {
     let storage = MemoryStorage::new(Network::Devnet, 1);
     test_account_registration_topoheight(storage).await
+}
+
+#[tokio::test]
+async fn test_memory_multisig_operations() -> Result<()> {
+    let data = TestData::new()?;
+    let storage = MemoryStorage::new(data.network, 1);
+    test_multisig_operations(storage, &data).await
+}
+
+#[tokio::test]
+async fn test_memory_multisig_delete_versioned_at_topoheight() -> Result<()> {
+    let storage = MemoryStorage::new(Network::Devnet, 1);
+    test_multisig_delete_versioned_at_topoheight(storage).await
+}
+
+#[tokio::test]
+async fn test_memory_multisig_delete_versioned_above_topoheight() -> Result<()> {
+    let storage = MemoryStorage::new(Network::Devnet, 1);
+    test_multisig_delete_versioned_above_topoheight(storage).await
+}
+
+#[tokio::test]
+async fn test_memory_multisig_delete_versioned_below_topoheight() -> Result<()> {
+    let storage = MemoryStorage::new(Network::Devnet, 1);
+    test_multisig_delete_versioned_below_topoheight(storage).await
 }

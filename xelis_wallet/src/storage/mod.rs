@@ -50,6 +50,7 @@ use anyhow::{
 use crate::{
     cipher::Cipher,
     config::SALT_SIZE,
+    password_config::PasswordConfig,
     entry::{
         EntryData,
         TransactionEntry,
@@ -67,6 +68,7 @@ pub use types::*;
 pub struct TransactionFilterOptions<'a> {
     pub address: Option<Cow<'a, PublicKey>>,
     pub asset: Option<Cow<'a, Hash>>,
+    pub contract: Option<Cow<'a, Hash>>,
     pub min_topoheight: Option<u64>,
     pub max_topoheight: Option<u64>,
     pub min_timestamp: Option<TimestampMillis>,
@@ -86,6 +88,7 @@ impl<'a> Default for TransactionFilterOptions<'a> {
         Self {
             address: None,
             asset: None,
+            contract: None,
             min_topoheight: None,
             max_topoheight: None,
             min_timestamp: None,
@@ -113,6 +116,7 @@ const NONCE_KEY: &[u8] = b"NONCE";
 const SALT_KEY: &[u8] = b"SALT";
 // Password + salt is necessary to decrypt master key
 const PASSWORD_SALT_KEY: &[u8] = b"PSALT";
+const PASSWORD_CONFIG_KEY: &[u8] = b"PCFG";
 // Master key to encrypt/decrypt while interacting with the storage 
 const MASTER_KEY: &[u8] = b"MKEY";
 const PRIVATE_KEY: &[u8] = b"PKEY";
@@ -1251,6 +1255,7 @@ impl EncryptedStorage {
         let TransactionFilterOptions {
             address,
             asset,
+            contract,
             min_topoheight,
             max_topoheight,
             min_timestamp,
@@ -1325,15 +1330,30 @@ impl EncryptedStorage {
             // We double check topoheight bounds here as well
             if min_topoheight.is_some_and(|min| entry.get_topoheight() < min) ||
                max_topoheight.is_some_and(|max| entry.get_topoheight() > max) {
-                debug!("entry topoheight {} out of bounds", entry.get_topoheight());
+                trace!("entry topoheight {} out of bounds", entry.get_topoheight());
                 continue;
             }
 
             // We also check timestamp bounds here
             if min_timestamp.is_some_and(|min| entry.get_timestamp() < min) ||
                max_timestamp.is_some_and(|max| entry.get_timestamp() > max) {
-                debug!("entry timestamp {} out of bounds", entry.get_timestamp());
+                trace!("entry timestamp {} out of bounds", entry.get_timestamp());
                 continue;
+            }
+
+            if let Some(contract_filter) = contract.as_ref() {
+                let matches = match entry.get_entry() {
+                    EntryData::InvokeContract { contract, .. } => contract == contract_filter.as_ref(),
+                    // A deployed contract uses its deployment transaction hash as its contract hash.
+                    EntryData::DeployContract { .. } => entry.get_hash() == contract_filter.as_ref(),
+                    EntryData::IncomingContract { transfers } => transfers.contains_key(contract_filter.as_ref()),
+                    _ => false,
+                };
+
+                if !matches {
+                    trace!("entry is not related to requested contract");
+                    continue;
+                }
             }
 
             let mut transfers: Option<Vec<Transfer>> = None;
@@ -1385,17 +1405,32 @@ impl EncryptedStorage {
                         }
                     }
                 },
-                EntryData::InvokeContract { deposits, .. } if accept_outgoing => {
+                EntryData::InvokeContract { deposits, received, .. } if accept_outgoing => {
                     // Filter by asset
                     if let Some(asset) = asset.as_ref() {
-                        if !deposits.contains_key(asset.as_ref()) {
+                        deposits.retain(|deposit, _| *deposit == *asset.as_ref());
+                        for assets in received.values_mut() {
+                            assets.retain(|received_asset, _| *received_asset == *asset.as_ref());
+                        }
+                        received.retain(|_, assets| !assets.is_empty());
+                        if deposits.is_empty() && received.is_empty() {
                             continue;
                         }
-
-                        deposits.retain(|deposit, _| *deposit == *asset.as_ref());
                     }
                 },
                 EntryData::DeployContract { .. } if accept_outgoing => {},
+                EntryData::IncomingContract { transfers: t } if accept_incoming => {
+                    if let Some(asset) = asset.as_ref() {
+                        for assets in t.values_mut() {
+                            assets.retain(|transfer, _| *transfer == *asset.as_ref());
+                        }
+                        t.retain(|_, assets| !assets.is_empty());
+                    }
+
+                    if t.is_empty() {
+                        continue;
+                    }
+                },
                 EntryData::OutgoingBlob { destinations, data, .. } if accept_blob => {
                     if asset.is_some() {
                         continue;
@@ -1965,6 +2000,27 @@ impl Storage {
         trace!("set password salt");
         self.db.insert(PASSWORD_SALT_KEY, salt)?;
         Ok(())
+    }
+
+    // set the password config used to derive the password-based key
+    pub fn set_password_config(&mut self, config: &PasswordConfig) -> Result<()> {
+        trace!("set password config");
+        let encoded = config.to_bytes();
+        self.db.insert(PASSWORD_CONFIG_KEY, encoded.as_slice())?;
+        Ok(())
+    }
+
+    // retrieve the password config used to derive the password-based key
+    pub fn get_password_config(&self) -> Result<PasswordConfig> {
+        trace!("get password config");
+        match self.db.get(PASSWORD_CONFIG_KEY)? {
+            Some(value) => {
+                let config = PasswordConfig::from_bytes(&value)
+                    .context("Error while deserializing wallet password config")?;
+                Ok(config)
+            }
+            None => Ok(PasswordConfig::legacy_default()),
+        }
     }
 
     // retrieve password salt used to derive the password-based key

@@ -2,7 +2,7 @@ use std::{borrow::Cow, collections::HashMap};
 
 use indexmap::{IndexMap, IndexSet};
 use crate::{
-    block::{Block, TopoHeight},
+    block::{Block, TopoHeight, BlockVersion},
     contract::vm::ContractCaller,
     crypto::{Hash, PublicKey},
     versioned::VersionedState
@@ -51,6 +51,8 @@ pub struct ChainState<'a> {
     pub block_hash: &'a Hash,
     // The block in which the contract is executed
     pub block: &'a Block,
+    // Current block version
+    pub block_version: BlockVersion,
     // Tx hash in which the contract is executed
     // If None, this means the contract was not
     // invoked by a TX.
@@ -68,7 +70,7 @@ pub struct ChainState<'a> {
     pub injected_gas: IndexMap<Source, u64>,
     // The contract logs
     // This is similar to an event log
-    pub logs: Vec<ContractLog>,
+    pub logs: ContractLogs,
     // executions manager
     pub executions: ExecutionsManager<'a>,
     // Changes made during the execution
@@ -81,8 +83,6 @@ pub struct ChainState<'a> {
     // This is reduced from the used gas fee at the end of the execution
     // to prevent double refunding/paying
     pub gas_fee_allowance: u64,
-    // Internal flag to determine if we should clone refs in the cache or not
-    pub cache_clone_refs: bool,
 }
 
 // Aggregate all events from all executed contracts to track in one structure

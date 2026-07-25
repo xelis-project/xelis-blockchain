@@ -14,6 +14,7 @@ use xelis_vm::{
 };
 use crate::{
     account::CiphertextCache,
+    block::BlockVersion,
     contract::{
         CIPHERTEXT_OPAQUE_ID,
         ContractMetadata,
@@ -138,7 +139,7 @@ pub fn ciphertext_generate(_: FnInstance, mut params: FnParams, metadata: &Modul
         .context("Invalid public key")?;
 
     let state = state_from_context(context)?;
-    let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.cache_clone_refs);
+    let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.block_version < BlockVersion::V6);
     if cache.random.is_none() {
         cache.random = Some(DeterministicRandom::new(&metadata.metadata.contract_executor, state.block_hash, state.topoheight, &state.caller.get_hash()));
     }

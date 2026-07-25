@@ -29,12 +29,14 @@ use crate::{
     p2p::Peer,
 };
 use super::{InternalRpcError, ApiError};
+use linked_hash_table::LinkedHashSet;
 use xelis_common::{
     account::{VersionedBalance, VersionedNonce},
     api::{
         daemon::*,
         *
     },
+    immutable::Immutable,
     asset::RPCAssetData,
     async_handler,
     block::{
@@ -76,7 +78,6 @@ use xelis_common::{
 };
 use xelis_vm::ValueCell;
 use futures::{stream, StreamExt, TryStreamExt};
-use itertools::Itertools;
 use anyhow::Context as AnyContext;
 use human_bytes::human_bytes;
 use serde_json::{json, Value};
@@ -255,7 +256,7 @@ pub async fn get_transaction_response<'a, S: Storage>(blockchain: &Blockchain<S>
         None
     };
 
-    let executed_in_block = storage.get_block_executor_for_tx(&hash).await.ok();
+    let executed_in_block = storage.get_block_executor_for_tx(&hash).await?;
     let tx_size = tx.size();
 
     // Search the real fee paid if executed in block
@@ -638,7 +639,7 @@ async fn get_stable_balance<S: Storage>(context: &Context<'_, '_>, params: GetBa
         (topoheight, version)
     } else {
         storage.get_balance_at_maximum_topoheight(params.address.get_public_key(), &params.asset, stable_topoheight).await?
-            .ok_or(InternalRpcError::InvalidRequestStr("no stable balance found for this account"))?
+            .ok_or(InternalRpcError::InvalidRequest("no stable balance found for this account".into()))?
     };
 
     Ok(GetStableBalanceResult {
@@ -950,7 +951,8 @@ async fn get_transaction_executor<S: Storage>(context: &Context<'_, '_>, params:
     let blockchain = chain_from_context::<S>(context)?;
     let storage = blockchain.get_storage().read().await;
 
-    let block_executor = storage.get_block_executor_for_tx(&params.hash).await?;
+    let block_executor = storage.get_block_executor_for_tx(&params.hash).await?
+        .context("Transaction not found in any block")?;
     let block_topoheight = storage.get_topo_height_for_hash(&block_executor).await?;
     let block_timestamp = storage.get_timestamp_for_block_hash(&block_executor).await?;
 
@@ -1045,7 +1047,7 @@ async fn get_mempool_summary<S: Storage>(context: &Context<'_, '_>, params: GetM
     let mempool = blockchain.get_mempool().read().await;
     let txs = mempool.get_txs();
     let total = txs.len();
-    let mut transactions = Vec::with_capacity(maximum.max(total));
+    let mut transactions = Vec::new();
 
     let mainnet = blockchain.get_network().is_mainnet();
     for (hash, sorted_tx) in txs.iter().skip(skip).take(maximum) {
@@ -1258,7 +1260,7 @@ async fn get_account_history<S: Storage>(context: &Context<'_, '_>, params: GetA
     }
 
     if !params.incoming_flow && !params.outgoing_flow {
-        return Err(InternalRpcError::InvalidParams("No history type was selected"));
+        return Err(InternalRpcError::InvalidParams("No history type was selected".into()));
     }
 
     let key = params.address.get_public_key();
@@ -1270,7 +1272,7 @@ async fn get_account_history<S: Storage>(context: &Context<'_, '_>, params: GetA
 
     let mut version: Option<(u64, Option<u64>, _)> = if let Some(topo) = params.maximum_topoheight {
         if topo < pruned_topoheight {
-            return Err(InternalRpcError::InvalidParams("Maximum topoheight is lower than pruned topoheight"));
+            return Err(InternalRpcError::InvalidParams("Maximum topoheight is lower than pruned topoheight".into()));
         }
 
         // if incoming flows aren't accepted
@@ -1896,7 +1898,7 @@ async fn split_address<S: Storage>(context: &Context<'_, '_>, params: SplitAddre
     }
 
     let (data, address) = address.extract_data();
-    let integrated_data = data.ok_or(InternalRpcError::InvalidParams("Address is not an integrated address"))?;
+    let integrated_data = data.ok_or(InternalRpcError::InvalidParams("Address is not an integrated address".into()))?;
     let size = integrated_data.size();
     Ok(SplitAddressResult {
         address,
@@ -1912,7 +1914,7 @@ async fn make_integrated_address<S: Storage>(context: &Context<'_, '_>, params: 
     }
 
     if !params.address.is_normal() {
-        return Err(InternalRpcError::InvalidParams("Address is not a normal address"))
+        return Err(InternalRpcError::InvalidParams("Address is not a normal address".into()))
     }
 
     let address = Address::new(params.address.is_mainnet(), AddressType::Data(params.integrated_data.into_owned()), params.address.into_owned().to_public_key());
@@ -2038,15 +2040,21 @@ async fn get_contract_registered_executions_at_topoheight<S: Storage>(context: &
     let max = params.max.unwrap_or(MAX_SCHEDULED_EXECUTIONS);
 
     let storage = blockchain.get_storage().read().await;
-    let executions = storage.get_registered_contract_scheduled_executions_at_topoheight(params.topoheight).await
+    let mut executions = Vec::new();
+    for res in storage.get_registered_contract_scheduled_executions_at_topoheight(params.topoheight).await
         .context("Error while retrieving contract registered executions")?
         .skip(params.skip.unwrap_or(0))
-        .take(max)
-        .map_ok(|(topoheight, execution_hash)| RegisteredExecution {
-            execution_hash: Cow::Owned(execution_hash),
+        .take(max) {
+        let (topoheight, execution_contract) = res?;
+
+        let scheduled_execution = storage.get_contract_scheduled_execution_at_topoheight(&execution_contract, topoheight).await?;
+
+        executions.push(RegisteredExecution {
+            execution_hash: Cow::Owned(scheduled_execution.hash.as_ref().clone()),
+            execution_contract: Cow::Owned(execution_contract),
             execution_topoheight: topoheight,
         })
-        .collect::<Result<Vec<_>, _>>()?;
+    }
 
     Ok(executions)
 }
@@ -2059,7 +2067,7 @@ async fn get_contracts_outputs<S: Storage>(context: &Context<'_, '_>, params: Ge
         .context("Error while retrieving block header at topoheight")?;
 
     let mut executions = HashMap::new();
-    let mut scheduled_executions = Vec::new();
+    let mut scheduled_executions = LinkedHashSet::new();
     for tx_hash in header.get_transactions() {
         let is_executed = storage.is_tx_executed_in_block(tx_hash, &block_hash).await
             .context("Error while checking if TX is executed in block")?;
@@ -2085,14 +2093,21 @@ async fn get_contracts_outputs<S: Storage>(context: &Context<'_, '_>, params: Ge
                                 .transfers
                                 .entry(Cow::Owned(asset.clone()))
                                 .or_insert(0) += *amount;
-                        },
-                    ContractLog::ScheduledExecution { .. } => {
-                        scheduled_executions.push(tx_hash.clone());
+                    },
+                    ContractLog::ScheduledExecution { hash, kind: ScheduledExecutionKindLog::BlockEnd { .. }, .. } => {
+                        scheduled_executions.insert(Immutable::Owned(hash.clone()));
                     },
                     _ => {}
                 }
             }
         }
+    }
+
+    // Scheduled executions at a target topoheight do not have a transaction
+    // in the block header, so discover their caller hashes from the execution index.
+    for res in storage.get_contract_scheduled_executions_at_topoheight(params.topoheight).await? {
+        let entry = res?;
+        scheduled_executions.insert(Immutable::Arc(entry.hash));
     }
 
     // Also handle the scheduled executions that were triggered at block end
@@ -2102,13 +2117,19 @@ async fn get_contracts_outputs<S: Storage>(context: &Context<'_, '_>, params: Ge
 
         for log in logs {
             match &log {
-                ContractLog::Transfer { destination, contract, .. }
-                | ContractLog::TransferPayload { destination, contract, .. }
+                ContractLog::Transfer { destination, contract, amount, asset }
+                | ContractLog::TransferPayload { destination, contract, amount, asset, .. }
                     if destination == params.address.get_public_key() => {
-                        executions.entry(ContractTransfersEntryKey {
-                            caller: Cow::Owned(hash.clone()),
+                        *executions.entry(ContractTransfersEntryKey {
+                            caller: Cow::Owned(hash.as_ref().clone()),
                             contract: Cow::Owned(contract.clone()),
-                        });
+                        })
+                            .or_insert_with(|| ContractTransfersEntry {
+                                transfers: HashMap::new(),
+                            })
+                            .transfers
+                            .entry(Cow::Owned(asset.clone()))
+                            .or_insert(0) += *amount;
                     },
                 _ => {}
             }
@@ -2124,7 +2145,7 @@ async fn get_contract_module<S: Storage>(context: &Context<'_, '_>, params: GetC
     let blockchain = chain_from_context::<S>(context)?;
     let storage = blockchain.get_storage().read().await;
     let Some(topoheight) = storage.get_last_topoheight_for_contract(&params.contract).await? else {
-        return Err(InternalRpcError::InvalidParams("no contract module available"));
+        return Err(InternalRpcError::InvalidParams("no contract module available".into()));
     };
     let version = storage.get_contract_at_topoheight_for(&params.contract, topoheight).await
         .context("Error while retrieving contract module")?;
@@ -2279,9 +2300,26 @@ async fn get_contract_transactions<S: Storage>(context: &Context<'_, '_>, params
     let iter = storage.get_contract_transactions(&params.contract).await
         .context("Error while retrieving contract transactions")?;
 
-    let transactions = iter.skip(params.skip.unwrap_or_default())
-        .take(maximum)
-        .collect::<Result<Vec<_>, _>>()?;
+    let has_filter = params.minimum_topoheight.is_some() || params.maximum_topoheight.is_some();
+    let mut transactions = Vec::new();
+    for tx_hash in iter.skip(params.skip.unwrap_or_default()).take(maximum) {
+        let tx_hash = tx_hash.context("Error while retrieving contract transactions")?;
+
+        if has_filter {
+            let Some(block_executor) = storage.get_block_executor_for_tx(&tx_hash).await.context("Error while retrieving block executor for transaction")? else {
+                continue;
+            };
+
+            let topoheight = storage.get_topo_height_for_hash(&block_executor).await
+                .context("fetching topoheight for hash")?;
+
+            if params.minimum_topoheight.map_or(false, |min| topoheight < min) || params.maximum_topoheight.map_or(false, |max| topoheight > max) {
+                continue;
+            }
+        }
+
+        transactions.push(tx_hash);
+    }
 
     Ok(transactions)
 }

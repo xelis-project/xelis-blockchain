@@ -840,8 +840,9 @@ impl<S: Storage> P2pServer<S> {
                     trace!("No multisig change for {}", key.as_address(self.blockchain.get_network().is_mainnet()));
                 },
                 State::Deleted => {
-                    trace!("Deleting multisig for {}", key.as_address(self.blockchain.get_network().is_mainnet()));
-                    storage.delete_last_topoheight_for_multisig(key).await?;
+                    debug!("no multisig for {}, mark it as a tombstone only", key.as_address(self.blockchain.get_network().is_mainnet()));
+                    let versioned = VersionedMultiSig::new(None, None);
+                    storage.set_last_multisig_to(key, stable_topoheight, versioned).await?;
                 },
                 State::Some(multisig) => {
                     trace!("Saving multisig for {}", key.as_address(self.blockchain.get_network().is_mainnet()));

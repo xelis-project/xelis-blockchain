@@ -9,6 +9,8 @@ pub const CHARSET: &str = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
 pub const GENERATOR: [u32; 5] = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
 /// separator character used in Bech32 encoding.
 pub const SEPARATOR: char = ':';
+/// maximum length of a Bech32 string.
+pub const MAX_STR_LEN: usize = 2048;
 
 #[derive(Error, Debug)]
 pub enum Bech32Error {
@@ -165,37 +167,48 @@ pub fn encode(mut hrp: String, data: &[u8]) -> Result<String, Bech32Error> {
 
 /// Decode a bech32 string into a human readable part and data part.
 pub fn decode(bech: &str) -> Result<(String, Vec<u8>), Bech32Error> {
-    if bech.to_uppercase() != *bech && bech.to_lowercase() != *bech {
-        return Err(Bech32Error::HrpMixCase)
+    if bech.len() > MAX_STR_LEN {
+        return Err(Bech32Error::InvalidValue(bech.len() as u8, MAX_STR_LEN))
     }
 
-    let pos = bech.rfind(SEPARATOR).ok_or(Bech32Error::SeparatorNotFound)?;
-    if pos < 1 || pos + 7 > bech.len() {
-        return Err(Bech32Error::SeparatorInvalidPosition(pos))
+    let bytes = bech.as_bytes();
+    if let Some(&byte) = bytes.iter().find(|byte| !byte.is_ascii()) {
+        return Err(Bech32Error::HrpInvalidCharacter(byte));
     }
 
-    let hrp = bech[0..pos].to_owned();
-    for value in hrp.bytes() {
-        if value < 33 || value > 126 {
-            return Err(Bech32Error::HrpInvalidCharacter(value))
+    let has_lower = bytes.iter().any(u8::is_ascii_lowercase);
+    let has_upper = bytes.iter().any(u8::is_ascii_uppercase);
+    if has_lower && has_upper {
+        return Err(Bech32Error::HrpMixCase);
+    }
+
+    let pos = bytes.iter()
+        .rposition(|byte| *byte == SEPARATOR as u8)
+        .ok_or(Bech32Error::SeparatorNotFound)?;
+    if pos < 1 || pos + 7 > bytes.len() {
+        return Err(Bech32Error::SeparatorInvalidPosition(pos));
+    }
+
+    let hrp_bytes = &bytes[..pos];
+    for &byte in hrp_bytes {
+        if byte < 33 || byte > 126 {
+            return Err(Bech32Error::HrpInvalidCharacter(byte));
         }
     }
+    let hrp = String::from_utf8(hrp_bytes.to_vec())?;
 
-    let mut data: Vec<u8> = vec![];
-    for i in pos + 1..bech.len() {
-        let c = bech.chars().nth(i).ok_or(Bech32Error::InvalidIndex(i))?;
-        let value = CHARSET.find(c).ok_or(Bech32Error::HrpInvalidCharacter(c as u8))?;
-
+    let alphabet = CHARSET.as_bytes();
+    let mut data = Vec::with_capacity(bytes.len() - pos - 1);
+    for &byte in &bytes[pos + 1..] {
+        let value = alphabet.iter()
+            .position(|allowed| *allowed == byte)
+            .ok_or(Bech32Error::HrpInvalidCharacter(byte))?;
         data.push(value as u8);
     }
 
     if !verify_checksum(&hrp, &data) {
-        return Err(Bech32Error::InvalidChecksum)
+        return Err(Bech32Error::InvalidChecksum);
     }
-
-    for _ in 0..6 {
-        data.remove(data.len() - 1);
-    }
-
+    data.truncate(data.len() - 6);
     Ok((hrp, data))
 }

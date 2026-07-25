@@ -7,6 +7,7 @@ pub mod mnemonics;
 pub mod transaction_builder;
 pub mod error;
 pub mod decoder;
+pub mod password_config;
 
 pub mod precomputed_tables;
 

@@ -27,14 +27,6 @@ impl MultiSigProvider for MemoryStorage {
             .ok_or(BlockchainError::MultisigNotFound)
     }
 
-    async fn delete_last_topoheight_for_multisig(&mut self, key: &PublicKey) -> Result<(), BlockchainError> {
-        self.accounts.get_mut(key)
-            .map(|acc| {
-                acc.multisig.pop_last();
-            })
-            .ok_or(BlockchainError::UnknownAccount)
-    }
-
     async fn get_multisig_at_maximum_topoheight_for<'a>(&'a self, account: &PublicKey, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedMultiSig<'a>)>, BlockchainError> {
         Ok(self.accounts.get(account)
             .and_then(|acc| acc.multisig.range(..=maximum_topoheight)
@@ -46,7 +38,8 @@ impl MultiSigProvider for MemoryStorage {
 
     async fn has_multisig(&self, account: &PublicKey) -> Result<bool, BlockchainError> {
         Ok(self.accounts.get(account)
-            .map_or(false, |acc| !acc.multisig.is_empty())
+            .and_then(|acc| acc.multisig.last_key_value())
+            .is_some_and(|(_, version)| version.get().is_some())
         )
     }
 

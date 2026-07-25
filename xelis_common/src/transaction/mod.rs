@@ -235,6 +235,15 @@ impl Transaction {
         }
     }
 
+    // If the transaction is related to contract VM
+    #[inline]
+    pub fn is_contract_related(&self) -> bool {
+        match &self.data {
+            TransactionType::DeployContract(_) | TransactionType::InvokeContract(_) => true,
+            _ => false
+        }  
+    }
+
     // Consume the transaction by returning the source public key and the transaction type
     #[inline(always)]
     pub fn consume(self) -> (CompressedPublicKey, TransactionType) {

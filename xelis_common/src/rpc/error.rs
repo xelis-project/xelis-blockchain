@@ -1,4 +1,4 @@
-use std::fmt::{Display, Formatter};
+use std::{borrow::Cow, fmt::{Display, Formatter}};
 
 
 use serde_json::{Value, Error as SerdeError, json};
@@ -38,7 +38,7 @@ impl From<ErrorWithKind> for InternalRpcError {
 #[derive(Error, Debug)]
 pub enum InternalRpcError {
     #[error("Internal error: {}", _0)]
-    InternalError(&'static str),
+    InternalError(Cow<'static, str>),
     #[error("Invalid context")]
     InvalidContext,
     #[error("Invalid body in request")]
@@ -46,11 +46,11 @@ pub enum InternalRpcError {
     #[error("Invalid JSON request")]
     InvalidJSONRequest,
     #[error("Invalid request: {}", _0)]
-    InvalidRequestStr(&'static str),
+    InvalidRequest(Cow<'static, str>),
     #[error("Invalid params: {}", _0)]
     InvalidJSONParams(#[from] SerdeError),
     #[error("Invalid params: {}", _0)]
-    InvalidParams(&'static str),
+    InvalidParams(Cow<'static, str>),
     #[error("Invalid params: {:#}", _0)]
     InvalidParamsAny(AnyError),
     #[error("Expected parameters for this method but was not present")]
@@ -91,7 +91,7 @@ impl InternalRpcError {
             // JSON RPC errors
             Self::ParseBodyError => -32700,
             Self::InvalidJSONRequest
-            | Self::InvalidRequestStr(_)
+            | Self::InvalidRequest(_)
             | Self::InvalidVersion
             | Self::BatchLimitExceeded => -32600,
             Self::MethodNotFound(_) => -32601,
@@ -116,7 +116,7 @@ impl InternalRpcError {
         match self {
             Self::ParseBodyError => "BODY_ERROR",
             Self::InvalidJSONRequest => "INVALID_JSON_REQUEST",
-            Self::InvalidRequestStr(_) => "INVALID_REQUEST",
+            Self::InvalidRequest(_) => "INVALID_REQUEST",
             Self::InvalidParams(_) | Self::InvalidJSONParams(_) | Self::InvalidParamsAny(_) => "INVALID_PARAMS",
             Self::UnexpectedParams => "UNEXPECTED_PARAMS",
             Self::ExpectedParams => "EXPECTED_PARAMS",
