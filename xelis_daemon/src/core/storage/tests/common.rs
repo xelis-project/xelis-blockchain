@@ -1214,6 +1214,7 @@ pub async fn test_delete_versioned_data_below_topoheight_nonces<S: Storage>(mut 
 
 pub async fn test_delete_versioned_data_above_topoheight_nonces<S: Storage>(mut storage: S, data: &TestData) -> Result<()> {
     let public_key = data.public_key_pair.get_public_key().compress();
+    setup_asset(&mut storage, &XELIS_ASSET).await?;
     
     // Store nonces at multiple topoheights with proper versioning
     let nonce0 = VersionedNonce::new(0, None);
@@ -1249,6 +1250,7 @@ pub async fn test_delete_versioned_data_above_topoheight_nonces<S: Storage>(mut 
 
 pub async fn test_delete_versioned_data_at_topoheight_contracts<S: Storage>(mut storage: S) -> Result<()> {
     let contract_hash = Hash::new([200u8; 32]);
+    setup_asset(&mut storage, &XELIS_ASSET).await?;
     
     // Store contract at multiple topoheights
     for topo in 0u64..5 {
@@ -1286,7 +1288,9 @@ pub async fn test_delete_versioned_data_at_topoheight_contracts<S: Storage>(mut 
 
 pub async fn test_delete_versioned_data_below_topoheight_contracts<S: Storage>(mut storage: S) -> Result<()> {
     let contract_hash = Hash::new([201u8; 32]);
-    
+
+    setup_asset(&mut storage, &XELIS_ASSET).await?;
+
     // Store contract at multiple topoheights
     for topo in 0u64..8 {
         let module = Arc::new(Module::new());
@@ -1327,7 +1331,8 @@ pub async fn test_delete_versioned_data_below_topoheight_contracts<S: Storage>(m
 
 pub async fn test_delete_versioned_data_above_topoheight_contracts<S: Storage>(mut storage: S) -> Result<()> {
     let contract_hash = Hash::new([202u8; 32]);
-    
+    setup_asset(&mut storage, &XELIS_ASSET).await?;
+
     // Store contract at multiple topoheights
     for topo in 0u64..8 {
         let module = Arc::new(Module::new());
@@ -1477,6 +1482,18 @@ pub async fn test_delete_versioned_data_above_topoheight_mixed<S: Storage>(mut s
     Ok(())
 }
 
+async fn setup_asset<S: Storage>(storage: &mut S, asset: &Hash) -> Result<()> {
+    // Register the asset (no-op for MemoryStorage, required for RocksDB).
+    storage.add_asset(
+        asset,
+        0,
+        VersionedAssetData::new(
+            AssetData::new(8, "TEST".to_owned(), "TST".to_owned(), MaxSupplyMode::Fixed(u64::MAX), AssetOwner::None),
+            None,
+        ),
+    ).await.context("Failed to add asset")
+}
+
 /// Helper: register an account and asset so that RocksDB's ID-mapping layer is
 /// satisfied before calling any balance APIs.
 async fn setup_balance_storage<S: Storage>(
@@ -1488,17 +1505,7 @@ async fn setup_balance_storage<S: Storage>(
     storage.set_account_registration_topoheight(key, 0).await
         .context("Failed to register account")?;
 
-    // Register the asset (no-op for MemoryStorage, required for RocksDB).
-    storage.add_asset(
-        asset,
-        0,
-        VersionedAssetData::new(
-            AssetData::new(8, "Test".to_owned(), "TST".to_owned(), MaxSupplyMode::Fixed(u64::MAX), AssetOwner::None),
-            None,
-        ),
-    ).await.context("Failed to add asset")?;
-
-    Ok(())
+    setup_asset(storage, asset).await
 }
 
 pub async fn test_delete_versioned_balances_below_topoheight_keeps_latest_output<S: Storage>(
