@@ -308,11 +308,10 @@ impl<'s, 'b, 'ty, P: ApplicableChainStateProvider> BlockchainContractState<'b, '
         let contract = self.inner.internal_get_contract_module(&contract_hash).await?;
 
         // Starting V6, we fully clone the contract, not just its references
-        let cache_clone_refs = self.block_version < BlockVersion::V6;
         // Find the contract cache in our cache map
         // We apply the deposits below in case we have any
         let mut cache = self.contract_manager.caches.get(&contract_hash)
-            .map(|c| c.clone_with(cache_clone_refs))
+            .map(|c| c.clone_with(self.block_version < BlockVersion::V6))
             .unwrap_or_default();
 
         // We need to add the deposits to the balances
@@ -358,6 +357,11 @@ impl<'s, 'b, 'ty, P: ApplicableChainStateProvider> BlockchainContractState<'b, '
             (contract_hash.as_ref().clone(), cache)
         ].into();
 
+        let mut block_version = self.block.get_version();
+        if block_version < BlockVersion::V7 && self.is_v7_pre_enabled() {
+            block_version = BlockVersion::V7;
+        }
+
         let state = ContractChainState {
             debug_mode: self.debug_mode,
             mainnet,
@@ -365,6 +369,7 @@ impl<'s, 'b, 'ty, P: ApplicableChainStateProvider> BlockchainContractState<'b, '
             topoheight: self.inner.topoheight,
             block_hash: self.block_hash,
             block: self.block,
+            block_version,
             caller,
             logs: ContractLogs::default(),
             changes: ChainStateChanges {
@@ -392,7 +397,6 @@ impl<'s, 'b, 'ty, P: ApplicableChainStateProvider> BlockchainContractState<'b, '
             gas_fee_allowance: 0,
             environments: Cow::Borrowed(self.inner.environments),
             loaded_modules: Default::default(),
-            cache_clone_refs,
         };
 
         let environment = self.environments.get(&contract.version)
@@ -579,6 +583,11 @@ impl<'s, 'b, P: ApplicableChainStateProvider> ApplicableChainState<'s, 'b, P> {
         }
     }
 
+    // Is v7 pre-enabled
+    fn is_v7_pre_enabled(&self) -> bool {
+        self.block_version >= BlockVersion::V7 || self.topoheight >= 7973161
+    }
+
     // Returns if the TX was already executed
     #[inline]
     pub fn link_tx_to_block(&mut self, tx_hash: &'b Hash, block_hash: &'b Hash, contract: Option<&'b Hash>) -> bool {
@@ -727,7 +736,7 @@ impl<'s, 'b, P: ApplicableChainStateProvider> ApplicableChainState<'s, 'b, P> {
 
             for (listener_contract, mut callback) in callbacks {
                 debug!("processing event callback of {}", listener_contract);
-                if self.inner.block_version >= BlockVersion::V7
+                if self.is_v7_pre_enabled()
                     && !self.collateralize_legacy_event_callback(&listener_contract, &mut callback).await?
                 {
                     warn!(
@@ -811,7 +820,7 @@ impl<'s, 'b, P: ApplicableChainStateProvider> ApplicableChainState<'s, 'b, P> {
         &mut self,
         execution: &ScheduledExecution,
     ) -> Result<bool, BlockchainError> {
-        if self.inner.block_version < BlockVersion::V7 {
+        if !self.is_v7_pre_enabled() {
             return Ok(true);
         }
 
