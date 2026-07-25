@@ -25,7 +25,8 @@ use crate::{
         FEE_PER_BYTE_STORED_CONTRACT,
         TX_GAS_BURN_PERCENT,
         MAX_GAS_USAGE_PER_TX,
-        XELIS_ASSET
+        XELIS_ASSET,
+        SCHEDULED_EXECUTION_MIN_GAS,
     },
     block::BlockVersion,
     contract::{
@@ -198,6 +199,10 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider<'ty>>(
         return Err(EnvironmentError::Static("max_gas exceeds allowed limit"))
     }
 
+    if state.block.get_version() >= BlockVersion::V7 && max_gas < SCHEDULED_EXECUTION_MIN_GAS {
+        return Ok(SysCallResult::Return(Primitive::Null.into()));
+    }
+
     if p.len() > (u8::MAX - 1) as usize {
         return Ok(SysCallResult::Return(Primitive::Null.into()));
     }
@@ -239,10 +244,15 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider<'ty>>(
 
         Source::Contract(metadata.metadata.contract_executor.clone())
     } else {
-        let source = state.caller.get_source()
+        let account = state.caller.get_source()
             .cloned()
-            .map(Source::Account)
             .ok_or(EnvironmentError::Static("cannot pay from non transaction call"))?;
+
+        let source = if state.block.get_version() >= BlockVersion::V7 {
+            Source::AccountBalance(account)
+        } else {
+            Source::Account(account)
+        };
 
         // only allocate the max gas
         // the extra cost must be paid
@@ -438,10 +448,15 @@ pub async fn scheduled_execution_increase_max_gas<'a, 'ty, 'r, P: ContractProvid
     let source = if use_contract_balance {
         Source::Contract(metadata.metadata.contract_executor.clone())
     } else {
-        state.caller.get_source()
+        let account = state.caller.get_source()
             .cloned()
-            .map(Source::Account)
-            .ok_or(EnvironmentError::Static("cannot pay from non transaction call"))?
+            .ok_or(EnvironmentError::Static("cannot pay from non transaction call"))?;
+
+        if state.block.get_version() >= BlockVersion::V7 {
+            Source::AccountBalance(account)
+        } else {
+            Source::Account(account)
+        }
     };
 
     if execution.gas_sources.len() >= u16::MAX as usize && !execution.gas_sources.contains_key(&source) {

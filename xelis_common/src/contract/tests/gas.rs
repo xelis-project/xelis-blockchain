@@ -18,7 +18,7 @@ use crate::{
         ContractVersion,
         InterContractPermission,
         Source,
-        vm::{self, ContractCaller, InvokeContract, refund_gas_sources},
+        vm::{self, ContractCaller, ContractError, ContractStateError, InvokeContract, refund_gas_sources},
     },
     crypto::{
         Hash,
@@ -124,6 +124,135 @@ fn assert_gas_injection_log(log: &ContractLog, expected_contract: &Hash, expecte
         },
         other => panic!("expected gas injection log, got {:?}", other)
     }
+}
+
+fn assert_invalid_gas_sources(result: Result<vm::ExecutionResult, ContractStateError<anyhow::Error>>) {
+    assert!(matches!(
+        result,
+        Err(ContractStateError::Contract(ContractError::InvalidGasSources))
+    ));
+}
+
+#[tokio::test]
+async fn vm_rejects_untrusted_or_wrong_domain_gas_sources_before_execution() {
+    let mut state = MockChainState::with(BlockVersion::V7);
+    let contract = create_contract(
+        &mut state,
+        r#"
+            pub fn delayed() -> u64 {
+                return 0
+            }
+
+            entry main() -> u64 {
+                return 0
+            }
+        "#,
+        ContractVersion::V1,
+    ).expect("create contract");
+    state.set_contract_balance(&contract, &XELIS_ASSET, 1_000);
+    let account = KeyPair::new().get_public_key().compress();
+
+    let wrong_scheduled_marker = vm::invoke_contract(
+        ContractCaller::Scheduled(Cow::Owned(Hash::zero()), Cow::Owned(contract.clone())),
+        &mut state,
+        Cow::Owned(contract.clone()),
+        None,
+        std::iter::empty(),
+        [(Source::ContractBalance(contract.clone()), 100)].into(),
+        100,
+        InvokeContract::Chunk(0, false),
+        Cow::Owned(Default::default()),
+        true,
+    ).await;
+    assert_invalid_gas_sources(wrong_scheduled_marker);
+
+    let unmarked_scheduled_account = vm::invoke_contract(
+        ContractCaller::Scheduled(Cow::Owned(Hash::zero()), Cow::Owned(contract.clone())),
+        &mut state,
+        Cow::Owned(contract.clone()),
+        None,
+        std::iter::empty(),
+        [(Source::Account(account.clone()), 100)].into(),
+        100,
+        InvokeContract::Chunk(0, false),
+        Cow::Owned(Default::default()),
+        true,
+    ).await;
+    assert_invalid_gas_sources(unmarked_scheduled_account);
+
+    let uncollateralized_legacy_callback = vm::invoke_contract(
+        ContractCaller::EventCallback(Cow::Owned(Hash::zero()), Cow::Owned(Hash::zero())),
+        &mut state,
+        Cow::Owned(contract.clone()),
+        None,
+        std::iter::empty(),
+        [(Source::Contract(contract.clone()), 100)].into(),
+        100,
+        InvokeContract::Chunk(0, false),
+        Cow::Owned(Default::default()),
+        false,
+    ).await;
+    assert_invalid_gas_sources(uncollateralized_legacy_callback);
+
+    let direct_caller_with_refundable_source = vm::invoke_contract(
+        ContractCaller::System,
+        &mut state,
+        Cow::Owned(contract.clone()),
+        None,
+        std::iter::empty(),
+        [(Source::AccountBalance(account), 100)].into(),
+        100,
+        InvokeContract::Entry(0),
+        Cow::Owned(Default::default()),
+        true,
+    ).await;
+    assert_invalid_gas_sources(direct_caller_with_refundable_source);
+
+    assert_eq!(state.get_contract_balance(&contract, &XELIS_ASSET), 1_000);
+    assert_eq!(state.gas_fee, 0);
+    assert_eq!(state.burned_fee, 0);
+    assert!(state.contract_logs.is_empty());
+}
+
+#[tokio::test]
+async fn rejects_zero_gas_scheduled_liabilities_at_creation() {
+    let mut state = MockChainState::with(BlockVersion::V7);
+    let contract = create_contract(
+        &mut state,
+        r#"
+            pub fn delayed() -> u64 {
+                return 0
+            }
+
+            entry main() -> u64 {
+                require(
+                    ScheduledExecution::new_at_block_end(delayed, [], 0u64, false) == null,
+                    "zero-gas execution must be rejected"
+                );
+                return 0
+            }
+        "#,
+        ContractVersion::V1,
+    ).expect("create contract");
+    let source = KeyPair::new().get_public_key().compress();
+
+    let result = vm::invoke_contract(
+        ContractCaller::Impersonate(Cow::Owned(source)),
+        &mut state,
+        Cow::Owned(contract),
+        None,
+        std::iter::empty(),
+        IndexMap::new(),
+        100_000,
+        InvokeContract::Entry(1),
+        Cow::Owned(Default::default()),
+        true,
+    ).await
+        .expect("invoke");
+
+    assert!(result.is_success(), "zero-gas rejection contract failed: {:?}", result);
+    assert!(state.executions.executions.is_empty());
+    assert!(state.executions.block_end.is_empty());
 }
 
 #[tokio::test]
@@ -525,6 +654,133 @@ async fn failed_increase_gas_limit_charges_extra_gas_used() {
 }
 
 #[tokio::test]
+async fn account_gas_allowance_cannot_use_contract_injected_headroom() {
+    let original_max_gas = 60_000u64;
+    let injection = 100_000u64;
+    let scheduled_gas = 80_000u64;
+    let initial_contract_balance = injection;
+    let code = format!(r#"
+        pub fn callback() -> u64 {{
+            return 0
+        }}
+
+        entry main() -> u64 {{
+            require(increase_gas_limit({injection}u64), "gas injection must succeed");
+            let execution = ScheduledExecution::new_at_block_end(callback, [], {scheduled_gas}u64, false);
+            require(execution != null, "scheduled execution must be created");
+            return 0
+        }}
+    "#);
+
+    let mut state = MockChainState::with(BlockVersion::V7);
+    let contract = create_contract(&mut state, &code, ContractVersion::V1)
+        .expect("create contract");
+    state.set_contract_balance(&contract, &XELIS_ASSET, initial_contract_balance);
+    let source = KeyPair::new().get_public_key().compress();
+
+    let result = vm::invoke_contract(
+        ContractCaller::Impersonate(Cow::Owned(source.clone())),
+        &mut state,
+        Cow::Owned(contract.clone()),
+        None,
+        std::iter::empty(),
+        IndexMap::new(),
+        original_max_gas,
+        InvokeContract::Entry(1),
+        Cow::Owned(Default::default()),
+        true,
+    ).await
+        .expect("invoke contract");
+
+    assert!(
+        !result.is_success(),
+        "must reject an account liability that exceeds the original account-funded gas pool"
+    );
+    assert!(
+        state.executions.block_end.is_empty(),
+        "rejected allowance must not commit a scheduled execution"
+    );
+    assert_eq!(
+        state.get_contract_balance(&contract, &XELIS_ASSET),
+        initial_contract_balance,
+        "failed execution must roll back the contract gas injection"
+    );
+}
+
+#[tokio::test]
+async fn allowance_consumes_injected_gas_if_later_usage_exhausts_original_pool() {
+    let original_max_gas = 100_000u64;
+    let injection = 100_000u64;
+    let scheduled_gas = 50_000u64;
+    let target_total_gas = 130_000u64;
+    let initial_contract_balance = injection;
+    let code = format!(r#"
+        pub fn callback() -> u64 {{
+            return 0
+        }}
+
+        entry main() -> u64 {{
+            require(increase_gas_limit({injection}u64), "gas injection must succeed");
+            let execution = ScheduledExecution::new_at_block_end(callback, [], {scheduled_gas}u64, false);
+            require(execution != null, "scheduled execution must be created");
+            let i: u64 = 0;
+            while get_gas_usage() < {target_total_gas}u64 {{
+                i += 1;
+            }}
+            return 0
+        }}
+    "#);
+
+    let mut state = MockChainState::with(BlockVersion::V7);
+    let contract = create_contract(&mut state, &code, ContractVersion::V1)
+        .expect("create contract");
+    state.set_contract_balance(&contract, &XELIS_ASSET, initial_contract_balance);
+    let source = KeyPair::new().get_public_key().compress();
+
+    let result = vm::invoke_contract(
+        ContractCaller::Impersonate(Cow::Owned(source.clone())),
+        &mut state,
+        Cow::Owned(contract.clone()),
+        None,
+        std::iter::empty(),
+        IndexMap::new(),
+        original_max_gas,
+        InvokeContract::Entry(1),
+        Cow::Owned(Default::default()),
+        true,
+    ).await
+        .expect("invoke contract");
+
+    assert!(result.is_success(), "execution should succeed: {:?}", result);
+    let execution_hash = state.executions.block_end.first()
+        .expect("scheduled execution hash");
+    let execution = state.executions.executions.get(execution_hash)
+        .expect("scheduled execution");
+    assert_eq!(
+        execution.gas_sources.get(&Source::AccountBalance(source)).copied(),
+        Some(scheduled_gas),
+        "account reservations must carry the verified funding marker"
+    );
+    let funded_usage = result.used_gas.checked_add(scheduled_gas)
+        .expect("funded usage overflow");
+    assert!(
+        funded_usage > original_max_gas,
+        "test must consume injected gas after reserving the account allowance"
+    );
+    let consumed_injection = funded_usage - original_max_gas;
+    assert_eq!(
+        initial_contract_balance - state.get_contract_balance(&contract, &XELIS_ASSET),
+        consumed_injection,
+        "must not refund injected gas that backs execution fees or the scheduled liability"
+    );
+    assert_eq!(
+        original_max_gas + consumed_injection,
+        result.used_gas + scheduled_gas,
+        "original and injected source pools must exactly fund fees plus the scheduled liability"
+    );
+}
+
+#[tokio::test]
 async fn successful_account_paid_scheduled_execution_keeps_reserved_gas_funded() {
     let code = r#"
         pub fn callback(args: any[]) -> u64 {
@@ -546,7 +802,7 @@ async fn successful_account_paid_scheduled_execution_keeps_reserved_gas_funded()
     let max_gas = 100000u64;
 
     let result = vm::invoke_contract(
-        ContractCaller::Impersonate(Cow::Owned(source)),
+        ContractCaller::Impersonate(Cow::Owned(source.clone())),
         &mut chain_state,
         Cow::Owned(contract),
         None,
@@ -1865,7 +2121,7 @@ async fn successful_account_paid_event_listener_keeps_callback_gas_funded() {
         }
     "#;
 
-    let mut chain_state = MockChainState::new();
+    let mut chain_state = MockChainState::with(BlockVersion::V7);
     let emitter = create_contract(&mut chain_state, emitter_code, ContractVersion::V1)
         .expect("create emitter");
 
@@ -1889,7 +2145,7 @@ async fn successful_account_paid_event_listener_keeps_callback_gas_funded() {
     let max_gas = 100000u64;
 
     let result = vm::invoke_contract(
-        ContractCaller::Impersonate(Cow::Owned(source)),
+        ContractCaller::Impersonate(Cow::Owned(source.clone())),
         &mut chain_state,
         Cow::Owned(listener),
         None,
@@ -1904,9 +2160,15 @@ async fn successful_account_paid_event_listener_keeps_callback_gas_funded() {
 
     assert!(result.is_success(), "listener registration should succeed: {:?}", result);
     assert_eq!(
-        chain_state.events_listeners.get(&(emitter, 7)).map(Vec::len),
+        chain_state.events_listeners.get(&(emitter.clone(), 7)).map(Vec::len),
         Some(1),
         "event listener must be registered"
+    );
+    let callback = &chain_state.events_listeners[&(emitter, 7)][0].1;
+    assert_eq!(
+        callback.gas_sources.get(&Source::AccountBalance(source)).copied(),
+        Some(50_000),
+        "account-funded callbacks must carry the verified funding marker"
     );
 
     let synthetic_caller = Hash::zero();
@@ -1979,6 +2241,99 @@ async fn failed_account_paid_event_listener_refunds_only_current_input() {
     assert!(
         refund > max_gas - 50000,
         "discarded event callback gas allowance should be refundable on failure"
+    );
+}
+
+#[tokio::test]
+async fn scheduled_callback_event_listener_funding_changes() {
+    let callback_gas = 50000u64;
+    let emitter_code = r#"
+        entry emit() -> u64 {
+            emit_event(7, []);
+            return 0
+        }
+    "#;
+
+    let mut chain_state = MockChainState::with(BlockVersion::V7);
+    let emitter = create_contract(&mut chain_state, emitter_code, ContractVersion::V1)
+        .expect("create emitter");
+
+    let listener_code_template = format!(r#"
+        pub fn on_event() -> u64 {{
+            return 0
+        }}
+
+        pub fn register_from_callback() -> u64 {{
+            let emitter: Hash = Hash::from_hex("EMITTER_HASH");
+            let contract = Contract::new(emitter).expect("load emitter");
+            contract.listen_event(7, on_event, {callback_gas}u64);
+            return 0
+        }}
+
+        entry main() -> u64 {{
+            return 0
+        }}
+    "#);
+    let listener_code = listener_code_template.replace("EMITTER_HASH", &emitter.to_string());
+
+    let listener = create_contract(&mut chain_state, &listener_code, ContractVersion::V1)
+        .expect("create listener");
+    let keypair = KeyPair::new();
+    let source = keypair.get_public_key().compress();
+    chain_state.accounts.insert(source.clone(), MockAccount {
+        balances: [(XELIS_ASSET, keypair.get_public_key().encrypt(0u64))].into_iter().collect(),
+        nonce: 0,
+    });
+
+    let without_balance = vm::invoke_contract(
+        ContractCaller::Scheduled(Cow::Owned(Hash::zero()), Cow::Owned(listener.clone())),
+        &mut chain_state,
+        Cow::Owned(listener.clone()),
+        None,
+        std::iter::empty(),
+        [(Source::AccountBalance(source.clone()), 100000)].into(),
+        100000,
+        InvokeContract::Chunk(1, false),
+        Cow::Owned(Default::default()),
+        true,
+    ).await
+        .expect("invoke callback without contract balance");
+    assert!(without_balance.is_success(), "callback should handle an unfunded registration: {:?}", without_balance);
+    assert!(
+        chain_state.events_listeners.is_empty(),
+        "an unfunded callback registration must not be committed"
+    );
+
+    chain_state.set_contract_balance(&listener, &XELIS_ASSET, callback_gas);
+    let with_balance = vm::invoke_contract(
+        ContractCaller::Scheduled(Cow::Owned(Hash::zero()), Cow::Owned(listener.clone())),
+        &mut chain_state,
+        Cow::Owned(listener.clone()),
+        None,
+        std::iter::empty(),
+        [(Source::AccountBalance(source), 100000)].into(),
+        100000,
+        InvokeContract::Chunk(1, false),
+        Cow::Owned(Default::default()),
+        true,
+    ).await
+        .expect("invoke callback with contract balance");
+    assert!(with_balance.is_success(), "funded callback registration should succeed: {:?}", with_balance);
+    assert_eq!(
+        chain_state.events_listeners.get(&(emitter.clone(), 7)).map(Vec::len),
+        Some(1),
+        "the funded callback registration must be committed"
+    );
+    let callback = &chain_state.events_listeners[&(emitter.clone(), 7)][0].1;
+    assert_eq!(
+        callback.gas_sources.get(&Source::ContractBalance(listener.clone())).copied(),
+        Some(callback_gas),
+        "contract-funded callbacks must carry the collateralized funding marker"
+    );
+    assert_eq!(
+        chain_state.get_contract_balance(&listener, &XELIS_ASSET),
+        0,
+        "non-transaction listener registration must reserve gas from the contract balance"
     );
 }
 

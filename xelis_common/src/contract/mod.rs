@@ -45,7 +45,7 @@ use xelis_vm::{
 };
 use crate::{
     account::CiphertextCache,
-    block::TopoHeight,
+    block::{BlockVersion, TopoHeight},
     config::{
         COST_PER_ASSET,
         COST_PER_SCHEDULED_EXECUTION,
@@ -2572,6 +2572,30 @@ pub async fn record_account_balance_credit<'a, 'b>(
 // Take from the available gas fee and increase the state gas fee allowance
 // this will be reduced from the final used gas to prevent double charging
 pub fn record_gas_allowance<'ty, 'r>(context: &mut VMContext<'ty, 'r>, amount: u64) -> Result<(), anyhow::Error> {
+    {
+        let current_gas_usage = context.current_gas_usage();
+        let current_gas_limit = context.get_gas_limit();
+
+        let state = state_from_context(context)?;
+        if state.block.get_version() >= BlockVersion::V7 {
+            // Contract-funded gas injections may increase the VM limit, but they
+            // cannot fund a future liability attributed to the transaction account.
+            // Restrict allowances to the execution's original, account-funded pool.
+            let injected_gas = state.injected_gas.values()
+                .try_fold(0u64, |total, gas| total.checked_add(*gas))
+                .context("Overflow while summing injected gas")?;
+
+            let original_gas_limit = current_gas_limit.checked_sub(injected_gas)
+                .context("Injected gas exceeds current gas limit")?;
+            let usage_with_allowance = current_gas_usage.checked_add(amount)
+                .context("Overflow while reserving gas allowance")?;
+
+            if usage_with_allowance > original_gas_limit {
+                return Err(EnvironmentError::Static("gas allowance exceeds original execution gas limit").into())
+            }
+        }
+    }
+
     context.increase_gas_usage(amount)?;
 
     let state = state_from_context(context)?;
@@ -2680,10 +2704,8 @@ async fn listen_event_fn<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance
         .as_u64()?;
 
     let (provider, state) = from_context::<P>(context)?;
-    let source = match state.caller.get_source() {
-        Some(source) => Source::Account(source.clone()),
-        None => Source::Contract(metadata.metadata.contract_executor.clone())
-    };
+    let account_source = state.caller.get_source().cloned();
+    let block_version = state.block.get_version();
 
     // check from storage that we're not already registered
     if provider.has_contract_callback_for_event(
@@ -2698,8 +2720,57 @@ async fn listen_event_fn<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance
     let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.cache_clone_refs);
 
     // Event is already registered in our cache
-    if !cache.events_listeners.insert((contract.clone(), event_id)) {
+    if cache.events_listeners.contains(&(contract.clone(), event_id)) {
         return Ok(Primitive::Boolean(false).into());
+    }
+
+    let source = match account_source {
+        Some(source) => {
+            // Transaction calls reserve the callback gas from the transaction gas pool.
+            record_gas_allowance(context, max_gas)?;
+            if block_version >= BlockVersion::V7 {
+                Source::AccountBalance(source)
+            } else {
+                Source::Account(source)
+            }
+        },
+        None => {
+            if block_version < BlockVersion::V7 {
+                record_gas_allowance(context, max_gas)?;
+                Source::Contract(metadata.metadata.contract_executor.clone())
+            } else {
+                // Scheduled executions and event callbacks have their own prepaid gas
+                // sources. Do not reallocate that gas and refund it at the same time:
+                // callbacks registered from those contexts are funded by the listener
+                // contract balance instead.
+                let (provider, state) = from_context::<P>(context)?;
+                if !has_enough_balance_for_contract(
+                    provider,
+                    state,
+                    metadata.metadata.contract_executor.clone(),
+                    XELIS_ASSET,
+                    max_gas,
+                ).await? {
+                    return Ok(Primitive::Boolean(false).into());
+                }
+
+                record_balance_charge(
+                    provider,
+                    state,
+                    metadata.metadata.contract_executor.clone(),
+                    XELIS_ASSET,
+                    max_gas,
+                ).await?;
+
+                Source::ContractBalance(metadata.metadata.contract_executor.clone())
+            }
+        }
+    };
+
+    let (_, state) = from_context::<P>(context)?;
+    let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.cache_clone_refs);
+    if !cache.events_listeners.insert((contract.clone(), event_id)) {
+        return Err(EnvironmentError::Static("event listener registration changed during funding"))
     }
 
     let listeners = state.changes.events_listeners.entry((contract.clone(), event_id))
@@ -2707,8 +2778,6 @@ async fn listen_event_fn<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance
 
     let callback = EventCallbackRegistration::new(chunk_id, max_gas, source);
     listeners.push((metadata.metadata.contract_executor.clone(), callback));
-
-    record_gas_allowance(context, max_gas)?;
 
     Ok(Primitive::Boolean(true).into())
 }
