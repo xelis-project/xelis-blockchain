@@ -1,4 +1,4 @@
-FROM lukemathwalker/cargo-chef:0.1.77-rust-1.95-slim AS chef
+FROM lukemathwalker/cargo-chef:0.1.77-rust-slim-trixie AS chef
 
 ENV BUILD_DIR=/tmp/xelis-build
 
