@@ -357,11 +357,6 @@ impl<'s, 'b, 'ty, P: ApplicableChainStateProvider> BlockchainContractState<'b, '
             (contract_hash.as_ref().clone(), cache)
         ].into();
 
-        let mut block_version = self.block.get_version();
-        if block_version < BlockVersion::V7 && self.is_v7_pre_enabled() {
-            block_version = BlockVersion::V7;
-        }
-
         let state = ContractChainState {
             debug_mode: self.debug_mode,
             mainnet,
@@ -369,7 +364,7 @@ impl<'s, 'b, 'ty, P: ApplicableChainStateProvider> BlockchainContractState<'b, '
             topoheight: self.inner.topoheight,
             block_hash: self.block_hash,
             block: self.block,
-            block_version,
+            block_version: self.block.get_version(),
             caller,
             logs: ContractLogs::default(),
             changes: ChainStateChanges {
@@ -583,11 +578,6 @@ impl<'s, 'b, P: ApplicableChainStateProvider> ApplicableChainState<'s, 'b, P> {
         }
     }
 
-    // Is v7
-    fn is_v7_pre_enabled(&self) -> bool {
-        self.block_version >= BlockVersion::V7
-    }
-
     // Returns if the TX was already executed
     #[inline]
     pub fn link_tx_to_block(&mut self, tx_hash: &'b Hash, block_hash: &'b Hash, contract: Option<&'b Hash>) -> bool {
@@ -736,7 +726,7 @@ impl<'s, 'b, P: ApplicableChainStateProvider> ApplicableChainState<'s, 'b, P> {
 
             for (listener_contract, mut callback) in callbacks {
                 debug!("processing event callback of {}", listener_contract);
-                if self.is_v7_pre_enabled()
+                if self.block_version >= BlockVersion::V7
                     && !self.collateralize_legacy_event_callback(&listener_contract, &mut callback).await?
                 {
                     warn!(
@@ -820,7 +810,7 @@ impl<'s, 'b, P: ApplicableChainStateProvider> ApplicableChainState<'s, 'b, P> {
         &mut self,
         execution: &ScheduledExecution,
     ) -> Result<bool, BlockchainError> {
-        if !self.is_v7_pre_enabled() {
+        if self.block_version < BlockVersion::V7 {
             return Ok(true);
         }
 
