@@ -364,7 +364,7 @@ impl<S: Storage> P2pServer<S> {
             Err(e) => {
                 match lookup_host(address).await {
                     Ok(it) => {
-                        info!("Valid host found for {}", address);
+                        debug!("valid host found for {}", address);
                         return Ok(Either::Left(it));
                     },
                     Err(e2) => {
