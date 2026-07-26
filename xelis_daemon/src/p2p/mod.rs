@@ -626,7 +626,7 @@ impl<S: Storage> P2pServer<S> {
 
         // check if the version of this peer is allowed
         if !hard_fork::is_version_allowed_at_height(self.blockchain.get_network(), self.blockchain.get_height().await, handshake.get_version()).map_err(|e| P2pError::InvalidP2pVersion(e.to_string()))? {
-            return Err(P2pError::InvalidP2pVersion(handshake.get_version().clone()));
+            return Err(P2pError::IncompatibleP2pVersion(handshake.get_version().clone()));
         }
 
         Ok(())
