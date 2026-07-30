@@ -2504,33 +2504,41 @@ impl<S: Storage> P2pServer<S> {
     // Packet is read from the same task always, while its handling is delegated to a unique task
     async fn listen_connection(self: &Arc<Self>, peer: &Arc<Peer>, mut receiver: mpsc::Receiver<Packet<'static>>) -> Result<(), P2pError> {
         let mut executor = Executor::new();
+        let mut peer_exit = peer.get_exit_receiver();
 
         loop {
             select! {
                 biased;
+                _ = peer_exit.recv() => {
+                    debug!("Peer {} has exited, stopping packet listener...", peer);
+                    break;
+                },
                 Some(packet) = receiver.recv() => {
                     let dependent = packet.is_order_dependent();
-                    let zelf = Arc::clone(self);
-                    let peer = Arc::clone(peer);
-                    let future = async move {
-                        let packet_id = packet.get_id();
-                        trace!("handling received packet #{} from {}", packet_id, peer);
-                        if let Err(e) = zelf.handle_incoming_packet(&peer, packet).await {
-                            warn!("Error while handling packet #{} from {}: {}", packet_id, peer, e);
-                            // check that we don't have too many fails
-                            // otherwise disconnect peer
-                            // Priority nodes are not disconnected
-                            if peer.get_fail_count() >= zelf.fail_count_limit && !peer.is_priority() {
-                                warn!("High fail count detected for {}! Closing connection...", peer);
-                                if let Err(e) = peer.close_and_temp_ban(zelf.temp_ban_time).await {
-                                    error!("Error while trying to close connection with {} due to high fail count: {}", peer, e);
+                    let future = {
+                        let zelf = Arc::clone(self);
+                        let peer = Arc::clone(peer);
+
+                        async move {
+                            let packet_id = packet.get_id();
+                            trace!("handling received packet #{} from {}", packet_id, peer);
+                            if let Err(e) = zelf.handle_incoming_packet(&peer, packet).await {
+                                warn!("Error while handling packet #{} from {}: {}", packet_id, peer, e);
+                                // check that we don't have too many fails
+                                // otherwise disconnect peer
+                                // Priority nodes are not disconnected
+                                if peer.get_fail_count() >= zelf.fail_count_limit && !peer.is_priority() {
+                                    warn!("High fail count detected for {}! Closing connection...", peer);
+                                    if let Err(e) = peer.close_and_temp_ban(zelf.temp_ban_time).await {
+                                        error!("Error while trying to close connection with {} due to high fail count: {}", peer, e);
+                                    }
+
+                                    return true
                                 }
-
-                                return true
                             }
-                        }
 
-                        false
+                            false
+                        }
                     };
 
                     if !self.handle_peer_packets_in_dedicated_task {
@@ -2543,6 +2551,16 @@ impl<S: Storage> P2pServer<S> {
                         if dependent {
                             executor.push_back(future);
                         } else {
+                            // Detached packet handlers must still stop when their peer
+                            // is removed, otherwise they retain Arc<Peer> and its socket.
+                            let mut peer_exit = peer.get_exit_receiver();
+                            let future = async move {
+                                select! {
+                                    biased;
+                                    _ = peer_exit.recv() => true,
+                                    result = future => result
+                                }
+                            };
                             tokio::spawn(future);
                         }
                     }
