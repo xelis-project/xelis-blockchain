@@ -1842,29 +1842,36 @@ impl<S: Storage> P2pServer<S> {
         }
 
         let (sender, receiver) = mpsc::channel(8);
-        let read_packet = spawn_task("peer-read-packet", read_peer_packet_task(Arc::clone(peer), sender));
+        let mut read_packet = spawn_task("peer-read-packet", read_peer_packet_task(Arc::clone(peer), sender));
 
-        select! {
+        let result = select! {
             biased;
             _ = server_exit.recv() => {
                 trace!("Exit message received for peer {}", peer);
+                Ok(())
             },
             _ = peer_exit.recv() => {
                 debug!("Peer {} has exited, stopping...", peer);
+                Ok(())
             },
             _ = write_task => {
                 debug!("write task for {} has finished, stopping...", peer);
+                Ok(())
             },
-            res = read_packet => {
+            res = &mut read_packet => {
                 debug!("read packet task for {} has finished", peer);
-                res.context("Error while joining read packet task")??;
+                return res.context("Error while joining read packet task")?
             },
             res = self.listen_connection(&peer, receiver) => {
-                res?;
+                res
             }
-        }
+        };
 
-        Ok(())
+        // Cancel and join it before releasing this peer's final task reference.
+        read_packet.abort();
+        let _ = read_packet.await;
+
+        result
     }
 
     // this function handle the whole connection with a peer

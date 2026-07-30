@@ -462,7 +462,6 @@ impl Connection {
         trace!("Closing internal connection with {}", self.addr);
         if self.closed.swap(true, Ordering::SeqCst) {
             debug!("Connection with {} already closed", self.addr);
-            return Ok(());
         }
 
         // sometimes the peer is not removed on other peer side
