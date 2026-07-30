@@ -212,6 +212,17 @@ impl<S: Storage> DaemonRpcServer<S> {
 
     pub async fn stop(&self) {
         info!("Stopping RPC Server...");
+
+        if let Err(e) = self.websocket.clear_connections().await {
+            error!("Error while clearing RPC WebSocket connections: {}", e);
+        }
+
+        if let Some(getwork) = &self.getwork {
+            if let Err(e) = getwork.clear_connections().await {
+                error!("Error while clearing GetWork WebSocket connections: {}", e);
+            }
+        }
+
         let mut handle = self.handle.lock().await;
         if let Some(handle) = handle.take() {
             handle.stop(false).await;
