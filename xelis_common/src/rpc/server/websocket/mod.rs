@@ -285,8 +285,8 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static + Send + Sync {
 
         debug!("Clear {} connections", sessions.len());
         for session in sessions {
-            if let Err(e) = session.close_internal(None).await {
-                debug!("Error while closing internal session: {}", e);
+            if let Err(e) = session.close(None).await {
+                debug!("Error while requesting session close: {}", e);
             }
 
             if let Err(e) = self.get_handler().on_close(&session).await {
