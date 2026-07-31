@@ -89,6 +89,9 @@ use xelis_wallet::config::DEFAULT_DAEMON_ADDRESS;
 
 #[cfg(feature = "xswd")]
 use {
+    std::collections::VecDeque,
+    futures::future::OptionFuture,
+    anyhow::Error,
     xelis_wallet::{
         api::{
             AuthConfig,
@@ -104,10 +107,10 @@ use {
         prompt::ShareablePrompt,
         tokio::{
             spawn_task,
+            select,
             sync::mpsc::UnboundedReceiver
         }
     },
-    anyhow::Error,
 };
 
 #[cfg(feature = "api_server")]
@@ -243,10 +246,6 @@ async fn register_default_commands(manager: &CommandManager) -> Result<(), Comma
 #[cfg(feature = "xswd")]
 // This must be run in a separate task
 async fn xswd_handler(mut receiver: UnboundedReceiver<XSWDEvent>, prompt: ShareablePrompt) {
-    use std::collections::VecDeque;
-    use futures::future::OptionFuture;
-    use xelis_common::tokio::select;
-
     let mut queue = VecDeque::new();
     let mut current = None;
 
