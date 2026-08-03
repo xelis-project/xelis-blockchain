@@ -753,8 +753,8 @@ impl TransactionBuilder {
                     }
     
                     // Set the integrated data as extra data
-                    if let Some(extra_data) = transfer.destination.extract_data_only() {
-                        transfer.extra_data = Some(extra_data);
+                    if let Some(extra_data) = transfer.destination.get_extra_data() {
+                        transfer.extra_data = Some(extra_data.clone());
                     }
     
                     if let Some(extra_data) = &transfer.extra_data {

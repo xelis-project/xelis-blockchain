@@ -1,13 +1,13 @@
 use std::{
     fmt::{Display, Formatter},
-    hash::{Hash, Hasher},
-    mem,
+    hash,
     str::FromStr
 };
 use crate::{
-    api::{DataElement, ValueType, DataValue},
-    serializer::{Serializer, Writer, Reader, ReaderError},
+    api::{DataElement, DataValue, ValueType},
     config::{PREFIX_ADDRESS, TESTNET_PREFIX_ADDRESS},
+    crypto::Hash,
+    serializer::{Reader, ReaderError, Serializer, Writer},
     transaction::EXTRA_DATA_LIMIT_SIZE
 };
 use super::{
@@ -28,7 +28,15 @@ pub enum AddressType {
     Normal,
     // Data variant allow to integrate data in address for easier communication / data transfered
     // those data are directly integrated in the data part and can be transfered in the transaction directly
-    Data(DataElement)
+    Data(DataElement),
+    // Invoice variant allow to create an invoice address with a specific asset and amount
+    // this is useful for creating an address that can be used to request a specific asset and amount
+    Invoice {
+        // asset type requested for the invoice
+        asset: Hash,
+        // atomic amount requested for the invoice
+        amount: u64,
+    },
 }
 
 /// A XELIS address represented as a Bech32 encoded string.
@@ -41,8 +49,8 @@ pub struct Address {
     key: PublicKey
 }
 
-impl Hash for Address {
-    fn hash<H: Hasher>(&self, state: &mut H) {
+impl hash::Hash for Address {
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
         self.key.hash(state);
     }
 }
@@ -76,24 +84,14 @@ impl Address {
         (self.key, self.addr_type)
     }
 
-    // Change internally the address type to extract the data
-    pub fn extract_data_only(&mut self) -> Option<DataElement> {
-        let mut addr_type = AddressType::Normal;
-        mem::swap(&mut addr_type, &mut self.addr_type);
-
-        match addr_type {
-            AddressType::Data(data) => Some(data),
-            AddressType::Normal => None
-        }
-    }
-
     // Recreate a new address struct without the integrated data
     pub fn extract_data(self) -> (Option<DataElement>, Self) {
         match self.addr_type {
             AddressType::Data(data) => {
                 (Some(data), Self::new(self.mainnet, AddressType::Normal, self.key))
             },
-            AddressType::Normal => (None, self)
+            AddressType::Normal => (None, self),
+            AddressType::Invoice { .. } => (None, self)
         }
     }
 
@@ -110,6 +108,14 @@ impl Address {
         match self.addr_type {
             AddressType::Normal => true,
             _=> false
+        }
+    }
+
+    // Check if the address is an integrated address (data integrated)
+    pub fn is_integrated(&self) -> bool {
+        match self.addr_type {
+            AddressType::Data(_) => true,
+            _ => false
         }
     }
 
@@ -141,8 +147,8 @@ impl Address {
     // Search for a data value in the address
     pub fn get_data(&self, name: String, value_type: ValueType) -> Option<&DataValue> {
         match &self.addr_type {
-            AddressType::Normal => None,
-            AddressType::Data(data) => data.get_value_by_string_key(name, value_type)
+            AddressType::Data(data) => data.get_value_by_string_key(name, value_type),
+            _ => None,
         }
     }
 
@@ -232,6 +238,11 @@ impl Serializer for AddressType {
             AddressType::Data(data) => {
                 writer.write_u8(1);
                 data.write(writer);
+            },
+            AddressType::Invoice { asset, amount } => {
+                writer.write_u8(2);
+                asset.write(writer);
+                writer.write_u64(*amount);
             }
         };
     }
@@ -249,15 +260,21 @@ impl Serializer for AddressType {
 
                 addr_type
             },
+            2 => {
+                let asset = Hash::read(reader)?;
+                let amount = reader.read_u64()?;
+                AddressType::Invoice { asset, amount }
+            },
             _ => return Err(ReaderError::InvalidValue)
         };
         Ok(_type)
     }
 
     fn size(&self) -> usize {
-        match self {
-            AddressType::Normal => 1,
-            AddressType::Data(data) => 1 + data.size()
+        1 + match self {
+            AddressType::Normal => 0,
+            AddressType::Data(data) => data.size(),
+            AddressType::Invoice { asset, amount } => asset.size() + amount.size(),
         }
     }
 }
