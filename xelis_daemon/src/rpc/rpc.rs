@@ -2277,12 +2277,15 @@ async fn get_contract_data_entries<S: Storage>(context: &Context<'_, '_>, params
         .context("Error while retrieving contract entries")?;
 
     let stream = stream.boxed();
-    let entries = stream.skip(params.skip.unwrap_or(0))
-        .take(maximum)
-        .map_ok(|(key, value)| ContractDataEntry {
-            key,
-            value,
+    let entries = stream
+        .try_filter_map(|(key, value)| async move {
+            Ok(value.map(|value| ContractDataEntry {
+                key,
+                value,
+            }))
         })
+        .skip(params.skip.unwrap_or(0))
+        .take(maximum)
         .try_collect::<Vec<_>>()
         .await
         .context("Error while collecting contract entries")?;

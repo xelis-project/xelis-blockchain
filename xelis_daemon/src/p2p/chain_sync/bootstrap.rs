@@ -1049,7 +1049,7 @@ impl<S: Storage> P2pServer<S> {
             let entries_count = entries.len();
             let mut storage = self.blockchain.get_storage().write().await;
             for (key, value) in entries {
-                storage.set_last_contract_data_to(contract, &key, stable_topoheight, &VersionedContractData::new(Some(value), None)).await?;
+                storage.set_last_contract_data_to(contract, &key, stable_topoheight, &VersionedContractData::new(value, None)).await?;
             }
 
             // If next_skip is 0, we're done (no more data)

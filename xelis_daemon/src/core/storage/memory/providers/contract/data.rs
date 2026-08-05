@@ -68,17 +68,14 @@ impl ContractDataProvider for MemoryStorage {
         )
     }
 
-    async fn get_contract_data_entries_at_maximum_topoheight<'a>(&'a self, contract: &'a Hash, topoheight: TopoHeight) -> Result<impl Stream<Item = Result<(ValueCell, ValueCell), BlockchainError>> + Send + 'a, BlockchainError> {
+    async fn get_contract_data_entries_at_maximum_topoheight<'a>(&'a self, contract: &'a Hash, topoheight: TopoHeight) -> Result<impl Stream<Item = Result<(ValueCell, Option<ValueCell>), BlockchainError>> + Send + 'a, BlockchainError> {
         let entries = self.contracts.get(contract)
             .with_context(|| format!("Contract data entries not found for contract {:?}, topoheight {}", contract, topoheight))?
             .data
             .iter()
             .filter_map(move |(key, data_map)| data_map.range(..=topoheight)
                 .next_back()
-                .and_then(|(_, data)| data.get()
-                    .as_ref()
-                    .map(|value| (key.clone(), value.clone()))
-                )
+                .map(|(_, data)| (key.clone(), data.get().clone()))
             )
             .map(Ok);
 

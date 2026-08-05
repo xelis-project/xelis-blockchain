@@ -103,7 +103,7 @@ impl ContractDataProvider for RocksStorage {
         self.contains_data(Column::VersionedContractsData, &key)
     }
 
-    async fn get_contract_data_entries_at_maximum_topoheight<'a>(&'a self, contract: &'a Hash, topoheight: TopoHeight) -> Result<impl Stream<Item = Result<(ValueCell, ValueCell), BlockchainError>> + Send + 'a, BlockchainError> {
+    async fn get_contract_data_entries_at_maximum_topoheight<'a>(&'a self, contract: &'a Hash, topoheight: TopoHeight) -> Result<impl Stream<Item = Result<(ValueCell, Option<ValueCell>), BlockchainError>> + Send + 'a, BlockchainError> {
         trace!("get contract {} data entries at maximum topoheight {}", contract, topoheight);
         let contract_id = self.get_contract_id(contract)?;
         let iterator = self.iter_keys::<(u64, u64)>(Column::ContractsData, IteratorMode::WithPrefix(&contract_id.to_be_bytes(), Direction::Forward))?;
@@ -113,17 +113,12 @@ impl ContractDataProvider for RocksStorage {
                 match self.get_contract_data_topoheight_at_maximum_topoheight_for_internal(contract_id, data_id, topoheight).await? {
                     Some(topoheight) => {
                         let versioned_key = Self::get_versioned_contract_data_key(contract_id, data_id, topoheight);
-                        let version = self.load_from_disk::<_, VersionedContractData>(Column::VersionedContractsData, &versioned_key)?
-                            .take();
+                        let version = self.load_from_disk::<_, VersionedContractData>(Column::VersionedContractsData, &versioned_key)?;
 
-                        match version {
-                            Some(data) => {
-                                // Load the key from the data id
-                                let key = self.load_from_disk(Column::ContractDataTableById, &data_id.to_be_bytes())?;
-                                Ok(Some((key, data)))
-                            },
-                            None => Ok(None),
-                        }
+                        // Load the key from the data id. Keep None values as
+                        // tombstones so bootstrap can reproduce deletion state.
+                        let key = self.load_from_disk(Column::ContractDataTableById, &data_id.to_be_bytes())?;
+                        Ok(Some((key, version.take())))
                     },
                     _ => Ok(None),
                 }

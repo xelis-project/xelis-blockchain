@@ -1,5 +1,5 @@
 use anyhow::{Result, Context};
-use futures::StreamExt;
+use futures::{pin_mut, StreamExt};
 use std::sync::Arc;
 use std::borrow::Cow;
 use indexmap::IndexSet;
@@ -2236,6 +2236,13 @@ pub async fn test_contract_data_lifecycle<S: Storage>(mut storage: S) -> Result<
     assert!(storage.has_contract_data_at_exact_topoheight(&contract, &key, 6).await?, "exact topo 6 (delete) must exist");
     assert!(!storage.has_contract_data_at_exact_topoheight(&contract, &key, 4).await?, "exact topo 4 must not exist (no write)");
 
+    let entries = storage.get_contract_data_entries_at_maximum_topoheight(&contract, 6).await?;
+    pin_mut!(entries);
+    let entry = entries.next().await.transpose()?.context("deleted contract data entry should be exported")?;
+    assert_eq!(entry.0, key, "exported contract data key must match");
+    assert!(entry.1.is_none(), "exported deleted contract data must remain a tombstone");
+    assert!(entries.next().await.is_none(), "contract data export should contain one key");
+
     Ok(())
 }
 
@@ -2329,6 +2336,10 @@ pub async fn test_contract_module_lifecycle<S: Storage>(mut storage: S) -> Resul
         "should have contract at topo 5");
     assert!(!storage.has_contract_at_maximum_topoheight(&hash, 10).await?,
         "should NOT have contract at topo 10 (deleted at 7)");
+
+    let contracts = storage.get_contracts(Some(0), Some(5)).await?
+        .collect::<Result<Vec<_>, _>>()?;
+    assert!(contracts.contains(&hash), "contract range query must include versions at or below the maximum topoheight");
 
     Ok(())
 }

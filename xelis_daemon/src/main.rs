@@ -1403,7 +1403,9 @@ async fn inspect_contract<S: Storage>(manager: &CommandManager, mut arguments: A
     let mut total_size = 0;
     let mut stream = stream.boxed();
     while let Some(res) = stream.next().await {
-        let (key, value) = res.context("Error on contract data entry")?;
+        let (key, Some(value)) = res.context("Error on contract data entry")? else {
+            continue;
+        };
         let key_size = key.size();
         total_size += key_size;
         let value_size = value.size();
