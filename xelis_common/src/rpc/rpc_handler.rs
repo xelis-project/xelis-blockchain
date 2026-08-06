@@ -318,7 +318,7 @@ where
         let handler = self.methods.get(&key)
             .ok_or_else(|| RpcResponseError::new(request.id.clone(), InternalRpcError::MethodNotFound(request.method.clone())))?;
 
-        trace!("executing '{}' RPC method", request.method);
+        trace!("executing '{}' RPC method {}", request.method, request.params.as_ref().map(|v| v.to_string()).unwrap_or_else(|| "null".to_string()));
         counter!("xelis_rpc_calls", "method" => request.method.clone()).increment(1);
 
         let params = request.params.take().unwrap_or(Value::Null);
