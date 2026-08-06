@@ -2,18 +2,21 @@ mod handler;
 mod http_request;
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     hash::{Hash, Hasher},
+    net::IpAddr,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc
+        Arc,
+        Mutex as StdMutex
     },
     time::{Duration, Instant}
 };
 use actix_web::{
     HttpRequest as ActixHttpRequest,
-    web::Payload,
-    HttpResponse
+    HttpResponse,
+    error::ErrorInternalServerError,
+    web::Payload
 };
 use actix_ws::{
     AggregatedMessage,
@@ -100,7 +103,29 @@ pub struct WebSocketSession<H: WebSocketHandler + 'static> {
     inner: Mutex<Option<Session>>,
     // Sender to send messages to the session
     channel: Sender<InnerMessage>,
-    _session_permit: OwnedSemaphorePermit
+    _session_permit: OwnedSemaphorePermit,
+    _ip_session_permit: Option<IpSessionPermit>
+}
+
+// A permit for a session associated with an IP address
+struct IpSessionPermit {
+    sessions: Arc<StdMutex<HashMap<IpAddr, usize>>>,
+    ip: IpAddr
+}
+
+impl Drop for IpSessionPermit {
+    fn drop(&mut self) {
+        let Ok(mut sessions) = self.sessions.lock() else {
+            return;
+        };
+
+        if let Some(count) = sessions.get_mut(&self.ip) {
+            *count -= 1;
+            if *count == 0 {
+                sessions.remove(&self.ip);
+            }
+        }
+    }
 }
 
 tid! { impl<'a, H: 'static> TidAble<'a> for WebSocketSession<H> where H: WebSocketHandler }
@@ -230,6 +255,8 @@ pub struct WebSocketServer<H: WebSocketHandler + 'static + Send + Sync> {
     session_permits: Arc<Semaphore>,
     session_channel_size: usize,
     session_work_queue_size: usize,
+    max_connections_per_ip: Option<usize>,
+    connections_per_ip: Arc<StdMutex<HashMap<IpAddr, usize>>>,
     id_counter: AtomicU64,
     handler: Immutable<H>
 }
@@ -240,7 +267,8 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static + Send + Sync {
             handler,
             DEFAULT_MAX_WEBSOCKET_SESSIONS,
             DEFAULT_MAX_SESSION_CHANNEL_SIZE,
-            DEFAULT_MAX_SESSION_WORK_QUEUE
+            DEFAULT_MAX_SESSION_WORK_QUEUE,
+            None,
         )
     }
 
@@ -248,17 +276,21 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static + Send + Sync {
         handler: impl Into<Immutable<H>>,
         max_sessions: usize,
         session_channel_size: usize,
-        session_work_queue_size: usize
+        session_work_queue_size: usize,
+        max_connections_per_ip: Option<usize>
     ) -> WebSocketServerShared<H> {
         assert!(max_sessions > 0, "max websocket sessions must be greater than 0");
         assert!(session_channel_size > 0, "websocket session channel size must be greater than 0");
         assert!(session_work_queue_size > 0, "websocket session work queue size must be greater than 0");
+        assert!(max_connections_per_ip.map_or(true, |v| v > 0), "max connections per IP must be greater than 0");
 
         Arc::new(Self {
             sessions: RwLock::new(HashSet::new()),
             session_permits: Arc::new(Semaphore::new(max_sessions)),
             session_channel_size,
             session_work_queue_size,
+            max_connections_per_ip,
+            connections_per_ip: Arc::new(StdMutex::new(HashMap::new())),
             id_counter: AtomicU64::new(0),
             handler: handler.into()
         })
@@ -318,6 +350,17 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static + Send + Sync {
             }
         };
 
+        let ip_session_permit = if let Some(address) = request.peer_addr() {
+            let permit = self.try_acquire_ip_session(address.ip())?;
+            if self.max_connections_per_ip.is_some() && permit.is_none() {
+                debug!("Rejecting WebSocket connection, per-IP session limit reached");
+                return Ok(HttpResponse::TooManyRequests().finish());
+            }
+            permit
+        } else {
+            None
+        };
+
         let (response, session, stream) = actix_ws::handle(&request, body)?;
         let id = self.next_id();
         let request = HttpRequest::from(request);
@@ -328,7 +371,8 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static + Send + Sync {
             server: Arc::clone(&self),
             inner: Mutex::new(Some(session)),
             channel: tx,
-            _session_permit: permit
+            _session_permit: permit,
+            _ip_session_permit: ip_session_permit
         });
 
         debug!("Created new WebSocketSession with id {}", id);
@@ -360,6 +404,30 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static + Send + Sync {
                 )
         );
         Ok(response)
+    }
+
+    // Try to acquire a session permit for the given IP address
+    // Returns Some(IpSessionPermit) if the permit was acquired, None otherwise
+    fn try_acquire_ip_session(&self, ip: IpAddr) -> Result<Option<IpSessionPermit>, actix_web::Error> {
+        let Some(limit) = self.max_connections_per_ip else {
+            return Ok(None);
+        };
+
+        let mut sessions = self.connections_per_ip.lock()
+            .map_err(|e| {
+                error!("Failed to lock connections_per_ip: {}", e);
+                ErrorInternalServerError(format!("Failed to lock connections_per_ip: {}", e.to_string()))
+            })?;
+        let count = sessions.entry(ip).or_insert(0);
+        if *count >= limit {
+            return Ok(None);
+        }
+
+        *count += 1;
+        Ok(Some(IpSessionPermit {
+            sessions: Arc::clone(&self.connections_per_ip),
+            ip
+        }))
     }
 
     // Internal function to generate a unique id for a session
