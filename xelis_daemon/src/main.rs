@@ -206,6 +206,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
 
     // Register all our commands
     command_manager.add_command(Command::with_optional_arguments("list_miners", "List all miners connected", vec![Arg::new("page", ArgType::Number)], CommandHandler::Async(async_handler!(list_miners::<S>))))?;
+    command_manager.add_command(Command::with_optional_arguments("list_rpc_connections", "List all RPC WebSocket connection IPs", vec![Arg::new("page", ArgType::Number)], CommandHandler::Async(async_handler!(list_rpc_connections::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("list_peers", "List all peers connected", vec![Arg::new("page", ArgType::Number)], CommandHandler::Async(async_handler!(list_peers::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("list_assets", "List all assets registered on chain", vec![Arg::new("page", ArgType::Number)], CommandHandler::Async(async_handler!(list_assets::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("show_peerlist", "Show the stored peerlist", vec![Arg::new("page", ArgType::Number)], CommandHandler::Async(async_handler!(show_stored_peerlist::<S>))))?;
@@ -873,6 +874,7 @@ async fn temp_ban_address<S: Storage>(manager: &CommandManager, mut args: Argume
 }
 
 const ELEMENTS_PER_PAGE: usize = 10;
+const RPC_CONNECTIONS_PER_PAGE: usize = 20;
 
 async fn list_miners<S: Storage>(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
     let page = if arguments.has_argument("page") {
@@ -912,6 +914,56 @@ async fn list_miners<S: Storage>(manager: &CommandManager, mut arguments: Argume
             },
             None => {
                 manager.message("No miners running!");
+            }
+        },
+        None => {
+            manager.message("No RPC server running!");
+        }
+    };
+
+    Ok(())
+}
+
+async fn list_rpc_connections<S: Storage>(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let page = if arguments.has_argument("page") {
+        arguments.get_value("page")?.to_number()? as usize
+    } else {
+        1
+    };
+
+    if page == 0 {
+        return Err(CommandError::InvalidArgument("Page must be greater than 0".to_string()));
+    }
+
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    match blockchain.get_rpc().read().await.as_ref() {
+        Some(rpc) => {
+            let sessions = rpc.get_websocket().get_sessions().read().await;
+            if sessions.is_empty() {
+                manager.message("No RPC connections");
+                return Ok(());
+            }
+
+            let mut ips: Vec<String> = sessions.iter()
+                .map(|session| session.get_request().head().peer_addr
+                    .map(|address| address.ip().to_string())
+                    .unwrap_or_else(|| "unknown".to_owned()))
+                .collect();
+            ips.sort();
+
+            let mut max_pages = ips.len() / RPC_CONNECTIONS_PER_PAGE;
+            if ips.len() % RPC_CONNECTIONS_PER_PAGE != 0 {
+                max_pages += 1;
+            }
+
+            if page > max_pages {
+                return Err(CommandError::InvalidArgument(format!("Page must be less than maximum pages ({})", max_pages)));
+            }
+
+            manager.message(format!("RPC connections (total {}) page {}/{}:", ips.len(), page, max_pages));
+            for ip in ips.iter().skip((page - 1) * RPC_CONNECTIONS_PER_PAGE).take(RPC_CONNECTIONS_PER_PAGE) {
+                manager.message(format!("- {}", ip));
             }
         },
         None => {
