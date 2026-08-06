@@ -95,7 +95,8 @@ impl<S: Storage> DaemonRpcServer<S> {
                 ),
                 config.max_websocket_sessions,
                 config.websocket_session_channel_size,
-                config.websocket_session_work_queue_size
+                config.websocket_session_work_queue_size,
+                config.max_connections_per_ip
             ))
         } else {
             None
@@ -110,7 +111,8 @@ impl<S: Storage> DaemonRpcServer<S> {
             EventWebSocketHandler::new(rpc_handler, config.notify_events_concurrency),
             config.max_websocket_sessions,
             config.websocket_session_channel_size,
-            config.websocket_session_work_queue_size
+            config.websocket_session_work_queue_size,
+            config.max_connections_per_ip
         );
 
         let server = Arc::new(Self {
