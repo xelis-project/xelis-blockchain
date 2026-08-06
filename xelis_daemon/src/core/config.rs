@@ -308,6 +308,10 @@ pub struct RPCConfig {
     #[clap(name = "rpc-max-websocket-sessions", long, default_value_t = default_rpc_max_websocket_sessions())]
     #[serde(default = "default_rpc_max_websocket_sessions")]
     pub max_websocket_sessions: usize,
+    /// Optional maximum number of websocket sessions accepted from one IP address.
+    #[clap(name = "rpc-max-connections-per-ip", long)]
+    #[serde(default)]
+    pub max_connections_per_ip: Option<usize>,
     /// Maximum number of outbound messages queued per websocket session.
     #[clap(name = "rpc-websocket-session-channel-size", long, default_value_t = default_rpc_websocket_session_channel_size())]
     #[serde(default = "default_rpc_websocket_session_channel_size")]
@@ -347,6 +351,7 @@ impl Default for RPCConfig {
             notify_events_concurrency: detect_available_parallelism(),
             batch_limit: default_rpc_batch_limit(),
             max_websocket_sessions: default_rpc_max_websocket_sessions(),
+            max_connections_per_ip: None,
             websocket_session_channel_size: default_rpc_websocket_session_channel_size(),
             websocket_session_work_queue_size: default_rpc_websocket_session_work_queue_size(),
             cors_allowed_origins: Vec::new(),

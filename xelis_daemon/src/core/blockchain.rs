@@ -280,6 +280,11 @@ impl<S: Storage> Blockchain<S> {
                 return Err(BlockchainError::InvalidConfig.into())
             }
 
+            if config.rpc.max_connections_per_ip == Some(0) {
+                error!("RPC max connections per IP must be above 0");
+                return Err(BlockchainError::InvalidConfig.into())
+            }
+
             if config.p2p.proxy.kind.is_some() != config.p2p.proxy.address.is_some() {
                 error!("P2P Proxy must be specified with an address");
                 return Err(BlockchainError::InvalidConfig.into())
