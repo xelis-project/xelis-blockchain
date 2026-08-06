@@ -544,13 +544,17 @@ impl Peer {
                 debug!("{} was already sent to {}, subscribing to the same channel", request, self);
                 sender.subscribe()
             } else {
-                sent_at = Some(get_current_time_in_millis());
-                self.send_packet(Packet::ObjectRequest(Cow::Borrowed(&request))).await?;
                 let (sender, receiver) = broadcast::channel(1);
                 // clone is necessary in case timeout has occured
                 if objects.put(request.clone(), sender).is_some() {
                     warn!("{} was already pending for {}", request, self);
                 };
+
+                drop(objects);
+
+                self.send_packet(Packet::ObjectRequest(Cow::Borrowed(&request))).await?;
+                sent_at = Some(get_current_time_in_millis());
+
                 receiver
             }
         };
