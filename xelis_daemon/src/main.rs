@@ -945,10 +945,28 @@ async fn list_rpc_connections<S: Storage>(manager: &CommandManager, mut argument
                 return Ok(());
             }
 
-            let mut ips: Vec<String> = sessions.iter()
-                .map(|session| session.get_ip_addr().to_string())
-                .collect();
-            ips.sort();
+            let mut ip_sessions = HashMap::<String, (usize, HashSet<String>, HashSet<String>)>::new();
+            for session in sessions.iter() {
+                let (count, referers, user_agents) = ip_sessions
+                    .entry(session.get_ip_addr().to_string())
+                    .or_insert_with(|| (0, HashSet::new(), HashSet::new()));
+                *count += 1;
+
+                if let Some(referer) = session.get_request().headers().get("referer")
+                    .and_then(|value| value.to_str().ok())
+                {
+                    referers.insert(referer.to_owned());
+                }
+
+                if let Some(user_agent) = session.get_request().headers().get("user-agent")
+                    .and_then(|value| value.to_str().ok())
+                {
+                    user_agents.insert(user_agent.to_owned());
+                }
+            }
+
+            let mut ips: Vec<(String, (usize, HashSet<String>, HashSet<String>))> = ip_sessions.into_iter().collect();
+            ips.sort_by(|(left, _), (right, _)| left.cmp(right));
 
             let mut max_pages = ips.len() / RPC_CONNECTIONS_PER_PAGE;
             if ips.len() % RPC_CONNECTIONS_PER_PAGE != 0 {
@@ -959,9 +977,25 @@ async fn list_rpc_connections<S: Storage>(manager: &CommandManager, mut argument
                 return Err(CommandError::InvalidArgument(format!("Page must be less than maximum pages ({})", max_pages)));
             }
 
-            manager.message(format!("RPC connections (total {}) page {}/{}:", ips.len(), page, max_pages));
-            for ip in ips.iter().skip((page - 1) * RPC_CONNECTIONS_PER_PAGE).take(RPC_CONNECTIONS_PER_PAGE) {
-                manager.message(format!("- {}", ip));
+            manager.message(format!("RPC connections (total {}) page {}/{}:", sessions.len(), page, max_pages));
+            for (ip, (count, referers, user_agents)) in ips.iter().skip((page - 1) * RPC_CONNECTIONS_PER_PAGE).take(RPC_CONNECTIONS_PER_PAGE) {
+                let mut referers: Vec<&str> = referers.iter().map(String::as_str).collect();
+                referers.sort_unstable();
+                let mut user_agents: Vec<&str> = user_agents.iter().map(String::as_str).collect();
+                user_agents.sort_unstable();
+
+                let referer = if referers.is_empty() {
+                    String::new()
+                } else {
+                    format!(", referer: {}", referers.join(", "))
+                };
+                let user_agent = if user_agents.is_empty() {
+                    String::new()
+                } else {
+                    format!(", user-agent: {}", user_agents.join(", "))
+                };
+
+                manager.message(format!("- {} ({} session{}){}{}", ip, count, if *count == 1 { "" } else { "s" }, referer, user_agent));
             }
         },
         None => {
