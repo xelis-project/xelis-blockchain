@@ -312,6 +312,12 @@ pub struct RPCConfig {
     #[clap(name = "rpc-max-connections-per-ip", long)]
     #[serde(default)]
     pub max_connections_per_ip: Option<usize>,
+    /// Use the client IP address provided by a proxy server instead of the direct TCP connection.
+    /// Example: X-Forwarded-For, X-Real-IP, etc. This is useful when the RPC server is behind a reverse proxy.
+    /// Configure it to override the client IP address with the value of the first header found in `rpc-proxy-address-headers`.
+    #[clap(name = "rpc-proxy-address-headers", long)]
+    #[serde(default)]
+    pub proxy_address_headers: Vec<String>,
     /// Maximum number of outbound messages queued per websocket session.
     #[clap(name = "rpc-websocket-session-channel-size", long, default_value_t = default_rpc_websocket_session_channel_size())]
     #[serde(default = "default_rpc_websocket_session_channel_size")]
@@ -352,6 +358,7 @@ impl Default for RPCConfig {
             batch_limit: default_rpc_batch_limit(),
             max_websocket_sessions: default_rpc_max_websocket_sessions(),
             max_connections_per_ip: None,
+            proxy_address_headers: Vec::new(),
             websocket_session_channel_size: default_rpc_websocket_session_channel_size(),
             websocket_session_work_queue_size: default_rpc_websocket_session_work_queue_size(),
             cors_allowed_origins: Vec::new(),
