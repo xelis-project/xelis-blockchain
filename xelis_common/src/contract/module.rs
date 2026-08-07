@@ -54,7 +54,7 @@ impl Serializer for ContractModule {
                     Access::All { parameters } | Access::Entry { parameters } => {
                         if self.version >= ContractVersion::V1 {
                             parameters.as_ref()
-                                .map_or(2, |v| 3 + v.iter().map(Serializer::size).sum::<usize>())
+                                .map_or(1, |v| 3 + v.iter().map(Serializer::size).sum::<usize>())
                         } else {
                             1
                         }

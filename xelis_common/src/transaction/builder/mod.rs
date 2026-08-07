@@ -17,11 +17,9 @@ use merlin::Transcript;
 use bulletproofs::RangeProof;
 use curve25519_dalek::Scalar;
 use serde::{Deserialize, Serialize};
-use xelis_vm::Module;
 use std::{
     collections::HashSet,
     iter,
-    sync::Arc,
 };
 use crate::{
     config::{BURN_PER_CONTRACT, MAX_GAS_USAGE_PER_TX, XELIS_ASSET},
@@ -50,7 +48,6 @@ use crate::{
         HASH_SIZE,
         SIGNATURE_SIZE
     },
-    contract::ContractModule,
     serializer::Serializer,
     utils::calculate_tx_fee
 };
@@ -370,9 +367,8 @@ impl TransactionBuilder {
             },
             TransactionTypeBuilder::DeployContract(payload) => {
                 // Module is in hex format, so we need to divide by 2 for its bytes size
-                // + 1 for the contract version
                 // + 1 for the invoke option
-                size += 1 + payload.module.len() / 2 + 1;
+                size += 1 + payload.contract.size();
                 if let Some(invoke) = payload.invoke.as_ref() {
                     let (commitments, deposits_size) = self.estimate_deposits_size(&invoke.deposits);
 
@@ -1118,18 +1114,12 @@ impl TransactionBuilder {
             TransactionTypeBuilder::DeployContract(payload) => {
                 transcript.deploy_contract_proof_domain_separator();
 
-                let module = Module::from_hex(&payload.module)
-                    .map_err(|_| GenerationError::InvalidModule)?;
-
-                if payload.invoke.is_none() != module.get_chunk_id_of_hook(0).is_none() {
+                if payload.invoke.is_none() != payload.contract.module.get_chunk_id_of_hook(0).is_none() {
                     return Err(GenerationError::InvalidConstructorInvoke.into());
                 }
 
                 TransactionType::DeployContract(DeployContractPayload {
-                    contract: ContractModule {
-                        version: payload.contract_version,
-                        module: Arc::new(module),
-                    },
+                    contract: payload.contract.0,
                     invoke: payload.invoke.map(|invoke| {
                         transcript.invoke_constructor_proof_domain_separator();
                         transcript.append_u64(b"max_gas", invoke.max_gas);

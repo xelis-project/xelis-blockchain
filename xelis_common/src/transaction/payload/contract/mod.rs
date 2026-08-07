@@ -519,7 +519,7 @@ impl Serializer for Module {
                 let instructions = entry.chunk.get_instructions();
                 DynamicLen(instructions.len()).size() + instructions.len() + match &entry.access {
                     Access::Internal => 1,
-                    Access::All { parameters } | Access::Entry { parameters } => parameters.as_ref().map_or(1, |v| 2 + v.iter().map(Serializer::size).sum::<usize>()),
+                    Access::All { parameters } | Access::Entry { parameters } => parameters.as_ref().map_or(1, |v| 3 + v.iter().map(Serializer::size).sum::<usize>()),
                     Access::Hook { id } => 1 + id.size(),
                 }
         })

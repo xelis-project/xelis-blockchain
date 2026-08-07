@@ -8,7 +8,7 @@ use super::Serializer;
 
 /// Hexable is a wrapper around a type that implements `Serializer` and `Serialize`/`DeserializeOwned`.
 /// It allows the type to be deserialized from an hexadecimal.
-#[derive(Serialize, JsonSchema)]
+#[derive(Serialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
 pub struct Hexable<T: Serializer>(pub T);
 
 impl<T: Serializer> Deref for Hexable<T> {
