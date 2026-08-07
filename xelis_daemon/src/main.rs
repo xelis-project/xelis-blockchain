@@ -946,9 +946,7 @@ async fn list_rpc_connections<S: Storage>(manager: &CommandManager, mut argument
             }
 
             let mut ips: Vec<String> = sessions.iter()
-                .map(|session| session.get_request().head().peer_addr
-                    .map(|address| address.ip().to_string())
-                    .unwrap_or_else(|| "unknown".to_owned()))
+                .map(|session| session.get_ip_addr().to_string())
                 .collect();
             ips.sort();
 
