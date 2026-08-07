@@ -256,6 +256,7 @@ pub struct WebSocketServer<H: WebSocketHandler + 'static + Send + Sync> {
     session_channel_size: usize,
     session_work_queue_size: usize,
     max_connections_per_ip: Option<usize>,
+    proxy_address_headers: Vec<String>,
     connections_per_ip: Arc<StdMutex<HashMap<IpAddr, usize>>>,
     id_counter: AtomicU64,
     handler: Immutable<H>
@@ -263,21 +264,23 @@ pub struct WebSocketServer<H: WebSocketHandler + 'static + Send + Sync> {
 
 impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static + Send + Sync {
     pub fn new(handler: impl Into<Immutable<H>>) -> WebSocketServerShared<H> {
-        Self::with_limits(
+        Self::with(
             handler,
             DEFAULT_MAX_WEBSOCKET_SESSIONS,
             DEFAULT_MAX_SESSION_CHANNEL_SIZE,
             DEFAULT_MAX_SESSION_WORK_QUEUE,
             None,
+            Vec::new(),
         )
     }
 
-    pub fn with_limits(
+    pub fn with(
         handler: impl Into<Immutable<H>>,
         max_sessions: usize,
         session_channel_size: usize,
         session_work_queue_size: usize,
-        max_connections_per_ip: Option<usize>
+        max_connections_per_ip: Option<usize>,
+        proxy_address_headers: Vec<String>
     ) -> WebSocketServerShared<H> {
         assert!(max_sessions > 0, "max websocket sessions must be greater than 0");
         assert!(session_channel_size > 0, "websocket session channel size must be greater than 0");
@@ -290,6 +293,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static + Send + Sync {
             session_channel_size,
             session_work_queue_size,
             max_connections_per_ip,
+            proxy_address_headers,
             connections_per_ip: Arc::new(StdMutex::new(HashMap::new())),
             id_counter: AtomicU64::new(0),
             handler: handler.into()
@@ -350,7 +354,7 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static + Send + Sync {
             }
         };
 
-        let ip_session_permit = if let Some(address) = request.peer_addr() {
+        let ip_session_permit = if let Some(address) = self.get_client_address(&request) {
             let permit = self.try_acquire_ip_session(address.ip())?;
             if self.max_connections_per_ip.is_some() && permit.is_none() {
                 debug!("Rejecting WebSocket connection, per-IP session limit reached");
@@ -404,6 +408,19 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static + Send + Sync {
                 )
         );
         Ok(response)
+    }
+
+    // Get the client address from the request, considering proxy headers if configured
+    fn get_client_address(&self, request: &ActixHttpRequest) -> Option<std::net::SocketAddr> {
+        for name in &self.proxy_address_headers {
+            if let Some(value) = request.headers().get(name).and_then(|value| value.to_str().ok()) {
+                if let Some(ip) = value.split(',').next().map(str::trim).and_then(|value| value.parse::<IpAddr>().ok()) {
+                    return Some(std::net::SocketAddr::new(ip, 0));
+                }
+            }
+        }
+
+        request.peer_addr()
     }
 
     // Try to acquire a session permit for the given IP address
