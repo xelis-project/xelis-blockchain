@@ -2,7 +2,6 @@ use std::{
     fs::File,
     io::Write,
     path::Path,
-    str::FromStr,
     sync::Arc,
     time::Duration
 };
@@ -49,8 +48,7 @@ use xelis_common::{
     tokio,
     contract::{
         vm::HOOK_CONSTRUCTOR_ID,
-        Module,
-        ContractVersion,
+        ContractModule,
     },
     transaction::{
         builder::{
@@ -510,8 +508,7 @@ async fn setup_wallet_command_manager(wallet: Arc<Wallet>, command_manager: &Com
         "deploy_contract",
         "Deploy a contract on the blockchain",
         vec![
-            Arg::new("module", ArgType::String),
-            Arg::new("version", ArgType::String),
+            Arg::new("contract", ArgType::String),
             Arg::new("max_gas", ArgType::Number),
             Arg::new("confirm", ArgType::Bool)
         ],
@@ -1656,23 +1653,17 @@ async fn deploy_contract(manager: &CommandManager, mut args: ArgumentManager) ->
     let context = manager.get_context().lock()?;
     let wallet: &Arc<Wallet> = context.get()?;
 
-    let module_hex = if args.has_argument("module") {
-        args.get_value("module")?.to_string_value()?
+    let contract_hex = if args.has_argument("contract") {
+        args.get_value("contract")?.to_string_value()?
     } else {
         prompt.read_input(
-            prompt.colorize_string(Color::Green, "Module hex: "),
+            prompt.colorize_string(Color::Green, "Contract hex: "),
             false
         ).await.context("Error while reading contract code")?
     };
-    let contract_version = if args.has_argument("version") {
-        let version_str = args.get_value("version")?.to_string_value()?;
-        ContractVersion::from_str(&version_str)?
-    } else {
-        ContractVersion::V0
-    };
 
-    let module = Module::from_hex(&module_hex).context("Invalid module hex")?; 
-    let invoke = if module.get_chunk_id_of_hook(HOOK_CONSTRUCTOR_ID).is_some() {
+    let contract = ContractModule::from_hex(&contract_hex).context("Invalid module hex")?; 
+    let invoke = if contract.module.get_chunk_id_of_hook(HOOK_CONSTRUCTOR_ID).is_some() {
         manager.message("Module contains a constructor hook");
 
         let max_gas = if args.has_argument("max_gas") {
@@ -1761,8 +1752,7 @@ async fn deploy_contract(manager: &CommandManager, mut args: ArgumentManager) ->
 
     manager.message("Building transaction...");
     let tx_type = TransactionTypeBuilder::DeployContract(DeployContractBuilder {
-        module: module_hex,
-        contract_version,
+        contract: contract.into(),
         invoke,
     });
 
