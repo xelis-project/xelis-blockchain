@@ -3186,7 +3186,11 @@ impl<S: Storage> Blockchain<S> {
             } else {
                 let blocks_at_height = provider.get_blocks_at_height(height).await?;
                 for block in blocks_at_height {
-                    if *hash != block && self.is_side_block(provider, &block).await? {
+                    if *hash != block
+                        && provider.is_block_topological_ordered(&block).await?
+                        && provider.get_topo_height_for_hash(&block).await? < current_topoheight
+                        && self.is_side_block(provider, &block).await?
+                    {
                         side_blocks_count += 1;
                     }
                 }
