@@ -82,7 +82,7 @@ use anyhow::Context as AnyContext;
 use human_bytes::human_bytes;
 use serde_json::{json, Value};
 use std::{borrow::Cow, collections::HashMap, sync::Arc};
-use log::{debug, info, trace, warn};
+use log::{Level, debug, info, trace, warn};
 
 // limit the result returned per `get_dag_order` rpc method
 const MAX_DAG_ORDER: u64 = 64;
@@ -2381,7 +2381,7 @@ async fn simulate_contract_invoke<'a, S: Storage>(context: &Context<'_, '_>, par
         false,
         base_fee,
         stable_height,
-        false,
+        Level::Trace,
     );
 
     let mut decompressed_deposits = HashMap::new();

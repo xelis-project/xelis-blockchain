@@ -69,6 +69,10 @@ const fn debug_log_level() -> LogLevel {
     LogLevel::Debug
 }
 
+const fn default_contracts_log_level() -> LogLevel {
+    LogLevel::Off
+}
+
 const fn default_rpc_batch_limit() -> usize {
     20
 }
@@ -697,10 +701,10 @@ pub struct BlockchainConfig {
     #[clap(long)]
     #[serde(default)]
     pub skip_pow_verification: bool,
-    /// Print contract logs while contracts execute.
-    #[clap(long)]
-    #[serde(default)]
-    pub enable_contracts_logging: bool,
+    /// Log contract execution messages at the selected level.
+    #[clap(long, value_enum, default_value_t = LogLevel::Off)]
+    #[serde(default = "default_contracts_log_level")]
+    pub contracts_log_level: LogLevel,
     /// Enable automatic pruning while keeping at least this many blocks below the tip.
     ///
     /// Pruning runs after new blocks are applied.
@@ -783,7 +787,7 @@ impl Default for BlockchainConfig {
             dir_path: None,
             simulator: None,
             skip_pow_verification: false,
-            enable_contracts_logging: false,
+            contracts_log_level: default_contracts_log_level(),
             auto_prune_keep_n_blocks: None,
             skip_block_template_txs_verification: false,
             genesis_block_hex: None,

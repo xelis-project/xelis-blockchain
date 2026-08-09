@@ -233,8 +233,8 @@ pub struct Blockchain<S: Storage> {
     concurrency: usize,
     // Cache for mining block header templates
     mining_cache: RwLock<Option<BlockHeader>>,
-    // Should contracts show logs on execution
-    contracts_logging: bool,
+    // Log level for contract execution messages
+    contracts_log_level: log::Level,
     // Enable snapshot mode during DAG reorganizations.
     snapshot_on_reorg: bool,
     // Minimum fee per kB to consider a transaction as valid for the mempool.
@@ -338,7 +338,7 @@ impl<S: Storage> Blockchain<S> {
             disable_zkp_cache: config.disable_zkp_cache,
             concurrency: config.concurrency,
             mining_cache: RwLock::new(None),
-            contracts_logging: config.enable_contracts_logging,
+            contracts_log_level: config.contracts_log_level.into(),
             snapshot_on_reorg: config.enable_snapshot_on_reorg,
             min_fee_per_kb: config.mempool.min_fee_per_kb,
         };
@@ -507,8 +507,8 @@ impl<S: Storage> Blockchain<S> {
 
     // Should we log contracts execution logs
     #[inline]
-    pub fn contracts_logging(&self) -> bool {
-        self.contracts_logging
+    pub fn contracts_log_level(&self) -> log::Level {
+        self.contracts_log_level
     }
 
     // get the environment stdlib for contract execution
@@ -2604,7 +2604,7 @@ impl<S: Storage> Blockchain<S> {
                         is_side_block,
                         required_tx_fee,
                         base_height,
-                        self.contracts_logging,
+                        self.contracts_log_level,
                     );
     
                     // Increase the circulating supply with the block reward

@@ -10,7 +10,7 @@ use std::{
 };
 use anyhow::Context;
 use async_trait::async_trait;
-use log::{debug, trace, warn};
+use log::{Level, debug, trace, warn};
 use indexmap::{IndexMap, IndexSet};
 use xelis_common::{
     account::Nonce,
@@ -82,7 +82,7 @@ pub struct ApplicableChainState<'s, 'b, P: ApplicableChainStateProvider> {
     // Transactions links to store: tx hash -> (blocks linked, executed in, contract)
     transactions_links: HashMap<&'b Hash, (IndexSet<&'b Hash>, Option<&'b Hash>, Option<&'b Hash>)>,
     // used for logs of contracts are executed in block
-    debug_mode: bool
+    log_level: Level,
 }
 
 #[async_trait]
@@ -358,7 +358,7 @@ impl<'s, 'b, 'ty, P: ApplicableChainStateProvider> BlockchainContractState<'b, '
         ].into();
 
         let state = ContractChainState {
-            debug_mode: self.debug_mode,
+            log_level: self.log_level,
             mainnet,
             entry_contract: contract_hash,
             topoheight: self.inner.topoheight,
@@ -554,7 +554,7 @@ impl<'s, 'b, P: ApplicableChainStateProvider> ApplicableChainState<'s, 'b, P> {
         is_side_block: bool,
         tx_base_fee: u64,
         base_height: u64,
-        debug_mode: bool,
+        log_level: Level,
     ) -> Self {
         Self {
             inner: ChainState::new(
@@ -574,7 +574,7 @@ impl<'s, 'b, P: ApplicableChainStateProvider> ApplicableChainState<'s, 'b, P> {
             block,
             is_side_block,
             transactions_links: HashMap::new(),
-            debug_mode,
+            log_level,
         }
     }
 
@@ -1111,7 +1111,7 @@ mod tests {
             false,
             0,
             0,
-            false,
+            Level::Info,
         );
 
         let emitter = Hash::new([2u8; 32]);
@@ -1186,7 +1186,7 @@ mod tests {
             false,
             0,
             0,
-            false,
+            Level::Info,
         );
 
         let emitter = Hash::new([2u8; 32]);
@@ -1258,7 +1258,7 @@ mod tests {
             false,
             0,
             0,
-            false,
+            Level::Info,
         );
 
         let emitter = Hash::new([2u8; 32]);
@@ -1405,7 +1405,7 @@ mod tests {
             false,
             0,
             0,
-            false,
+            Level::Info,
         );
 
         let contract = Hash::new([2u8; 32]);
