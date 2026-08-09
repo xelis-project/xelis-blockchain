@@ -26,7 +26,7 @@ use std::{
 use anyhow::Context as AnyhowContext;
 use curve25519_dalek::Scalar;
 use indexmap::IndexMap;
-use log::{debug, info};
+use log::{debug, log};
 use xelis_builder::{EnvironmentBuilder, xstd::*};
 use xelis_vm::{
     VMContext,
@@ -2466,6 +2466,7 @@ pub async fn get_asset_from_cache<'a, 'b, 'ty, P: ContractProvider<'ty>>(provide
 
 // Record a burn in the asset supply
 pub async fn record_burned_asset<'a, 'b, 'ty, P: ContractProvider<'ty>>(provider: &P, state: &'a mut ChainState<'b>, contract: Hash, asset: Hash, amount: u64) -> Result<(), anyhow::Error> {
+    log!(state.log_level, "Burning {} of asset {} from contract {}", amount, asset, contract);
     let changes = get_asset_from_cache(provider, state, asset.clone()).await?;
 
     let new_supply = changes.circulating_supply.1
@@ -2483,16 +2484,19 @@ pub async fn record_burned_asset<'a, 'b, 'ty, P: ContractProvider<'ty>>(provider
 
 // Check if the contract has enough balance for the given asset and amount
 pub async fn has_enough_balance_for_contract<'ty, P: ContractProvider<'ty>>(provider: &P, state: &mut ChainState<'_>, contract: Hash, asset: Hash, amount: u64) -> Result<bool, anyhow::Error> {
-    let balance_opt = get_balance_from_cache(provider, state, contract, asset).await?;
+    let balance_opt = get_balance_from_cache(provider, state, contract.clone(), asset).await?;
 
-    Ok(match balance_opt {
+    let enough = match balance_opt {
         Some((_, balance)) => *balance >= amount,
         None => false
-    })
+    };
+    log!(state.log_level, "Balance check for contract {}: amount {}, enough: {}", contract, amount, enough);
+    Ok(enough)
 }
 
 // Record a balance charge for the given contract and asset
 pub async fn record_balance_charge<'a, 'b, 'ty, P: ContractProvider<'ty>>(provider: &P, state: &'a mut ChainState<'b>, contract: Hash, asset: Hash, amount: u64) -> Result<(), anyhow::Error> {
+    log!(state.log_level, "Charging {} of asset {} from contract {}", amount, asset, contract);
     let (state, balance) = get_mut_balance_for_contract(provider, state, contract, asset).await?;
 
     state.mark_updated();
@@ -2504,6 +2508,7 @@ pub async fn record_balance_charge<'a, 'b, 'ty, P: ContractProvider<'ty>>(provid
 
 // Record a balance credit for the given contract and asset
 pub async fn record_balance_credit<'a, 'b, 'ty, P: ContractProvider<'ty>>(provider: &P, state: &'a mut ChainState<'b>, contract: Hash, asset: Hash, amount: u64) -> Result<(), anyhow::Error> {
+    log!(state.log_level, "Crediting {} of asset {} to contract {}", amount, asset, contract);
     let (state, balance) = get_mut_balance_for_contract(provider, state, contract, asset).await?;
 
     state.mark_updated();
@@ -2522,6 +2527,7 @@ pub async fn record_account_balance_credit<'a, 'b>(
     amount: u64,
     payload: Option<ValueCell>,
 ) -> Result<(), anyhow::Error> {
+    log!(state.log_level, "Transferring {} of asset {} from contract {} to {}{}", amount, asset, from_contract, address, if payload.is_some() { " with payload" } else { "" });
     let key = address.to_public_key();
 
     // Aggregated transfers for this address
@@ -2599,6 +2605,7 @@ pub fn record_gas_allowance<'ty, 'r>(context: &mut VMContext<'ty, 'r>, amount: u
     context.increase_gas_usage(amount)?;
 
     let state = state_from_context(context)?;
+    log!(state.log_level, "Reserving {} gas allowance", amount);
     state.gas_fee_allowance = state.gas_fee_allowance.checked_add(amount)
         .context("Overflow while increasing gas allowance")?;
 
@@ -2624,6 +2631,10 @@ fn rpc_event_fn(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'
     let id = params.remove(0)
         .as_u64()?;
 
+    let state: &ChainState = context.get()
+        .context("Chain state not found")?;
+    log!(state.log_level, "Contract {} registering RPC event {}", metadata.metadata.contract_executor, id);
+
     let constant = data.into_owned();
 
     let size = constant.size();
@@ -2646,7 +2657,7 @@ fn rpc_event_fn(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'
 }
 
 fn emit_event_fn(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
-    let args = params.remove(1)
+    let args: Vec<ValueCell> = params.remove(1)
         .into_owned()
         .to_vec()?
         .into_iter()
@@ -2657,6 +2668,7 @@ fn emit_event_fn(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<
         .as_u64()?;
 
     let state = state_from_context(context)?;
+    log!(state.log_level, "Contract {} emitting event {} with {} parameters", metadata.metadata.contract_executor, id, args.len());
 
     state.logs.push(ContractLog::Event {
         contract: metadata.metadata.contract_executor.clone(),
@@ -2704,6 +2716,8 @@ async fn listen_event_fn<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance
         .as_u64()?;
 
     let (provider, state) = from_context::<P>(context)?;
+    let log_level = state.log_level;
+    log!(log_level, "Contract {} listening to event {} from contract {} on chunk {} with max gas {}", metadata.metadata.contract_executor, event_id, contract, chunk_id, max_gas);
     let account_source = state.caller.get_source().cloned();
     let block_version = state.block_version;
 
@@ -2779,6 +2793,8 @@ async fn listen_event_fn<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance
     let callback = EventCallbackRegistration::new(chunk_id, max_gas, source);
     listeners.push((metadata.metadata.contract_executor.clone(), callback));
 
+    log!(log_level, "Contract {} registered listener for event {} from contract {}", metadata.metadata.contract_executor, event_id, contract);
+
     Ok(Primitive::Boolean(true).into())
 }
 
@@ -2788,18 +2804,14 @@ fn get_xelis_asset(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut V
 
 fn println_fn(_: FnInstance, params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let state = state_from_context(context)?;
-    if state.debug_mode {
-        info!("[{}#{}]: {}", state.entry_contract, metadata.metadata.contract_executor, params[0].as_ref());
-    }
+    log!(state.log_level, "[{}#{}]: {}", state.entry_contract, metadata.metadata.contract_executor, params[0].as_ref());
 
     Ok(SysCallResult::None)
 }
 
 fn debug_fn(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let state = state_from_context(context)?;
-    if state.debug_mode {
-        debug!("{:?}", params[0].as_ref());
-    }
+    log!(state.log_level, "{:?}", params[0].as_ref());
 
     Ok(SysCallResult::None)
 }
@@ -2866,6 +2878,8 @@ async fn get_balance_for_asset<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInsta
         .into_owned()
         .into_opaque_type()?;
 
+    log!(state.log_level, "Contract {} reading its balance for asset {}", metadata.metadata.contract_executor, asset);
+
     let balance: ValueCell = get_balance_from_cache(provider, state, metadata.metadata.contract_executor.clone(), asset).await?
         .map(|(_, v)| Primitive::U64(v).into())
         .unwrap_or_default();
@@ -2885,6 +2899,8 @@ async fn get_contract_balance_for_asset<'a, 'ty, 'r, P: ContractProvider<'ty>>(_
         .into_owned()
         .into_opaque_type()?;
 
+    log!(state.log_level, "Reading balance for contract {} and asset {}", contract, asset);
+
     let balance: ValueCell = get_balance_from_cache(provider, state, contract, asset).await?
         .map(|(_, v)| Primitive::U64(v).into())
         .unwrap_or_default();
@@ -2893,20 +2909,22 @@ async fn get_contract_balance_for_asset<'a, 'ty, 'r, P: ContractProvider<'ty>>(_
 }
 
 async fn transfer_internal<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>, payload: bool) -> Result<bool, EnvironmentError> {
-    debug!("Transfer called {:?}", params);
+    let state = state_from_context(context)?;
+    let log_level = state.log_level;
+    log!(log_level, "Contract {} transfer called (payload: {})", metadata.metadata.contract_executor, payload);
 
     let payload = if payload {
         let payload = params.remove(3)
             .into_owned();
 
         if !payload.is_json_serializable() || !payload.is_serializable() {
-            debug!("Payload is not serializable");
+            log!(log_level, "Payload is not serializable");
             return Ok(false);
         }
 
         let bytes = data_size_in_bytes(&payload);
         if bytes > CONTRACT_MAX_PAYLOAD_SIZE {
-            debug!("Payload size {} exceeds maximum allowed {}", bytes, CONTRACT_MAX_PAYLOAD_SIZE);
+            log!(log_level, "Payload size {} exceeds maximum allowed {}", bytes, CONTRACT_MAX_PAYLOAD_SIZE);
             return Ok(false);
         }
 
@@ -2929,7 +2947,10 @@ async fn transfer_internal<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<
         .into_owned()
         .into_opaque_type()?;
 
+    log!(log_level, "Contract {} transferring {} of asset {} to {}", metadata.metadata.contract_executor, amount, asset, destination);
+
     if !destination.is_normal() {
+        log!(log_level, "Transfer rejected: destination {} is not a normal address", destination);
         return Ok(false);
     }
 
@@ -2943,20 +2964,25 @@ async fn transfer_internal<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<
 
     let (provider, state) = from_context::<P>(context)?;
     if destination.is_mainnet() != state.mainnet {
+        log!(log_level, "Transfer rejected: destination network does not match contract network");
         return Ok(false);
     }
 
     if amount == 0 {
+        log!(log_level, "Transfer rejected: amount is zero");
         return Ok(false);
     }
 
     // We have to check if the contract has enough balance to transfer
     if !has_enough_balance_for_contract(provider, state, metadata.metadata.contract_executor.clone(), asset.clone(), amount).await? {
+        log!(log_level, "Transfer rejected: insufficient balance");
         return Ok(false);
     }
 
     record_balance_charge(provider, state, metadata.metadata.contract_executor.clone(), asset.clone(), amount).await?;
     record_account_balance_credit(state, metadata.metadata.contract_executor.clone(), destination.clone(), asset.clone(), amount, payload).await?;
+
+    log!(log_level, "Transfer completed for contract {}", metadata.metadata.contract_executor);
 
     Ok(true)
 }
@@ -2972,7 +2998,9 @@ async fn transfer_payload<'a, 'ty, 'r, P: ContractProvider<'ty>>(instance: FnIns
 }
 
 async fn transfer_contract<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
-    debug!("Transfer contract called {:?}", params);
+    let state = state_from_context(context)?;
+    let log_level = state.log_level;
+    log!(log_level, "Contract {} transfer_contract called", metadata.metadata.contract_executor);
 
     let asset: Hash = params.remove(2)
         .into_owned()
@@ -2985,10 +3013,12 @@ async fn transfer_contract<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<
     let destination: Hash = params.remove(0)
         .into_owned()
         .into_opaque_type()?;
+    log!(log_level, "Contract {} transferring {} of asset {} to contract {}", metadata.metadata.contract_executor, amount, asset, destination);
     {
         let (provider, chain_state) = from_context::<P>(context)?;
         // verify that the contract exists
         if !provider.has_contract(&destination, chain_state.topoheight).await? {
+            log!(log_level, "Contract transfer rejected: destination contract {} does not exist", destination);
             return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
         }
     }
@@ -2996,10 +3026,12 @@ async fn transfer_contract<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<
     let (provider, state) = from_context::<P>(context)?;
 
     if amount == 0 {
+        log!(log_level, "Contract transfer rejected: amount is zero");
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
     }
 
     if !has_enough_balance_for_contract(provider, state, metadata.metadata.contract_executor.clone(), asset.clone(), amount).await? {
+        log!(log_level, "Contract transfer rejected: insufficient balance");
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
     }
 
@@ -3009,11 +3041,14 @@ async fn transfer_contract<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<
     // Add the output
     state.logs.push(ContractLog::TransferContract { contract: metadata.metadata.contract_executor.clone(), destination, amount, asset });
 
+    log!(log_level, "Contract transfer completed");
+
     Ok(SysCallResult::Return(Primitive::Boolean(true).into()))
 }
 
 async fn burn<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let (provider, state) = from_context::<P>(context)?;
+    let log_level = state.log_level;
 
     let asset: Hash = params.remove(1)
         .into_owned()
@@ -3022,12 +3057,16 @@ async fn burn<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, mut para
         .into_owned()
         .to_u64()?;
 
+    log!(log_level, "Contract {} burning {} of asset {}", metadata.metadata.contract_executor, amount, asset);
+
     // We have to check if the contract has enough balance to transfer
     if amount == 0 {
+        log!(log_level, "Burn rejected: amount is zero");
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
     }
 
     if !has_enough_balance_for_contract(provider, state, metadata.metadata.contract_executor.clone(), asset.clone(), amount).await? {
+        log!(log_level, "Burn rejected: insufficient balance");
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
     }
 
@@ -3036,6 +3075,8 @@ async fn burn<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, mut para
     // Track the burn in the circulating supply
     // We expect that the asset changes exists
     record_burned_asset(provider, state, metadata.metadata.contract_executor.clone(), asset.clone(), amount).await?;
+
+    log!(log_level, "Burn completed");
 
     Ok(SysCallResult::Return(Primitive::Boolean(true).into()))
 }
@@ -3050,6 +3091,8 @@ async fn get_account_balance_for_asset<'a, 'ty, 'r, P: ContractProvider<'ty>>(_:
     let address: Address = params.remove(0)
         .into_owned()
         .into_opaque_type()?;
+
+    log!(state.log_level, "Reading account {} balance for asset {}", address, asset);
 
     let balance = provider.get_account_balance_for_asset(address.get_public_key(), &asset, state.topoheight).await?
         .map(|(topoheight, ciphertext)| ValueCell::Object(vec![
@@ -3074,6 +3117,10 @@ fn get_gas_limit(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &m
 // Increase the gas limit using contract balance
 async fn increase_gas_limit<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let amount = params[0].as_u64()?;
+    let log_level = context.get::<ChainState>()
+        .map(|state| state.log_level)
+        .context("ChainState not present in Context")?;
+    log!(log_level, "Contract {} requesting {} additional gas", metadata.metadata.contract_executor, amount);
 
     // Ensure we're still below the TX max usage
     let below_limit = context.get_gas_limit()
@@ -3082,6 +3129,7 @@ async fn increase_gas_limit<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance
 
     // Zero amount is rejected
     if amount == 0 || !below_limit {
+        log!(log_level, "Additional gas rejected: amount is zero or transaction gas limit would be exceeded");
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into())); 
     }
 
@@ -3119,12 +3167,14 @@ async fn increase_gas_limit<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance
 
         // Not enough balance before invoke
         if balance < total_amount {
+            log!(log_level, "Additional gas rejected: insufficient XEL balance (required {}, available {})", total_amount, balance);
             return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
         }
     }
 
     // And we check with current cache if any and then apply if correct
     if !has_enough_balance_for_contract(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET, amount).await? {
+        log!(log_level, "Additional gas rejected: insufficient current XEL balance");
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
     }
 
@@ -3138,6 +3188,8 @@ async fn increase_gas_limit<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance
         .context("Overflow while tracking injected gas")?;
 
     context.increase_gas_limit(amount)?;
+
+    log!(log_level, "Contract {} added {} gas to its execution", metadata.metadata.contract_executor, amount);
 
     Ok(SysCallResult::Return(Primitive::Boolean(true).into()))
 }

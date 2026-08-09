@@ -4,6 +4,7 @@ mod manager;
 use std::{borrow::Borrow, hash, sync::Arc};
 
 use indexmap::IndexMap;
+use log::log;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use xelis_vm::{
@@ -170,15 +171,18 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider<'ty>>(
     match kind {
         ScheduledExecutionKind::TopoHeight(topoheight) => {
             if topoheight <= state.topoheight {
+                log!(state.log_level, "Scheduled execution for topoheight {} is in the past", topoheight);
                 return Ok(SysCallResult::Return(Primitive::Null.into()));
             }
 
             if provider.has_scheduled_execution_at_topoheight(&metadata.metadata.contract_executor, topoheight).await? {
+                log!(state.log_level, "Scheduled execution for topoheight {} already exists", topoheight);
                 return Ok(SysCallResult::Return(Primitive::Null.into()));
             }
         }
         ScheduledExecutionKind::BlockEnd => {
             if !state.executions.allow_executions {
+                log!(state.log_level, "Scheduled execution for block end is not allowed");
                 return Ok(SysCallResult::Return(Primitive::Null.into()));
             }
         }
@@ -192,18 +196,22 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider<'ty>>(
 
     let chunk_id = params.remove(0).as_u16()?;
     if !metadata.module.is_callable_chunk(chunk_id as _) {
+        log!(state.log_level, "Scheduled execution for chunk {} is not callable", chunk_id);
         return Ok(SysCallResult::Return(Primitive::Null.into()));
     }
 
     if max_gas > MAX_GAS_USAGE_PER_TX {
+        log!(state.log_level, "Scheduled execution max_gas {} exceeds allowed limit", max_gas);
         return Err(EnvironmentError::Static("max_gas exceeds allowed limit"))
     }
 
     if state.block_version >= BlockVersion::V7 && max_gas < SCHEDULED_EXECUTION_MIN_GAS {
+        log!(state.log_level, "Scheduled execution max_gas {} is below minimum allowed", max_gas);
         return Ok(SysCallResult::Return(Primitive::Null.into()));
     }
 
     if p.len() > (u8::MAX - 1) as usize {
+        log!(state.log_level, "Scheduled execution parameters count {} exceeds allowed limit", p.len());
         return Ok(SysCallResult::Return(Primitive::Null.into()));
     }
 
@@ -212,6 +220,7 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider<'ty>>(
         .collect();
     let params_size = params.size();
     if params_size > MAX_VALUE_SIZE {
+        log!(state.log_level, "Scheduled execution parameters size {} exceeds allowed limit", params_size);
         return Ok(SysCallResult::Return(Primitive::Null.into()));
     }
 
@@ -231,6 +240,7 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider<'ty>>(
     // reservation through gas allowance, so doing this after insert failure would
     // leave gas reserved without any scheduled execution owning it.
     if state.executions.contains_key(&hash) {
+        log!(state.log_level, "Scheduled execution for hash {} already exists", hash);
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
     }
 
@@ -238,7 +248,8 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider<'ty>>(
         .ok_or(EnvironmentError::GasOverflow)?;
     let source = if use_contract_balance {
         // check that we have enough to pay the reserved gas & params fee
-        if !has_enough_balance_for_contract(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET, total_cost).await?{
+        if !has_enough_balance_for_contract(provider, state, metadata.metadata.contract_executor.clone(), XELIS_ASSET, total_cost).await? {
+            log!(state.log_level, "Scheduled execution for hash {} has insufficient balance", hash);
             return Ok(SysCallResult::Return(Primitive::Null.into()));
         }
 
@@ -278,6 +289,7 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider<'ty>>(
 
     // check that it does not already exist
     if !state.executions.insert(execution) {
+        log!(state.log_level, "Scheduled execution for hash {} already exists", hash);
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()));
     }
 
@@ -289,6 +301,8 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider<'ty>>(
             ScheduledExecutionKind::BlockEnd => ScheduledExecutionKindLog::BlockEnd { chunk_id, max_gas, params }
         },
     });
+
+    log!(state.log_level, "Scheduled execution for hash {} registered", hash);
 
     if use_contract_balance {
         // Once passed here, we are safe and can apply changes

@@ -1,7 +1,7 @@
 mod manager;
 
 use anyhow::Context as AnyhowContext;
-use log::debug;
+use log::{debug, log};
 use xelis_vm::{
     traits::{JSONHelper, Serializable},
     VMContext,
@@ -225,6 +225,8 @@ pub async fn asset_transfer_ownership<'a, 'ty, 'r, P: ContractProvider<'ty>>(zel
     let zelf = zelf?;
     let asset: &OpaqueAsset = zelf.as_opaque_type()?;
     let (provider, state) = from_context::<P>(context)?;
+    let log_level = state.log_level;
+    log!(log_level, "Contract {} transferring ownership of asset {} to {}", metadata.metadata.contract_executor, asset.hash, param);
 
     // Ensure that the new owner contract hash is a valid one
     if !provider.has_contract(&param, state.topoheight).await? {
@@ -242,6 +244,7 @@ pub async fn asset_transfer_ownership<'a, 'ty, 'r, P: ContractProvider<'ty>>(zel
     if transfer {
         changes.data.0.mark_updated();
     }
+    log!(log_level, "Asset ownership transfer completed: {}", transfer);
     Ok(SysCallResult::Return(Primitive::Boolean(transfer).into()))
 }
 
@@ -249,6 +252,7 @@ pub async fn asset_mint<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance<
     let mut zelf = zelf?;
     let asset: &mut OpaqueAsset = zelf.as_opaque_type_mut()?;
     let (provider, state) = from_context::<P>(context)?;
+    let log_level = state.log_level;
 
     let changes = get_asset_changes_for_hash_mut(state, &asset.hash)?;
     let asset_data = &mut changes.data.1;
@@ -261,6 +265,7 @@ pub async fn asset_mint<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance<
     }
 
     let amount = params[0].as_u64()?;
+    log!(log_level, "Contract {} minting {} of asset {}", metadata.metadata.contract_executor, amount, asset.hash);
     if amount == 0 {
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()))
     }
@@ -295,6 +300,7 @@ pub async fn asset_mint<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance<
         asset: asset.hash.clone(),
         amount,
     });
+    log!(log_level, "Mint completed for asset {}", asset.hash);
 
     Ok(SysCallResult::Return(Primitive::Boolean(true).into()))
 }

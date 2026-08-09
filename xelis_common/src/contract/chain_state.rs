@@ -1,6 +1,7 @@
 use std::{borrow::Cow, collections::HashMap};
 
 use indexmap::{IndexMap, IndexSet};
+use log::Level;
 use crate::{
     block::{Block, TopoHeight, BlockVersion},
     contract::vm::ContractCaller,
@@ -38,9 +39,8 @@ pub struct ChainStateChanges {
 // If the contract execution is a success, the updated version
 // replace the one in the cache.
 pub struct ChainState<'a> {
-    // Are we in debug mode
-    // used by the contract to print debug information
-    pub debug_mode: bool,
+    // log filter for the contract execution
+    pub log_level: Level,
     // Are we in mainnet
     pub mainnet: bool,
     // The contract hash that was invoked as entry point

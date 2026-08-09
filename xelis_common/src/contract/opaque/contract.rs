@@ -1,7 +1,7 @@
 use std::{collections::{VecDeque, hash_map::Entry}, hash, sync::Arc};
 
 use indexmap::IndexMap;
-use log::debug;
+use log::{debug, log};
 use xelis_vm::{
     VMContext,
     EnvironmentError,
@@ -100,6 +100,7 @@ pub async fn contract_call<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstan
     let opaque: &OpaqueContract = zelf.as_opaque_type()?;
 
     let (provider, chain_state) = from_context::<P>(context)?;
+    let log_level = chain_state.log_level;
 
     let assets = params.remove(2)
         .into_owned()
@@ -116,6 +117,8 @@ pub async fn contract_call<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstan
     let chunk_id = params.remove(0)
         .into_owned()
         .as_u16()?;
+
+    log!(log_level, "Contract {} calling contract {} chunk {} with {} assets and {} parameters", metadata.metadata.contract_executor, opaque.hash, chunk_id, assets.len(), p.len());
 
     if !opaque.contract_module.module.is_public_chunk(chunk_id as usize) {
         return Err(EnvironmentError::Static("Chunk is not public"));
@@ -165,7 +168,7 @@ pub async fn contract_call<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstan
         record_balance_charge(provider, chain_state, metadata.metadata.contract_executor.clone(), asset.clone(), amount).await?;
         record_balance_credit(provider, chain_state, opaque.hash.clone(), asset.clone(), amount).await?;
 
-        debug!("Transfering {} of {} to {} from {}", amount, asset, opaque.hash, metadata.metadata.contract_executor);
+        log!(log_level, "Contract call deposit: transferring {} of {} to {} from {}", amount, asset, opaque.hash, metadata.metadata.contract_executor);
         deposits.insert(asset, ContractDeposit::Public(amount));
     }
 

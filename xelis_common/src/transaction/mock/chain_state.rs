@@ -9,7 +9,7 @@ use anyhow::Context;
 use async_trait::async_trait;
 use curve25519_dalek::{ristretto::CompressedRistretto, traits::Identity};
 use indexmap::{IndexMap, IndexSet};
-use log::warn;
+use log::{Level, warn};
 use xelis_builder::EnvironmentBuilder;
 use xelis_vm::{Environment, Module};
 
@@ -452,7 +452,7 @@ impl<'a, 'ty> BlockchainContractState<'a, 'ty, MockStorageProvider, anyhow::Erro
         };
 
         let chain_state = ContractChainState {
-            debug_mode: true,
+            log_level: Level::Info,
             mainnet: self.mainnet,
             entry_contract: contract,
             topoheight: 1,
