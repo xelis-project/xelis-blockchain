@@ -6,8 +6,6 @@ on:
     tags: [ "v**" ]
   pull_request:
     branches: [ "master" ]
-  schedule:
-    - cron: '0 14 * * *'
 
 env:
   SHOULD_PUSH: ${{ github.event_name != 'pull_request' && (github.ref_type == 'tag' || github.ref == 'refs/heads/dev') }}
