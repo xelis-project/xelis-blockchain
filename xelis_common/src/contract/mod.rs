@@ -2484,13 +2484,14 @@ pub async fn record_burned_asset<'a, 'b, 'ty, P: ContractProvider<'ty>>(provider
 
 // Check if the contract has enough balance for the given asset and amount
 pub async fn has_enough_balance_for_contract<'ty, P: ContractProvider<'ty>>(provider: &P, state: &mut ChainState<'_>, contract: Hash, asset: Hash, amount: u64) -> Result<bool, anyhow::Error> {
+    let log_level = state.log_level;
     let balance_opt = get_balance_from_cache(provider, state, contract.clone(), asset).await?;
 
     let enough = match balance_opt {
         Some((_, balance)) => *balance >= amount,
         None => false
     };
-    log!(state.log_level, "Balance check for contract {}: amount {}, enough: {}", contract, amount, enough);
+    log!(log_level, "Balance check for contract {}: amount {}, enough: {}, current: {}", contract, amount, enough, balance_opt.as_ref().map(|(_, b)| b).unwrap_or(&0));
     Ok(enough)
 }
 
