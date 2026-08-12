@@ -111,6 +111,7 @@ impl VersionedState {
 // For serializer, previous_topoheight is written before the data
 // So we can go through all the previous versions without reading the actual data
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[schemars(rename = "Versioned<{T}>")]
 pub struct Versioned<T> {
     previous_topoheight: Option<TopoHeight>,
     data: T,

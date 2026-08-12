@@ -54,6 +54,7 @@ pub fn deserialize_extra_nonce<'de, 'a, D: Deserializer<'de>>(deserializer: D) -
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
+#[schemars(rename = "KV<{K}, {V}>")]
 struct KV<K, V> {
     key: K,
     value: V,
@@ -1214,6 +1215,7 @@ pub struct SimulateContractInvokeResult<'a> {
 
 
 #[derive(Serialize, Deserialize, JsonSchema)]
+#[schemars(rename = "RPCVersioned<{T}>")]
 pub struct RPCVersioned<T> {
     /// Topoheight of the versioned value.
     pub topoheight: TopoHeight,

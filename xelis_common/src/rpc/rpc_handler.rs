@@ -529,7 +529,10 @@ fn normalize_schema(schema: &Schema, definitions: &mut BTreeMap<String, Value>) 
             for (name, definition) in local_definitions {
                 match definitions.get(&name) {
                     Some(existing) if existing != &definition => {
-                        return Err(InternalRpcError::InternalError("Conflicting JSON schema definition".into()))
+                        return Err(InternalRpcError::InternalError(format!(
+                            "Conflicting JSON schema definition: {}",
+                            name
+                        ).into()))
                     },
                     Some(_) => {},
                     None => {

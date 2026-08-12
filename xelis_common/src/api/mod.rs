@@ -39,12 +39,14 @@ use crate::{
 pub use data::*;
 
 #[derive(Serialize, Deserialize, JsonSchema)]
+#[schemars(rename = "SubscribeParams<{E}>")]
 pub struct SubscribeParams<'a, E: Clone> {
     /// Event notification kind to subscribe or unsubscribe.
     pub notify: Cow<'a, E>
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
+#[schemars(rename = "EventResult<{E}>")]
 pub struct EventResult<'a, E: Clone> {
     /// Event name.
     pub event: Cow<'a, E>,
@@ -54,6 +56,7 @@ pub struct EventResult<'a, E: Clone> {
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
+#[schemars(rename = "DataHash<{T}>")]
 pub struct DataHash<'a, T: Clone> {
     /// Hash used by this field.
     pub hash: Cow<'a, Hash>,

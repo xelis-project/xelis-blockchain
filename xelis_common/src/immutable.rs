@@ -10,6 +10,7 @@ use serde::{Serialize, Deserialize};
 use crate::serializer::*;
 
 #[derive(Clone, Serialize, Deserialize, Debug, JsonSchema)]
+#[schemars(rename = "Immutable<{T}>")]
 #[serde(untagged)]
 pub enum Immutable<T> {
     Owned(T),
