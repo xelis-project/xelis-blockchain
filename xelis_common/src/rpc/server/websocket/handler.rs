@@ -53,7 +53,7 @@ where
             events: Events::new(&mut handler),
             handler,
             notify_concurrency,
-            semaphore: Semaphore::new(notify_concurrency),
+            semaphore: Semaphore::new(notify_concurrency.max(1)),
         }
     }
 
