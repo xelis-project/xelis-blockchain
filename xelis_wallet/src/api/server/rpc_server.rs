@@ -61,16 +61,16 @@ impl<W> WalletRpcServer<W>
 where
     W: ShareableTid<'static>,
 {
-    pub async fn new(bind_address: String, rpc_handler: RPCHandler<W>, auth_config: Option<AuthConfig>, threads: Option<usize>) -> Result<WalletRpcServerShared<W>> {
+    pub async fn new(bind_address: String, rpc_handler: RPCHandler<W>, auth_config: Option<AuthConfig>, threads: usize, notify_events_concurrency: usize) -> Result<WalletRpcServerShared<W>> {
         let server = Arc::new(Self {
             handle: Mutex::new(None),
-            websocket: WebSocketServer::new(EventWebSocketHandler::new(rpc_handler, 0)),
+            websocket: WebSocketServer::new(EventWebSocketHandler::new(rpc_handler, notify_events_concurrency)),
             auth_config
         });
 
         {
             let clone = Arc::clone(&server);
-            let mut builder = HttpServer::new(move || {
+            let builder = HttpServer::new(move || {
                 let server = Arc::clone(&clone);
                 let auth = HttpAuthentication::basic(auth::<W>);
                 App::new()
@@ -83,16 +83,8 @@ where
                     .service(index)
             })
             .disable_signals()
-            .bind(&bind_address)?;
-
-            if let Some(threads) = threads {
-                if threads == 0 {
-                    return Err(anyhow::anyhow!("The number of workers must be greater than 0"));
-                }
-
-                info!("Setting the number of workers to: {}", threads);
-                builder = builder.workers(threads);
-            }
+            .bind(&bind_address)?
+            .workers(threads);
 
             let http_server = builder.run();
             { // save the server handle to be able to stop it later

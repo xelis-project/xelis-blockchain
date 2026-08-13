@@ -162,19 +162,19 @@ async fn main() -> Result<()> {
     {
         // Sanity check
         // check that we don't have both server enabled
-        if config.enable_xswd && config.rpc.rpc_bind_address.is_some() {
+        if config.enable_xswd && config.rpc.bind_address.is_some() {
             error!("Invalid parameters configuration: RPC Server and XSWD cannot be enabled at the same time");
             return Ok(()); // exit
         }
 
         // check that username/password is not in param if bind address is not set
-        if config.rpc.rpc_bind_address.is_none() && (config.rpc.rpc_password.is_some() || config.rpc.rpc_username.is_some()) {
+        if config.rpc.bind_address.is_none() && (config.rpc.password.is_some() || config.rpc.username.is_some()) {
             error!("Invalid parameters configuration for rpc password and username: RPC Server is not enabled");
             return Ok(())
         }
 
         // check that username/password is set together if bind address is set
-        if config.rpc.rpc_bind_address.is_some() && config.rpc.rpc_password.is_some() != config.rpc.rpc_username.is_some() {
+        if config.rpc.bind_address.is_some() && config.rpc.password.is_some() != config.rpc.username.is_some() {
             error!("Invalid parameters configuration: usernamd AND password must be provided");
             return Ok(())
         }
@@ -414,13 +414,13 @@ async fn apply_config(config: Config, wallet: &Arc<Wallet>, #[cfg(feature = "xsw
 
     #[cfg(feature = "api_server")]
     {
-        if config.enable_xswd && config.rpc.rpc_bind_address.is_some() {
+        if config.enable_xswd && config.rpc.bind_address.is_some() {
             error!("Invalid parameters configuration: RPC Server and XSWD cannot be enabled at the same time");
             return;
         }
 
-        if let Some(address) = config.rpc.rpc_bind_address {
-            let auth_config = if let (Some(username), Some(password)) = (config.rpc.rpc_username, config.rpc.rpc_password) {
+        if let Some(address) = config.rpc.bind_address {
+            let auth_config = if let (Some(username), Some(password)) = (config.rpc.username, config.rpc.password) {
                 Some(AuthConfig {
                     username,
                     password
@@ -430,7 +430,7 @@ async fn apply_config(config: Config, wallet: &Arc<Wallet>, #[cfg(feature = "xsw
             };
 
             info!("Enabling RPC Server on {} {}", address, if auth_config.is_some() { "with authentication" } else { "without authentication" });
-            if let Err(e) = wallet.enable_rpc_server(address, auth_config, config.rpc.rpc_threads).await {
+            if let Err(e) = wallet.enable_rpc_server(address, auth_config, config.rpc.threads, config.rpc.notify_events_concurrency).await {
                 error!("Error while enabling RPC Server: {:#}", e);
             }
         } else if config.enable_xswd {
@@ -2145,7 +2145,9 @@ async fn start_rpc_server(manager: &CommandManager, mut arguments: ArgumentManag
         password
     });
 
-    wallet.enable_rpc_server(bind_address, auth_config, None).await.context("Error while enabling RPC Server")?;
+    let config: Config = Config::parse();
+
+    wallet.enable_rpc_server(bind_address, auth_config, config.rpc.threads, config.rpc.notify_events_concurrency).await.context("Error while enabling RPC Server")?;
     manager.message("RPC Server has been enabled");
     Ok(())
 }
