@@ -1142,6 +1142,14 @@ pub struct GetContractDataParams<'a> {
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
+pub struct HasContractDataParams<'a> {
+    /// Contract hash.
+    pub contract: Cow<'a, Hash>,
+    /// Key used by this field.
+    pub key: Cow<'a, ValueCell>
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetContractDataAtTopoHeightParams<'a> {
     /// Contract hash.
     pub contract: Cow<'a, Hash>,
