@@ -433,6 +433,7 @@ pub fn register_methods<T: ShareableTid<'static>, S: Storage>(handler: &mut RPCH
     handler.register_method_with_params(("get_contracts_outputs", "Retrieve contract transfers made to an address at a specific topoheight."), async_handler!(get_contracts_outputs::<S>));
     handler.register_method_with_params_and_return_schema::<_, RPCVersioned<Versioned<Option<Cow<xelis_vm::Module>>>>>(("get_contract_module", "Retrieve the contract module (compiled code) for a specific contract."), async_handler!(get_contract_module::<S>));
     handler.register_method_with_params(("get_contract_data", "Retrieve the contract data with the requested key."), async_handler!(get_contract_data::<S>));
+    handler.register_method_with_params(("has_contract_data", "Verify if contract data exists for the requested key."), async_handler!(has_contract_data::<S>));
     handler.register_method_with_params(("get_contract_data_at_topoheight", "Retrieve the contract data with the requested key at a specific topoheight."), async_handler!(get_contract_data_at_topoheight::<S>));
     handler.register_method_with_params(("get_contract_balance", "Retrieve the contract balance"), async_handler!(get_contract_balance::<S>));
     handler.register_method_with_params(("get_contract_balance_at_topoheight", "Retrieve the contract balance at a specific topoheight."), async_handler!(get_contract_balance_at_topoheight::<S>));
@@ -2169,6 +2170,13 @@ async fn get_contract_data<S: Storage>(context: &Context<'_, '_>, params: GetCon
         topoheight,
         version,
     })
+}
+
+async fn has_contract_data<S: Storage>(context: &Context<'_, '_>, params: HasContractDataParams<'_>) -> Result<bool, InternalRpcError> {
+    let blockchain = chain_from_context::<S>(context)?;
+    let storage = blockchain.get_storage().read().await;
+
+    Ok(storage.get_last_topoheight_for_contract_data(&params.contract, &params.key).await?.is_some())
 }
 
 
