@@ -1,7 +1,7 @@
 mod kind;
 mod manager;
 
-use std::{borrow::Borrow, hash, sync::Arc};
+use std::{borrow::{Borrow, Cow}, hash, sync::Arc};
 
 use indexmap::IndexMap;
 use log::log;
@@ -54,6 +54,44 @@ use crate::{
 pub use kind::*;
 pub use manager::*;
 
+#[derive(Serialize, Deserialize, JsonSchema)]
+struct GasSourceEntry<'a> {
+    key: Cow<'a, Source>,
+    value: u64,
+}
+
+mod gas_sources_serde {
+    use super::*;
+    use serde::{
+        Deserialize,
+        Deserializer,
+        Serializer,
+        ser::SerializeSeq
+    };
+
+    pub fn serialize<S>(map: &IndexMap<Source, u64>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut sequence = serializer.serialize_seq(Some(map.len()))?;
+        for (key, value) in map {
+            sequence.serialize_element(&GasSourceEntry {
+                key: Cow::Borrowed(&key),
+                value: *value,
+            })?;
+        }
+        sequence.end()
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<IndexMap<Source, u64>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let entries = Vec::<GasSourceEntry>::deserialize(deserializer)?;
+        Ok(entries.into_iter().map(|entry| (entry.key.into_owned(), entry.value)).collect())
+    }
+}
+
 fn calculate_burned_extra_cost(extra_cost: u64) -> Result<u64, EnvironmentError> {
     Ok(extra_cost.checked_mul(TX_GAS_BURN_PERCENT)
         .ok_or(EnvironmentError::GasOverflow)? / 100)
@@ -80,6 +118,8 @@ pub struct ScheduledExecution {
     // Kind of scheduled execution
     pub kind: ScheduledExecutionKind,
     // Gas sources done for this scheduled execution
+    #[serde(with = "gas_sources_serde")]
+    #[schemars(with = "Vec<GasSourceEntry>")]
     pub gas_sources: IndexMap<Source, u64>,
 }
 
