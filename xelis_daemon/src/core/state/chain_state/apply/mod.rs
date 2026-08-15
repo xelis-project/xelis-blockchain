@@ -1481,4 +1481,175 @@ mod tests {
             "a marked V7 account reservation must remain executable"
         );
     }
+
+    #[tokio::test]
+    async fn block_end_scheduled_executions_are_independent_and_settle_failed_gas() {
+        let storage = MemoryStorage::new(Network::Devnet, 1);
+        let environments = HashMap::from([(
+            ContractVersion::V1,
+            Arc::new(build_environment::<MemoryStorage>(ContractVersion::V1).build()),
+        )]);
+        let block_hash = Hash::new([1u8; 32]);
+        let miner = KeyPair::new().get_public_key().compress();
+        let block_header = BlockHeader::new(
+            BlockVersion::V6,
+            0,
+            0,
+            IndexSet::new(),
+            [0u8; EXTRA_NONCE_SIZE],
+            miner,
+            IndexSet::new(),
+        );
+        let block = Block::new(block_header, Vec::new());
+
+        let mut state = ApplicableChainState::new(
+            &storage,
+            &environments,
+            0,
+            1,
+            BlockVersion::V7,
+            &block_hash,
+            &block,
+            false,
+            0,
+            0,
+            Level::Info,
+        );
+
+        let failed_contract = Hash::new([2u8; 32]);
+        let successful_contract = Hash::new([3u8; 32]);
+        state.inner.contracts.insert(
+            Cow::Owned(failed_contract.clone()),
+            Some((VersionedState::New, Some(Cow::Owned(module_returning(1))))),
+        );
+        state.inner.contracts.insert(
+            Cow::Owned(successful_contract.clone()),
+            Some((VersionedState::New, Some(Cow::Owned(module_returning(0))))),
+        );
+
+        let failed_hash = Arc::new(Hash::new([4u8; 32]));
+        let successful_hash = Arc::new(Hash::new([5u8; 32]));
+        let failed_execution = ScheduledExecution {
+            hash: failed_hash.clone(),
+            contract: failed_contract.clone(),
+            chunk_id: 0,
+            params: Vec::new(),
+            max_gas: 1_000,
+            kind: ScheduledExecutionKind::BlockEnd,
+            gas_sources: [(Source::Contract(failed_contract.clone()), 1_000)].into(),
+        };
+        let successful_execution = ScheduledExecution {
+            hash: successful_hash.clone(),
+            contract: successful_contract.clone(),
+            chunk_id: 0,
+            params: Vec::new(),
+            max_gas: 1_000,
+            kind: ScheduledExecutionKind::BlockEnd,
+            gas_sources: [(Source::Contract(successful_contract.clone()), 1_000)].into(),
+        };
+
+        state.contract_manager.executions.executions.insert(failed_hash.clone(), failed_execution);
+        state.contract_manager.executions.executions.insert(successful_hash.clone(), successful_execution);
+        state.contract_manager.executions.block_end.extend([failed_hash.clone(), successful_hash.clone()]);
+
+        state.process_executions_at_block_end()
+            .await
+            .expect("one failed scheduled execution must not block the next one");
+
+        let failed_logs = state.contract_manager.logs.get(&Cow::Owned(failed_hash.as_ref().clone()))
+            .expect("failed execution logs");
+        assert!(failed_logs.iter().any(|log| matches!(log, ContractLog::ExitCode(Some(1)))));
+
+        let successful_logs = state.contract_manager.logs.get(&Cow::Owned(successful_hash.as_ref().clone()))
+            .expect("successful execution logs");
+        assert!(successful_logs.iter().any(|log| matches!(log, ContractLog::ExitCode(Some(0)))));
+
+        assert!(state.inner.get_gas_fee() > 0, "failed execution must still pay used gas");
+        assert!(
+            state.get_contract_balance_for_gas(&failed_contract).await
+                .expect("failed contract gas balance").1 > 0,
+            "unused gas from the failed execution must be refunded"
+        );
+    }
+
+    #[tokio::test]
+    async fn event_callbacks_are_independent_when_one_returns_an_error() {
+        let storage = MemoryStorage::new(Network::Devnet, 1);
+        let environments = HashMap::from([(
+            ContractVersion::V1,
+            Arc::new(build_environment::<MemoryStorage>(ContractVersion::V1).build()),
+        )]);
+        let block_hash = Hash::new([1u8; 32]);
+        let miner = KeyPair::new().get_public_key().compress();
+        let block_header = BlockHeader::new(
+            BlockVersion::V7,
+            0,
+            0,
+            IndexSet::new(),
+            [0u8; EXTRA_NONCE_SIZE],
+            miner,
+            IndexSet::new(),
+        );
+        let block = Block::new(block_header, Vec::new());
+
+        let mut state = ApplicableChainState::new(
+            &storage,
+            &environments,
+            0,
+            1,
+            BlockVersion::V6,
+            &block_hash,
+            &block,
+            false,
+            0,
+            0,
+            Level::Info,
+        );
+
+        let emitter = Hash::new([2u8; 32]);
+        let failed_listener = Hash::new([3u8; 32]);
+        let successful_listener = Hash::new([4u8; 32]);
+        state.inner.contracts.insert(
+            Cow::Owned(failed_listener.clone()),
+            Some((VersionedState::New, Some(Cow::Owned(module_returning(1))))),
+        );
+        state.inner.contracts.insert(
+            Cow::Owned(successful_listener.clone()),
+            Some((VersionedState::New, Some(Cow::Owned(module_returning(0))))),
+        );
+        state.contract_manager.events.push_back(CallbackEvent {
+            contract: emitter.clone(),
+            event_id: 7,
+            params: Vec::new(),
+        });
+        state.contract_manager.events_listeners.insert(
+            (emitter, 7),
+            vec![
+                (
+                    failed_listener.clone(),
+                    EventCallbackRegistration::new(0, 1_000, Source::Contract(failed_listener.clone())),
+                ),
+                (
+                    successful_listener.clone(),
+                    EventCallbackRegistration::new(0, 1_000, Source::Contract(successful_listener.clone())),
+                ),
+            ],
+        );
+
+        let caller = Hash::new([5u8; 32]);
+        state.execute_callback_events(&caller)
+            .await
+            .expect("one failed callback must not block the next callback");
+
+        let exit_codes = state.contract_manager.logs.get(&Cow::Owned(caller))
+            .expect("callback logs")
+            .iter()
+            .filter_map(|log| match log {
+                ContractLog::ExitCode(code) => Some(*code),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(exit_codes, vec![Some(1), Some(0)]);
+        assert!(state.inner.get_gas_fee() > 0, "failed callback must still pay used gas");
+    }
 }
