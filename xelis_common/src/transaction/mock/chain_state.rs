@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use curve25519_dalek::{ristretto::CompressedRistretto, traits::Identity};
 use indexmap::{IndexMap, IndexSet};
 use log::{Level, warn};
-use xelis_builder::EnvironmentBuilder;
+use silex_builder::EnvironmentBuilder;
 use xelis_vm::{Environment, Module};
 
 use super::MockStorageProvider;

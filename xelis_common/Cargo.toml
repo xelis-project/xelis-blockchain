@@ -10,9 +10,9 @@ build = "build.rs"
 [dependencies]
 xelis-hash = { git = "https://github.com/xelis-project/xelis-hash", tag = "v3.1.0" }
 xelis-vm = { workspace = true }
-xelis-types = { workspace = true }
-xelis-builder = { workspace = true }
-xelis-bytecode = { workspace = true }
+silex-types = { workspace = true }
+silex-builder = { workspace = true }
+silex-bytecode = { workspace = true }
 bulletproofs = { git = "https://github.com/xelis-project/bulletproofs", tag = "v5.3.0" }
 curve25519-dalek = { features = ["digest", "group", "rand_core", "serde", "ecdlp"], git = "https://github.com/xelis-project/curve25519-dalek", tag = "v5.0.2" }
 merlin = { git = "https://github.com/xelis-project/merlin", tag = "v4.1.0" }
@@ -85,9 +85,9 @@ tokio = { workspace = true, features = ["macros", "signal", "time", "sync", "rt"
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
 criterion = "0.6.0"
-xelis_compiler = { workspace = true }
-xelis_parser = { workspace = true }
-xelis_lexer = { workspace = true }
+silex-compiler = { workspace = true }
+silex-parser = { workspace = true }
+silex-lexer = { workspace = true }
 futures = { workspace = true }
 futures-util = { workspace = true }
 

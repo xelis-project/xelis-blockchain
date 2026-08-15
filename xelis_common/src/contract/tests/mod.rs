@@ -1,10 +1,10 @@
 use std::{borrow::Cow, sync::Arc};
 use indexmap::IndexMap;
 
-use xelis_builder::EnvironmentBuilder;
-use xelis_compiler::Compiler;
-use xelis_lexer::Lexer;
-use xelis_parser::Parser;
+use silex_builder::EnvironmentBuilder;
+use silex_compiler::Compiler;
+use silex_lexer::Lexer;
+use silex_parser::Parser;
 use xelis_vm::{Module, Primitive, ValueCell};
 
 use crate::{

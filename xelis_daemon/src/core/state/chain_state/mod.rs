@@ -34,7 +34,7 @@ use xelis_common::{
     utils::format_xelis,
     versioned::VersionedState,
 };
-use xelis_environment::Environment;
+use silex_environment::Environment;
 use xelis_vm::Module;
 use crate::core::{
     error::BlockchainError,
