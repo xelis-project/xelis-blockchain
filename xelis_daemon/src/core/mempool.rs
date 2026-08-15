@@ -31,8 +31,7 @@ use xelis_common::{
     time::{get_current_time_in_seconds, TimestampSeconds},
     transaction::{
         MultiSigPayload,
-        Transaction,
-        verify::TrustedZKPCache
+        Transaction
     }
 };
 
@@ -219,7 +218,8 @@ impl Mempool {
         self.add_tx_internal(storage, stable_topoheight, hash, tx, size, block_version, balances, multisig).await
     }
 
-    /// Add a TX to mempool without verifying the static proofs part of it
+    /// Add a transaction already known by local storage back to the mempool.
+    /// Static proofs may only be skipped through the hash-bound storage cache.
     pub async fn add_known_tx<S: Storage>(
         &mut self,
         storage: &S,
@@ -240,7 +240,8 @@ impl Mempool {
             storage
         };
         let mut state = ChainState::new(&provider, environments, stable_topoheight, topoheight, topoheight, block_version, tx_base_fee, base_height);
-        tx.verify(&hash, &mut state, &TrustedZKPCache).await?;
+        let tx_cache = TxCache::new(storage, self, self.disable_zkp_cache);
+        tx.verify(&hash, &mut state, &tx_cache).await?;
 
         let (balances, multisig) = state.get_sender_cache(tx.get_source())
             .ok_or_else(|| BlockchainError::AccountNotFound(tx.get_source().as_address(self.mainnet)))?;
