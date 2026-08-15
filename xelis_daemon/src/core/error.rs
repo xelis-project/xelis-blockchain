@@ -22,7 +22,7 @@ use xelis_common::{
     serializer::ReaderError,
     time::TimestampMillis,
     transaction::verify::{VerificationError, VerificationStateError},
-    contract::vm::ContractError,
+    contract::vm::{ContractError, ContractStateError},
     utils::format_xelis
 };
 use human_bytes::human_bytes;
@@ -364,6 +364,15 @@ impl BlockchainError {
             Self::VerificationError(e) => e.into(),
             Self::ContractError(e) => e.into(),
             _ => self.into(),
+        }
+    }
+}
+
+impl From<ContractStateError<BlockchainError>> for BlockchainError {
+    fn from(value: ContractStateError<BlockchainError>) -> Self {
+        match value {
+            ContractStateError::State(state_error) => state_error,
+            ContractStateError::Contract(contract_error) => contract_error.into(),
         }
     }
 }

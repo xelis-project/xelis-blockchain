@@ -884,15 +884,12 @@ impl<'s, 'b, P: ApplicableChainStateProvider> ApplicableChainState<'s, 'b, P> {
 
         if !self.load_contract_module(contract.clone()).await? {
             warn!("failed to load contract module for scheduled execution of contract {} with caller {}", contract, caller.get_hash());
-            vm::refund_gas_sources(self, gas_sources, 0, max_gas).await
-                .map_err(|err| match err {
-                    vm::ContractStateError::State(err) => err,
-                    vm::ContractStateError::Contract(err) => BlockchainError::ContractError(err),
-                })?;
+            vm::refund_gas_sources(self, gas_sources, 0, max_gas).await?;
+
             return Ok(());
         }
 
-        if let Err(e) = vm::invoke_contract(
+        vm::invoke_contract(
             caller.clone(),
             self,
             contract.clone(),
@@ -903,9 +900,7 @@ impl<'s, 'b, P: ApplicableChainStateProvider> ApplicableChainState<'s, 'b, P> {
             InvokeContract::Chunk(chunk_id, false),
             Cow::Owned(InterContractPermission::All),
             post_hook,
-        ).await {
-            warn!("failed to process execution of contract {} with caller {}: {}", contract, caller.get_hash(), e);
-        }
+        ).await?;
 
         Ok(())
     }
