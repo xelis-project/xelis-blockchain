@@ -380,7 +380,8 @@ where
             Box::pin(async move {
                 let params: P = parse_params(body)?;
                 let res = f(ctx, params).await?;
-                Ok(json!(res))
+                serde_json::to_value(res)
+                    .map_err(|e| InternalRpcError::InternalError(format!("Failed to serialize response: {}", e).into()))
             })
         });
 
