@@ -300,9 +300,9 @@ impl<C: Hash + Eq> Snapshot<C> {
             .map(|res| {
                 let (k_bytes, v_bytes) = res?;
 
-                let k = K::from_bytes(k_bytes.as_ref())
+                let k = K::from_bytes_non_strict(k_bytes.as_ref())
                     .context("Failed to deserialize key in snapshot iterator")?;
-                let v = V::from_bytes(v_bytes.as_ref())
+                let v = V::from_bytes_non_strict(v_bytes.as_ref())
                     .context("Failed to deserialize value in snapshot iterator")?;
 
                 Ok((k, v))

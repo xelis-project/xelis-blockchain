@@ -36,7 +36,7 @@ impl VersionedMultiSigProvider for RocksStorage {
                 let account_key = s.get_account_key_from_id(account_id)?;
                 let mut account = s.get_account_type(&account_key)?;
                 if account.multisig_pointer.is_some_and(|pointer| pointer >= topoheight) {
-                    let prev_topo = Option::from_bytes(&value)?;
+                    let prev_topo = Option::from_bytes_non_strict(&value)?;
                     account.multisig_pointer = prev_topo;
 
                     Self::insert_into_disk_internal(&s.db, s.snapshot.as_mut(), Column::Account, account_key.as_bytes(), &account)?;
@@ -62,7 +62,7 @@ impl VersionedMultiSigProvider for RocksStorage {
                 let mut account = s.get_account_type(&key)?;
 
                 if account.multisig_pointer.is_none_or(|v| v > topoheight) {
-                    let prev_topo = Option::from_bytes(&value)?;
+                    let prev_topo = Option::from_bytes_non_strict(&value)?;
                     let filtered = prev_topo.filter(|v| *v <= topoheight);
                     if filtered != account.multisig_pointer {
                         account.multisig_pointer = filtered;

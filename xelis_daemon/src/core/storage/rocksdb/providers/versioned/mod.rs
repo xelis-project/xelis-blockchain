@@ -40,7 +40,7 @@ impl RocksStorage {
                 let pointer = s.load_optional_from_disk::<_, TopoHeight>(column_pointer, key_without_topo)?;
 
                 if pointer.is_some_and(|pointer| pointer >= topoheight) {
-                    let prev_topo = Option::<TopoHeight>::from_bytes(&value)?;
+                    let prev_topo = Option::<TopoHeight>::from_bytes_non_strict(&value)?;
                     if let Some(prev_topo) = prev_topo {
                         Self::insert_into_disk_internal(&s.db, s.snapshot.as_mut(), column_pointer, key_without_topo, &prev_topo.to_be_bytes())?;
                     } else {
@@ -63,7 +63,7 @@ impl RocksStorage {
                 Self::remove_from_disk_internal(&s.db, s.snapshot.as_mut(), column_versioned, &key)?;
                 let pointer = s.load_optional_from_disk::<_, TopoHeight>(column_pointer, &key[8..])?;
                 if pointer.is_none_or(|v| v > topoheight) {
-                    let prev_topo = Option::<TopoHeight>::from_bytes(&value)?;
+                    let prev_topo = Option::<TopoHeight>::from_bytes_non_strict(&value)?;
                     let filtered = prev_topo.filter(|v| *v <= topoheight);
                     if filtered != pointer {
                         if let Some(pointer) = filtered {
@@ -86,7 +86,7 @@ impl RocksStorage {
         topoheight: TopoHeight,
         keep_last: bool,
     ) -> Result<(), BlockchainError> {
-        self.delete_versioned_below_topoheight(column_pointer, column_versioned, topoheight, keep_last, |k, v| Ok((RawBytes::from_bytes(&k)?, v))).await
+        self.delete_versioned_below_topoheight(column_pointer, column_versioned, topoheight, keep_last, |k, v| Ok((RawBytes::from_bytes_non_strict(&k)?, v))).await
     }
 
     pub async fn delete_versioned_below_topoheight<K: Serializer, V: Serializer>(
@@ -103,7 +103,7 @@ impl RocksStorage {
                 for res in Self::iter_raw_internal(&s.db, snapshot.as_ref(), IteratorMode::Start, column_pointer)? {
                     let (key, value) = res?;
 
-                    let pointer = V::from_bytes(&value)?;
+                    let pointer = V::from_bytes_non_strict(&value)?;
                     let (mapped_key, mut prev_version) = mapper(key, pointer)?;
                     let mut patched = false;
 

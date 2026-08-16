@@ -404,7 +404,7 @@ impl RocksStorage {
 
         if let Some(v) = snapshot.map(|s| s.get(column, key.as_ref())) {
             match v {
-                EntryState::Stored(v) => return Ok(Some(V::from_bytes(&v)?)),
+                EntryState::Stored(v) => return Ok(Some(V::from_bytes_non_strict(&v)?)),
                 EntryState::Deleted => return Ok(None),
                 EntryState::Absent => {},
             }
@@ -413,7 +413,7 @@ impl RocksStorage {
         let cf = cf_handle!(db, column);
         match db.get_pinned_cf(&cf, key.as_ref())
             .with_context(|| format!("Internal error while reading column {:?}", column))? {
-            Some(bytes) => Ok(Some(V::from_bytes(&bytes)?)),
+            Some(bytes) => Ok(Some(V::from_bytes_non_strict(&bytes)?)),
             None => Ok(None)
         }
     }
@@ -462,8 +462,8 @@ impl RocksStorage {
         Self::iter_raw_internal(db, snapshot, mode, column).map(|iter| {
             iter.map(|res| {
                 let (key_bytes, value_bytes) = res?;
-                let key = K::from_bytes(&key_bytes)?;
-                let value = V::from_bytes(&value_bytes)?;
+                let key = K::from_bytes_non_strict(&key_bytes)?;
+                let value = V::from_bytes_non_strict(&value_bytes)?;
 
                 Ok((key, value))
             })
@@ -496,7 +496,7 @@ impl RocksStorage {
         Self::iter_raw_internal(db, snapshot, mode, column).map(|iter| {
             iter.map(|res| {
                 let (key_bytes, _value_bytes) = res?;
-                let key = K::from_bytes(&key_bytes)?;
+                let key = K::from_bytes_non_strict(&key_bytes)?;
 
                 Ok(key)
             })
