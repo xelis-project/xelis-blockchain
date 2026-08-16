@@ -14,6 +14,8 @@ pub enum ReaderError {
     InvalidHex,
     #[error("Error on try into")]
     ErrorTryInto,
+    #[error("Trailing bytes after reading")]
+    TrailingBytes,
     #[error(transparent)]
     TryFromSliceError(#[from] TryFromSliceError),
     #[error(transparent)]
