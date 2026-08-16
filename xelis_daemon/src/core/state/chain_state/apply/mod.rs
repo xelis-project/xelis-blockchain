@@ -1597,7 +1597,7 @@ mod tests {
             &environments,
             0,
             1,
-            BlockVersion::V6,
+            BlockVersion::V7,
             &block_hash,
             &block,
             false,
@@ -1617,6 +1617,20 @@ mod tests {
             Cow::Owned(successful_listener.clone()),
             Some((VersionedState::New, Some(Cow::Owned(module_returning(0))))),
         );
+        // Fund both listeners so this test exercises callback
+        // failure isolation rather than the unfunded-legacy rejection path.
+        {
+            let (_, balance) = state.get_contract_balance_for_gas(&failed_listener)
+                .await
+                .expect("failed listener balance");
+            *balance = 1_000;
+        }
+        {
+            let (_, balance) = state.get_contract_balance_for_gas(&successful_listener)
+                .await
+                .expect("successful listener balance");
+            *balance = 1_000;
+        }
         state.contract_manager.events.push_back(CallbackEvent {
             contract: emitter.clone(),
             event_id: 7,
