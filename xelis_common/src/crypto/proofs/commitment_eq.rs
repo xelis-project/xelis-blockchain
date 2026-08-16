@@ -19,7 +19,6 @@ use crate::{
             SCALAR_SIZE
         },
         KeyPair,
-        non_zero_random_scalar,
         rng,
         ProtocolTranscript
     },
@@ -150,9 +149,7 @@ impl CommitmentEqProof {
             transcript.append_scalar(b"z_r", &self.z_r);
         }
 
-        // w used for batch verification
         let w = transcript.challenge_scalar(b"w");
-
         let ww = &w * &w;
 
         let w_negated = -&w;
@@ -172,26 +169,22 @@ impl CommitmentEqProof {
             .decompress()
             .ok_or(DecompressionError)?;
 
-        let batch_factor = non_zero_random_scalar(&mut rng());
+        let mut batch = batch_collector.begin_proof();
 
         // w * z_x * G + ww * z_x * G
-        batch_collector.g_scalar += (w * self.z_x + ww * self.z_x) * batch_factor;
+        batch.add_g_scalar(w * self.z_x + ww * self.z_x);
         // -c * H + ww * z_r * H
-        batch_collector.h_scalar += (-c + ww * self.z_r) * batch_factor;
+        batch.add_h_scalar(-c + ww * self.z_r);
 
-        batch_collector.dynamic_scalars.extend(
-            [
-                self.z_s,       // z_s
-                -Scalar::ONE,   // -identity
-                w * self.z_s,   // w * z_s
-                w_negated * c,  // -w * c
-                w_negated,      // -w
-                ww_negated * c, // -ww * c
-                ww_negated,     // -ww
-            ]
-            .map(|s| s * batch_factor),
-        );
-        batch_collector.dynamic_points.extend([
+        batch.extend([
+            self.z_s,
+            -Scalar::ONE,
+            w * self.z_s,
+            w_negated * c,
+            w_negated,
+            ww_negated * c,
+            ww_negated,
+        ], [
             P_source,      // P_source
             &Y_0,          // Y_0
             D_source,      // D_source
@@ -401,6 +394,65 @@ mod tests {
                 )
                 .is_ok()
         );
+        assert!(batch_collector.verify().is_err());
+    }
+
+    #[test]
+    fn test_tx_rejects_legacy_commitment_eq_cross_equation_cancellation() {
+        let keypair = KeyPair::new();
+        let source_amount = Scalar::from(5u64);
+        let claimed_amount = Scalar::from(100u64);
+        let source_opening = PedersenOpening::generate_new();
+        let claimed_opening = PedersenOpening::generate_new();
+        let source_ciphertext = keypair
+            .get_public_key()
+            .encrypt_with_opening(source_amount, &source_opening);
+        let claimed_commitment = PedersenCommitment::new_with_opening(
+            claimed_amount,
+            &claimed_opening,
+        );
+
+        // A proof shaped around the old unbound-response transcript must not
+        // pass the TxVersion 3 verifier.
+        let y_s = Scalar::from(11u64);
+        let y_x = Scalar::from(13u64);
+        let y_r = Scalar::from(17u64);
+        let y_0 = (y_s * keypair.get_public_key().as_point()).compress();
+        let y_1 = RistrettoPoint::multiscalar_mul(
+            [&y_x, &y_s],
+            [&G, source_ciphertext.handle().as_point()],
+        ).compress();
+        let y_2 = PC_GENS.commit(y_x, y_r).compress();
+
+        let mut transcript = Transcript::new(b"test");
+        transcript.equality_proof_domain_separator();
+        transcript.append_point(b"Y_0", &y_0);
+        transcript.append_point(b"Y_1", &y_1);
+        transcript.append_point(b"Y_2", &y_2);
+        let c = transcript.challenge_scalar(b"c");
+        let w = transcript.challenge_scalar(b"w");
+        let denominator = Scalar::ONE + w;
+        assert_ne!(denominator, Scalar::ZERO);
+
+        let proof = CommitmentEqProof {
+            Y_0: y_0,
+            Y_1: y_1,
+            Y_2: y_2,
+            z_s: c * keypair.get_private_key().as_scalar() + y_s,
+            z_x: y_x + c * (source_amount + w * claimed_amount) * denominator.invert(),
+            z_r: c * claimed_opening.as_scalar() + y_r,
+        };
+
+        let mut transcript = Transcript::new(b"test");
+        let mut batch_collector = BatchCollector::default();
+        assert!(proof.pre_verify(
+            keypair.get_public_key(),
+            &source_ciphertext,
+            &claimed_commitment,
+            TxVersion::V3,
+            &mut transcript,
+            &mut batch_collector,
+        ).is_ok());
         assert!(batch_collector.verify().is_err());
     }
 }
