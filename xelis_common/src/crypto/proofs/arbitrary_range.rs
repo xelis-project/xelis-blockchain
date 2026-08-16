@@ -279,4 +279,75 @@ mod tests {
                 .is_err()
         );
     }
+
+    #[test]
+    fn test_negative_scalar_ciphertext_is_not_in_arbitrary_range() {
+        let keypair = KeyPair::new();
+        let max_value = 100u64;
+
+        // Encode -1 in the scalar field. The previous one-sided construction
+        // accepted this because max_value - (-1) = 101 is itself a valid u64.
+        let source_opening = PedersenOpening::generate_new();
+        let source_ciphertext = keypair
+            .get_public_key()
+            .encrypt_with_opening(-Scalar::ONE, &source_opening);
+
+        let delta = max_value + 1;
+        let delta_opening = PedersenOpening::generate_new();
+        let delta_commitment = PedersenCommitment::new_with_opening(delta, &delta_opening)
+            .compress();
+
+        let mut transcript = Transcript::new(b"arbitrary_range_proof");
+        transcript.arbitrary_range_proof_domain_separator();
+        transcript.append_u64(b"max_value", max_value);
+        transcript.append_commitment(b"commitment", &delta_commitment);
+        transcript.append_ciphertext(b"source_ct", &source_ciphertext.compress());
+        transcript.append_public_key(b"public_key", &keypair.get_public_key().compress());
+
+        // Recreate the formerly accepted proof: equality and range were both
+        // established only for the delta, never for the source value.
+        let max_ciphertext = keypair
+            .get_public_key()
+            .encrypt_with_opening(max_value, &ArbitraryRangeProof::OPENING);
+        let delta_ciphertext = max_ciphertext - source_ciphertext.clone();
+        let commitment_eq_proof = CommitmentEqProof::new(
+            &keypair,
+            &delta_ciphertext,
+            &delta_opening,
+            delta,
+            TxVersion::V3,
+            &mut transcript,
+        );
+        let (range_proof, _) = RangeProof::prove_single(
+            &BP_GENS,
+            &PC_GENS,
+            &mut transcript,
+            delta,
+            &delta_opening.as_scalar(),
+            BULLET_PROOF_SIZE,
+        ).unwrap();
+
+        let proof = ArbitraryRangeProof::from(
+            max_value,
+            delta_commitment,
+            commitment_eq_proof,
+            range_proof,
+        );
+
+        assert!(proof.verify(
+            keypair.get_public_key(),
+            &source_ciphertext,
+            &mut Transcript::new(b"arbitrary_range_proof"),
+        ).is_err());
+
+        let mut transcript = Transcript::new(b"arbitrary_range_proof");
+        let mut batch_collector = BatchCollector::default();
+        let pre_verify = proof.pre_verify(
+            keypair.get_public_key(),
+            source_ciphertext,
+            &mut transcript,
+            &mut batch_collector,
+        );
+        assert!(pre_verify.is_err() || batch_collector.verify().is_err());
+    }
 }
