@@ -277,7 +277,7 @@ impl EncryptedStorage {
     fn decrypt_and_read<V: Serializer>(&self, data: &[u8]) -> Result<V> {
         trace!("decrypt and read");
         let decrypted = self.cipher.decrypt_value(data).context("Error while decrypting value from disk")?;
-        V::from_bytes(&decrypted).context("Error while de-serializing value from disk")
+        V::from_bytes_non_strict(&decrypted).context("Error while de-serializing value from disk")
     }
 
     // Key must be hashed or encrypted before calling this function
