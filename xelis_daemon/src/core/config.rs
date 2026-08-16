@@ -15,7 +15,7 @@ use xelis_common::{
 };
 use crate::{
     config::*,
-    p2p::{KeyVerificationAction, WrappedSecret}
+    p2p::{KeyVerificationAction, WrappedSecret, P2pTimeouts}
 };
 
 use super::simulator::Simulator;
@@ -59,6 +59,18 @@ fn default_p2p_temp_ban_duration() -> HumanDuration {
 
 fn default_p2p_outgoing_connection_timeout() -> HumanDuration {
     HumanDuration::from(Duration::from_millis(PEER_TIMEOUT_INIT_OUTGOING_CONNECTION))
+}
+
+fn default_p2p_ping_interval() -> HumanDuration {
+    HumanDuration::from(Duration::from_secs(P2P_PING_DELAY))
+}
+
+fn default_p2p_heartbeat_interval() -> HumanDuration {
+    HumanDuration::from(Duration::from_secs(P2P_HEARTBEAT_INTERVAL))
+}
+
+fn default_p2p_ping_timeout() -> HumanDuration {
+    HumanDuration::from(Duration::from_secs(P2P_PING_TIMEOUT))
 }
 
 const fn default_p2p_fail_count_limit() -> u8 {
@@ -402,6 +414,10 @@ pub struct ProxyConfig {
 
 #[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
 pub struct P2pConfig {
+    /// P2P protocol and request timeout settings.
+    #[clap(flatten)]
+    #[serde(flatten)]
+    pub timeouts: P2pTimeouts,
     /// Proxy settings for outbound P2P connections.
     #[clap(flatten)]
     pub proxy: ProxyConfig,
@@ -515,6 +531,18 @@ pub struct P2pConfig {
         default = "default_p2p_outgoing_connection_timeout"
     )]
     pub outgoing_connection_timeout: HumanDuration,
+    /// Interval between generic P2P ping packets.
+    #[clap(name = "p2p-ping-interval", long, default_value_t = default_p2p_ping_interval())]
+    #[serde(with = "humantime_serde", default = "default_p2p_ping_interval")]
+    pub ping_interval: HumanDuration,
+    /// Interval at which connected peers are checked for liveness.
+    #[clap(name = "p2p-heartbeat-interval", long, default_value_t = default_p2p_heartbeat_interval())]
+    #[serde(with = "humantime_serde", default = "default_p2p_heartbeat_interval")]
+    pub heartbeat_interval: HumanDuration,
+    /// Maximum time without receiving a ping before closing a peer.
+    #[clap(name = "p2p-ping-timeout", long, default_value_t = default_p2p_ping_timeout())]
+    #[serde(with = "humantime_serde", default = "default_p2p_ping_timeout")]
+    pub ping_timeout: HumanDuration,
     /// Number of peer failures allowed before applying a temporary ban.
     #[clap(name = "p2p-fail-count-limit", long, default_value_t = default_p2p_fail_count_limit())]
     #[serde(default = "default_p2p_fail_count_limit")]
@@ -569,6 +597,7 @@ pub struct P2pConfig {
 impl Default for P2pConfig {
     fn default() -> Self {
         Self {
+            timeouts: P2pTimeouts::default(),
             proxy: ProxyConfig::default(),
             tag: None,
             bind_address: default_p2p_bind_address(),
@@ -588,6 +617,9 @@ impl Default for P2pConfig {
             stream_concurrency: detect_available_parallelism(),
             temp_ban_duration: default_p2p_temp_ban_duration(),
             outgoing_connection_timeout: default_p2p_outgoing_connection_timeout(),
+            ping_interval: default_p2p_ping_interval(),
+            heartbeat_interval: default_p2p_heartbeat_interval(),
+            ping_timeout: default_p2p_ping_timeout(),
             fail_count_limit: default_p2p_fail_count_limit(),
             disable_reexecute_blocks_on_sync: false,
             block_propagation_log_level: debug_log_level(),

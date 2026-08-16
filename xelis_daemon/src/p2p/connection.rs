@@ -1,8 +1,6 @@
 use crate::{
     config::{
-        PEER_SEND_BYTES_TIMEOUT,
-        PEER_TIMEOUT_DISCONNECT,
-        PEER_TIMEOUT_INIT_CONNECTION
+        PEER_TIMEOUT_DISCONNECT
     },
     p2p::compression::Compression
 };
@@ -11,7 +9,8 @@ use super::{
     encryption::{Encryption, CipherSide},
     error::P2pError,
     packet::Packet,
-    EncryptionKey
+    EncryptionKey,
+    P2pTimeouts
 };
 use std::{
     borrow::Cow,
@@ -87,13 +86,14 @@ pub struct Connection {
     encryption: Encryption,
     // Compression state used for packets
     compression: Compression,
+    timeouts: P2pTimeouts,
 }
 
 // We are rotating every 1GB sent
 const ROTATE_EVERY_N_BYTES: usize = 1024 * 1024 * 1024;
 
 impl Connection {
-    pub fn new(stream: TcpStream, addr: SocketAddr, out: bool) -> Self {
+    pub fn new(stream: TcpStream, addr: SocketAddr, out: bool, timeouts: P2pTimeouts) -> Self {
         let (read, write) = stream.into_split();
         Self {
             out,
@@ -110,6 +110,7 @@ impl Connection {
             rotate_key_out: AtomicUsize::new(0),
             encryption: Encryption::new(),
             compression: Compression::new(),
+            timeouts,
         }
     }
 
@@ -143,7 +144,7 @@ impl Connection {
 
         // Wait for the peer to receive its key
         let Packet::KeyExchange(peer_dh_key) = timeout(
-            Duration::from_millis(PEER_TIMEOUT_INIT_CONNECTION),
+            self.timeouts.handshake.into(),
             self.read_packet(buffer, 256)
         ).await?? else {
             error!("Expected KeyExchange packet");
@@ -189,7 +190,7 @@ impl Connection {
         trace!("Waiting for key from {}", self.addr);
         // Wait for the shared key of the peer to receive
         let Packet::KeyExchange(peer_key) = timeout(
-            Duration::from_millis(PEER_TIMEOUT_INIT_CONNECTION),
+            self.timeouts.handshake.into(),
             self.read_packet(buffer, 256)
         ).await?? else {
             error!("Expected KeyExchange packet");
@@ -281,7 +282,7 @@ impl Connection {
     // Send bytes to the tcp stream with a timeout
     // if an error occurs, the connection is closed
     pub async fn send_bytes(&self, packet: &mut impl Buffer) -> P2pResult<()> {
-        match timeout(Duration::from_millis(PEER_SEND_BYTES_TIMEOUT), self.send_bytes_internal(packet)).await {
+        match timeout(self.timeouts.send.into(), self.send_bytes_internal(packet)).await {
             Ok(Ok(())) => Ok(()),
             Ok(Err(e)) => {
                 debug!("Failed to send bytes to {}: {}", self.get_address(), e);

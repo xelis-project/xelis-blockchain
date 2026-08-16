@@ -453,6 +453,10 @@ impl<S: Storage> Blockchain<S> {
                 config.disable_fast_sync_support,
                 proxy,
                 config.outgoing_connection_timeout.into(),
+                config.ping_interval.into(),
+                config.heartbeat_interval.into(),
+                config.ping_timeout.into(),
+                config.timeouts,
                 config.sync_from_priority_only,
                 config.reorg_from_priority_only,
             ) {

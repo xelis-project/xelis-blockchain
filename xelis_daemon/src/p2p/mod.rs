@@ -1,4 +1,5 @@
 mod connection;
+mod config;
 mod error;
 mod packet;
 mod peer_list;
@@ -10,6 +11,7 @@ mod chain_sync;
 mod expirable_cache;
 
 pub use encryption::EncryptionKey;
+pub use config::*;
 pub use connection::*;
 pub use packet::*;
 pub use peer_list::*;
@@ -191,6 +193,11 @@ pub struct P2pServer<S: Storage> {
     proxy: Option<(ProxyKind, SocketAddr, Option<(String, String)>)>,
     // Timeout used when initiating outgoing peer connections
     outgoing_connection_timeout: Duration,
+    // P2P heartbeat and protocol timeouts
+    ping_interval: Duration,
+    heartbeat_interval: Duration,
+    ping_timeout: Duration,
+    timeouts: P2pTimeouts,
     // Requested objects from various peers
     requests_cache: ExpirableCache,
     // Flags to use in handshake
@@ -227,6 +234,10 @@ impl<S: Storage> P2pServer<S> {
         disable_fast_sync_support: bool,
         proxy: Option<(ProxyKind, SocketAddr, Option<(String, String)>)>,
         outgoing_connection_timeout: Duration,
+        ping_interval: Duration,
+        heartbeat_interval: Duration,
+        ping_timeout: Duration,
+        timeouts: P2pTimeouts,
         sync_from_priority_only: bool,
         reorg_from_priority_only: bool,
     ) -> Result<Arc<Self>, P2pError> {
@@ -320,6 +331,10 @@ impl<S: Storage> P2pServer<S> {
             handle_peer_packets_in_dedicated_task,
             proxy,
             outgoing_connection_timeout,
+            ping_interval,
+            heartbeat_interval,
+            ping_timeout,
+            timeouts,
             requests_cache: ExpirableCache::new(),
             flags,
             sync_from_priority_only,
@@ -524,7 +539,7 @@ impl<S: Storage> P2pServer<S> {
             return Ok(())
         }
 
-        let connection = Connection::new(stream, addr, false);
+        let connection = Connection::new(stream, addr, false, self.timeouts);
         let zelf = Arc::clone(&self);
         thread_pool.execute(async move {
             let mut buffer = [0; 512];
@@ -689,7 +704,7 @@ impl<S: Storage> P2pServer<S> {
             mempool.size() > 0
         };
 
-        Ok(handshake.create_peer(connection, priority, self.peer_list.clone(), !has_any_tx))
+        Ok(handshake.create_peer(connection, priority, self.peer_list.clone(), !has_any_tx, self.timeouts))
     }
 
     // this function handle all new connections
@@ -710,7 +725,7 @@ impl<S: Storage> P2pServer<S> {
         }
 
         // wait on the handshake packet
-        let mut handshake: Handshake<'static> = match timeout(Duration::from_millis(PEER_TIMEOUT_INIT_CONNECTION), connection.read_packet(buf, buf.len() as u32)).await?? {
+        let mut handshake: Handshake<'static> = match timeout(self.timeouts.handshake.into(), connection.read_packet(buf, buf.len() as u32)).await?? {
             // only allow handshake packet
             Packet::Handshake(h) => h.into_owned(),
             _ => return Err(P2pError::ExpectedHandshake)
@@ -852,7 +867,7 @@ impl<S: Storage> P2pServer<S> {
             timeout(self.outgoing_connection_timeout, TcpStream::connect(&addr)).await??
         };
 
-        let connection = Connection::new(stream, addr, true);
+        let connection = Connection::new(stream, addr, true, self.timeouts);
         Ok(connection)
     }
 
@@ -1231,7 +1246,7 @@ impl<S: Storage> P2pServer<S> {
         debug!("Starting ping loop...");
 
         let mut last_peerlist_update = get_current_time_in_seconds();
-        let duration = Duration::from_secs(P2P_PING_DELAY);
+        let duration = self.ping_interval;
         loop {
             trace!("Waiting for ping delay...");
             select! {
@@ -1352,6 +1367,7 @@ impl<S: Storage> P2pServer<S> {
                 trace!("Sending generic ping packet...");
                 let packet = Packet::Ping(Cow::Owned(ping));
                 let bytes = Bytes::from(packet.to_bytes());
+                let ping_interval = self.ping_interval.as_secs();
 
                 // broadcast directly the ping packet asap to all peers
                 stream::iter(all_peers)
@@ -1359,7 +1375,7 @@ impl<S: Storage> P2pServer<S> {
                         // Move the reference only
                         let bytes = &bytes;
                         async move {
-                            if current_time - peer.get_last_ping_sent() > P2P_PING_DELAY && !peer.get_connection().is_closed() {
+                            if current_time - peer.get_last_ping_sent() > ping_interval && !peer.get_connection().is_closed() {
                                 trace!("broadcast generic ping packet to {}", peer);
                                 if let Err(e) = peer.send_bytes(bytes.clone()).await {
                                     error!("Error while trying to send ping packet to {}: {}", peer, e);
@@ -1381,7 +1397,7 @@ impl<S: Storage> P2pServer<S> {
     // this is used to prevent holding too many entries in memory
     async fn requests_cache_task(self: Arc<Self>) {
         debug!("Starting requests cache cleaning task...");
-        let duration = Duration::from_millis(PEER_TIMEOUT_REQUEST_OBJECT);
+        let duration = self.timeouts.request_object.into();
         loop {
             if !self.is_running() {
                 debug!("Requests cache cleaning task is stopped!");
@@ -1783,7 +1799,7 @@ impl<S: Storage> P2pServer<S> {
     async fn handle_connection_write_side(&self, peer: &Arc<Peer>, rx: &mut Rx, mut task_rx: oneshot::Receiver<()>) -> Result<(), P2pError> {
         let mut server_exit = self.exit_sender.subscribe();
         let mut peer_exit = peer.get_exit_receiver();
-        let mut interval = interval(Duration::from_secs(P2P_HEARTBEAT_INTERVAL));
+        let mut interval = interval(self.heartbeat_interval);
         loop {
             select! {
                 biased;
@@ -1804,8 +1820,8 @@ impl<S: Storage> P2pServer<S> {
                     trace!("Checking heartbeat of {}", peer);
                     // Last time we got a ping packet from him
                     let last_ping = peer.get_last_ping();
-                    if last_ping != 0 && get_current_time_in_seconds() - last_ping > P2P_PING_TIMEOUT {
-                        debug!("{} has not sent a ping packet for {} seconds, closing connection...", peer, P2P_PING_TIMEOUT);
+                    if last_ping != 0 && get_current_time_in_seconds() - last_ping > self.ping_timeout.as_secs() {
+                        debug!("{} has not sent a ping packet for {} seconds, closing connection...", peer, self.ping_timeout.as_secs());
                         break;
                     }
                 },

@@ -1,8 +1,7 @@
 use crate::{
     config::{
         PEER_FAIL_TIME_RESET, PEER_BLOCK_CACHE_SIZE,
-        PEER_TX_CACHE_SIZE, PEER_TIMEOUT_BOOTSTRAP_STEP,
-        PEER_TIMEOUT_REQUEST_OBJECT, CHAIN_SYNC_TIMEOUT_SECS,
+        PEER_TX_CACHE_SIZE,
         PEER_PACKET_CHANNEL_SIZE, PEER_PEERS_CACHE_SIZE,
         PEER_OBJECTS_CONCURRENCY, PEER_LATENCY_AVG_WINDOW, MILLIS_PER_SECOND
     },
@@ -32,7 +31,8 @@ use super::{
     super::{
         Connection,
         packet::*,
-        error::P2pError
+        error::P2pError,
+        P2pTimeouts,
     },
     SharedPeerList,
 };
@@ -168,7 +168,8 @@ pub struct Peer {
     // Did the sync chain failed?
     // It is maybe another (bad) chain
     sync_chain_failed: AtomicBool,
-    request_id: AtomicU64
+    request_id: AtomicU64,
+    timeouts: P2pTimeouts,
 }
 
 impl Peer {
@@ -186,7 +187,8 @@ impl Peer {
         cumulative_difficulty: CumulativeDifficulty,
         peer_list: SharedPeerList,
         flags: Flags,
-        propagate_txs: bool
+        propagate_txs: bool,
+        timeouts: P2pTimeouts
     ) -> (Self, Rx) {
         let mut outgoing_address = *connection.get_address();
         outgoing_address.set_port(local_port);
@@ -235,6 +237,7 @@ impl Peer {
             propagate_txs: AtomicBool::new(propagate_txs),
             sync_chain_failed: AtomicBool::new(false),
             request_id: AtomicU64::new(0),
+            timeouts,
         }, rx)
     }
 
@@ -562,7 +565,7 @@ impl Peer {
         let mut exit_channel = self.get_exit_receiver();
         let object = select! {
             _ = exit_channel.recv() => return Err(P2pError::Disconnected),
-            res = timeout(Duration::from_millis(PEER_TIMEOUT_REQUEST_OBJECT), receiver.recv()) => match res {
+            res = timeout(self.timeouts.request_object.into(), receiver.recv()) => match res {
                 Ok(res) => res.context("Error on blocking object response")?,
                 Err(_) => {
                     warn!("Requested data {} from {} has timed out", request, self);
@@ -615,7 +618,7 @@ impl Peer {
         let mut exit_channel = self.get_exit_receiver();
         let response = select! {
             _ = exit_channel.recv() => return Err(P2pError::Disconnected),
-            res = timeout(Duration::from_millis(PEER_TIMEOUT_BOOTSTRAP_STEP), receiver) => match res {
+            res = timeout(self.timeouts.bootstrap.into(), receiver) => match res {
                 Ok(res) => res?,
                 Err(e) => {
                     // Clear the bootstrap chain channel to preserve the order
@@ -657,7 +660,7 @@ impl Peer {
         let mut exit_channel = self.get_exit_receiver();
         let response = select! {
             _ = exit_channel.recv() => return Err(P2pError::Disconnected),
-            res = timeout(Duration::from_secs(CHAIN_SYNC_TIMEOUT_SECS), receiver) => match res {
+            res = timeout(self.timeouts.chain_sync.into(), receiver) => match res {
                 Ok(res) => res?,
                 Err(e) => {
                     // Clear the sync chain channel
