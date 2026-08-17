@@ -555,7 +555,11 @@ impl Peer {
 
                 drop(objects);
 
-                self.send_packet(Packet::ObjectRequest(Cow::Borrowed(&request))).await?;
+                if let Err(e) = self.send_packet(Packet::ObjectRequest(Cow::Borrowed(&request))).await {
+                    let mut objects = self.objects_requested.lock().await;
+                    objects.pop(&request);
+                    return Err(e)
+                }
                 sent_at = Some(get_current_time_in_millis());
 
                 receiver
@@ -613,7 +617,11 @@ impl Peer {
         }
 
         let start = get_current_time_in_millis();
-        self.send_packet(Packet::BootstrapChainRequest(BootstrapChainRequest::new(id, step))).await?;
+        if let Err(e) = self.send_packet(Packet::BootstrapChainRequest(BootstrapChainRequest::new(id, step))).await {
+            let mut senders = self.bootstrap_requests.lock().await;
+            senders.pop(&id);
+            return Err(e)
+        }
 
         let mut exit_channel = self.get_exit_receiver();
         let response = select! {
@@ -654,7 +662,11 @@ impl Peer {
 
         trace!("sending chain request packet");
         let start = get_current_time_in_millis();
-        self.send_packet(Packet::ChainRequest(request)).await?;
+        if let Err(e) = self.send_packet(Packet::ChainRequest(request)).await {
+            let mut sender_lock = self.sync_chain.lock().await;
+            sender_lock.take();
+            return Err(e)
+        }
 
         trace!("waiting for chain response");
         let mut exit_channel = self.get_exit_receiver();
