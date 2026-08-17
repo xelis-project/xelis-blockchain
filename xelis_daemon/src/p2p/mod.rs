@@ -19,6 +19,7 @@ pub use error::*;
 pub use diffie_hellman::*;
 
 use std::{
+    time::Instant,
     borrow::Cow,
     collections::HashSet,
     io,
@@ -33,7 +34,7 @@ use std::{
 };
 use anyhow::Context;
 use log::{debug, error, info, log, trace, warn};
-use metrics::counter;
+use metrics::{counter, gauge, histogram};
 use itertools::Either;
 use tokio_socks::tcp::{Socks4Stream, Socks5Stream};
 use bytes::{Bytes, BytesMut};
@@ -1411,6 +1412,7 @@ impl<S: Storage> P2pServer<S> {
     }
 
     async fn request_blocking_object_from_peer(&self, peer: &Arc<Peer>, request: ObjectRequest) -> Result<OwnedObjectResponse, P2pError> {
+        let started = Instant::now();
         // Insert it into our cache
         let hash = request.get_hash().clone();
         self.requests_cache.insert(hash.clone()).await;
@@ -1421,6 +1423,13 @@ impl<S: Storage> P2pServer<S> {
 
         // Remove it from cache because we got our response
         self.requests_cache.remove(&hash).await;
+
+        counter!(
+            "xelis_p2p_object_request_outcomes_total",
+            "outcome" => if response.is_ok() { "success" } else { "error" }
+        ).increment(1u64);
+        histogram!("xelis_p2p_object_request_latency_ms")
+            .record(started.elapsed().as_millis() as f64);
 
         response
     }
@@ -1636,12 +1645,15 @@ impl<S: Storage> P2pServer<S> {
                     };
 
                     scheduler.push_back(future);
+                    gauge!("xelis_p2p_blocks_processing_queue").set(scheduler.len() as f64);
                 },
                 Some(block_hash) = blocks_executor.next() => {
                     pending_requests.remove(&block_hash);
                     scheduler.increment_n();
+                    gauge!("xelis_p2p_blocks_executor_queue").set(blocks_executor.len() as f64);
                 },
                 Some((res, block_hash, peer)) = scheduler.next() => {
+                    gauge!("xelis_p2p_blocks_processing_queue").set(scheduler.len() as f64);
                     // Mark the timestamp of when its being added
                     match res {
                         Ok(block) => {
@@ -1673,6 +1685,7 @@ impl<S: Storage> P2pServer<S> {
 
                             scheduler.decrement_n();
                             blocks_executor.push_back(future);
+                            gauge!("xelis_p2p_blocks_executor_queue").set(blocks_executor.len() as f64);
                         },
                         Err(e) => {
                             pending_requests.remove(&block_hash);
@@ -1728,6 +1741,7 @@ impl<S: Storage> P2pServer<S> {
                     break 'main;
                 },
                 Some(res) = txs_executor.next() => {
+                    gauge!("xelis_p2p_txs_executor_queue").set(txs_executor.len() as f64);
                     if let Err(e) = res {
                         debug!("Error while processing TX: {}", e);
                     }
@@ -1760,8 +1774,10 @@ impl<S: Storage> P2pServer<S> {
                     };
 
                     futures.push_back(future);
+                    gauge!("xelis_p2p_txs_processing_queue").set(futures.len() as f64);
                 },
                 Some((res, hash)) = futures.next() => {
+                    gauge!("xelis_p2p_txs_processing_queue").set(futures.len() as f64);
                     debug!("removing TX {} from pending requests", hash);
                     pending_requests.remove(&hash);
 
@@ -1783,6 +1799,7 @@ impl<S: Storage> P2pServer<S> {
                             };
 
                             txs_executor.push_back(future);
+                            gauge!("xelis_p2p_txs_executor_queue").set(txs_executor.len() as f64);
                         },
                         Err(e) => {
                             debug!("Error in txs processing task for TX {}: {} ", hash, e);
@@ -2544,7 +2561,17 @@ impl<S: Storage> P2pServer<S> {
                         async move {
                             let packet_id = packet.get_id();
                             trace!("handling received packet #{} from {}", packet_id, peer);
+                            counter!(
+                                "xelis_p2p_packets_total",
+                                "peer_id" => peer.get_id().to_string(),
+                                "packet_id" => packet_id.to_string()
+                            ).increment(1u64);
                             if let Err(e) = zelf.handle_incoming_packet(&peer, packet).await {
+                                counter!(
+                                    "xelis_p2p_packet_errors_total",
+                                    "peer_id" => peer.get_id().to_string(),
+                                    "packet_id" => packet_id.to_string()
+                                ).increment(1u64);
                                 warn!("Error while handling packet #{} from {}: {}", packet_id, peer, e);
                                 // check that we don't have too many fails
                                 // otherwise disconnect peer

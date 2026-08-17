@@ -8,7 +8,7 @@ use crate::{
     p2p::packet::PacketWrapper
 };
 use anyhow::Context;
-use metrics::counter;
+use metrics::{counter, histogram};
 use xelis_common::{
     tokio::{
         select,
@@ -46,7 +46,7 @@ use std::{
         atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering},
         Arc
     },
-    time::Duration
+    time::{Duration, Instant}
 };
 use lru::LruCache;
 use bytes::Bytes;
@@ -601,6 +601,7 @@ impl Peer {
 
     // Request a bootstrap chain from this peer and wait on it until we receive it or until timeout
     pub async fn request_boostrap_chain(&self, step: StepRequest<'_>) -> Result<StepResponse, P2pError> {
+        let started = Instant::now();
         let step_kind = step.kind();
         debug!("waiting for permit for bootstrap chain step: {:?}", step_kind);
 
@@ -625,7 +626,10 @@ impl Peer {
 
         let mut exit_channel = self.get_exit_receiver();
         let response = select! {
-            _ = exit_channel.recv() => return Err(P2pError::Disconnected),
+            _ = exit_channel.recv() => {
+                counter!("xelis_p2p_bootstrap_request_outcomes_total", "outcome" => "disconnected").increment(1u64);
+                return Err(P2pError::Disconnected)
+            },
             res = timeout(self.timeouts.bootstrap.into(), receiver) => match res {
                 Ok(res) => res?,
                 Err(e) => {
@@ -636,11 +640,14 @@ impl Peer {
                     }
 
                     debug!("Requested bootstrap chain step {:?} has timed out", step_kind);
+                    counter!("xelis_p2p_bootstrap_request_timeouts_total").increment(1u64);
                     return Err(P2pError::AsyncTimeOut(e));
                 }
             }
         };
         self.track_latency_since(start);
+        histogram!("xelis_p2p_bootstrap_request_latency_ms")
+            .record(started.elapsed().as_millis() as f64);
 
         // check that the response is what we asked for
         let response_kind = response.kind();
@@ -653,6 +660,7 @@ impl Peer {
 
     // Request a sync chain from this peer and wait on it until we receive it or until timeout
     pub async fn request_sync_chain(&self, request: PacketWrapper<'_, ChainRequest>) -> Result<ChainResponse, P2pError> {
+        let started = Instant::now();
         debug!("Requesting sync chain");
         let (sender, receiver) = tokio::sync::oneshot::channel();
         {
@@ -671,18 +679,24 @@ impl Peer {
         trace!("waiting for chain response");
         let mut exit_channel = self.get_exit_receiver();
         let response = select! {
-            _ = exit_channel.recv() => return Err(P2pError::Disconnected),
+            _ = exit_channel.recv() => {
+                counter!("xelis_p2p_chain_sync_request_outcomes_total", "outcome" => "disconnected").increment(1u64);
+                return Err(P2pError::Disconnected)
+            },
             res = timeout(self.timeouts.chain_sync.into(), receiver) => match res {
                 Ok(res) => res?,
                 Err(e) => {
                     // Clear the sync chain channel
                     let contains = self.sync_chain.lock().await.take().is_some();
                     debug!("Requested sync chain has timed out, contains: {}", contains);
+                    counter!("xelis_p2p_chain_sync_request_timeouts_total").increment(1u64);
                     return Err(P2pError::AsyncTimeOut(e));
                 }
             }
         };
         self.track_latency_since(start);
+        histogram!("xelis_p2p_chain_sync_request_latency_ms")
+            .record(started.elapsed().as_millis() as f64);
 
         Ok(response)
     }
@@ -771,6 +785,7 @@ impl Peer {
     // Close the peer connection and remove it from the peer list
     pub async fn close_and_temp_ban(&self, duration: Duration) -> Result<(), P2pError> {
         trace!("temp ban {}", self);
+        counter!("xelis_p2p_temp_bans_total").increment(1u64);
         if !self.is_priority() {
             self.peer_list.temp_ban_address(&self.get_connection().get_address().ip(), duration, false).await?;
         } else {
@@ -794,6 +809,7 @@ impl Peer {
     // Close the peer connection and remove it from the peer list
     pub async fn close(&self) -> Result<(), P2pError> {
         trace!("Deleting peer {} from peerlist", self);
+        counter!("xelis_p2p_disconnects_total").increment(1u64);
         let res = self.peer_list.remove_peer(self.get_id(), true).await;
 
         trace!("Closing connection internal with {}", self);
