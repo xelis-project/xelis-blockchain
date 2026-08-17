@@ -1990,7 +1990,11 @@ impl<S: Storage> P2pServer<S> {
         stream::iter(peer_peers)
             .filter_map(move |(addr, direction)| async move {
                 // If we never received it from the peer, its not a common peer
-                if !direction.contains_in() {
+                // A peer is a common peer only when we have both received its
+                // address from `peer` and sent its address to `peer`.
+                // Having only received the address is not enough: it may have
+                // come from a third peer and would create a false positive.
+                if !direction.is_both() {
                     return None
                 }
 
@@ -2187,6 +2191,7 @@ impl<S: Storage> P2pServer<S> {
                     let zelf = Arc::clone(self);
                     let block_hash = block_hash.clone();
                     let header = header.clone();
+                    let source_peer_id = peer.get_id();
 
                     spawn_task("p2p-broadcast-priority-block", async move {
                         debug!("building generic ping packet for priority block");
@@ -2202,6 +2207,7 @@ impl<S: Storage> P2pServer<S> {
                                     &block_hash,
                                     false,
                                     false,
+                                    Some(source_peer_id),
                                 ).await;
                             },
                             Err(e) => {
@@ -2833,11 +2839,11 @@ impl<S: Storage> P2pServer<S> {
         // we build the ping packet ourself this time (we have enough data for it)
         // because this function can be call from Blockchain, which would lead to a deadlock
         let ping = Ping::new(Cow::Borrowed(&hash), our_topoheight, our_height, pruned_topoheight, cumulative_difficulty, IndexSet::new());
-        self.broadcast_block_with_ping(block, ping, &hash, is_from_mining, true).await;
+        self.broadcast_block_with_ping(block, ping, &hash, is_from_mining, true, None).await;
     }
 
     // Broadcast a block with a pre-built ping packet
-    pub async fn broadcast_block_with_ping(&self, block: &BlockHeader, ping: Ping<'_>, hash: &Arc<Hash>, is_from_mining: bool, send_ping: bool) {
+    pub async fn broadcast_block_with_ping(&self, block: &BlockHeader, ping: Ping<'_>, hash: &Arc<Hash>, is_from_mining: bool, send_ping: bool, exclude_peer_id: Option<u64>) {
         debug!("Broadcasting block {} at height {}", hash, block.get_height());
         counter!("xelis_p2p_broadcast_block").increment(1u64);
 
@@ -2863,6 +2869,15 @@ impl<S: Storage> P2pServer<S> {
         // Prepare all the futures to execute them in parallel
         stream::iter(self.peer_list.get_cloned_peers().await)
             .for_each_concurrent(self.stream_concurrency, |peer| async move {
+                // A propagated block must never be sent back to the peer it
+                // came from. The per-peer propagation cache provides a second
+                // layer of protection, but this explicit identity check also
+                // covers fast propagation before the block is fully queued.
+                if exclude_peer_id.is_some_and(|peer_id| peer.get_id() == peer_id) {
+                    trace!("Skipping {} for block {} because it is the source peer", peer, hash);
+                    return;
+                }
+
                 // if the peer can directly accept this new block, send it
                 let peer_height = peer.get_height();
 
