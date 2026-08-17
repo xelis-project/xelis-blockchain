@@ -714,6 +714,15 @@ impl Peer {
         requests.clear();
     }
 
+    // Cancel every request waiting on this peer. Dropping the response senders
+    // wakes the corresponding receivers with an error instead of leaving them
+    // alive until their individual timeouts expire.
+    pub async fn clear_pending_requests(&self) {
+        self.clear_objects_requested().await;
+        self.clear_bootstrap_requests().await;
+        self.sync_chain.lock().await.take();
+    }
+
     // Get the sync chain channel
     // This is used for chain sync requests to be fully awaited
     pub fn get_sync_chain_channel(&self) -> &Mutex<Option<oneshot::Sender<ChainResponse>>> {
@@ -800,6 +809,7 @@ impl Peer {
     // Signal the exit of the peer to the tasks
     // This is listened by write task to close the connection
     pub async fn signal_exit(&self) -> Result<(), P2pError> {
+        self.clear_pending_requests().await;
         self.exit_channel.send(())
             .map_err(|e| P2pError::SendError(e.to_string()))?;
 
