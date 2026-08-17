@@ -71,22 +71,26 @@ impl Serializable for OpaqueTranscript {
     }
 }
 
-pub fn transcript_new(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn transcript_new(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let label = params[0]
         .as_ref()
         .as_bytes()?;
+
+    context.increase_gas_usage(label.len() as u64 * 2)?;
 
     let transcript = OpaqueTranscript(Transcript::new(&label));
     Ok(SysCallResult::Return(transcript.into()))
 }
 
-pub fn transcript_challenge_scalar(zelf: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn transcript_challenge_scalar(zelf: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let mut zelf = zelf?;
     let zelf: &mut OpaqueTranscript = zelf.as_opaque_type_mut()?;
 
     let label = params[0]
         .as_ref()
         .as_bytes()?;
+
+    context.increase_gas_usage(label.len() as u64 * 2)?;
 
     let scalar = zelf.0.challenge_scalar(&label);
     Ok(SysCallResult::Return(OpaqueScalar(scalar).into()))
@@ -112,6 +116,7 @@ pub fn transcript_challenge_bytes(zelf: FnInstance, params: FnParams, _: &Module
         return Err(anyhow::anyhow!("Bytes length must not exceed 256 bytes").into());
     }
 
+    context.increase_gas_usage(label.len() as u64 * 2)?;
     context.increase_gas_usage(bytes_len as u64 * 5)?;
 
     let mut buffer = vec![0u8; bytes_len as usize];
@@ -139,13 +144,15 @@ pub fn transcript_append_message(zelf: FnInstance, params: FnParams, _: &ModuleM
     Ok(SysCallResult::None)
 }
 
-pub fn transcript_append_point(zelf: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn transcript_append_point(zelf: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let mut zelf = zelf?;
     let zelf: &mut OpaqueTranscript = zelf.as_opaque_type_mut()?;
 
     let label = params[0]
         .as_ref()
         .as_bytes()?;
+
+    context.increase_gas_usage(label.len() as u64 * 2)?;
 
     let point: &OpaqueRistrettoPoint = params[1]
         .as_ref()
@@ -156,13 +163,15 @@ pub fn transcript_append_point(zelf: FnInstance, params: FnParams, _: &ModuleMet
     Ok(SysCallResult::None)
 }
 
-pub fn transcript_validate_and_append_point(zelf: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn transcript_validate_and_append_point(zelf: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let mut zelf = zelf?;
     let zelf: &mut OpaqueTranscript = zelf.as_opaque_type_mut()?;
 
     let label = params[0]
         .as_ref()
         .as_bytes()?;
+
+    context.increase_gas_usage(label.len() as u64 * 2)?;
 
     let point: &OpaqueRistrettoPoint = params[1]
         .as_ref()
@@ -174,13 +183,15 @@ pub fn transcript_validate_and_append_point(zelf: FnInstance, params: FnParams, 
     Ok(SysCallResult::None)
 }
 
-pub fn transcript_append_scalar(zelf: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn transcript_append_scalar(zelf: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let mut zelf = zelf?;
     let zelf: &mut OpaqueTranscript = zelf.as_opaque_type_mut()?;
 
     let label = params[0]
         .as_ref()
         .as_bytes()?;
+
+    context.increase_gas_usage(label.len() as u64 * 2)?;
 
     let scalar: &OpaqueScalar = params[1]
         .as_ref()
@@ -190,4 +201,3 @@ pub fn transcript_append_scalar(zelf: FnInstance, params: FnParams, _: &ModuleMe
 
     Ok(SysCallResult::None)
 }
-

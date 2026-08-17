@@ -2669,6 +2669,15 @@ fn emit_event_fn(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<
         .as_u64()?;
 
     let state = state_from_context(context)?;
+
+    if state.block_version >= BlockVersion::V7 {
+        let args_size = args.iter()
+            .map(|arg| arg.size())
+            .sum::<usize>();
+        context.increase_gas_usage(FEE_PER_BYTE_OF_EVENT_DATA * args_size as u64)?;
+    }
+
+    let state = state_from_context(context)?;
     log!(state.log_level, "Contract {} emitting event {} with {} parameters", metadata.metadata.contract_executor, id, args.len());
 
     state.logs.push(ContractLog::Event {
