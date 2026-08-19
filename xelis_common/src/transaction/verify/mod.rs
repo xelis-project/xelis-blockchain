@@ -88,6 +88,7 @@ struct PreVerifyCache<'a> {
     transfers_decompressed: Vec<DecompressedTransferCt>,
     deposits_decompressed: HashMap<&'a Hash, DecompressedDepositCt>,
     transcript: Transcript,
+    serialized: Option<Vec<u8>>,
 }
 
 pub struct DecompressedTransferCt {
@@ -544,11 +545,58 @@ impl Transaction {
         state: &mut B,
         sigma_batch_collector: &mut BatchCollector,
     ) -> Result<PreVerifyCache<'a>, VerificationStateError<E>> {
+        if !self.has_valid_version_format() {
+            return Err(VerificationError::InvalidFormat.into());
+        }
+
+        // Keep the value cached to avoid re-serializing the transaction for signature verification
+        let mut serialized = None;
+
+        // Verify multisig compatibility against the state
+        if let Some(config) = state.get_multisig_state(&self.source).await.map_err(VerificationStateError::State)? {
+            let Some(multisig) = self.get_multisig() else {
+                return Err(VerificationError::MultiSigNotFound.into());
+            };
+
+            if (config.threshold as usize) != multisig.len() || multisig.len() > MAX_MULTISIG_PARTICIPANTS {
+                return Err(VerificationError::MultiSigParticipants.into());
+            }
+
+            let bytes = self.to_bytes();
+            // Multisig are based on the Tx data, without the final signature
+            // We need to remove the final signature and the multisig from the bytes
+            // Each SigId is composed of a u8 and a signature (64 bytes + 1 byte)
+            // We have overhead of 1 byte for the optional bool, and 1 byte for the count in u8
+            // We also need to get rid of the final signature (64 bytes)
+            let size = 1 + 1 + SIGNATURE_SIZE + multisig.len() * (SIGNATURE_SIZE + 1);
+            if  size >= bytes.len() {
+                return Err(VerificationError::InvalidFormat.into());
+            }
+
+            let hash = hash(&bytes[..bytes.len() - size]);
+            for sig in multisig.get_signatures() {
+                // A participant can't sign more than once because of the IndexSet (SignatureId impl Hash on id)
+                let index = sig.id as usize;
+                let Some(key) = config.participants.get_index(index) else {
+                    return Err(VerificationError::MultiSigParticipants.into());
+                };
+
+                let decompressed = key.decompress().map_err(ProofVerificationError::from)?;
+                if !sig.signature.verify(hash.as_bytes(), &decompressed) {
+                    return Err(VerificationError::InvalidSignature.into());
+                }
+            }
+
+            serialized = Some(bytes);
+        } else if self.get_multisig().is_some() {
+            return Err(VerificationError::MultiSigNotConfigured.into());
+        }
+
         let mut transfers_decompressed = Vec::new();
         let mut deposits_decompressed = HashMap::new();
 
         trace!("Pre-verifying dynamic parts of the transaction on state");
-        state.pre_verify_tx_dynamic(&self).await
+        state.pre_verify_tx(&self).await
             .map_err(VerificationStateError::State)?;
 
         trace!("verify fee to pay");
@@ -586,6 +634,10 @@ impl Transaction {
                 if is_reset && state.get_multisig_state(&self.source).await.map_err(VerificationStateError::State)?.is_none() {
                     return Err(VerificationError::MultiSigNotConfigured.into());
                 }
+
+                // Setup the multisig
+                state.set_multisig_state(&self.source, payload).await
+                    .map_err(VerificationStateError::State)?;
             },
             TransactionType::InvokeContract(payload) => {
                 self.verify_invoke_contract_deposits(
@@ -679,6 +731,7 @@ impl Transaction {
             transfers_decompressed,
             deposits_decompressed,
             transcript,
+            serialized,
         })
     }
 
@@ -703,18 +756,11 @@ impl Transaction {
     ) -> Result<(Transcript, Vec<(RistrettoPoint, CompressedRistretto)>), VerificationStateError<E>>
     {
         trace!("Pre-verifying transaction");
-        if !self.has_valid_version_format() {
-            return Err(VerificationError::InvalidFormat.into());
-        }
 
         let tx_size = self.size();
         if tx_size > MAX_TRANSACTION_SIZE {
             return Err(VerificationError::TxTooBig(tx_size, MAX_TRANSACTION_SIZE).into());
         }
-
-        trace!("Pre-verifying transaction on state");
-        state.pre_verify_tx(self).await
-            .map_err(VerificationStateError::State)?;
 
         if !self.verify_commitment_assets() {
             debug!("Invalid commitment assets");
@@ -838,54 +884,18 @@ impl Transaction {
             transfers_decompressed,
             deposits_decompressed,
             mut transcript,
+            serialized,
         } = self.verify_dynamic_parts(
             tx_hash,
             state,
             sigma_batch_collector
         ).await?;
 
-        // 2. Verify Signature
-        let bytes = self.to_bytes();
+        // 3. Verify Signature
+        let bytes = serialized.unwrap_or_else(|| self.to_bytes());
         if !self.signature.verify(&bytes[..bytes.len() - SIGNATURE_SIZE], &source_decompressed) {
             debug!("transaction signature is invalid");
             return Err(VerificationError::InvalidSignature.into());
-        }
-
-        // 3. Verify multisig
-        if let Some(config) = state.get_multisig_state(&self.source).await.map_err(VerificationStateError::State)? {
-            let Some(multisig) = self.get_multisig() else {
-                return Err(VerificationError::MultiSigNotFound.into());
-            };
-
-            if (config.threshold as usize) != multisig.len() || multisig.len() > MAX_MULTISIG_PARTICIPANTS {
-                return Err(VerificationError::MultiSigParticipants.into());
-            }
-
-            // Multisig are based on the Tx data, without the final signature
-            // We need to remove the final signature and the multisig from the bytes
-            // Each SigId is composed of a u8 and a signature (64 bytes + 1 byte)
-            // We have overhead of 1 byte for the optional bool, and 1 byte for the count in u8
-            // We also need to get rid of the final signature (64 bytes)
-            let size = 1 + 1 + SIGNATURE_SIZE + multisig.len() * (SIGNATURE_SIZE + 1);
-            if  size >= bytes.len() {
-                return Err(VerificationError::InvalidFormat.into());
-            }
-
-            let hash = hash(&bytes[..bytes.len() - size]);
-            for sig in multisig.get_signatures() {
-                // A participant can't sign more than once because of the IndexSet (SignatureId impl Hash on id)
-                let index = sig.id as usize;
-                let Some(key) = config.participants.get_index(index) else {
-                    return Err(VerificationError::MultiSigParticipants.into());
-                };
-
-                let decompressed = key.decompress().map_err(ProofVerificationError::from)?;
-                if !sig.signature.verify(hash.as_bytes(), &decompressed) {
-                    return Err(VerificationError::InvalidSignature.into());
-                }
-            }
-        } else if self.get_multisig().is_some() {
-            return Err(VerificationError::MultiSigNotConfigured.into());
         }
 
         // 4. Verify every CtValidityProof
@@ -953,10 +963,6 @@ impl Transaction {
                 for key in &payload.participants {
                     transcript.append_public_key(b"multisig_participant", key);
                 }
-
-                // Setup the multisig
-                state.set_multisig_state(&self.source, payload).await
-                    .map_err(VerificationStateError::State)?;
             },
             TransactionType::InvokeContract(payload) => {                
                 let dest_pubkey = PublicKey::from_hash(&payload.contract);
