@@ -135,13 +135,6 @@ impl<'s, 'b, P: ApplicableChainStateProvider> BlockchainVerificationState<'b, Bl
         self.inner.pre_verify_tx(tx).await
     }
 
-    async fn pre_verify_tx_dynamic<'c>(
-        &'c mut self,
-        tx: &Transaction,
-    ) -> Result<(), BlockchainError> {
-        self.inner.pre_verify_tx_dynamic(tx).await
-    }
-
     /// Get the balance ciphertext for a receiver account
     async fn get_receiver_balance<'c>(
         &'c mut self,
