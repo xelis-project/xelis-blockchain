@@ -28,7 +28,7 @@ actix-rt = { version = "2.9.0", optional = true }
 actix-ws = { version = "0.3.0", optional = true }
 zip = { version = "4", features = ["zstd"], default-features = false, optional = true }
 pin-project-lite = { version = "0.2.16", optional = true }
-console-subscriber = { version = "0.4.1", optional = true }
+console-subscriber = { version = "0.5", optional = true }
 
 # WebSocket support
 tokio-tungstenite-wasm = { workspace = true, optional = true }
