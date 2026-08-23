@@ -3432,7 +3432,7 @@ impl<S: Storage> Blockchain<S> {
         // check that we are not under the pruned topoheight
         if let Some(pruned_topoheight) = provider.get_pruned_topoheight().await? {
             if topoheight - count < pruned_topoheight {
-                count = pruned_topoheight
+                count = topoheight - pruned_topoheight;
             }
         }
 
@@ -3469,7 +3469,7 @@ impl<S: Storage> Blockchain<S> {
         // check that we are not under the pruned topoheight
         if let Some(pruned_topoheight) = provider.get_pruned_topoheight().await? {
             if topoheight - count < pruned_topoheight {
-                count = pruned_topoheight
+                count = topoheight - pruned_topoheight;
             }
         }
 
