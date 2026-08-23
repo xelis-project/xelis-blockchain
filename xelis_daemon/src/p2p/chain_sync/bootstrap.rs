@@ -341,6 +341,7 @@ impl<S: Storage> P2pServer<S> {
                 let mut entries = IndexMap::new();
                 let mut current_size = 0usize;
                 let mut processed_count = 0u64;
+                let mut has_more = false;
 
                 // Base size: 8 byte (response id) + 2 bytes (entries count) + 8 bytes (next_skip)
                 let base_overhead = 8 + 2 + 8;
@@ -355,6 +356,9 @@ impl<S: Storage> P2pServer<S> {
 
                     // Check if adding this entry would exceed our limit
                     if current_size + entry_size > MAX_RESPONSE_SIZE {
+                        // The entry has already been consumed from this stream,
+                        // so we need to set has_more to true and break the loop
+                        has_more = true;
                         break;
                     }
                     
@@ -363,8 +367,7 @@ impl<S: Storage> P2pServer<S> {
                     processed_count += 1;
                 }
 
-                // Calculate next skip value (0 means no more data)
-                let next_skip = if processed_count > 0 && stream.next().await.transpose()?.is_some() {
+                let next_skip = if processed_count > 0 && (has_more || stream.next().await.transpose()?.is_some()) {
                     skip + processed_count
                 } else {
                     0
