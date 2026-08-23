@@ -16,6 +16,7 @@ use log::{debug, error, info, trace, warn};
 use metrics::histogram;
 use xelis_common::{
     block::Block,
+    crypto::Hashable,
     crypto::Hash,
     difficulty::CumulativeDifficulty,
     immutable::Immutable,
@@ -480,7 +481,7 @@ impl<S: Storage> P2pServer<S> {
                     let future = async move {
                         match res? {
                             ResponseHelper::Requested(block, pre_verify) => self.blockchain.add_new_block_with_storage(StorageHolder::Snapshot(snapshot), block, pre_verify, BroadcastOption::None, false).await,
-                            ResponseHelper::NotRequested(hash) => self.try_re_execution_block(hash, StorageHolder::Snapshot(snapshot)).await,
+                            ResponseHelper::NotRequested(hash) => self.try_re_execution_block(peer, hash, StorageHolder::Snapshot(snapshot)).await,
                         }
                     };
 
@@ -798,6 +799,8 @@ impl<S: Storage> P2pServer<S> {
                         let future = async {
                             match res? {
                                 ResponseHelper::Requested(block, pre_verify) => {
+                                    let block_hash = Arc::new(block.hash());
+                                    self.mark_block_received_from_peer(peer, block_hash).await;
                                     if let Some(hash) = pre_verify.get_block_hash() {
                                         // Block has been added already
                                         // This can occurs when the block is requested
@@ -824,7 +827,7 @@ impl<S: Storage> P2pServer<S> {
                                     Ok(true)
                                 },
                                 ResponseHelper::NotRequested(hash) => {
-                                    if let Err(e) = self.try_re_execution_block(hash, StorageHolder::Storage(self.blockchain.get_storage())).await {
+                                    if let Err(e) = self.try_re_execution_block(peer, hash, StorageHolder::Storage(self.blockchain.get_storage())).await {
                                         warn!("sync chain failed during block re-execution: {}", peer);
                                         peer.increment_fail_count();
                                         return Err(e)
@@ -890,7 +893,7 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // Try to re-execute the block requested if its not included in DAG order (it has no topoheight assigned)
-    async fn try_re_execution_block(&self, hash: Immutable<Hash>, storage: StorageHolder<'_, S>) -> Result<(), BlockchainError> {
+    async fn try_re_execution_block(&self, peer: &Arc<Peer>, hash: Immutable<Hash>, storage: StorageHolder<'_, S>) -> Result<(), BlockchainError> {
         trace!("check re execution block {}", hash);
         
         if self.disable_reexecute_blocks_on_sync {
@@ -925,6 +928,7 @@ impl<S: Storage> P2pServer<S> {
 
         warn!("Block {} is not in topological order, forcing its re-execution", hash);
         // Replicate same behavior as above branch
+        self.mark_block_received_from_peer(peer, hash.as_arc()).await;
         self.blockchain.add_new_block_with_storage(storage, block, PreVerifyBlock::Hash(hash), BroadcastOption::All, false).await
     }
 

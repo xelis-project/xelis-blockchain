@@ -2793,6 +2793,25 @@ impl<S: Storage> P2pServer<S> {
             .flatten()
     }
 
+    // Chain synchronization delivers blocks through a request/response rather
+    // than BlockPropagation. Record that the sync peer already sent the block
+    // so a subsequent broadcast does not send it back to the source.
+    pub(super) async fn mark_block_received_from_peer(&self, peer: &Arc<Peer>, hash: Arc<Hash>) {
+        let direction = TimedDirection::In {
+            received_at: get_current_time_in_millis()
+        };
+        let mut blocks_propagation = peer.get_blocks_propagation().lock().await;
+        match blocks_propagation.get_mut(&hash) {
+            Some((origin, is_common)) => {
+                *is_common = false;
+                origin.update(direction);
+            },
+            None => {
+                blocks_propagation.put(hash, (direction, false));
+            }
+        }
+    }
+
     // Broadcast a new transaction hash using propagation packet
     // This is used so we don't overload the network during spam or high transactions count
     // We simply share its hash to nodes and others nodes can check if they have it already or not
