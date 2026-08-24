@@ -1675,6 +1675,7 @@ impl<S: Storage> P2pServer<S> {
                                 debug!("Adding received block {} from {} to chain", block_hash, peer);
                                 if let Err(e) = zelf.blockchain.add_new_block(block, PreVerifyBlock::Hash(Immutable::Arc(block_hash.clone())), BroadcastOption::All, false).await {
                                     warn!("Error while adding new block {} from {}: {}", block_hash, peer, e);
+                                    zelf.clear_block_propagation(&block_hash).await;
                                     peer.increment_fail_count();
                                 } else {
                                     peer.set_sync_chain_failed(false);
@@ -1689,6 +1690,7 @@ impl<S: Storage> P2pServer<S> {
                         },
                         Err(e) => {
                             pending_requests.remove(&block_hash);
+                            self.clear_block_propagation(&block_hash).await;
                             warn!("Error on blocks processing task: {}", e);
                         }
                     }
@@ -2237,7 +2239,8 @@ impl<S: Storage> P2pServer<S> {
                 let peer = Arc::clone(peer);
 
                 // This will block the task if the bounded channel is full
-                if let Err(e) = self.blocks_processor.send((peer, header, block_hash)).await {
+                if let Err(e) = self.blocks_processor.send((peer, header, block_hash.clone())).await {
+                    self.clear_block_propagation(&block_hash).await;
                     error!("Error while sending block propagated to blocks processor task: {}", e);
                 }
             },
@@ -2791,6 +2794,14 @@ impl<S: Storage> P2pServer<S> {
         blocks_propagation_queue.peek(hash)
             .copied()
             .flatten()
+    }
+
+    // A block is inserted in this queue before its full contents are fetched.
+    // Remove failed attempts so a later announcement can retry the block instead
+    // of being suppressed until the bounded LRU cache evicts it.
+    async fn clear_block_propagation(&self, hash: &Hash) {
+        let mut blocks_propagation_queue = self.blocks_propagation_queue.write().await;
+        blocks_propagation_queue.pop(hash);
     }
 
     // Chain synchronization delivers blocks through a request/response rather
