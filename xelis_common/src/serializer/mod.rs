@@ -46,15 +46,26 @@ pub trait Serializer {
     fn from_hex(hex: &str) -> Result<Self, ReaderError>
     where Self: Sized {
         match hex::decode(hex) {
-            Ok(bytes) => {
-                let mut reader = Reader::new(&bytes);
-                Self::read(&mut reader)
-            },
+            Ok(bytes) => Self::from_bytes(&bytes),
             Err(_) => Err(ReaderError::InvalidHex)
         }
     }
 
+    /// Deserialize a complete value from bytes.
+    /// Returns an error if there are trailing bytes after the value.
     fn from_bytes(bytes: &[u8]) -> Result<Self, ReaderError>
+    where Self: Sized {
+        let mut reader = Reader::new(bytes);
+        let result = Self::read(&mut reader)?;
+        if reader.size() != 0 {
+            return Err(ReaderError::TrailingBytes);
+        }
+
+        Ok(result)
+    }
+
+    /// Deserialize a value from the beginning of bytes and ignore trailing data.
+    fn from_bytes_non_strict(bytes: &[u8]) -> Result<Self, ReaderError>
     where Self: Sized {
         let mut reader = Reader::new(bytes);
         Self::read(&mut reader)

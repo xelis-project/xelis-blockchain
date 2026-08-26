@@ -397,8 +397,10 @@ async fn test_tx_deploy_contract() {
         assert!(module.size() == module.to_bytes().len());
 
         let data = TransactionTypeBuilder::DeployContract(DeployContractBuilder {
-            contract_version: Default::default(),
-            module: module.to_hex(),
+            contract: ContractModule {
+                version: Default::default(),
+                module: Arc::new(module)
+            }.into(),
             invoke: Some(DeployContractInvokeBuilder {
                 deposits: [(XELIS_ASSET, ContractDepositBuilder {
                     amount: deposit,
@@ -460,8 +462,10 @@ async fn test_tx_invoke_contract_deployed_in_same_batch_is_rejected() {
         module.add_entry_chunk(Chunk::new(), None);
 
         let deploy_data = TransactionTypeBuilder::DeployContract(DeployContractBuilder {
-            contract_version: Default::default(),
-            module: module.to_hex(),
+            contract: ContractModule {
+                version: Default::default(),
+                module: Arc::new(module),
+            }.into(),
             invoke: None,
         });
         let deploy_builder = TransactionBuilder::new(

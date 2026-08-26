@@ -1,4 +1,5 @@
 use blake3::hash;
+use log::log;
 use xelis_vm::{
     VMContext,
     EnvironmentError,
@@ -63,6 +64,8 @@ fn is_valid_char_for_asset(c: char, whitespace: bool, uppercase_only: bool) -> b
 // Return None if the asset already exists
 pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let (provider, state) = from_context::<P>(context)?;
+    let log_level = state.log_level;
+    log!(log_level, "Contract {} creating an asset", metadata.metadata.contract_executor);
 
     let (id, values) = params.remove(4).into_owned().to_enum()?;
     let max_supply = match id {
@@ -169,6 +172,7 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'
     }
 
     state.logs.push(ContractLog::NewAsset { contract: metadata.metadata.contract_executor.clone(), asset: asset_hash.clone() });
+    log!(log_level, "Contract {} created asset {}", metadata.metadata.contract_executor, asset_hash);
 
     let asset = OpaqueAsset {
         hash: asset_hash

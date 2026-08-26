@@ -479,7 +479,7 @@ pub enum StepResponse {
     ContractBalances(IndexMap<Hash, u64>, Option<u64>),
     // Contract stores
     // entries, next skip count (0 if no more data)
-    ContractStores(IndexMap<ValueCell, ValueCell>, u64),
+    ContractStores(IndexMap<ValueCell, Option<ValueCell>>, u64),
     // Contract executions
     ContractsExecutions(IndexSet<ScheduledExecutionMetadata>, Option<u64>),
     // Contracts events registered for the requested
@@ -697,7 +697,7 @@ impl Serializer for StepResponse {
                 let mut entries = IndexMap::with_capacity(len as usize);
                 for _ in 0..len {
                     let key = ValueCell::read(reader)?;
-                    let value = ValueCell::read(reader)?;
+                    let value = Option::read(reader)?;
                     if entries.insert(key, value).is_some() {
                         debug!("Duplicated contract store in Step Response");
                         return Err(ReaderError::InvalidValue)

@@ -42,11 +42,11 @@ impl VersionedBalanceProvider for RocksStorage {
             for res in Self::iter_raw_internal(&s.db, snapshot.as_ref(), crate::core::storage::rocksdb::IteratorMode::Start, Column::Balances)? {
                 let (key, value) = res?;
 
-                let bytes = RawBytes::from_bytes(&key)?.to_bytes();
+                let bytes = RawBytes::from_bytes_non_strict(&key)?.to_bytes();
                 let mut versioned_key = vec![0; bytes.len() + 8];
                 versioned_key[8..].copy_from_slice(&bytes);
 
-                let mut prev_version = Some(TopoHeight::from_bytes(&value)?);
+                let mut prev_version = Some(TopoHeight::from_bytes_non_strict(&value)?);
                 let mut patched = false;
                 while let Some(prev_topo) = prev_version.take() {
                     versioned_key[0..8].copy_from_slice(&prev_topo.to_be_bytes());

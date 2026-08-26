@@ -34,7 +34,7 @@ use xelis_common::{
     utils::format_xelis,
     versioned::VersionedState,
 };
-use xelis_environment::Environment;
+use silex_environment::Environment;
 use xelis_vm::Module;
 use crate::core::{
     error::BlockchainError,
@@ -333,14 +333,7 @@ impl<'s, 'b, P: ChainStateProvider> BlockchainVerificationState<'b, BlockchainEr
         &'c mut self,
         tx: &Transaction,
     ) -> Result<(), BlockchainError> {
-        super::pre_verify_tx(tx, self.topoheight, self.expected_topoheight, self.block_version).await
-    }
-
-    async fn pre_verify_tx_dynamic<'c>(
-        &'c mut self,
-        tx: &Transaction,
-    ) -> Result<(), BlockchainError> {
-        super::pre_verify_tx_dynamic(self.provider, tx, self.base_height, self.topoheight, self.block_version).await
+        super::pre_verify_tx(self.provider, tx, self.base_height, self.topoheight, self.expected_topoheight, self.block_version).await
     }
 
     /// Get the balance ciphertext for a receiver account

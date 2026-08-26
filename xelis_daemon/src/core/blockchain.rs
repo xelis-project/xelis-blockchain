@@ -233,8 +233,8 @@ pub struct Blockchain<S: Storage> {
     concurrency: usize,
     // Cache for mining block header templates
     mining_cache: RwLock<Option<BlockHeader>>,
-    // Should contracts show logs on execution
-    contracts_logging: bool,
+    // Log level for contract execution messages
+    contracts_log_level: log::Level,
     // Enable snapshot mode during DAG reorganizations.
     snapshot_on_reorg: bool,
     // Minimum fee per kB to consider a transaction as valid for the mempool.
@@ -277,6 +277,11 @@ impl<S: Storage> Blockchain<S> {
 
             if config.rpc.threads == 0 {
                 error!("RPC threads count must be above 0");
+                return Err(BlockchainError::InvalidConfig.into())
+            }
+
+            if config.rpc.max_connections_per_ip == Some(0) {
+                error!("RPC max connections per IP must be above 0");
                 return Err(BlockchainError::InvalidConfig.into())
             }
 
@@ -333,7 +338,7 @@ impl<S: Storage> Blockchain<S> {
             disable_zkp_cache: config.disable_zkp_cache,
             concurrency: config.concurrency,
             mining_cache: RwLock::new(None),
-            contracts_logging: config.enable_contracts_logging,
+            contracts_log_level: config.contracts_log_level.into(),
             snapshot_on_reorg: config.enable_snapshot_on_reorg,
             min_fee_per_kb: config.mempool.min_fee_per_kb,
         };
@@ -448,6 +453,10 @@ impl<S: Storage> Blockchain<S> {
                 config.disable_fast_sync_support,
                 proxy,
                 config.outgoing_connection_timeout.into(),
+                config.ping_interval.into(),
+                config.heartbeat_interval.into(),
+                config.ping_timeout.into(),
+                config.timeouts,
                 config.sync_from_priority_only,
                 config.reorg_from_priority_only,
             ) {
@@ -502,8 +511,8 @@ impl<S: Storage> Blockchain<S> {
 
     // Should we log contracts execution logs
     #[inline]
-    pub fn contracts_logging(&self) -> bool {
-        self.contracts_logging
+    pub fn contracts_log_level(&self) -> log::Level {
+        self.contracts_log_level
     }
 
     // get the environment stdlib for contract execution
@@ -2599,7 +2608,7 @@ impl<S: Storage> Blockchain<S> {
                         is_side_block,
                         required_tx_fee,
                         base_height,
-                        self.contracts_logging,
+                        self.contracts_log_level,
                     );
     
                     // Increase the circulating supply with the block reward
@@ -3181,7 +3190,11 @@ impl<S: Storage> Blockchain<S> {
             } else {
                 let blocks_at_height = provider.get_blocks_at_height(height).await?;
                 for block in blocks_at_height {
-                    if *hash != block && self.is_side_block(provider, &block).await? {
+                    if *hash != block
+                        && provider.is_block_topological_ordered(&block).await?
+                        && provider.get_topo_height_for_hash(&block).await? < current_topoheight
+                        && self.is_side_block(provider, &block).await?
+                    {
                         side_blocks_count += 1;
                     }
                 }
@@ -3419,7 +3432,7 @@ impl<S: Storage> Blockchain<S> {
         // check that we are not under the pruned topoheight
         if let Some(pruned_topoheight) = provider.get_pruned_topoheight().await? {
             if topoheight - count < pruned_topoheight {
-                count = pruned_topoheight
+                count = topoheight - pruned_topoheight;
             }
         }
 
@@ -3456,7 +3469,7 @@ impl<S: Storage> Blockchain<S> {
         // check that we are not under the pruned topoheight
         if let Some(pruned_topoheight) = provider.get_pruned_topoheight().await? {
             if topoheight - count < pruned_topoheight {
-                count = pruned_topoheight
+                count = topoheight - pruned_topoheight;
             }
         }
 

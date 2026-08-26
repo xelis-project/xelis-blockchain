@@ -13,6 +13,7 @@ use crate::p2p::{
         Peer,
         Rx,
     },
+    P2pTimeouts,
     Flags,
 };
 use std::{
@@ -103,7 +104,7 @@ impl<'a> Handshake<'a> {
     }
 
     // Create a new peer using its connection and this handshake packet
-    pub fn create_peer(self, connection: Connection, priority: bool, peer_list: SharedPeerList, propagate_txs: bool) -> (Peer, Rx) {
+    pub fn create_peer(self, connection: Connection, priority: bool, peer_list: SharedPeerList, propagate_txs: bool, timeouts: P2pTimeouts) -> (Peer, Rx) {
         Peer::new(
             connection,
             self.get_peer_id(),
@@ -118,7 +119,8 @@ impl<'a> Handshake<'a> {
             self.cumulative_difficulty.into_owned(),
             peer_list,
             self.flags,
-            propagate_txs
+            propagate_txs,
+            timeouts
         )
     }
 

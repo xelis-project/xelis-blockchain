@@ -395,14 +395,14 @@ impl SledStorage {
         if let Some(v) = snapshot.map(|s| s.get(tree.into(), key_ref)) {
             trace!("loaded from snapshot key {:?} from db", key_ref);
             match v {
-                EntryState::Stored(v) => return Ok(Some(T::from_bytes(&v)?)),
+                EntryState::Stored(v) => return Ok(Some(T::from_bytes_non_strict(&v)?)),
                 EntryState::Deleted => return Ok(None),
                 EntryState::Absent => {}
             }
         }
 
         match tree.get(key_ref)? {
-            Some(bytes) => Ok(Some(T::from_bytes(&bytes)?)),
+            Some(bytes) => Ok(Some(T::from_bytes_non_strict(&bytes)?)),
             None => Ok(None)
         }
     }
@@ -432,7 +432,7 @@ impl SledStorage {
             Some(snapshot) => Either::Left(snapshot.lazy_iter_keys(tree.into(), IteratorMode::WithPrefix(prefix, Direction::Forward), tree.iter())),
             None => Either::Right(tree.scan_prefix(prefix).into_iter().keys().map(|res| {
                 let bytes = res?;
-                let k = K::from_bytes(&bytes)?;
+                let k = K::from_bytes_non_strict(&bytes)?;
                 Ok(k)
             }))
         }
@@ -453,8 +453,8 @@ impl SledStorage {
     pub(super) fn scan_prefix<'a, K: Serializer + 'a, V: Serializer + 'a>(snapshot: Option<&'a Snapshot>, tree: &Tree, prefix: &[u8]) -> impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a {
         Self::scan_prefix_raw(snapshot, tree, prefix).map(|res| {
             let (k_bytes, v_bytes) = res?;
-            let k = K::from_bytes(&k_bytes)?;
-            let v = V::from_bytes(&v_bytes)?;
+            let k = K::from_bytes_non_strict(&k_bytes)?;
+            let v = V::from_bytes_non_strict(&v_bytes)?;
             Ok((k, v))
         })
     }
@@ -474,8 +474,8 @@ impl SledStorage {
     pub(super) fn iter<'a, K: Serializer + 'a, V: Serializer + 'a>(snapshot: Option<&'a Snapshot>, tree: &Tree) -> impl Iterator<Item = Result<(K, V), BlockchainError>> + 'a {
         Self::iter_raw(snapshot, tree).map(|res| {
             let (k_bytes, v_bytes) = res?;
-            let k = K::from_bytes(&k_bytes)?;
-            let v = V::from_bytes(&v_bytes)?;
+            let k = K::from_bytes_non_strict(&k_bytes)?;
+            let v = V::from_bytes_non_strict(&v_bytes)?;
             Ok((k, v))
         })
     }
@@ -484,7 +484,7 @@ impl SledStorage {
     pub(super) fn iter_keys<'a, K: Serializer + 'a>(snapshot: Option<&'a Snapshot>, tree: &Tree) -> impl Iterator<Item = Result<K, BlockchainError>> + 'a {
         Self::iter_raw(snapshot, tree).map(|res| {
             let (k_bytes, _) = res?;
-            let k = K::from_bytes(&k_bytes)?;
+            let k = K::from_bytes_non_strict(&k_bytes)?;
             Ok(k)
         })
     }
@@ -494,18 +494,18 @@ impl SledStorage {
         let key_ref = key.as_ref();
         let prev = if let Some(snapshot) = snapshot {
             match snapshot.delete(tree.into(), key_ref.to_vec()) {
-                EntryState::Stored(prev) => Some(T::from_bytes(&prev)?),
+                EntryState::Stored(prev) => Some(T::from_bytes_non_strict(&prev)?),
                 EntryState::Deleted => None,
                 EntryState::Absent => {
                     // Fallback to the disk for the previous value
                     tree.get(key_ref)?
-                        .map(|bytes| T::from_bytes(&bytes))
+                        .map(|bytes| T::from_bytes_non_strict(&bytes))
                         .transpose()?
                 }
             }
         } else {
             tree.remove(key_ref)?
-                .map(|bytes| T::from_bytes(&bytes))
+                .map(|bytes| T::from_bytes_non_strict(&bytes))
                 .transpose()?
         };
 
@@ -550,18 +550,18 @@ impl SledStorage {
             let value = value.into();
             let v: &[u8] = &value;
             match snapshot.put(tree.into(), key.as_ref().to_vec(), v.to_vec()) {
-                EntryState::Stored(prev) => Some(R::from_bytes(&prev)?),
+                EntryState::Stored(prev) => Some(R::from_bytes_non_strict(&prev)?),
                 EntryState::Deleted => None,
                 EntryState::Absent => {
                     // Fallback to the disk for the previous value
                     tree.get(key.as_ref())?
-                        .map(|bytes| R::from_bytes(&bytes))
+                        .map(|bytes| R::from_bytes_non_strict(&bytes))
                         .transpose()?
                 },
             }
         } else {
             tree.insert(key.as_ref(), value)?
-                .map(|bytes| R::from_bytes(&bytes))
+                .map(|bytes| R::from_bytes_non_strict(&bytes))
                 .transpose()?
         };
 

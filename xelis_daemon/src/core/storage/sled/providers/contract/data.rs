@@ -81,13 +81,13 @@ impl ContractDataProvider for SledStorage {
         self.contains_data(&self.versioned_contracts_data, self.get_versioned_contract_data_key(contract, key, topoheight))
     }
 
-    async fn get_contract_data_entries_at_maximum_topoheight<'a>(&'a self, contract: &'a Hash, topoheight: TopoHeight) -> Result<impl Stream<Item = Result<(ValueCell, ValueCell), BlockchainError>> + Send + 'a, BlockchainError> {
+    async fn get_contract_data_entries_at_maximum_topoheight<'a>(&'a self, contract: &'a Hash, topoheight: TopoHeight) -> Result<impl Stream<Item = Result<(ValueCell, Option<ValueCell>), BlockchainError>> + Send + 'a, BlockchainError> {
         Ok(stream::iter(Self::scan_prefix_keys::<(Hash, ValueCell)>(self.snapshot.as_ref(), &self.contracts_data, contract.as_bytes()))
             .map(move |res| async move {
                 let (_, key) = res?;
                 let value = self.get_contract_data_at_maximum_topoheight_for(contract, &key, topoheight).await?;
 
-                Ok(value.and_then(|(_, v)| v.take().map(|v| (key, v))))
+                Ok(value.map(|(_, v)| (key, v.take())))
             })
             .filter_map(|res| async move { res.await.transpose() })
         )

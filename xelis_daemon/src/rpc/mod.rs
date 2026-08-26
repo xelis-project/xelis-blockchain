@@ -86,7 +86,7 @@ impl<S: Storage> DaemonRpcServer<S> {
     ) -> Result<SharedDaemonRpcServer<S>, BlockchainError> {
         let getwork = if !config.getwork.disable {
             info!("Creating GetWork server...");
-            Some(WebSocketServer::with_limits(
+            Some(WebSocketServer::with(
                 GetWorkServer::new(
                     blockchain.clone(),
                     config.getwork.rate_limit_ms,
@@ -95,7 +95,9 @@ impl<S: Storage> DaemonRpcServer<S> {
                 ),
                 config.max_websocket_sessions,
                 config.websocket_session_channel_size,
-                config.websocket_session_work_queue_size
+                config.websocket_session_work_queue_size,
+                config.max_connections_per_ip,
+                config.proxy_address_headers.clone(),
             ))
         } else {
             None
@@ -106,11 +108,13 @@ impl<S: Storage> DaemonRpcServer<S> {
         rpc::register_methods::<Arc<Blockchain<S>>, S>(&mut rpc_handler, !config.getwork.disable, config.allow_private_methods, config.allow_contract_vm_executions);
 
         // create the default websocket server (support event & rpc methods)
-        let ws = WebSocketServer::with_limits(
+        let ws = WebSocketServer::with(
             EventWebSocketHandler::new(rpc_handler, config.notify_events_concurrency),
             config.max_websocket_sessions,
             config.websocket_session_channel_size,
-            config.websocket_session_work_queue_size
+            config.websocket_session_work_queue_size,
+            config.max_connections_per_ip,
+            config.proxy_address_headers
         );
 
         let server = Arc::new(Self {
@@ -212,6 +216,17 @@ impl<S: Storage> DaemonRpcServer<S> {
 
     pub async fn stop(&self) {
         info!("Stopping RPC Server...");
+
+        if let Err(e) = self.websocket.clear_connections().await {
+            error!("Error while clearing RPC WebSocket connections: {}", e);
+        }
+
+        if let Some(getwork) = &self.getwork {
+            if let Err(e) = getwork.clear_connections().await {
+                error!("Error while clearing GetWork WebSocket connections: {}", e);
+            }
+        }
+
         let mut handle = self.handle.lock().await;
         if let Some(handle) = handle.take() {
             handle.stop(false).await;

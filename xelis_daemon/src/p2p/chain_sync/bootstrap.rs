@@ -341,6 +341,7 @@ impl<S: Storage> P2pServer<S> {
                 let mut entries = IndexMap::new();
                 let mut current_size = 0usize;
                 let mut processed_count = 0u64;
+                let mut has_more = false;
 
                 // Base size: 8 byte (response id) + 2 bytes (entries count) + 8 bytes (next_skip)
                 let base_overhead = 8 + 2 + 8;
@@ -355,6 +356,9 @@ impl<S: Storage> P2pServer<S> {
 
                     // Check if adding this entry would exceed our limit
                     if current_size + entry_size > MAX_RESPONSE_SIZE {
+                        // The entry has already been consumed from this stream,
+                        // so we need to set has_more to true and break the loop
+                        has_more = true;
                         break;
                     }
                     
@@ -363,8 +367,7 @@ impl<S: Storage> P2pServer<S> {
                     processed_count += 1;
                 }
 
-                // Calculate next skip value (0 means no more data)
-                let next_skip = if processed_count > 0 && stream.next().await.transpose()?.is_some() {
+                let next_skip = if processed_count > 0 && (has_more || stream.next().await.transpose()?.is_some()) {
                     skip + processed_count
                 } else {
                     0
@@ -659,7 +662,7 @@ impl<S: Storage> P2pServer<S> {
                                 contracts
                             };
 
-                            self.update_bootstrap_contracts(peer, &contracts, our_topoheight, stable_topoheight).await?;
+                            self.update_bootstrap_contract_modules(peer, &contracts, our_topoheight, stable_topoheight).await?;
                             if contracts.len() < MAX_ITEMS_PER_PAGE {
                                 break;
                             }
@@ -675,11 +678,13 @@ impl<S: Storage> P2pServer<S> {
                 },
                 StepResponse::Contracts(contracts, page) => {
                     info!("Requesting contract metadata for {} contracts #{}", contracts.len(), page.unwrap_or(0));
-                    self.update_bootstrap_contracts(peer, &contracts, our_topoheight, stable_topoheight).await?;
+                    self.update_bootstrap_contract_modules(peer, &contracts, our_topoheight, stable_topoheight).await?;
 
                     if page.is_some() {
                         Some(StepRequest::Contracts(our_topoheight, stable_topoheight, page))
                     } else {
+                        self.update_bootstrap_contract_data(peer, our_topoheight, stable_topoheight).await?;
+
                         // Request all the scheduled executions
                         self.update_contract_scheduled_executions(peer, our_topoheight, stable_topoheight).await?;
 
@@ -1049,7 +1054,7 @@ impl<S: Storage> P2pServer<S> {
             let entries_count = entries.len();
             let mut storage = self.blockchain.get_storage().write().await;
             for (key, value) in entries {
-                storage.set_last_contract_data_to(contract, &key, stable_topoheight, &VersionedContractData::new(Some(value), None)).await?;
+                storage.set_last_contract_data_to(contract, &key, stable_topoheight, &VersionedContractData::new(value, None)).await?;
             }
 
             // If next_skip is 0, we're done (no more data)
@@ -1092,27 +1097,59 @@ impl<S: Storage> P2pServer<S> {
         Ok(())
     }
 
-    // Update all keys using bootstrap request
-    // This will fetch the nonce and associated balance for each asset
-    async fn update_bootstrap_contracts(&self, peer: &Arc<Peer>, contracts: &IndexSet<Hash>, our_topoheight: u64, stable_topoheight: u64) -> Result<(), P2pError> {
+    // Register every contract module before importing contract-dependent data.
+    // Event callbacks refer to both the caller and listener contract IDs in
+    // backends such as RocksDB, so all modules must exist first.
+    async fn update_bootstrap_contract_modules(&self, peer: &Arc<Peer>, contracts: &IndexSet<Hash>, our_topoheight: u64, stable_topoheight: u64) -> Result<(), P2pError> {
         if contracts.is_empty() {
             warn!("No contract to update");
             return Ok(())
         }
 
-        stream::iter(contracts.iter().map(Ok))
+        stream::iter(contracts.iter().map(Ok::<_, P2pError>))
             .try_for_each_concurrent(self.stream_concurrency, |contract| async move {
-                // Order is important because storing module generate an id for the contract
-                // which is used later for balances
                 self.handle_contract_module(peer, contract, our_topoheight, stable_topoheight).await?;
-
-                // But once the module is stored, we can support concurrency
-                try_join!(
-                    self.handle_contract_stores(peer, contract, stable_topoheight),
-                    self.handle_contract_balances(peer, contract, stable_topoheight),
-                    self.handle_contract_events(peer, contract, our_topoheight, stable_topoheight)
-                ).map(|_| ())
+                Ok(())
             }).await?;
+
+        Ok(())
+    }
+
+    // Import contract data after every contract module has been registered.
+    async fn update_bootstrap_contract_data(&self, peer: &Arc<Peer>, our_topoheight: u64, stable_topoheight: u64) -> Result<(), P2pError> {
+        let mut skip = 0usize;
+        loop {
+            // Keep only one bounded page in memory. The read guard must be
+            // released before requesting contract data because the handlers
+            // acquire a write guard when storing the responses.
+            let contracts = {
+                let storage = self.blockchain.get_storage().read().await;
+                let contracts = storage.get_contracts(None, None).await?
+                    .skip(skip)
+                    .take(MAX_ITEMS_PER_PAGE)
+                    .collect::<Result<IndexSet<_>, _>>()?;
+                contracts
+            };
+
+            if contracts.is_empty() {
+                break;
+            }
+
+            skip += contracts.len();
+
+            stream::iter(contracts.iter().map(Ok))
+                .try_for_each_concurrent(self.stream_concurrency, |contract| async move {
+                    try_join!(
+                        self.handle_contract_stores(peer, contract, stable_topoheight),
+                        self.handle_contract_balances(peer, contract, stable_topoheight),
+                        self.handle_contract_events(peer, contract, our_topoheight, stable_topoheight)
+                    ).map(|_| ())
+                }).await?;
+
+            if contracts.len() < MAX_ITEMS_PER_PAGE {
+                break;
+            }
+        }
 
         Ok(())
     }

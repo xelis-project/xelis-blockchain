@@ -318,7 +318,7 @@ where
         let handler = self.methods.get(&key)
             .ok_or_else(|| RpcResponseError::new(request.id.clone(), InternalRpcError::MethodNotFound(request.method.clone())))?;
 
-        trace!("executing '{}' RPC method", request.method);
+        trace!("executing '{}' RPC method {}", request.method, request.params.as_ref().map(|v| v.to_string()).unwrap_or_else(|| "null".to_string()));
         counter!("xelis_rpc_calls", "method" => request.method.clone()).increment(1);
 
         let params = request.params.take().unwrap_or(Value::Null);
@@ -380,7 +380,8 @@ where
             Box::pin(async move {
                 let params: P = parse_params(body)?;
                 let res = f(ctx, params).await?;
-                Ok(json!(res))
+                serde_json::to_value(res)
+                    .map_err(|e| InternalRpcError::InternalError(format!("Failed to serialize response: {}", e).into()))
             })
         });
 
@@ -529,7 +530,10 @@ fn normalize_schema(schema: &Schema, definitions: &mut BTreeMap<String, Value>) 
             for (name, definition) in local_definitions {
                 match definitions.get(&name) {
                     Some(existing) if existing != &definition => {
-                        return Err(InternalRpcError::InternalError("Conflicting JSON schema definition".into()))
+                        return Err(InternalRpcError::InternalError(format!(
+                            "Conflicting JSON schema definition: {}",
+                            name
+                        ).into()))
                     },
                     Some(_) => {},
                     None => {

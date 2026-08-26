@@ -54,6 +54,7 @@ pub fn deserialize_extra_nonce<'de, 'a, D: Deserializer<'de>>(deserializer: D) -
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
+#[schemars(rename = "KV<{K}, {V}>")]
 struct KV<K, V> {
     key: K,
     value: V,
@@ -1141,6 +1142,14 @@ pub struct GetContractDataParams<'a> {
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
+pub struct HasContractDataParams<'a> {
+    /// Contract hash.
+    pub contract: Cow<'a, Hash>,
+    /// Key used by this field.
+    pub key: Cow<'a, ValueCell>
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetContractDataAtTopoHeightParams<'a> {
     /// Contract hash.
     pub contract: Cow<'a, Hash>,
@@ -1214,6 +1223,7 @@ pub struct SimulateContractInvokeResult<'a> {
 
 
 #[derive(Serialize, Deserialize, JsonSchema)]
+#[schemars(rename = "RPCVersioned<{T}>")]
 pub struct RPCVersioned<T> {
     /// Topoheight of the versioned value.
     pub topoheight: TopoHeight,

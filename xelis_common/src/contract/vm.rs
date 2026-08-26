@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use strum::IntoStaticStr;
 use thiserror::Error;
 use curve25519_dalek::Scalar;
-use log::{debug, log, trace, warn, Level};
+use log::{debug, log, trace, warn};
 use indexmap::IndexMap;
 use xelis_vm::{ModuleMetadata, Reference, VM, VMError, ValueCell};
 
@@ -37,7 +37,8 @@ use crate::{
         ContractDeposit,
         Transaction,
         verify::{BlockchainApplyState, ContractEnvironment, DecompressedDepositCt}
-    }
+    },
+    utils::format_xelis,
 };
 
 // Actual constructor hook id
@@ -171,7 +172,11 @@ pub(crate) async fn run_virtual_machine<'a, 'ty, P: for<'x> ContractProvider<'x>
     parameters: impl DoubleEndedIterator<Item = ValueCell> + ExactSizeIterator,
     max_gas: u64,
 ) -> Result<(u64, u64, ExitValue), VMError> {
-    debug!("run virtual machine on {} with max gas {}, caller: {}", contract, max_gas, caller.get_hash());
+    let log_level = chain_state.log_level;
+    let caller_hash = caller.get_hash();
+
+    log!(log_level, "Contract {} execution started: caller {}, invoke {:?}, max gas {}", contract, caller_hash, invoke, format_xelis(max_gas));
+
     let mut vm = VM::default();
 
     // Insert the module to load
@@ -191,26 +196,28 @@ pub(crate) async fn run_virtual_machine<'a, 'ty, P: for<'x> ContractProvider<'x>
     // This is the first chunk to be called
     match invoke {
         InvokeContract::Entry(entry) => {
-            vm.invoke_chunk_with_args(entry, parameters)?;
+            log!(log_level, "Contract {} invoking entry function/chunk {}", contract, entry);
+            vm.invoke_chunk_with_args(entry, parameters.into_iter())?;
         },
         InvokeContract::Hook(hook) => {
-            if !vm.invoke_hook_id_with_args(hook, parameters)? {
-                warn!("Invoke contract {} hook {} not found", contract, hook);
+            log!(log_level, "Contract {} invoking hook {}", contract, hook);
+            if !vm.invoke_hook_id_with_args(hook, parameters.into_iter())? {
+                log!(log_level, "Invoke contract {} hook {} not found", contract, hook);
                 return Ok((0, max_gas, ExitValue::Error(ExitError::UnknownHook)))
             }
         },
         InvokeContract::Chunk(chunk, allow_executions) => {
             if !contract_environment.module.is_callable_chunk(chunk as usize) {
-                warn!("Invoke contract {} chunk {} not found", contract, chunk);
+                log!(log_level, "Invoke contract {} chunk {} not found", contract, chunk);
                 return Ok((0, max_gas, ExitValue::Error(ExitError::InvalidEntry)))
             }
 
-            vm.invoke_chunk_with_args(chunk, parameters)?;
+            log!(log_level, "Contract {} invoking function/chunk {} (allow executions: {})", contract, chunk, allow_executions);
+            vm.invoke_chunk_with_args(chunk, parameters.into_iter())?;
             chain_state.executions.allow_executions = allow_executions;
         }
     }
 
-    let debug_mode = chain_state.debug_mode;
     let context = vm.context_mut();
 
     // Set the gas limit for the VM
@@ -230,21 +237,9 @@ pub(crate) async fn run_virtual_machine<'a, 'ty, P: for<'x> ContractProvider<'x>
     // been increased by contract-funded gas injections.
     let context = vm.context_mut();
 
-    let error_level = if debug_mode {
-        Level::Error
-    } else {
-        Level::Debug
-    };
-
     let exit_code = match res {
         Ok(res) => {
-            let level = if debug_mode {
-                Level::Info
-            } else {
-                Level::Debug
-            };
-
-            log!(level, "Invoke contract {} from {} result: {:#}", contract, caller.get_hash(), res);
+            log!(log_level, "Invoke contract {} from {} result: {:#}", contract, caller.get_hash(), res);
             // If the result return 0 as exit code, it means that everything went well
             let exit_code = match res.as_u64().ok() {
                 Some(v) => ExitValue::ExitCode(v),
@@ -254,8 +249,7 @@ pub(crate) async fn run_virtual_machine<'a, 'ty, P: for<'x> ContractProvider<'x>
                         // and not too big (> MAX_ENTRY_SIZE_BYTES)
                         let bytes = data_size_in_bytes(&res);
                         if !res.is_json_serializable() || !res.is_serializable() || bytes > CONTRACT_MAX_PAYLOAD_SIZE {
-                            
-                            log!(error_level, "Invoke contract {} returned a non serializable value: {:#}", contract, res);
+                            log!(log_level, "Invoke contract {} returned a non serializable value: {:#}", contract, res);
                             ExitValue::Error(ExitError::InvalidEntryPayloadReturn)
                         } else {
                             let cost = CONTRACT_PAYLOAD_FEE_PER_BYTE * bytes as u64;
@@ -263,7 +257,7 @@ pub(crate) async fn run_virtual_machine<'a, 'ty, P: for<'x> ContractProvider<'x>
                             match context.increase_gas_usage(cost) {
                                 Ok(()) => ExitValue::Payload(res),
                                 Err(e) => {
-                                    log!(error_level, "Invoke contract {} cannot pay payload gas cost: {:#}", contract, e);
+                                    log!(log_level, "Invoke contract {} cannot pay payload gas cost: {:#}", contract, e);
                                     ExitValue::Error(e.into())
                                 }
                             }
@@ -278,13 +272,14 @@ pub(crate) async fn run_virtual_machine<'a, 'ty, P: for<'x> ContractProvider<'x>
             exit_code
         },
         Err(err) => {
-            log!(error_level, "Invoke contract {} from {} error: {:#}", contract, caller.get_hash(), err);
+            log!(log_level, "Invoke contract {} from {} error: {:#}", contract, caller.get_hash(), err);
             ExitValue::Error(err.into())
         }
     };
 
     let gas_usage = context.current_gas_usage();
     let vm_max_gas = context.get_gas_limit();
+    log!(log_level, "Contract {} execution finished: gas used {}, gas limit {}, exit {:?}", contract, gas_usage, vm_max_gas, exit_code);
 
     Ok((gas_usage, vm_max_gas, exit_code))
 }

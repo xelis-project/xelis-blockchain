@@ -4,8 +4,9 @@ use serde::{Deserialize, Serialize};
 use xelis_vm::ValueCell;
 use crate::{
     api::DataElement,
-    contract::{ContractVersion, InterContractPermission},
-    crypto::{Address, Hash}
+    contract::{ContractModule, InterContractPermission},
+    crypto::{Address, Hash},
+    serializer::Hexable
 };
 
 fn default_bool_true() -> bool {
@@ -51,11 +52,8 @@ pub struct InvokeContractBuilder {
 
 #[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
 pub struct DeployContractBuilder {
-    // Contract environment version
-    #[serde(default)]
-    pub contract_version: ContractVersion,
-    // Module to deploy
-    pub module: String,
+    // ContractModule to deploy
+    pub contract: Hexable<ContractModule>,
     // Inner invoke during the deploy
     pub invoke: Option<DeployContractInvokeBuilder>
 }

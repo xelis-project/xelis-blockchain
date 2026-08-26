@@ -40,9 +40,11 @@ pub struct ArbitraryRangeProof {
     /// The commitment of the delta between max value and the actual value.
     delta_commitment: CompressedCommitment,
     /// The commitment proof.
-    /// Prove that `max_value - source_ct` encrypts the same value as `delta_commitment`.
+    /// Prove that `source_ct` encrypts the same value as the commitment derived
+    /// from `max_value - delta_commitment`.
     commitment_eq_proof: CommitmentEqProof,
-    /// The range proof to prove `delta_commitment` is >= 0
+    /// Aggregated range proof for both the encrypted value and its delta to the
+    /// maximum.
     range_proof: RangeProof,
 }
 
@@ -83,17 +85,40 @@ impl ArbitraryRangeProof {
         transcript.append_ciphertext(b"source_ct", &ciphertext.compress());
         transcript.append_public_key(b"public_key", &keypair.get_public_key().compress());
 
-        // Compute the delta ciphertext
-        // We subtract the original ciphertext from an encryption of max_value
-        let ct = keypair.get_public_key().encrypt_with_opening(max_value, &Self::OPENING);
-        let ct_delta = ct - ciphertext;
+        // Derive a commitment to the encrypted value from the public maximum
+        // and the committed delta:
+        //
+        //   C_value = (max_value * G + H) - (delta * G + r * H)
+        //           = value * G + (1 - r) * H
+        //
+        // Binding the source ciphertext to C_value and range-proving both
+        // value and delta proves the full statement 0 <= value <= max_value.
+        let max_commitment = PedersenCommitment::new_with_opening(max_value, &Self::OPENING);
+        let delta_commitment_decompressed = delta_commitment.decompress()?;
+        let value_commitment = max_commitment - &delta_commitment_decompressed;
+        let value_opening = PedersenOpening::from_scalar(Self::OPENING.as_scalar() - opening.as_scalar());
 
-        // Generate the proof that the delta commitment is valid for the `max_value - ciphertext` ciphertext subtraction
-        let commitment_eq_proof = CommitmentEqProof::new(keypair, &ct_delta, &opening, delta, TxVersion::V2, transcript);
+        let commitment_eq_proof = CommitmentEqProof::new(
+            keypair,
+            &ciphertext,
+            &value_opening,
+            value,
+            TxVersion::V2,
+            transcript,
+        );
 
-        // Create a range proof to prove that whats left is >= 0
-        let (range_proof, range_commitment) = RangeProof::prove_single(&BP_GENS, &PC_GENS, transcript, delta, &opening.as_scalar(), BULLET_PROOF_SIZE)?;
-        assert_eq!(&range_commitment, delta_commitment.as_point());
+        let values = [delta, value];
+        let openings = [opening.as_scalar(), value_opening.as_scalar()];
+        let (range_proof, range_commitments) = RangeProof::prove_multiple(
+            &BP_GENS,
+            &PC_GENS,
+            transcript,
+            &values,
+            &openings,
+            BULLET_PROOF_SIZE,
+        )?;
+        assert_eq!(&range_commitments[0], delta_commitment.as_point());
+        assert_eq!(&range_commitments[1], value_commitment.compress().as_point());
 
         Ok(Self::from(max_value, delta_commitment, commitment_eq_proof, range_proof))
     }
@@ -116,7 +141,7 @@ impl ArbitraryRangeProof {
     }
 
     /// Internal verify function to avoid code duplication.
-    fn verify_internal(&self, public_key: &PublicKey, source_ciphertext: Ciphertext, transcript: &mut Transcript) -> Result<(PedersenCommitment, Ciphertext), ProofVerificationError> {
+    fn verify_internal(&self, public_key: &PublicKey, source_ciphertext: &Ciphertext, transcript: &mut Transcript) -> Result<(PedersenCommitment, PedersenCommitment), ProofVerificationError> {
         if self.max_value == 0 {
             return Err(ProofVerificationError::Format);
         }
@@ -127,31 +152,36 @@ impl ArbitraryRangeProof {
         transcript.append_ciphertext(b"source_ct", &source_ciphertext.compress());
         transcript.append_public_key(b"public_key", &public_key.compress());
 
-        // Decompress the commitment
-        let commitment = self.delta_commitment.decompress()?;
+        let delta_commitment = self.delta_commitment.decompress()?;
+        let max_commitment = PedersenCommitment::new_with_opening(self.max_value, &Self::OPENING);
+        let value_commitment = max_commitment - &delta_commitment;
 
-        // Compute the balance left
-        let ct = public_key.encrypt_with_opening(self.max_value, &Self::OPENING);
-        let ct_delta = ct - source_ciphertext;
-
-        Ok((commitment, ct_delta))
+        Ok((delta_commitment, value_commitment))
     }
 
     /// Verify the Arbitrary Range proof using a batch collector.
     pub fn pre_verify(&self, public_key: &PublicKey, source_ciphertext: Ciphertext, transcript: &mut Transcript, batch_collector: &mut BatchCollector) -> Result<(), ProofVerificationError> {
-        let (commitment, balance_left) = self.verify_internal(public_key, source_ciphertext, transcript)?;
-        self.commitment_eq_proof.pre_verify(public_key, &balance_left, &commitment, TxVersion::V2, transcript, batch_collector)?;
+        let (delta_commitment, value_commitment) = self.verify_internal(public_key, &source_ciphertext, transcript)?;
+        self.commitment_eq_proof.pre_verify(public_key, &source_ciphertext, &value_commitment, TxVersion::V2, transcript, batch_collector)?;
 
-        self.range_proof.verify_single(&BP_GENS, &PC_GENS, transcript, &(commitment.as_point().clone(), self.delta_commitment.as_point().clone()), BULLET_PROOF_SIZE)
+        let commitments = [
+            (delta_commitment.as_point().clone(), self.delta_commitment.as_point().clone()),
+            (value_commitment.as_point().clone(), value_commitment.compress().as_point().clone()),
+        ];
+        self.range_proof.verify_multiple(&BP_GENS, &PC_GENS, transcript, &commitments, BULLET_PROOF_SIZE)
             .map_err(ProofVerificationError::from)
     }
 
     /// Verify the Arbitrary Range proof.
-    pub fn verify(&self, public_key: &PublicKey, source_ciphertext: Ciphertext, transcript: &mut Transcript) -> Result<(), ProofVerificationError> {
-        let (commitment, balance_left) = self.verify_internal(public_key, source_ciphertext, transcript)?;
-        self.commitment_eq_proof.verify(public_key, &balance_left, &commitment, transcript)?;
+    pub fn verify(&self, public_key: &PublicKey, source_ciphertext: &Ciphertext, transcript: &mut Transcript) -> Result<(), ProofVerificationError> {
+        let (delta_commitment, value_commitment) = self.verify_internal(public_key, &source_ciphertext, transcript)?;
+        self.commitment_eq_proof.verify(public_key, &source_ciphertext, &value_commitment, transcript)?;
 
-        self.range_proof.verify_single(&BP_GENS, &PC_GENS, transcript, &(commitment.as_point().clone(), self.delta_commitment.as_point().clone()), BULLET_PROOF_SIZE)
+        let commitments = [
+            (delta_commitment.as_point().clone(), self.delta_commitment.as_point().clone()),
+            (value_commitment.as_point().clone(), value_commitment.compress().as_point().clone()),
+        ];
+        self.range_proof.verify_multiple(&BP_GENS, &PC_GENS, transcript, &commitments, BULLET_PROOF_SIZE)
             .map_err(ProofVerificationError::from)
     }
 }
@@ -193,11 +223,25 @@ mod tests {
         // Create proof
         let proof = ArbitraryRangeProof::new(&keypair, value, max_value, ct.clone()).unwrap();
 
+        // Ensure the variable-sized aggregated range proof survives the
+        // public wire format before exercising both verifier paths.
+        let proof = ArbitraryRangeProof::from_bytes(&proof.to_bytes()).unwrap();
+
         // Verify the proof
         assert!(
-            proof.verify(keypair.get_public_key(), ct, &mut Transcript::new(b"arbitrary_range_proof"))
+            proof.verify(keypair.get_public_key(), &ct, &mut Transcript::new(b"arbitrary_range_proof"))
                 .is_ok()
         );
+
+        let mut transcript = Transcript::new(b"arbitrary_range_proof");
+        let mut batch_collector = BatchCollector::default();
+        assert!(proof.pre_verify(
+            keypair.get_public_key(),
+            ct,
+            &mut transcript,
+            &mut batch_collector,
+        ).is_ok());
+        assert!(batch_collector.verify().is_ok());
     }
 
     #[test]
@@ -224,15 +268,86 @@ mod tests {
         // Verify the proof
         let inflated_ct = ct + Scalar::ONE;
         assert!(
-            proof.verify(keypair.get_public_key(), inflated_ct, &mut Transcript::new(b"arbitrary_range_proof"))
+            proof.verify(keypair.get_public_key(), &inflated_ct, &mut Transcript::new(b"arbitrary_range_proof"))
                 .is_err()
         );
 
         // Another CT
         let ct = keypair.get_public_key().encrypt(30u64);
         assert!(
-            proof.verify(keypair.get_public_key(), ct, &mut Transcript::new(b"arbitrary_range_proof"))
+            proof.verify(keypair.get_public_key(), &ct, &mut Transcript::new(b"arbitrary_range_proof"))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn test_negative_scalar_ciphertext_is_not_in_arbitrary_range() {
+        let keypair = KeyPair::new();
+        let max_value = 100u64;
+
+        // Encode -1 in the scalar field. The previous one-sided construction
+        // accepted this because max_value - (-1) = 101 is itself a valid u64.
+        let source_opening = PedersenOpening::generate_new();
+        let source_ciphertext = keypair
+            .get_public_key()
+            .encrypt_with_opening(-Scalar::ONE, &source_opening);
+
+        let delta = max_value + 1;
+        let delta_opening = PedersenOpening::generate_new();
+        let delta_commitment = PedersenCommitment::new_with_opening(delta, &delta_opening)
+            .compress();
+
+        let mut transcript = Transcript::new(b"arbitrary_range_proof");
+        transcript.arbitrary_range_proof_domain_separator();
+        transcript.append_u64(b"max_value", max_value);
+        transcript.append_commitment(b"commitment", &delta_commitment);
+        transcript.append_ciphertext(b"source_ct", &source_ciphertext.compress());
+        transcript.append_public_key(b"public_key", &keypair.get_public_key().compress());
+
+        // Recreate the formerly accepted proof: equality and range were both
+        // established only for the delta, never for the source value.
+        let max_ciphertext = keypair
+            .get_public_key()
+            .encrypt_with_opening(max_value, &ArbitraryRangeProof::OPENING);
+        let delta_ciphertext = max_ciphertext - source_ciphertext.clone();
+        let commitment_eq_proof = CommitmentEqProof::new(
+            &keypair,
+            &delta_ciphertext,
+            &delta_opening,
+            delta,
+            TxVersion::V3,
+            &mut transcript,
+        );
+        let (range_proof, _) = RangeProof::prove_single(
+            &BP_GENS,
+            &PC_GENS,
+            &mut transcript,
+            delta,
+            &delta_opening.as_scalar(),
+            BULLET_PROOF_SIZE,
+        ).unwrap();
+
+        let proof = ArbitraryRangeProof::from(
+            max_value,
+            delta_commitment,
+            commitment_eq_proof,
+            range_proof,
+        );
+
+        assert!(proof.verify(
+            keypair.get_public_key(),
+            &source_ciphertext,
+            &mut Transcript::new(b"arbitrary_range_proof"),
+        ).is_err());
+
+        let mut transcript = Transcript::new(b"arbitrary_range_proof");
+        let mut batch_collector = BatchCollector::default();
+        let pre_verify = proof.pre_verify(
+            keypair.get_public_key(),
+            source_ciphertext,
+            &mut transcript,
+            &mut batch_collector,
+        );
+        assert!(pre_verify.is_err() || batch_collector.verify().is_err());
     }
 }

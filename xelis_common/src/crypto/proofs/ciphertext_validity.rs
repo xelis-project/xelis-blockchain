@@ -19,7 +19,6 @@ use crate::{
             RISTRETTO_COMPRESSED_SIZE,
             SCALAR_SIZE
         },
-        non_zero_random_scalar,
         rng,
         ProtocolTranscript
     },
@@ -146,8 +145,10 @@ impl CiphertextValidityProof {
         }
 
         let w = transcript.challenge_scalar(b"w");
+        let ww = &w * &w;
 
         let w_negated = -&w;
+        let ww_negated = -&ww;
 
         let Y_0 = self
             .Y_0
@@ -174,26 +175,19 @@ impl CiphertextValidityProof {
         let D_dest = dest_handle.as_point();
         let D_source = sender_handle.as_point();
 
-        let batch_factor = non_zero_random_scalar(&mut rng());
+        let mut batch = batch_collector.begin_proof();
 
-        // z_x * G
-        batch_collector.g_scalar += self.z_x * batch_factor;
-        // z_r * H
-        batch_collector.h_scalar += self.z_r * batch_factor;
-
-        let w_z_r = w * self.z_r;
-        let w_negated_c = w_negated * c;
-        batch_collector.dynamic_scalars.extend(
-            [
-                -c,            // -c
-                -Scalar::ONE,  // -identity
-                w_z_r,  // w * z_r
-                w_negated_c, // -w * c
-                w_negated,     // -w
-            ]
-            .map(|s| s * batch_factor),
-        );
-        batch_collector.dynamic_points.extend([
+        // z_x * G + z_r * H - c * C - Y_0 = 0
+        batch.add_g_scalar(self.z_x);
+        batch.add_h_scalar(self.z_r);
+        // z_r * P_dest - c * D_dest - Y_1 = 0
+        batch.extend([
+            -c,
+            -Scalar::ONE,
+            w * self.z_r,
+            w_negated * c,
+            w_negated,
+        ], [
             C,      // C
             &Y_0,   // Y_0
             P_dest, // P_dest
@@ -202,13 +196,11 @@ impl CiphertextValidityProof {
         ]);
 
         if let Some(Y_2) = Y_2 {
-            batch_collector.dynamic_scalars.extend([
-                w * w_z_r,           // w * z_r
-                w * w_negated_c, // -w * c
-                w * w_negated,   // -w
-            ].map(|s| s * batch_factor));
-
-            batch_collector.dynamic_points.extend([
+            batch.extend([
+                ww * self.z_r,
+                ww_negated * c,
+                ww_negated,
+            ], [
                 P_source, // P_source
                 D_source, // D_source
                 &Y_2,     // Y_2

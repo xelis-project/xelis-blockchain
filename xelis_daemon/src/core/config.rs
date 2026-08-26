@@ -15,7 +15,7 @@ use xelis_common::{
 };
 use crate::{
     config::*,
-    p2p::{KeyVerificationAction, WrappedSecret}
+    p2p::{KeyVerificationAction, WrappedSecret, P2pTimeouts}
 };
 
 use super::simulator::Simulator;
@@ -61,12 +61,28 @@ fn default_p2p_outgoing_connection_timeout() -> HumanDuration {
     HumanDuration::from(Duration::from_millis(PEER_TIMEOUT_INIT_OUTGOING_CONNECTION))
 }
 
+fn default_p2p_ping_interval() -> HumanDuration {
+    HumanDuration::from(Duration::from_secs(P2P_PING_DELAY))
+}
+
+fn default_p2p_heartbeat_interval() -> HumanDuration {
+    HumanDuration::from(Duration::from_secs(P2P_HEARTBEAT_INTERVAL))
+}
+
+fn default_p2p_ping_timeout() -> HumanDuration {
+    HumanDuration::from(Duration::from_secs(P2P_PING_TIMEOUT))
+}
+
 const fn default_p2p_fail_count_limit() -> u8 {
     PEER_FAIL_LIMIT
 }
 
 const fn debug_log_level() -> LogLevel {
     LogLevel::Debug
+}
+
+const fn default_contracts_log_level() -> LogLevel {
+    LogLevel::Off
 }
 
 const fn default_rpc_batch_limit() -> usize {
@@ -308,6 +324,16 @@ pub struct RPCConfig {
     #[clap(name = "rpc-max-websocket-sessions", long, default_value_t = default_rpc_max_websocket_sessions())]
     #[serde(default = "default_rpc_max_websocket_sessions")]
     pub max_websocket_sessions: usize,
+    /// Optional maximum number of websocket sessions accepted from one IP address.
+    #[clap(name = "rpc-max-connections-per-ip", long)]
+    #[serde(default)]
+    pub max_connections_per_ip: Option<usize>,
+    /// Use the client IP address provided by a proxy server instead of the direct TCP connection.
+    /// Example: X-Forwarded-For, X-Real-IP, etc. This is useful when the RPC server is behind a reverse proxy.
+    /// Configure it to override the client IP address with the value of the first header found in `rpc-proxy-address-headers`.
+    #[clap(name = "rpc-proxy-address-headers", long)]
+    #[serde(default)]
+    pub proxy_address_headers: Vec<String>,
     /// Maximum number of outbound messages queued per websocket session.
     #[clap(name = "rpc-websocket-session-channel-size", long, default_value_t = default_rpc_websocket_session_channel_size())]
     #[serde(default = "default_rpc_websocket_session_channel_size")]
@@ -347,6 +373,8 @@ impl Default for RPCConfig {
             notify_events_concurrency: detect_available_parallelism(),
             batch_limit: default_rpc_batch_limit(),
             max_websocket_sessions: default_rpc_max_websocket_sessions(),
+            max_connections_per_ip: None,
+            proxy_address_headers: Vec::new(),
             websocket_session_channel_size: default_rpc_websocket_session_channel_size(),
             websocket_session_work_queue_size: default_rpc_websocket_session_work_queue_size(),
             cors_allowed_origins: Vec::new(),
@@ -386,6 +414,10 @@ pub struct ProxyConfig {
 
 #[derive(Debug, Clone, clap::Args, Serialize, Deserialize)]
 pub struct P2pConfig {
+    /// P2P protocol and request timeout settings.
+    #[clap(flatten)]
+    #[serde(flatten)]
+    pub timeouts: P2pTimeouts,
     /// Proxy settings for outbound P2P connections.
     #[clap(flatten)]
     pub proxy: ProxyConfig,
@@ -499,6 +531,18 @@ pub struct P2pConfig {
         default = "default_p2p_outgoing_connection_timeout"
     )]
     pub outgoing_connection_timeout: HumanDuration,
+    /// Interval between generic P2P ping packets.
+    #[clap(name = "p2p-ping-interval", long, default_value_t = default_p2p_ping_interval())]
+    #[serde(with = "humantime_serde", default = "default_p2p_ping_interval")]
+    pub ping_interval: HumanDuration,
+    /// Interval at which connected peers are checked for liveness.
+    #[clap(name = "p2p-heartbeat-interval", long, default_value_t = default_p2p_heartbeat_interval())]
+    #[serde(with = "humantime_serde", default = "default_p2p_heartbeat_interval")]
+    pub heartbeat_interval: HumanDuration,
+    /// Maximum time without receiving a ping before closing a peer.
+    #[clap(name = "p2p-ping-timeout", long, default_value_t = default_p2p_ping_timeout())]
+    #[serde(with = "humantime_serde", default = "default_p2p_ping_timeout")]
+    pub ping_timeout: HumanDuration,
     /// Number of peer failures allowed before applying a temporary ban.
     #[clap(name = "p2p-fail-count-limit", long, default_value_t = default_p2p_fail_count_limit())]
     #[serde(default = "default_p2p_fail_count_limit")]
@@ -553,6 +597,7 @@ pub struct P2pConfig {
 impl Default for P2pConfig {
     fn default() -> Self {
         Self {
+            timeouts: P2pTimeouts::default(),
             proxy: ProxyConfig::default(),
             tag: None,
             bind_address: default_p2p_bind_address(),
@@ -572,6 +617,9 @@ impl Default for P2pConfig {
             stream_concurrency: detect_available_parallelism(),
             temp_ban_duration: default_p2p_temp_ban_duration(),
             outgoing_connection_timeout: default_p2p_outgoing_connection_timeout(),
+            ping_interval: default_p2p_ping_interval(),
+            heartbeat_interval: default_p2p_heartbeat_interval(),
+            ping_timeout: default_p2p_ping_timeout(),
             fail_count_limit: default_p2p_fail_count_limit(),
             disable_reexecute_blocks_on_sync: false,
             block_propagation_log_level: debug_log_level(),
@@ -685,10 +733,10 @@ pub struct BlockchainConfig {
     #[clap(long)]
     #[serde(default)]
     pub skip_pow_verification: bool,
-    /// Print contract logs while contracts execute.
-    #[clap(long)]
-    #[serde(default)]
-    pub enable_contracts_logging: bool,
+    /// Log contract execution messages at the selected level.
+    #[clap(long, value_enum, default_value_t = LogLevel::Off)]
+    #[serde(default = "default_contracts_log_level")]
+    pub contracts_log_level: LogLevel,
     /// Enable automatic pruning while keeping at least this many blocks below the tip.
     ///
     /// Pruning runs after new blocks are applied.
@@ -771,7 +819,7 @@ impl Default for BlockchainConfig {
             dir_path: None,
             simulator: None,
             skip_pow_verification: false,
-            enable_contracts_logging: false,
+            contracts_log_level: default_contracts_log_level(),
             auto_prune_keep_n_blocks: None,
             skip_block_template_txs_verification: false,
             genesis_block_hex: None,

@@ -44,7 +44,7 @@ impl VersionedContractBalanceProvider for RocksStorage {
                 Column::ContractsBalances,
             )? {
                 let (key, value) = res?;
-                let mut previous_topoheight = Some(TopoHeight::from_bytes(&value)?);
+                let mut previous_topoheight = Some(TopoHeight::from_bytes_non_strict(&value)?);
                 let mut patched = false;
 
                 while let Some(previous) = previous_topoheight.take() {

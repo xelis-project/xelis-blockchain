@@ -695,7 +695,7 @@ impl Wallet {
 
     // Enable RPC Server with requested authentication and bind address
     #[cfg(feature = "api_server")]
-    pub async fn enable_rpc_server(self: &Arc<Self>, bind_address: String, config: Option<AuthConfig>, threads: Option<usize>) -> Result<(), Error> {
+    pub async fn enable_rpc_server(self: &Arc<Self>, bind_address: String, config: Option<AuthConfig>, threads: usize, notify_events_concurrency: usize) -> Result<(), Error> {
         let mut lock = self.api_server.lock().await;
         if lock.is_some() {
             return Err(WalletError::RPCServerAlreadyRunning.into())
@@ -703,7 +703,7 @@ impl Wallet {
         let mut rpc_handler = RPCHandler::new(self.clone(), None);
         register_rpc_methods(&mut rpc_handler);
 
-        let rpc_server = WalletRpcServer::new(bind_address, rpc_handler, config, threads).await?;
+        let rpc_server = WalletRpcServer::new(bind_address, rpc_handler, config, threads, notify_events_concurrency).await?;
         *lock = Some(APIServer::RPCServer(rpc_server));
         Ok(())
     }

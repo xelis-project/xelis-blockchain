@@ -14,6 +14,8 @@ use xelis_common::{
     tokio::sync::Mutex
 };
 
+use super::trim_wallet_prefix;
+
 // Used for context only
 #[derive(Clone, Hash, PartialEq, Eq)]
 pub struct XSWDAppId(pub Arc<String>);
@@ -62,7 +64,7 @@ impl AppState {
             name: data.name,
             description: data.description,
             url: data.url,
-            permissions: Mutex::new(data.permissions.into_iter().map(|k| (k, Permission::Ask)).collect()),
+            permissions: Mutex::new(data.permissions.into_iter().map(|k| (trim_wallet_prefix(&k).to_owned(), Permission::Ask)).collect()),
             is_requesting: AtomicBool::new(false)
         }
     }

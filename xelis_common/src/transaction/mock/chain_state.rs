@@ -9,8 +9,8 @@ use anyhow::Context;
 use async_trait::async_trait;
 use curve25519_dalek::{ristretto::CompressedRistretto, traits::Identity};
 use indexmap::{IndexMap, IndexSet};
-use log::warn;
-use xelis_builder::EnvironmentBuilder;
+use log::{Level, warn};
+use silex_builder::EnvironmentBuilder;
 use xelis_vm::{Environment, Module};
 
 use super::MockStorageProvider;
@@ -262,10 +262,6 @@ impl<'a> BlockchainVerificationState<'a, anyhow::Error> for MockChainState {
         Ok(())
     }
 
-    async fn pre_verify_tx_dynamic<'b>(&'b mut self, _: &Transaction) -> Result<(), anyhow::Error> {
-        Ok(())
-    }
-
     async fn get_receiver_balance<'b>(
         &'b mut self,
         account: Cow<'a, PublicKey>,
@@ -452,7 +448,7 @@ impl<'a, 'ty> BlockchainContractState<'a, 'ty, MockStorageProvider, anyhow::Erro
         };
 
         let chain_state = ContractChainState {
-            debug_mode: true,
+            log_level: Level::Info,
             mainnet: self.mainnet,
             entry_contract: contract,
             topoheight: 1,

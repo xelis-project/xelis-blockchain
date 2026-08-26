@@ -8,9 +8,9 @@ authors.workspace = true
 
 [dependencies]
 xelis_common = { workspace = true, features = ["rpc-server", "tokio"] }
-xelis-environment = { workspace = true }
 xelis-vm = { workspace = true }
-xelis-assembler = { workspace = true }
+silex-environment = { workspace = true }
+silex-assembler = { workspace = true }
 
 # Database backends
 sled = "0.34.7"

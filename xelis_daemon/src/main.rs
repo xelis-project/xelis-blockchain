@@ -4,7 +4,7 @@ use humantime::{format_duration, Duration as HumanDuration};
 use log::{debug, error, info, trace, warn};
 use xelis_daemon::rpc::rpc::get_block_response_for_hash;
 use tokio::pin;
-use xelis_assembler::Disassembler;
+use silex_assembler::Disassembler;
 use xelis_common::{
     async_handler,
     config::{init, VERSION, XELIS_ASSET, FEE_PER_KB},
@@ -206,6 +206,7 @@ async fn run_prompt<S: Storage>(prompt: ShareablePrompt, blockchain: Arc<Blockch
 
     // Register all our commands
     command_manager.add_command(Command::with_optional_arguments("list_miners", "List all miners connected", vec![Arg::new("page", ArgType::Number)], CommandHandler::Async(async_handler!(list_miners::<S>))))?;
+    command_manager.add_command(Command::with_optional_arguments("list_rpc_connections", "List all RPC WebSocket connection IPs", vec![Arg::new("page", ArgType::Number)], CommandHandler::Async(async_handler!(list_rpc_connections::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("list_peers", "List all peers connected", vec![Arg::new("page", ArgType::Number)], CommandHandler::Async(async_handler!(list_peers::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("list_assets", "List all assets registered on chain", vec![Arg::new("page", ArgType::Number)], CommandHandler::Async(async_handler!(list_assets::<S>))))?;
     command_manager.add_command(Command::with_optional_arguments("show_peerlist", "Show the stored peerlist", vec![Arg::new("page", ArgType::Number)], CommandHandler::Async(async_handler!(show_stored_peerlist::<S>))))?;
@@ -873,6 +874,7 @@ async fn temp_ban_address<S: Storage>(manager: &CommandManager, mut args: Argume
 }
 
 const ELEMENTS_PER_PAGE: usize = 10;
+const RPC_CONNECTIONS_PER_PAGE: usize = 20;
 
 async fn list_miners<S: Storage>(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
     let page = if arguments.has_argument("page") {
@@ -912,6 +914,88 @@ async fn list_miners<S: Storage>(manager: &CommandManager, mut arguments: Argume
             },
             None => {
                 manager.message("No miners running!");
+            }
+        },
+        None => {
+            manager.message("No RPC server running!");
+        }
+    };
+
+    Ok(())
+}
+
+async fn list_rpc_connections<S: Storage>(manager: &CommandManager, mut arguments: ArgumentManager) -> Result<(), CommandError> {
+    let page = if arguments.has_argument("page") {
+        arguments.get_value("page")?.to_number()? as usize
+    } else {
+        1
+    };
+
+    if page == 0 {
+        return Err(CommandError::InvalidArgument("Page must be greater than 0".to_string()));
+    }
+
+    let context = manager.get_context().lock()?;
+    let blockchain: &Arc<Blockchain<S>> = context.get()?;
+    match blockchain.get_rpc().read().await.as_ref() {
+        Some(rpc) => {
+            let sessions = rpc.get_websocket().get_sessions().read().await;
+            if sessions.is_empty() {
+                manager.message("No RPC connections");
+                return Ok(());
+            }
+
+            let mut ip_sessions = HashMap::<String, (usize, HashSet<String>, HashSet<String>)>::new();
+            for session in sessions.iter() {
+                let (count, referers, user_agents) = ip_sessions
+                    .entry(session.get_ip_addr().to_string())
+                    .or_insert_with(|| (0, HashSet::new(), HashSet::new()));
+                *count += 1;
+
+                if let Some(referer) = session.get_request().headers().get("referer")
+                    .and_then(|value| value.to_str().ok())
+                {
+                    referers.insert(referer.to_owned());
+                }
+
+                if let Some(user_agent) = session.get_request().headers().get("user-agent")
+                    .and_then(|value| value.to_str().ok())
+                {
+                    user_agents.insert(user_agent.to_owned());
+                }
+            }
+
+            let mut ips: Vec<(String, (usize, HashSet<String>, HashSet<String>))> = ip_sessions.into_iter().collect();
+            ips.sort_by(|(left, _), (right, _)| left.cmp(right));
+
+            let mut max_pages = ips.len() / RPC_CONNECTIONS_PER_PAGE;
+            if ips.len() % RPC_CONNECTIONS_PER_PAGE != 0 {
+                max_pages += 1;
+            }
+
+            if page > max_pages {
+                return Err(CommandError::InvalidArgument(format!("Page must be less than maximum pages ({})", max_pages)));
+            }
+
+            manager.message(format!("RPC connections (total {}) page {}/{}:", sessions.len(), page, max_pages));
+            for (ip, (count, referers, user_agents)) in ips.iter().skip((page - 1) * RPC_CONNECTIONS_PER_PAGE).take(RPC_CONNECTIONS_PER_PAGE) {
+                let mut referers: Vec<&str> = referers.iter().map(String::as_str).collect();
+                referers.sort_unstable();
+                let mut user_agents: Vec<&str> = user_agents.iter().map(String::as_str).collect();
+                user_agents.sort_unstable();
+
+                let referer = if referers.is_empty() {
+                    String::new()
+                } else {
+                    format!(", referer: {}", referers.join(", "))
+                };
+                let user_agent = if user_agents.is_empty() {
+                    String::new()
+                } else {
+                    format!(", user-agent: {}", user_agents.join(", "))
+                };
+
+                manager.message(format!("- {} ({} session{}){}{}", ip, count, if *count == 1 { "" } else { "s" }, referer, user_agent));
             }
         },
         None => {
@@ -1403,7 +1487,9 @@ async fn inspect_contract<S: Storage>(manager: &CommandManager, mut arguments: A
     let mut total_size = 0;
     let mut stream = stream.boxed();
     while let Some(res) = stream.next().await {
-        let (key, value) = res.context("Error on contract data entry")?;
+        let (key, Some(value)) = res.context("Error on contract data entry")? else {
+            continue;
+        };
         let key_size = key.size();
         total_size += key_size;
         let value_size = value.size();
@@ -1478,7 +1564,7 @@ async fn replay_tx<S: Storage>(manager: &CommandManager, mut arguments: Argument
         false, // weither it is side block or not, it is only used as an hint for future storage
         required_base_fee,
         base_height,
-        blockchain.contracts_logging(),
+        blockchain.contracts_log_level(),
     );
 
     let tx = tx.as_arc();

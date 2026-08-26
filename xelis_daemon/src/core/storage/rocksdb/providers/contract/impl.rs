@@ -91,7 +91,7 @@ impl ContractProvider for RocksStorage {
                         break;
                     }
 
-                    if maximum_topoheight.is_none_or(|max| topo > max) {
+                    if maximum_topoheight.is_none_or(|max| topo <= max) {
                         return Ok(Some(hash))
                     }
 

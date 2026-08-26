@@ -38,7 +38,7 @@ impl VersionedAssetProvider for RocksStorage {
                 let mut asset = s.get_asset_type(&asset_hash)?;
 
                 if asset.data_pointer.is_some_and(|pointer| pointer >= topoheight) {
-                    let prev_topo = Option::from_bytes(&value)?;
+                    let prev_topo = Option::from_bytes_non_strict(&value)?;
                     if asset.data_pointer != prev_topo {
                         asset.data_pointer = prev_topo;
                         Self::insert_into_disk_internal(&s.db, s.snapshot.as_mut(), Column::Assets, &asset_hash, &asset)?;
@@ -65,7 +65,7 @@ impl VersionedAssetProvider for RocksStorage {
                 let mut asset = s.get_asset_type(&hash)?;
 
                 if asset.data_pointer.is_none_or(|v| v > topoheight) {
-                    let prev_topo = Option::from_bytes(&value)?;
+                    let prev_topo = Option::from_bytes_non_strict(&value)?;
                     let filtered = prev_topo.filter(|v| *v <= topoheight);
                     if filtered != asset.data_pointer {
                         asset.data_pointer = filtered;

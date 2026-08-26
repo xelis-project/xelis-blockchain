@@ -35,6 +35,7 @@ pin_project! {
 }
 
 impl<F: Future> Scheduler<F> {
+    #[inline]
     pub fn new(n: impl Into<Option<usize>>) -> Self {
         Self {
             states: VecDeque::new(),
@@ -42,20 +43,26 @@ impl<F: Future> Scheduler<F> {
         }
     }
 
+    // Push future to the front of the queue
+    #[inline]
     pub fn push_front(&mut self, future: F) {
         self.states.push_front(State::New(Some(Box::pin(future))));
     }
 
+    // Push future to the back of the queue
+    #[inline]
     pub fn push_back(&mut self, future: F) {
         self.states.push_back(State::New(Some(Box::pin(future))));
     }
 
     // Current len of futures available (pending & ready)
+    #[inline]
     pub fn len(&self) -> usize {
         self.states.len()
     }
 
     // Do we have any future left
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.states.back().is_none()
     }
@@ -67,15 +74,18 @@ impl<F: Future> Scheduler<F> {
             .count()
     }
 
+    #[inline]
     pub fn set_n(&mut self, n: impl Into<Option<usize>>) {
         self.n = n.into();
     }
 
+    #[inline]
     pub fn get_n(&self) -> Option<usize> {
         self.n
     }
 
     // Do nothing if n was set to None
+    #[inline]
     pub fn increment_n(&mut self) {
         if let Some(n) = self.n.as_mut() {
             *n += 1;
@@ -83,9 +93,10 @@ impl<F: Future> Scheduler<F> {
     }
 
     // Do nothing if n was set to None
+    #[inline]
     pub fn decrement_n(&mut self) {
         if let Some(n) = self.n.as_mut() {
-            *n -= 1;
+            *n = n.saturating_sub(1);
         }
     }
 }
@@ -168,7 +179,6 @@ mod tests {
         assert_eq!(scheduler.next().await, None);
 
         // If we don't have any capacity left
-        // it will return None
         scheduler.push_back(foo(Duration::from_secs(0), "third result"));
         scheduler.push_back(foo(Duration::from_secs(0), "fourth result"));
         scheduler.push_back(foo(Duration::from_secs(0), "last result"));

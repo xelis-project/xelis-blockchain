@@ -73,7 +73,7 @@ impl SledStorage {
         let cloned = snapshot.clone();
         for el in Self::iter_raw(cloned.as_ref(), tree_pointer) {
             let (key, value) = el?;
-            let topo = TopoHeight::from_bytes(&value)?;
+            let topo = TopoHeight::from_bytes_non_strict(&value)?;
 
             if topo > topoheight {
                 debug!("found pointer at {} above the requested topoheight {} with context {}", topo, topoheight, context);
@@ -128,7 +128,7 @@ impl SledStorage {
             for el in Self::iter_raw(cloned.as_ref(), tree_pointer) {
                 let (key, value) = el?;
 
-                let topo = TopoHeight::from_bytes(&value)?;
+                let topo = TopoHeight::from_bytes_non_strict(&value)?;
                 // We fetch the current last version
                 // So if N-1 is below the threshold, we can patch it to None
                 let mut prev_version = Some(topo);

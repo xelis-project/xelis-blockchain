@@ -38,7 +38,7 @@ impl VersionedContractProvider for RocksStorage {
                 let mut contract = s.get_contract_type(&contract_hash)?;
 
                 if contract.module_pointer.is_some_and(|pointer| pointer >= topoheight) {
-                    let prev_topo = Option::from_bytes(&value)?;
+                    let prev_topo = Option::from_bytes_non_strict(&value)?;
                     if contract.module_pointer != prev_topo {
                         contract.module_pointer = prev_topo;
                         Self::insert_into_disk_internal(&s.db, s.snapshot.as_mut(), Column::Contracts, &contract_hash, &contract)?;
@@ -65,7 +65,7 @@ impl VersionedContractProvider for RocksStorage {
                 let mut contract = s.get_contract_type(&hash)?;
 
                 if contract.module_pointer.is_none_or(|v| v > topoheight) {
-                    let prev_topo = Option::from_bytes(&value)?;
+                    let prev_topo = Option::from_bytes_non_strict(&value)?;
                     let filtered = prev_topo.filter(|v| *v <= topoheight);
                     if filtered != contract.module_pointer {
                         contract.module_pointer = filtered;

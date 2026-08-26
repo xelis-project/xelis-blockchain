@@ -10,7 +10,7 @@ use std::{
 };
 use anyhow::Context;
 use async_trait::async_trait;
-use log::{debug, trace, warn};
+use log::{Level, debug, trace, warn};
 use indexmap::{IndexMap, IndexSet};
 use xelis_common::{
     account::Nonce,
@@ -82,7 +82,7 @@ pub struct ApplicableChainState<'s, 'b, P: ApplicableChainStateProvider> {
     // Transactions links to store: tx hash -> (blocks linked, executed in, contract)
     transactions_links: HashMap<&'b Hash, (IndexSet<&'b Hash>, Option<&'b Hash>, Option<&'b Hash>)>,
     // used for logs of contracts are executed in block
-    debug_mode: bool
+    log_level: Level,
 }
 
 #[async_trait]
@@ -133,13 +133,6 @@ impl<'s, 'b, P: ApplicableChainStateProvider> BlockchainVerificationState<'b, Bl
         tx: &Transaction,
     ) -> Result<(), BlockchainError> {
         self.inner.pre_verify_tx(tx).await
-    }
-
-    async fn pre_verify_tx_dynamic<'c>(
-        &'c mut self,
-        tx: &Transaction,
-    ) -> Result<(), BlockchainError> {
-        self.inner.pre_verify_tx_dynamic(tx).await
     }
 
     /// Get the balance ciphertext for a receiver account
@@ -357,19 +350,14 @@ impl<'s, 'b, 'ty, P: ApplicableChainStateProvider> BlockchainContractState<'b, '
             (contract_hash.as_ref().clone(), cache)
         ].into();
 
-        let mut block_version = self.block.get_version();
-        if block_version < BlockVersion::V7 && self.is_v7_pre_enabled() {
-            block_version = BlockVersion::V7;
-        }
-
         let state = ContractChainState {
-            debug_mode: self.debug_mode,
+            log_level: self.log_level,
             mainnet,
             entry_contract: contract_hash,
             topoheight: self.inner.topoheight,
             block_hash: self.block_hash,
             block: self.block,
-            block_version,
+            block_version: self.block.get_version(),
             caller,
             logs: ContractLogs::default(),
             changes: ChainStateChanges {
@@ -559,7 +547,7 @@ impl<'s, 'b, P: ApplicableChainStateProvider> ApplicableChainState<'s, 'b, P> {
         is_side_block: bool,
         tx_base_fee: u64,
         base_height: u64,
-        debug_mode: bool,
+        log_level: Level,
     ) -> Self {
         Self {
             inner: ChainState::new(
@@ -579,13 +567,8 @@ impl<'s, 'b, P: ApplicableChainStateProvider> ApplicableChainState<'s, 'b, P> {
             block,
             is_side_block,
             transactions_links: HashMap::new(),
-            debug_mode,
+            log_level,
         }
-    }
-
-    // Is v7
-    fn is_v7_pre_enabled(&self) -> bool {
-        self.block_version >= BlockVersion::V7
     }
 
     // Returns if the TX was already executed
@@ -736,7 +719,7 @@ impl<'s, 'b, P: ApplicableChainStateProvider> ApplicableChainState<'s, 'b, P> {
 
             for (listener_contract, mut callback) in callbacks {
                 debug!("processing event callback of {}", listener_contract);
-                if self.is_v7_pre_enabled()
+                if self.block_version >= BlockVersion::V7
                     && !self.collateralize_legacy_event_callback(&listener_contract, &mut callback).await?
                 {
                     warn!(
@@ -820,7 +803,7 @@ impl<'s, 'b, P: ApplicableChainStateProvider> ApplicableChainState<'s, 'b, P> {
         &mut self,
         execution: &ScheduledExecution,
     ) -> Result<bool, BlockchainError> {
-        if !self.is_v7_pre_enabled() {
+        if self.block_version < BlockVersion::V7 {
             return Ok(true);
         }
 
@@ -894,15 +877,12 @@ impl<'s, 'b, P: ApplicableChainStateProvider> ApplicableChainState<'s, 'b, P> {
 
         if !self.load_contract_module(contract.clone()).await? {
             warn!("failed to load contract module for scheduled execution of contract {} with caller {}", contract, caller.get_hash());
-            vm::refund_gas_sources(self, gas_sources, 0, max_gas).await
-                .map_err(|err| match err {
-                    vm::ContractStateError::State(err) => err,
-                    vm::ContractStateError::Contract(err) => BlockchainError::ContractError(err),
-                })?;
+            vm::refund_gas_sources(self, gas_sources, 0, max_gas).await?;
+
             return Ok(());
         }
 
-        if let Err(e) = vm::invoke_contract(
+        vm::invoke_contract(
             caller.clone(),
             self,
             contract.clone(),
@@ -913,9 +893,7 @@ impl<'s, 'b, P: ApplicableChainStateProvider> ApplicableChainState<'s, 'b, P> {
             InvokeContract::Chunk(chunk_id, false),
             Cow::Owned(InterContractPermission::All),
             post_hook,
-        ).await {
-            warn!("failed to process execution of contract {} with caller {}: {}", contract, caller.get_hash(), e);
-        }
+        ).await?;
 
         Ok(())
     }
@@ -1050,7 +1028,7 @@ mod tests {
     use std::{borrow::Cow, collections::HashMap, sync::Arc};
 
     use indexmap::IndexSet;
-    use xelis_assembler::Assembler;
+    use silex_assembler::Assembler;
     use xelis_common::{
         block::{Block, BlockHeader, BlockVersion, EXTRA_NONCE_SIZE},
         contract::{
@@ -1121,7 +1099,7 @@ mod tests {
             false,
             0,
             0,
-            false,
+            Level::Info,
         );
 
         let emitter = Hash::new([2u8; 32]);
@@ -1196,7 +1174,7 @@ mod tests {
             false,
             0,
             0,
-            false,
+            Level::Info,
         );
 
         let emitter = Hash::new([2u8; 32]);
@@ -1268,7 +1246,7 @@ mod tests {
             false,
             0,
             0,
-            false,
+            Level::Info,
         );
 
         let emitter = Hash::new([2u8; 32]);
@@ -1415,7 +1393,7 @@ mod tests {
             false,
             0,
             0,
-            false,
+            Level::Info,
         );
 
         let contract = Hash::new([2u8; 32]);
@@ -1495,5 +1473,190 @@ mod tests {
                 .expect("prepare v7 scheduled execution"),
             "a marked V7 account reservation must remain executable"
         );
+    }
+
+    #[tokio::test]
+    async fn block_end_scheduled_executions_are_independent_and_settle_failed_gas() {
+        let storage = MemoryStorage::new(Network::Devnet, 1);
+        let environments = HashMap::from([(
+            ContractVersion::V1,
+            Arc::new(build_environment::<MemoryStorage>(ContractVersion::V1).build()),
+        )]);
+        let block_hash = Hash::new([1u8; 32]);
+        let miner = KeyPair::new().get_public_key().compress();
+        let block_header = BlockHeader::new(
+            BlockVersion::V6,
+            0,
+            0,
+            IndexSet::new(),
+            [0u8; EXTRA_NONCE_SIZE],
+            miner,
+            IndexSet::new(),
+        );
+        let block = Block::new(block_header, Vec::new());
+
+        let mut state = ApplicableChainState::new(
+            &storage,
+            &environments,
+            0,
+            1,
+            BlockVersion::V7,
+            &block_hash,
+            &block,
+            false,
+            0,
+            0,
+            Level::Info,
+        );
+
+        let failed_contract = Hash::new([2u8; 32]);
+        let successful_contract = Hash::new([3u8; 32]);
+        state.inner.contracts.insert(
+            Cow::Owned(failed_contract.clone()),
+            Some((VersionedState::New, Some(Cow::Owned(module_returning(1))))),
+        );
+        state.inner.contracts.insert(
+            Cow::Owned(successful_contract.clone()),
+            Some((VersionedState::New, Some(Cow::Owned(module_returning(0))))),
+        );
+
+        let failed_hash = Arc::new(Hash::new([4u8; 32]));
+        let successful_hash = Arc::new(Hash::new([5u8; 32]));
+        let failed_execution = ScheduledExecution {
+            hash: failed_hash.clone(),
+            contract: failed_contract.clone(),
+            chunk_id: 0,
+            params: Vec::new(),
+            max_gas: 1_000,
+            kind: ScheduledExecutionKind::BlockEnd,
+            gas_sources: [(Source::Contract(failed_contract.clone()), 1_000)].into(),
+        };
+        let successful_execution = ScheduledExecution {
+            hash: successful_hash.clone(),
+            contract: successful_contract.clone(),
+            chunk_id: 0,
+            params: Vec::new(),
+            max_gas: 1_000,
+            kind: ScheduledExecutionKind::BlockEnd,
+            gas_sources: [(Source::Contract(successful_contract.clone()), 1_000)].into(),
+        };
+
+        state.contract_manager.executions.executions.insert(failed_hash.clone(), failed_execution);
+        state.contract_manager.executions.executions.insert(successful_hash.clone(), successful_execution);
+        state.contract_manager.executions.block_end.extend([failed_hash.clone(), successful_hash.clone()]);
+
+        state.process_executions_at_block_end()
+            .await
+            .expect("one failed scheduled execution must not block the next one");
+
+        let failed_logs = state.contract_manager.logs.get(&Cow::Owned(failed_hash.as_ref().clone()))
+            .expect("failed execution logs");
+        assert!(failed_logs.iter().any(|log| matches!(log, ContractLog::ExitCode(Some(1)))));
+
+        let successful_logs = state.contract_manager.logs.get(&Cow::Owned(successful_hash.as_ref().clone()))
+            .expect("successful execution logs");
+        assert!(successful_logs.iter().any(|log| matches!(log, ContractLog::ExitCode(Some(0)))));
+
+        assert!(state.inner.get_gas_fee() > 0, "failed execution must still pay used gas");
+        assert!(
+            state.get_contract_balance_for_gas(&failed_contract).await
+                .expect("failed contract gas balance").1 > 0,
+            "unused gas from the failed execution must be refunded"
+        );
+    }
+
+    #[tokio::test]
+    async fn event_callbacks_are_independent_when_one_returns_an_error() {
+        let storage = MemoryStorage::new(Network::Devnet, 1);
+        let environments = HashMap::from([(
+            ContractVersion::V1,
+            Arc::new(build_environment::<MemoryStorage>(ContractVersion::V1).build()),
+        )]);
+        let block_hash = Hash::new([1u8; 32]);
+        let miner = KeyPair::new().get_public_key().compress();
+        let block_header = BlockHeader::new(
+            BlockVersion::V7,
+            0,
+            0,
+            IndexSet::new(),
+            [0u8; EXTRA_NONCE_SIZE],
+            miner,
+            IndexSet::new(),
+        );
+        let block = Block::new(block_header, Vec::new());
+
+        let mut state = ApplicableChainState::new(
+            &storage,
+            &environments,
+            0,
+            1,
+            BlockVersion::V7,
+            &block_hash,
+            &block,
+            false,
+            0,
+            0,
+            Level::Info,
+        );
+
+        let emitter = Hash::new([2u8; 32]);
+        let failed_listener = Hash::new([3u8; 32]);
+        let successful_listener = Hash::new([4u8; 32]);
+        state.inner.contracts.insert(
+            Cow::Owned(failed_listener.clone()),
+            Some((VersionedState::New, Some(Cow::Owned(module_returning(1))))),
+        );
+        state.inner.contracts.insert(
+            Cow::Owned(successful_listener.clone()),
+            Some((VersionedState::New, Some(Cow::Owned(module_returning(0))))),
+        );
+        // Fund both listeners so this test exercises callback
+        // failure isolation rather than the unfunded-legacy rejection path.
+        {
+            let (_, balance) = state.get_contract_balance_for_gas(&failed_listener)
+                .await
+                .expect("failed listener balance");
+            *balance = 1_000;
+        }
+        {
+            let (_, balance) = state.get_contract_balance_for_gas(&successful_listener)
+                .await
+                .expect("successful listener balance");
+            *balance = 1_000;
+        }
+        state.contract_manager.events.push_back(CallbackEvent {
+            contract: emitter.clone(),
+            event_id: 7,
+            params: Vec::new(),
+        });
+        state.contract_manager.events_listeners.insert(
+            (emitter, 7),
+            vec![
+                (
+                    failed_listener.clone(),
+                    EventCallbackRegistration::new(0, 1_000, Source::Contract(failed_listener.clone())),
+                ),
+                (
+                    successful_listener.clone(),
+                    EventCallbackRegistration::new(0, 1_000, Source::Contract(successful_listener.clone())),
+                ),
+            ],
+        );
+
+        let caller = Hash::new([5u8; 32]);
+        state.execute_callback_events(&caller)
+            .await
+            .expect("one failed callback must not block the next callback");
+
+        let exit_codes = state.contract_manager.logs.get(&Cow::Owned(caller))
+            .expect("callback logs")
+            .iter()
+            .filter_map(|log| match log {
+                ContractLog::ExitCode(code) => Some(*code),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(exit_codes, vec![Some(1), Some(0)]);
+        assert!(state.inner.get_gas_fee() > 0, "failed callback must still pay used gas");
     }
 }

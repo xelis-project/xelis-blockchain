@@ -5652,13 +5652,14 @@ Payload to deploy a contract on the network.
 ```json
 {
     "deploy_contract": {
-        "contract_version": 0,
-        "module": "<contract bytecode in hexadecimal>",
+        "contract": "<contract bytecode in hexadecimal>",
     }
 }
 ```
 
-Where `module` is the compiled contract bytecode in hexadecimal format. `contract_version` is optional and defaults to the current default contract environment version.
+Where `module` is the compiled contract bytecode in hexadecimal format and `contract_version` identifies the contract environment used to compile it.
+
+The module format is version-aware, but the contract version is not embedded in the module itself; `contract_version` must match the version used to serialize and compile `module`.
 
 In case your contract have a constructor hook, you can provide parameters to it during the deployment.
 ```json

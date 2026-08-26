@@ -144,7 +144,7 @@ pub fn arbitrary_range_proof_verify(zelf: FnInstance, mut params: FnParams, _: &
 
     let zelf = zelf?;
     let zelf: &ArbitraryRangeProof = zelf.as_opaque_type()?;
-    let valid = zelf.verify(&source_pubkey, source_ciphertext, &mut transcript.0)
+    let valid = zelf.verify(&source_pubkey, &source_ciphertext, &mut transcript.0)
         .is_ok();
 
     Ok(SysCallResult::Return(Primitive::Boolean(valid).into()))

@@ -82,7 +82,7 @@ use anyhow::Context as AnyContext;
 use human_bytes::human_bytes;
 use serde_json::{json, Value};
 use std::{borrow::Cow, collections::HashMap, sync::Arc};
-use log::{debug, info, trace, warn};
+use log::{Level, debug, info, trace, warn};
 
 // limit the result returned per `get_dag_order` rpc method
 const MAX_DAG_ORDER: u64 = 64;
@@ -433,6 +433,7 @@ pub fn register_methods<T: ShareableTid<'static>, S: Storage>(handler: &mut RPCH
     handler.register_method_with_params(("get_contracts_outputs", "Retrieve contract transfers made to an address at a specific topoheight."), async_handler!(get_contracts_outputs::<S>));
     handler.register_method_with_params_and_return_schema::<_, RPCVersioned<Versioned<Option<Cow<xelis_vm::Module>>>>>(("get_contract_module", "Retrieve the contract module (compiled code) for a specific contract."), async_handler!(get_contract_module::<S>));
     handler.register_method_with_params(("get_contract_data", "Retrieve the contract data with the requested key."), async_handler!(get_contract_data::<S>));
+    handler.register_method_with_params(("has_contract_data", "Verify if contract data exists for the requested key."), async_handler!(has_contract_data::<S>));
     handler.register_method_with_params(("get_contract_data_at_topoheight", "Retrieve the contract data with the requested key at a specific topoheight."), async_handler!(get_contract_data_at_topoheight::<S>));
     handler.register_method_with_params(("get_contract_balance", "Retrieve the contract balance"), async_handler!(get_contract_balance::<S>));
     handler.register_method_with_params(("get_contract_balance_at_topoheight", "Retrieve the contract balance at a specific topoheight."), async_handler!(get_contract_balance_at_topoheight::<S>));
@@ -2171,6 +2172,13 @@ async fn get_contract_data<S: Storage>(context: &Context<'_, '_>, params: GetCon
     })
 }
 
+async fn has_contract_data<S: Storage>(context: &Context<'_, '_>, params: HasContractDataParams<'_>) -> Result<bool, InternalRpcError> {
+    let blockchain = chain_from_context::<S>(context)?;
+    let storage = blockchain.get_storage().read().await;
+
+    Ok(storage.get_last_topoheight_for_contract_data(&params.contract, &params.key).await?.is_some())
+}
+
 
 async fn get_contract_data_at_topoheight<S: Storage>(context: &Context<'_, '_>, params: GetContractDataAtTopoHeightParams<'_>) -> Result<Versioned<Option<ValueCell>>, InternalRpcError> {
     let blockchain = chain_from_context::<S>(context)?;
@@ -2277,12 +2285,15 @@ async fn get_contract_data_entries<S: Storage>(context: &Context<'_, '_>, params
         .context("Error while retrieving contract entries")?;
 
     let stream = stream.boxed();
-    let entries = stream.skip(params.skip.unwrap_or(0))
-        .take(maximum)
-        .map_ok(|(key, value)| ContractDataEntry {
-            key,
-            value,
+    let entries = stream
+        .try_filter_map(|(key, value)| async move {
+            Ok(value.map(|value| ContractDataEntry {
+                key,
+                value,
+            }))
         })
+        .skip(params.skip.unwrap_or(0))
+        .take(maximum)
         .try_collect::<Vec<_>>()
         .await
         .context("Error while collecting contract entries")?;
@@ -2378,7 +2389,7 @@ async fn simulate_contract_invoke<'a, S: Storage>(context: &Context<'_, '_>, par
         false,
         base_fee,
         stable_height,
-        false,
+        Level::Trace,
     );
 
     let mut decompressed_deposits = HashMap::new();

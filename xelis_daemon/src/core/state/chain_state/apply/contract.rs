@@ -15,7 +15,7 @@ use xelis_common::{
     crypto::Hash
 };
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct ContractManager<'b> {
     // logs per caller hash
     pub logs: HashMap<Cow<'b, Hash>, ContractLogs>,

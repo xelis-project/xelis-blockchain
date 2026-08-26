@@ -38,17 +38,24 @@ pub const AUTO_RECONNECT_INTERVAL: u64 = 5;
 #[derive(Debug, clap::Args, Serialize, Deserialize)]
 pub struct RPCConfig {
     /// Address the RPC server listens on.
-    #[clap(long)]
-    pub rpc_bind_address: Option<String>,
+    #[clap(name = "rpc-bind-address", long)]
+    pub bind_address: Option<String>,
     /// Username required for RPC authentication.
-    #[clap(long)]
-    pub rpc_username: Option<String>,
+    #[clap(name = "rpc-username", long)]
+    pub username: Option<String>,
     /// Password required for RPC authentication.
-    #[clap(long)]
-    pub rpc_password: Option<String>,
+    #[clap(name = "rpc-password", long)]
+    pub password: Option<String>,
     /// Number of worker threads used by the RPC server.
-    #[clap(long)]
-    pub rpc_threads: Option<usize>
+    #[clap(name = "rpc-threads", long, default_value_t = detect_available_parallelism())]
+    pub threads: usize,
+    /// Maximum number of concurrent RPC event notification tasks.
+    ///
+    /// Defaults to the detected CPU parallelism. Set to `0` to remove the
+    /// concurrency limit.
+    #[clap(name = "rpc-notify-events-concurrency", long, default_value_t = detect_available_parallelism())]
+    #[serde(default = "detect_available_parallelism")]
+    pub notify_events_concurrency: usize,
 }
 
 // Functions Helpers

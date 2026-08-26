@@ -114,6 +114,9 @@ use record::{read_node_header_from_reader, NodeRecord};
 const GAS_SCALING_FACTOR: u64 = 1000;
 const GAS_PER_BYTE_WRITE: u64 = FEE_PER_BYTE_STORED_CONTRACT * GAS_SCALING_FACTOR;
 const GAS_PER_BYTE_READ: u64 = GAS_PER_BYTE_WRITE / 100;
+// Charged for every node read. Storage-byte charges cover the cold provider
+// read, while this fixed cost also accounts for warm-cache reads.
+const GAS_PER_NODE_READ: u64 = 15;
 const MAX_NAMESPACE_SIZE: usize = 32;
 
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
@@ -1111,6 +1114,7 @@ async fn read_node<'ty, P: ContractProvider<'ty>>(
     node_id: u64,
 ) -> Result<Option<Node>, EnvironmentError> {
     let key = node_storage_key(ctx.namespace, node_id);
+    ctx.charge_extra_gas(GAS_PER_NODE_READ)?;
     ensure_cache_entry(ctx, &key).await?;
     Ok(
         ctx.cached_value(&key)
@@ -1129,6 +1133,7 @@ async fn load_node_header<'ty, P: ContractProvider<'ty>>(
     ctx: &mut TreeContext<'_, 'ty, P>,
     id: u64,
 ) -> Result<Option<NodeHeader>, EnvironmentError> {
+    ctx.charge_extra_gas(GAS_PER_NODE_READ)?;
     let key = node_storage_key(ctx.namespace, id);
     ensure_cache_entry(ctx, &key).await?;
     if let Some(v) = ctx.cached_value(&key) {

@@ -49,16 +49,8 @@ pub trait BlockchainVerificationState<'a, E> {
     async fn handle_tx_fee<'b>(&'b mut self, tx: &Transaction, tx_hash: &Hash) -> Result<u64, E>;
 
     /// Pre-verify the TX
-    /// This checks the transaction static parts
+    /// This checks the transaction dynamic parts
     async fn pre_verify_tx<'b>(
-        &'b mut self,
-        tx: &Transaction,
-    ) -> Result<(), E>;
-
-
-    /// Pre-verify the TX
-    /// Related to the chain state
-    async fn pre_verify_tx_dynamic<'b>(
         &'b mut self,
         tx: &Transaction,
     ) -> Result<(), E>;

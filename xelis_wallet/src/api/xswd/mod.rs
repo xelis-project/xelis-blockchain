@@ -142,13 +142,7 @@ where
         }
 
         for perm in app_data.get_permissions() {
-            let trimmed_perm = if perm.starts_with("wallet.") {
-                &perm[7..]
-            } else {
-                perm.as_str()
-            };
-
-            if !self.handler.has_method(trimmed_perm) {
+            if !self.handler.has_method(trim_wallet_prefix(perm)) {
                 debug!("Permission '{}' is unknown", perm);
                 return Err(XSWDError::UnknownMethodInPermissionsList(perm.clone()))
             }
@@ -360,4 +354,13 @@ pub async fn prefetch_permissions<W: ShareableTid<'static> + XSWDHandler>(contex
     app.set_requesting(false);
 
     Ok(true)
+}
+
+/// Trim the "wallet." prefix from a method name if it exists
+pub fn trim_wallet_prefix(method: &str) -> &str {
+    if method.starts_with("wallet.") {
+        &method[7..]
+    } else {
+        method
+    }
 }

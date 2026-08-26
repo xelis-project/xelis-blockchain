@@ -164,7 +164,9 @@ mod tests {
 
         // Should be valid as we require >=1.13.0
         assert!(is_version_allowed_at_height(&Network::Mainnet, 435_000, "1.13.0").unwrap());
-        assert!(is_version_allowed_at_height(&Network::Mainnet, 435_000, VERSION).unwrap());
+
+        let hard_forks = get_hard_forks(&Network::Mainnet);
+        assert!(is_version_allowed_at_height(&Network::Mainnet, hard_forks[hard_forks.len() - 1].height, VERSION).unwrap());
     }
 
     #[test]
