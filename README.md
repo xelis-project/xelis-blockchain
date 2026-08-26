@@ -8,7 +8,7 @@ The main features of XELIS are the following:
 - **BlockDAG**: enabled to improve the scalability and the security of the network by reducing orphaned blocks rate.
 - **Egalitarian PoW**: Unique PoW algorithm built to allow any CPU or GPU to mine XELIS easily using [xelis-hash](https://github.com/xelis-project/xelis-hash).
 - **Kalman Filter**: Difficulty adjustment algorithm using Kalman Filter to adjust the difficulty at each block instantly and smoothly to prevent any stuck-chain or dishonest miners mining at lower difficulty. 
-- **Privacy**: Homomorphic Encryption allows to have encrypted balances and encrypted transfered amounts.
+- **Privacy**: Homomorphic Encryption allows to have encrypted balances and encrypted transferred amounts.
 - **Smart Contracts**: allows to create unstoppable decentralized applications by deploying programs on the network, executed in our sandboxed environment [xelis-vm](https://github.com/xelis-project/xelis-vm).
 - **Confidential Asset**: Any asset deployed on XELIS network will have the same privacy and functionality like XELIS in any wallet.
 - **Event system**: every event happening on the network (daemon or wallet) can be detected and notified easily.
@@ -223,12 +223,12 @@ Every data is integrated in the transaction payload when using an integrated add
 
 ## P2p (Encrypted Network)
 
-All transfered data are using a custom Serializer/Deserializer made by hand to transform a struct representation in raw bytes directly.
+All transferred data are using a custom Serializer/Deserializer made by hand to transform a struct representation in raw bytes directly.
 This serialization is done using the fixed position of each fields and their corresponding bits size.
 
-Before sending a packet, we're encrypting it using ChaCha20-Poly1305 algorithm to prevent network traffic analysis and authenticate each transfered data.
+Before sending a packet, we're encrypting it using ChaCha20-Poly1305 algorithm to prevent network traffic analysis and authenticate each transferred data.
 
-Every data transfered is done through the Packet system which allow easily to read & transfer data and doing the whole serialization itself.
+Every data transferred is done through the Packet system which allow easily to read & transfer data and doing the whole serialization itself.
 
 The connection for a new peer (took from the queue or a new incoming connections) is executed through a unique tokio task with the same allocated buffer for handshake.
 This prevents any DoS attack on creating multiple task and verifying connection.

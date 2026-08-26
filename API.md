@@ -336,7 +336,7 @@ Subscribe with `{"contract_invoke":{"contract":"<contract hash>"}}`.
 
 #### Contract Transfers
 
-When a contract has transfered any asset to the receiver address, it is aggregated.
+When a contract has transferred any asset to the receiver address, it is aggregated.
 
 ##### Name `contract_transfers`
 
