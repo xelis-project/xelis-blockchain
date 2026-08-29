@@ -458,6 +458,11 @@ impl EncryptedStorage {
         let tree = self.get_custom_tree(tree)?;
         let mut entries: IndexMap<DataValue, DataElement> = IndexMap::new();
         for res in tree.iter().skip(skip.unwrap_or(0)) {
+            if limit.is_some_and(|max| entries.len() >= max) {
+                trace!("max entries reached");
+                break;
+            }
+
             let (k, v) = res?;
             let mut key = None;
             let mut value = None;
@@ -495,11 +500,6 @@ impl EncryptedStorage {
             };
 
             entries.insert(key, value);
-
-            if limit.is_some_and(|max| entries.len() >= max) {
-                trace!("max entries reached");
-                break;
-            }
         }
 
         Ok(QueryResult {
