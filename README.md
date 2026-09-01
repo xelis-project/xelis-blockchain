@@ -41,7 +41,7 @@ By default, the network is set to `mainnet`.
 [@deroholic](https://github.com/deroholic):
 - Difficulty adjustment algorithm using Kalman-Filter.
 
-Thank you to every people testing actively the code base, honest miners and every future contributors!
+Thank you to everyone actively testing the code base, the honest miners, and every future contributor!
 
 ## How to build
 
@@ -73,7 +73,7 @@ To build using Docker, use the following command, using the `app` build argument
 ## Funding
 
 XELIS is a community driven project and is not funded by any company or organization.
-To helps the development, the success and provide a better support of XELIS, we set a dev fee percentage starting at 10% on block reward.
+To help the development and success of XELIS, and to provide better support, we set a dev fee percentage starting at 10% on the block reward.
 
 Current dev fee curve is as following:
 
@@ -215,7 +215,7 @@ After each TX, the nonce is incremented by 1.
 
 Integrated address are base address with custom data integrated.
 For example, you can integrate in it a unique identifier that will be integrated in the future transaction done using it.
-Its helpful to determine easily which account to link a transaction with an account/order on service side.
+It's helpful for easily determining which account to link a transaction with on the service side.
 
 Maximum data allowed is 1KB (same as a transfer payload).
 
@@ -297,13 +297,13 @@ Except at beginning, this packet should never be sent again.
 #### Ping
 
 Ping packet is sent at an regular interval and inform peers of the our blockchain state.
-Every 15 minutes, the packet can contains up to `MAX_LEN` sockets addresses (IPv4 or IPv6) to help others nodes to extends theirs peers list.
+Every 15 minutes, the packet can contain up to `MAX_LEN` socket addresses (IPv4 or IPv6) to help other nodes extend their peer list.
 
 #### Chain Sync
 
 We select randomly a peer which is higher in height from the peers list than us and send him a chain request.
 
-The chain request includes last `CHAIN_SYNC_REQUEST_MAX_BLOCKS` blocks hashes of our chain with theirs topoheight espaced exponentially.
+The chain request includes the last `CHAIN_SYNC_REQUEST_MAX_BLOCKS` block hashes of our chain, with their topoheight spaced exponentially.
 This data is used by the select peer to try to find a common point with our chain and his own (block hash must be at same topoheight as other peer).
 If selected peer found a common point, he add up to `CHAIN_SYNC_RESPONSE_MAX_BLOCKS` blocks hashes ordered by block height.
 
@@ -313,7 +313,7 @@ Chain sync is requested with a minimum interval of `CHAIN_SYNC_DELAY` seconds.
 
 #### Block Propagation
 
-Block propagation packet contains the block header only. Its sent to all peers who have theirs height minus our height less than `STABLE_LIMIT`.
+The block propagation packet contains the block header only. It's sent to all peers whose height minus our height is less than `STABLE_LIMIT`.
 To build the block, we retrieve transactions from mempool.
 If a transaction is not found in the mempool, we request it from the same peer in order to build it.
 

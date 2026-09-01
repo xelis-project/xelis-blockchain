@@ -2418,7 +2418,7 @@ No parameters
 ```
 
 #### P2p Status
-Retrieve some informations about P2p
+Retrieve some information about P2p
 
 ##### Method `p2p_status`
 
@@ -2901,7 +2901,7 @@ Fetch the block hash where the transaction was executed and its topoheight.
 ```
 
 #### Get Transactions
-Fetch transactions by theirs hashes from database and mempool of daemon and keep the same order in response
+Fetch transactions by their hashes from the database and mempool of the daemon, keeping the same order in the response
 If a transaction is not found, its position in the result array will be `null`.
 
 ##### Method `get_transactions`
