@@ -429,7 +429,7 @@ impl SledStorage {
     // Scan prefix over keys only
     pub(super) fn scan_prefix_keys<'a, K: Serializer + 'a>(snapshot: Option<&'a Snapshot>, tree: &Tree, prefix: &[u8]) -> impl Iterator<Item = Result<K, BlockchainError>> + 'a {
         match snapshot {
-            Some(snapshot) => Either::Left(snapshot.lazy_iter_keys(tree.into(), IteratorMode::WithPrefix(prefix, Direction::Forward), tree.iter())),
+            Some(snapshot) => Either::Left(snapshot.lazy_iter_keys(tree.into(), IteratorMode::WithPrefix(prefix, Direction::Forward), tree.scan_prefix(prefix))),
             None => Either::Right(tree.scan_prefix(prefix).into_iter().keys().map(|res| {
                 let bytes = res?;
                 let k = K::from_bytes_non_strict(&bytes)?;
@@ -441,7 +441,7 @@ impl SledStorage {
     // Scan prefix raw
     pub(super) fn scan_prefix_raw<'a>(snapshot: Option<&'a Snapshot>, tree: &Tree, prefix: &[u8]) -> impl Iterator<Item = Result<(BytesView<'a>, BytesView<'a>), BlockchainError>> + 'a {
         match snapshot {
-            Some(snapshot) => Either::Left(snapshot.lazy_iter_raw(tree.into(), IteratorMode::WithPrefix(prefix, Direction::Forward), tree.iter())),
+            Some(snapshot) => Either::Left(snapshot.lazy_iter_raw(tree.into(), IteratorMode::WithPrefix(prefix, Direction::Forward), tree.scan_prefix(prefix))),
             None => Either::Right(tree.scan_prefix(prefix).into_iter().map(|res| {
                 let (k, v) = res?;
                 Ok((k.into(), v.into()))

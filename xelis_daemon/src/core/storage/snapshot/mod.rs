@@ -176,6 +176,7 @@ impl<C: Hash + Eq> Snapshot<C> {
 
     // Lazy interator over raw keys and values as BytesView
     /// Note that this iterator is not allocating or copying any data from it!
+    /// The disk iterator must already respect the mode; the mode only filters snapshot writes.
     pub fn lazy_iter_raw<'a, I: AsRef<[u8]> + Into<BytesView<'a>> + 'a, E: StdError + Send + Sync + 'static>(
         &'a self,
         column: C,
