@@ -313,7 +313,7 @@ impl<'s, 'b, 'ty, P: ApplicableChainStateProvider> BlockchainContractState<'b, '
                 match deposit {
                     ContractDeposit::Public(amount) => match cache.balances.entry(asset.clone()) {
                         Entry::Occupied(mut o) => match o.get_mut() {
-                            Some((mut state, balance)) => {
+                            Some((state, balance)) => {
                                 state.mark_updated();
                                 *balance = balance.checked_add(*amount)
                                     .ok_or(BlockchainError::ContractError(ContractError::BalanceOverflow))?;
