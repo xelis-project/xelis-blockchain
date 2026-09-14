@@ -579,7 +579,7 @@ async fn finalize_unsigned_transaction(context: &Context<'_, '_>, params: Finali
     let wallet = wallet_from_context(context)?;
 
     let mut unsigned = params.unsigned;
-    if params.signatures.is_empty() != unsigned.multisig().is_some() {
+    if params.signatures.is_empty() == unsigned.multisig().is_some() {
         return Err(InternalRpcError::InvalidParams("Invalid signatures".into()))
     }
 
