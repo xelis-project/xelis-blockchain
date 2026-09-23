@@ -3537,7 +3537,7 @@ dependencies = [
 [[package]]
 name = "silex-assembler"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.3.0#e0b96d4d5e62fb7bac458ce449d2a83b9414171d"
+source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.4.0#259e287d2a32bdcd68ed952775c5e3af8ae673cf"
 dependencies = [
  "log",
  "silex-bytecode",
@@ -3548,7 +3548,7 @@ dependencies = [
 [[package]]
 name = "silex-ast"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.3.0#e0b96d4d5e62fb7bac458ce449d2a83b9414171d"
+source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.4.0#259e287d2a32bdcd68ed952775c5e3af8ae673cf"
 dependencies = [
  "indexmap",
  "silex-types",
@@ -3557,7 +3557,7 @@ dependencies = [
 [[package]]
 name = "silex-builder"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.3.0#e0b96d4d5e62fb7bac458ce449d2a83b9414171d"
+source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.4.0#259e287d2a32bdcd68ed952775c5e3af8ae673cf"
 dependencies = [
  "anyhow",
  "hex",
@@ -3572,7 +3572,7 @@ dependencies = [
 [[package]]
 name = "silex-bytecode"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.3.0#e0b96d4d5e62fb7bac458ce449d2a83b9414171d"
+source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.4.0#259e287d2a32bdcd68ed952775c5e3af8ae673cf"
 dependencies = [
  "hex",
  "indexmap",
@@ -3585,7 +3585,7 @@ dependencies = [
 [[package]]
 name = "silex-compiler"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.3.0#e0b96d4d5e62fb7bac458ce449d2a83b9414171d"
+source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.4.0#259e287d2a32bdcd68ed952775c5e3af8ae673cf"
 dependencies = [
  "log",
  "silex-ast",
@@ -3598,7 +3598,7 @@ dependencies = [
 [[package]]
 name = "silex-environment"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.3.0#e0b96d4d5e62fb7bac458ce449d2a83b9414171d"
+source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.4.0#259e287d2a32bdcd68ed952775c5e3af8ae673cf"
 dependencies = [
  "anyhow",
  "better_any",
@@ -3614,7 +3614,7 @@ dependencies = [
 [[package]]
 name = "silex-lexer"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.3.0#e0b96d4d5e62fb7bac458ce449d2a83b9414171d"
+source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.4.0#259e287d2a32bdcd68ed952775c5e3af8ae673cf"
 dependencies = [
  "log",
  "silex-ast",
@@ -3625,7 +3625,7 @@ dependencies = [
 [[package]]
 name = "silex-parser"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.3.0#e0b96d4d5e62fb7bac458ce449d2a83b9414171d"
+source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.4.0#259e287d2a32bdcd68ed952775c5e3af8ae673cf"
 dependencies = [
  "anyhow",
  "indexmap",
@@ -3641,7 +3641,7 @@ dependencies = [
 [[package]]
 name = "silex-types"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.3.0#e0b96d4d5e62fb7bac458ce449d2a83b9414171d"
+source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.4.0#259e287d2a32bdcd68ed952775c5e3af8ae673cf"
 dependencies = [
  "anyhow",
  "hex",
@@ -4866,7 +4866,7 @@ dependencies = [
 [[package]]
 name = "xelis-vm"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.3.0#e0b96d4d5e62fb7bac458ce449d2a83b9414171d"
+source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.4.0#259e287d2a32bdcd68ed952775c5e3af8ae673cf"
 dependencies = [
  "anyhow",
  "futures",
