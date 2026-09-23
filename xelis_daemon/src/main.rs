@@ -1456,7 +1456,7 @@ async fn inspect_contract<S: Storage>(manager: &CommandManager, mut arguments: A
     };
 
     manager.message(format!("Contract {} deployed at topoheight {}", contract, topo));
-    manager.message(format!("- Module: {}", module.module.to_hex()));
+    manager.message(format!("- Contract: {}", module.to_hex()));
     manager.message(format!("- Bytecode size: {}", human_bytes(module.module.size() as f64)));
     manager.message(format!("- Version: {}", module.version));
     manager.message(format!("- Constructor: {}", module.module.hook_chunk_ids().contains_key(&HOOK_CONSTRUCTOR_ID)));
