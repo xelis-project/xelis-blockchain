@@ -429,6 +429,7 @@ pub fn register_methods<T: ShareableTid<'static>, S: Storage>(handler: &mut RPCH
     handler.register_method_with_params(RpcMethod::with_descriptions("get_contract_logs", ["Retrieve all contract logs for a specific caller (transaction hash).", "Logs include information about gas refunds, transfers, asset minting/burning, scheduled executions, events, and more."]), async_handler!(get_contract_logs::<S>));
     handler.register_method_with_params(("get_contract_scheduled_executions_at_topoheight", "Retrieve the scheduled contract executions at a specific topoheight."), async_handler!(get_contract_scheduled_executions_at_topoheight::<S>));
     handler.register_method_with_params(("get_contract_registered_executions_at_topoheight", "Retrieve the registered scheduled contract executions at a specific topoheight."), async_handler!(get_contract_registered_executions_at_topoheight::<S>));
+    handler.register_method_with_params(("get_contract_scheduled_execution", "Retrieve the scheduled contract execution."), async_handler!(get_contract_scheduled_execution::<S>));
 
     handler.register_method_with_params(("get_contracts_outputs", "Retrieve contract transfers made to an address at a specific topoheight."), async_handler!(get_contracts_outputs::<S>));
     handler.register_method_with_params_and_return_schema::<_, RPCVersioned<Versioned<Option<Cow<xelis_vm::Module>>>>>(("get_contract_module", "Retrieve the contract module (compiled code) for a specific contract."), async_handler!(get_contract_module::<S>));
@@ -2058,6 +2059,16 @@ async fn get_contract_registered_executions_at_topoheight<S: Storage>(context: &
     }
 
     Ok(executions)
+}
+
+async fn get_contract_scheduled_execution<S: Storage>(context: &Context<'_, '_>, params: GetContractScheduledExecutionParams<'_>) -> Result<ScheduledExecution, InternalRpcError> {
+    let blockchain = chain_from_context::<S>(context)?;
+    let storage = blockchain.get_storage().read().await;
+
+    let scheduled_execution = storage.get_contract_scheduled_execution_at_topoheight(&params.contract, params.registration_topoheight).await
+        .context("Error while retrieving contract scheduled execution")?;
+
+    Ok(scheduled_execution)
 }
 
 async fn get_contracts_outputs<S: Storage>(context: &Context<'_, '_>, params: GetContractOutputsParams<'_>) -> Result<GetContractsOutputsResult<'static>, InternalRpcError> {
