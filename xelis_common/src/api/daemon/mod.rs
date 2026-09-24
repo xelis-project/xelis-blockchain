@@ -1262,17 +1262,6 @@ pub struct GetP2pBlockPropagationParams<'a> {
     pub incoming: bool,
 }
 
-#[derive(Serialize, Deserialize, JsonSchema)]
-pub struct RegisteredExecution<'a> {
-    /// Hash of the caller for the registered execution
-    /// You can use it for the contract logs associated to the execution.
-    pub execution_hash: Cow<'a, Hash>,
-    /// Contract hash that is invoked
-    pub execution_contract: Cow<'a, Hash>,
-    /// Topoheight at which the execution is scheduled
-    pub execution_topoheight: TopoHeight,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum NotifyEvent {
