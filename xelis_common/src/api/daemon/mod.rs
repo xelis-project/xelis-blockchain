@@ -1109,6 +1109,14 @@ pub struct GetContractScheduledExecutionsAtTopoHeightParams {
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
+pub struct GetContractScheduledExecutionParams<'a> {
+    /// Contract hash.
+    pub contract: Cow<'a, Hash>,
+    /// Topoheight at which the execution was registered.
+    pub registration_topoheight: TopoHeight,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetContractOutputsParams<'a> {
     /// Address used by this field.
     pub address: Cow<'a, Address>,
@@ -1257,6 +1265,7 @@ pub struct GetP2pBlockPropagationParams<'a> {
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct RegisteredExecution<'a> {
     /// Hash of the caller for the registered execution
+    /// You can use it for the contract logs associated to the execution.
     pub execution_hash: Cow<'a, Hash>,
     /// Contract hash that is invoked
     pub execution_contract: Cow<'a, Hash>,
