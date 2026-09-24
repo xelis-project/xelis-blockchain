@@ -161,6 +161,50 @@ impl ExecutionResult {
     }
 }
 
+// Prepare the VM with the module and invoke the contract entry point
+fn prepare_vm<'a: 'r, 'ty: 'a, 'r, I>(
+    vm: &mut VM<'a, 'ty, 'r, ContractMetadata>,
+    chain_state: &mut ChainState<'a>,
+    metadata: ModuleMetadata<'a, ContractMetadata>,
+    invoke: InvokeContract,
+    parameters: I,
+    log_level: log::Level,
+    contract: &Hash,
+) -> Result<(), ExitError>
+where
+    I: DoubleEndedIterator<Item = ValueCell> + ExactSizeIterator,
+{
+    // module is a reference to the module
+    let module = metadata.module.clone();
+    vm.append_module(metadata)?;
+
+    match invoke {
+        InvokeContract::Entry(entry) => {
+            log!(log_level, "Contract {} invoking entry function/chunk {}", contract, entry);
+            vm.invoke_chunk_with_args(entry, parameters)?;
+        },
+        InvokeContract::Hook(hook) => {
+            log!(log_level, "Contract {} invoking hook {}", contract, hook);
+            if !vm.invoke_hook_id_with_args(hook, parameters)? {
+                log!(log_level, "Invoke contract {} hook {} not found", contract, hook);
+                return Err(ExitError::UnknownHook)
+            }
+        },
+        InvokeContract::Chunk(chunk, allow_executions) => {
+            log!(log_level, "Contract {} invoking function/chunk {} (allow executions: {})", contract, chunk, allow_executions);
+            if !module.is_callable_chunk(chunk as usize) {
+                log!(log_level, "Invoke contract {} chunk {} not found", contract, chunk);
+                return Err(ExitError::InvalidEntry);
+            }
+
+            vm.invoke_chunk_with_args(chunk, parameters)?;
+            chain_state.executions.allow_executions = allow_executions;
+        },
+    }
+
+    Ok(())
+}
+
 // Create the VM and run the required contrac twith all needed functions
 pub(crate) async fn run_virtual_machine<'a, 'ty, P: for<'x> ContractProvider<'x>>( 
     contract_environment: ContractEnvironment<'a, 'ty, P>,
@@ -186,36 +230,17 @@ pub(crate) async fn run_virtual_machine<'a, 'ty, P: for<'x> ContractProvider<'x>
         contract_caller: None,
         deposits,
     };
-    vm.append_module(ModuleMetadata {
+    let module = ModuleMetadata {
         module: Reference::Borrowed(contract_environment.module),
         metadata: Reference::Shared(Arc::new(metadata)),
         environment: Reference::Borrowed(contract_environment.environment),
-    })?;
+    };
 
-    // Invoke the needed chunk
-    // This is the first chunk to be called
-    match invoke {
-        InvokeContract::Entry(entry) => {
-            log!(log_level, "Contract {} invoking entry function/chunk {}", contract, entry);
-            vm.invoke_chunk_with_args(entry, parameters.into_iter())?;
-        },
-        InvokeContract::Hook(hook) => {
-            log!(log_level, "Contract {} invoking hook {}", contract, hook);
-            if !vm.invoke_hook_id_with_args(hook, parameters.into_iter())? {
-                log!(log_level, "Invoke contract {} hook {} not found", contract, hook);
-                return Ok((0, max_gas, ExitValue::Error(ExitError::UnknownHook)))
-            }
-        },
-        InvokeContract::Chunk(chunk, allow_executions) => {
-            if !contract_environment.module.is_callable_chunk(chunk as usize) {
-                log!(log_level, "Invoke contract {} chunk {} not found", contract, chunk);
-                return Ok((0, max_gas, ExitValue::Error(ExitError::InvalidEntry)))
-            }
-
-            log!(log_level, "Contract {} invoking function/chunk {} (allow executions: {})", contract, chunk, allow_executions);
-            vm.invoke_chunk_with_args(chunk, parameters.into_iter())?;
-            chain_state.executions.allow_executions = allow_executions;
-        }
+    // Binding failures are ordinary contract failures so malformed scheduled
+    // calls and event callbacks cannot abort block application.
+    if let Err(e) = prepare_vm(&mut vm, chain_state, module, invoke, parameters, log_level, contract.as_ref()) {
+        log!(log_level, "Invoke contract {} failed before execution: {:#}", contract, e);
+        return Ok((0, max_gas, ExitValue::Error(e)));
     }
 
     let context = vm.context_mut();

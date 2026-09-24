@@ -783,12 +783,12 @@ async fn allowance_consumes_injected_gas_if_later_usage_exhausts_original_pool()
 #[tokio::test]
 async fn successful_account_paid_scheduled_execution_keeps_reserved_gas_funded() {
     let code = r#"
-        pub fn callback(args: any[]) -> u64 {
+        pub fn callback(hello: u64) -> u64 {
             return 0
         }
 
         entry main() {
-            let execution = ScheduledExecution::new_at_block_end(callback, [], 50000u64, false);
+            let execution = ScheduledExecution::new_at_block_end(callback, [0], 50000u64, false);
             require(execution != null, "scheduled execution was not created");
             return 0
         }
@@ -835,7 +835,7 @@ async fn duplicate_account_paid_scheduled_execution_does_not_reserve_unowned_gas
     let scheduled_gas = 50_000u64;
     let max_gas = 200_000u64;
     let code = format!(r#"
-        pub fn callback(args: any[]) -> u64 {{
+        pub fn callback() -> u64 {{
             return 0
         }}
 

@@ -15,6 +15,7 @@ use xelis_vm::{
     FnReturnType,
     Primitive,
     SysCallResult,
+    ModuleValidator,
     ValueCell,
     traits::{JSONHelper, Serializable}
 };
@@ -258,6 +259,14 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider<'ty>>(
     let params: Vec<ValueCell> = p.into_iter()
         .map(|v| v.into_owned().into())
         .collect();
+
+    let validator = ModuleValidator::new(&metadata.module, &metadata.environment);
+    validator.verify_invoke_chunk(chunk_id as usize, params.iter())
+        .map_err(|e| {
+            log!(state.log_level, "Scheduled execution for chunk {} has invalid parameters: {}", chunk_id, e);
+            EnvironmentError::Static("Invalid parameters for scheduled execution")
+        })?;
+
     let params_size = params.size();
     if params_size > MAX_VALUE_SIZE {
         log!(state.log_level, "Scheduled execution parameters size {} exceeds allowed limit", params_size);
