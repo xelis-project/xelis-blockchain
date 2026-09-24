@@ -2031,7 +2031,7 @@ async fn get_contract_scheduled_executions_at_topoheight<S: Storage>(context: &C
     Ok(executions)
 }
 
-async fn get_contract_registered_executions_at_topoheight<S: Storage>(context: &Context<'_, '_>, params: GetContractScheduledExecutionsAtTopoHeightParams) -> Result<Vec<RegisteredExecution<'static>>, InternalRpcError> {
+async fn get_contract_registered_executions_at_topoheight<S: Storage>(context: &Context<'_, '_>, params: GetContractScheduledExecutionsAtTopoHeightParams) -> Result<Vec<ScheduledExecution>, InternalRpcError> {
     let blockchain = chain_from_context::<S>(context)?;
 
     if params.max.is_some_and(|max| max > MAX_SCHEDULED_EXECUTIONS) {
@@ -2050,12 +2050,7 @@ async fn get_contract_registered_executions_at_topoheight<S: Storage>(context: &
         let (topoheight, execution_contract) = res?;
 
         let scheduled_execution = storage.get_contract_scheduled_execution_at_topoheight(&execution_contract, topoheight).await?;
-
-        executions.push(RegisteredExecution {
-            execution_hash: Cow::Owned(scheduled_execution.hash.as_ref().clone()),
-            execution_contract: Cow::Owned(execution_contract),
-            execution_topoheight: topoheight,
-        })
+        executions.push(scheduled_execution);
     }
 
     Ok(executions)

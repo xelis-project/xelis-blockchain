@@ -433,7 +433,7 @@ pub async fn test_contract_scheduled_execution_storage<S: Storage>(mut storage: 
     let execution = ScheduledExecution {
         hash: Arc::new(Hash::new([51u8; 32])),
         contract: contract_hash.clone(),
-        kind: ScheduledExecutionKind::TopoHeight(execution_topoheight),
+        kind: ScheduledExecutionKind::TopoHeight { execution_topoheight, registration_topoheight: topoheight },
         params: vec![],
         chunk_id: 0,
         max_gas: 1000,
@@ -489,7 +489,7 @@ pub async fn test_contract_scheduled_execution_retrieval<S: Storage>(mut storage
         let execution = ScheduledExecution {
             hash: Arc::new(Hash::new([62u8 + idx as u8; 32])),
             contract: contract.clone(),
-            kind: ScheduledExecutionKind::TopoHeight(execution_topoheight),
+            kind: ScheduledExecutionKind::TopoHeight { execution_topoheight, registration_topoheight: topoheight + idx },
             params: vec![],
             chunk_id: 0,
             max_gas: 2000,
@@ -539,7 +539,7 @@ pub async fn test_contract_scheduled_execution_at_topoheight_range<S: Storage>(m
         let execution = ScheduledExecution {
             hash: Arc::new(Hash::new([71 + reg_topo as u8; 32])),
             contract: contract_hash.clone(),
-            kind: ScheduledExecutionKind::TopoHeight(100 + reg_topo),
+            kind: ScheduledExecutionKind::TopoHeight { execution_topoheight: 100 + reg_topo, registration_topoheight: reg_topo },
             params: vec![],
             chunk_id: 0,
             max_gas: 3000,
@@ -667,7 +667,7 @@ pub async fn test_cleanup_below_topoheight_with_mixed_data<S: Storage>(mut stora
         let execution = ScheduledExecution {
             hash: Arc::new(Hash::new([141u8 + topo as u8; 32])),
             contract: contract_hash.clone(),
-            kind: ScheduledExecutionKind::TopoHeight(50 + topo),
+            kind: ScheduledExecutionKind::TopoHeight { execution_topoheight: 50 + topo, registration_topoheight: topo },
             params: vec![],
             chunk_id: 0,
             max_gas: 6000,
@@ -738,7 +738,7 @@ pub async fn test_cleanup_all_data_types_at_topoheight<S: Storage>(mut storage: 
     let execution = ScheduledExecution {
         hash: Arc::new(Hash::new([152u8; 32])),
         contract: contract_hash.clone(),
-        kind: ScheduledExecutionKind::TopoHeight(60),
+        kind: ScheduledExecutionKind::TopoHeight { execution_topoheight: 60, registration_topoheight: target_topo },
         params: vec![],
         chunk_id: 0,
         max_gas: 4000,
@@ -916,7 +916,7 @@ pub async fn test_versioned_scheduled_execution_in_range<S: Storage>(mut storage
         let execution = ScheduledExecution {
             hash: Arc::new(Hash::new([171 + reg_topo as u8; 32])),
             contract: contract_hash.clone(),
-            kind: ScheduledExecutionKind::TopoHeight(100 + reg_topo),
+            kind: ScheduledExecutionKind::TopoHeight { execution_topoheight: 100 + reg_topo, registration_topoheight: reg_topo },
             params: vec![],
             chunk_id: 0,
             max_gas: 5000,
@@ -2384,7 +2384,7 @@ pub async fn test_scheduled_execution_lifecycle<S: Storage>(mut storage: S) -> R
         let execution = ScheduledExecution {
             hash: Arc::new(Hash::new([1 + reg_topo as u8; 32])),
             contract: contract.clone(),
-            kind: ScheduledExecutionKind::TopoHeight(exec_topo),
+            kind: ScheduledExecutionKind::TopoHeight { execution_topoheight: exec_topo, registration_topoheight: reg_topo },
             params: vec![],
             chunk_id: 0,
             max_gas: 1000,
@@ -2433,7 +2433,7 @@ pub async fn test_scheduled_execution_range_query<S: Storage>(mut storage: S) ->
         let execution = ScheduledExecution {
             hash: Arc::new(Hash::new([254u8; 32])),
             contract: contract.clone(),
-            kind: ScheduledExecutionKind::TopoHeight(exec_topo),
+            kind: ScheduledExecutionKind::TopoHeight { execution_topoheight: exec_topo, registration_topoheight: reg_topo },
             params: vec![],
             chunk_id: 0,
             max_gas: 500,
@@ -2703,7 +2703,7 @@ pub async fn test_scheduled_execution_prune_keeps_future_execution<S: Storage>(m
     let future_execution = ScheduledExecution {
         hash: Arc::new(Hash::new([250u8; 32])),
         contract: contract.clone(),
-        kind: ScheduledExecutionKind::TopoHeight(100),
+        kind: ScheduledExecutionKind::TopoHeight { execution_topoheight: 100, registration_topoheight: 1 },
         params: vec![],
         chunk_id: 0,
         max_gas: 1000,
@@ -2716,7 +2716,7 @@ pub async fn test_scheduled_execution_prune_keeps_future_execution<S: Storage>(m
     let past_execution = ScheduledExecution {
         hash: Arc::new(Hash::new([249u8; 32])),
         contract: contract.clone(),
-        kind: ScheduledExecutionKind::TopoHeight(3),
+        kind: ScheduledExecutionKind::TopoHeight { execution_topoheight: 3, registration_topoheight: 2 },
         params: vec![],
         chunk_id: 0,
         max_gas: 1000,
