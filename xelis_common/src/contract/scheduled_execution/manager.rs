@@ -56,7 +56,7 @@ impl<'a> ExecutionsManager<'a> {
         }
 
         match &execution.kind {
-            ScheduledExecutionKind::TopoHeight(_) => self.changes.at_topoheight.push(execution.hash.clone()),
+            ScheduledExecutionKind::TopoHeight { .. } => self.changes.at_topoheight.push(execution.hash.clone()),
             ScheduledExecutionKind::BlockEnd => self.changes.block_end.push(execution.hash.clone()),
         };
 

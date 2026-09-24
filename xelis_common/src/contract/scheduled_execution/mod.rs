@@ -210,14 +210,14 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider<'ty>>(
     let (provider, state) = from_context::<P>(context)?;
 
     match kind {
-        ScheduledExecutionKind::TopoHeight(topoheight) => {
-            if topoheight <= state.topoheight {
-                log!(state.log_level, "Scheduled execution for topoheight {} is in the past", topoheight);
+        ScheduledExecutionKind::TopoHeight { execution_topoheight, .. } => {
+            if execution_topoheight <= state.topoheight {
+                log!(state.log_level, "Scheduled execution for topoheight {} is in the past", execution_topoheight);
                 return Ok(SysCallResult::Return(Primitive::Null.into()));
             }
 
-            if provider.has_scheduled_execution_at_topoheight(&metadata.metadata.contract_executor, topoheight).await? {
-                log!(state.log_level, "Scheduled execution for topoheight {} already exists", topoheight);
+            if provider.has_scheduled_execution_at_topoheight(&metadata.metadata.contract_executor, execution_topoheight).await? {
+                log!(state.log_level, "Scheduled execution for topoheight {} already exists", execution_topoheight);
                 return Ok(SysCallResult::Return(Primitive::Null.into()));
             }
         }
@@ -274,7 +274,7 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider<'ty>>(
     }
 
     let extra_cost = match kind {
-        ScheduledExecutionKind::TopoHeight(_) => COST_PER_SCHEDULED_EXECUTION + (params_size as u64 * FEE_PER_BYTE_STORED_CONTRACT),
+        ScheduledExecutionKind::TopoHeight { .. } => COST_PER_SCHEDULED_EXECUTION + (params_size as u64 * FEE_PER_BYTE_STORED_CONTRACT),
         ScheduledExecutionKind::BlockEnd => COST_PER_SCHEDULED_EXECUTION_AT_BLOCK_END
             + (params_size as u64 * FEE_PER_BYTE_IN_CONTRACT_MEMORY),
     };
@@ -346,7 +346,7 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider<'ty>>(
         contract: metadata.metadata.contract_executor.clone(),
         hash: hash.clone(),
         kind: match kind {
-            ScheduledExecutionKind::TopoHeight(topoheight) => ScheduledExecutionKindLog::TopoHeight { topoheight },
+            ScheduledExecutionKind::TopoHeight { execution_topoheight, registration_topoheight } => ScheduledExecutionKindLog::TopoHeight { execution_topoheight, registration_topoheight },
             ScheduledExecutionKind::BlockEnd => ScheduledExecutionKindLog::BlockEnd { chunk_id, max_gas, params }
         },
     });
@@ -390,8 +390,9 @@ pub async fn scheduled_execution_new_at_topoheight<'a, 'ty, 'r, P: ContractProvi
     metadata: &ModuleMetadata<'_>,
     context: &mut VMContext<'ty, 'r>,
 ) -> FnReturnType<ContractMetadata> {
-    let topoheight = params[4].as_u64()?;
-    schedule_execution::<P>(ScheduledExecutionKind::TopoHeight(topoheight), instance, params, metadata, context).await
+    let execution_topoheight = params[4].as_u64()?;
+    let registration_topoheight = state_from_context(context)?.topoheight;
+    schedule_execution::<P>(ScheduledExecutionKind::TopoHeight { execution_topoheight, registration_topoheight }, instance, params, metadata, context).await
 }
 
 pub async fn scheduled_execution_new_at_block_end<'a, 'ty, 'r, P: ContractProvider<'ty>>(
@@ -419,7 +420,7 @@ pub fn scheduled_execution_get_topoheight(instance: FnInstance<'_>, _: FnParams,
         .as_opaque_type()?;
 
     match scheduled_execution.kind {
-        ScheduledExecutionKind::TopoHeight(topoheight) => Ok(SysCallResult::Return(Primitive::U64(topoheight).into())),
+        ScheduledExecutionKind::TopoHeight { execution_topoheight, .. } => Ok(SysCallResult::Return(Primitive::U64(execution_topoheight).into())),
         ScheduledExecutionKind::BlockEnd => Ok(SysCallResult::Return(Primitive::Null.into())),
     }
 }
@@ -452,7 +453,7 @@ pub fn scheduled_execution_get_pending<'a, 'ty, 'r>(
 
     let param = &params[0];
     let kind = if !param.is_null() {
-        ScheduledExecutionKind::TopoHeight(param.as_u64()?)
+        ScheduledExecutionKind::TopoHeight { execution_topoheight: param.as_u64()?, registration_topoheight: state.topoheight }
     } else {
         ScheduledExecutionKind::BlockEnd
     };
