@@ -1405,7 +1405,7 @@ mod tests {
             chunk_id: 0,
             params: Vec::new(),
             max_gas: 1_000,
-            kind: ScheduledExecutionKind::TopoHeight(1),
+            kind: ScheduledExecutionKind::TopoHeight { execution_topoheight: 1, registration_topoheight: 0 },
             gas_sources: [
                 (Source::Account(legacy_account), 600),
                 (Source::Contract(contract.clone()), 400),
@@ -1436,7 +1436,7 @@ mod tests {
             chunk_id: 0,
             params: Vec::new(),
             max_gas: 250,
-            kind: ScheduledExecutionKind::TopoHeight(1),
+            kind: ScheduledExecutionKind::TopoHeight { execution_topoheight: 1, registration_topoheight: 0 },
             gas_sources: [(Source::ContractBalance(contract.clone()), 250)].into(),
         };
         assert!(
@@ -1464,7 +1464,7 @@ mod tests {
             chunk_id: 0,
             params: Vec::new(),
             max_gas: 1_000,
-            kind: ScheduledExecutionKind::TopoHeight(1),
+            kind: ScheduledExecutionKind::TopoHeight { execution_topoheight: 1, registration_topoheight: 0 },
             gas_sources: [(Source::AccountBalance(marked_account), 1_000)].into(),
         };
         assert!(
