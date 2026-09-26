@@ -1150,7 +1150,7 @@ async fn delayed_topoheight_noop_pays_fee_and_refunds_only_leftover() {
 
     let gas_fee_before = chain_state.gas_fee;
     let burned_fee_before = chain_state.burned_fee;
-    let execution_hash = chain_state.executions.at_topoheight.pop()
+    let (_, execution_hash) = chain_state.executions.at_topoheight.pop()
         .expect("delayed execution hash");
     let execution = chain_state.executions.executions.remove(&execution_hash)
         .expect("scheduled execution");

@@ -1,5 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
+use indexmap::IndexMap;
 use xelis_vm::EnvironmentError;
 
 use crate::crypto::Hash;
@@ -10,7 +11,8 @@ pub struct ExecutionsChanges {
     // Registered executions during the current execution
     pub executions: HashMap<Arc<Hash>, ScheduledExecution>,
     // Hashes of scheduled executions to trigger at specific topoheights
-    pub at_topoheight: Vec<Arc<Hash>>,
+    // contract -> scheduled execution hash
+    pub at_topoheight: IndexMap<Hash, Arc<Hash>>,
     // Hashes of scheduled executions to trigger at the end of the block
     pub block_end: Vec<Arc<Hash>>,
 }
@@ -56,7 +58,13 @@ impl<'a> ExecutionsManager<'a> {
         }
 
         match &execution.kind {
-            ScheduledExecutionKind::TopoHeight { .. } => self.changes.at_topoheight.push(execution.hash.clone()),
+            ScheduledExecutionKind::TopoHeight { .. } => {
+                if self.changes.at_topoheight.contains_key(&execution.contract) {
+                    return false
+                }
+
+                self.changes.at_topoheight.insert(execution.contract.clone(), execution.hash.clone());
+            },
             ScheduledExecutionKind::BlockEnd => self.changes.block_end.push(execution.hash.clone()),
         };
 
