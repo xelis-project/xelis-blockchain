@@ -1109,7 +1109,7 @@ pub struct GetContractScheduledExecutionsAtTopoHeightParams {
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
-pub struct GetContractScheduledExecutionParams<'a> {
+pub struct GetContractScheduledExecutionAtTopoHeightParams<'a> {
     /// Contract hash.
     pub contract: Cow<'a, Hash>,
     /// Topoheight at which the execution was registered.

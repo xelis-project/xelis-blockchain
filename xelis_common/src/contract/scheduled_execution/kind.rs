@@ -18,6 +18,14 @@ pub enum ScheduledExecutionKind {
 }
 
 impl ScheduledExecutionKind {
+    /// Get the execution topoheight, or None for a block-end execution.
+    pub fn execution_topoheight(&self) -> Option<TopoHeight> {
+        match self {
+            Self::TopoHeight { execution_topoheight, .. } => Some(*execution_topoheight),
+            Self::BlockEnd => None,
+        }
+    }
+
     pub fn id(&self) -> u8 {
         match self {
             ScheduledExecutionKind::TopoHeight { .. } => 0,

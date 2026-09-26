@@ -71,7 +71,7 @@ impl<'ty> ContractProvider<'ty> for MockStorageProvider {
         Ok(None)
     }
 
-    async fn has_scheduled_execution_at_topoheight(
+    async fn has_scheduled_execution_at_execution_topoheight(
         &self,
         _: &Hash,
         _: TopoHeight,

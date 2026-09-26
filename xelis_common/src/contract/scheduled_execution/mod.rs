@@ -100,6 +100,8 @@ fn calculate_burned_extra_cost(extra_cost: u64) -> Result<u64, EnvironmentError>
 // Scheduled executions are unique per contract
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
 pub struct ScheduledExecution {
+    // Kind of scheduled execution
+    pub kind: ScheduledExecutionKind,
     // The current hash representing this scheduled execution
     // It is based on blake3(contract || topoheight)
     // because we only allow one scheduled execution per contract
@@ -115,8 +117,6 @@ pub struct ScheduledExecution {
     // the remaining gas will be paid back to
     // the contract balance
     pub max_gas: u64,
-    // Kind of scheduled execution
-    pub kind: ScheduledExecutionKind,
     // Gas sources done for this scheduled execution
     #[serde(with = "gas_sources_serde")]
     #[schemars(with = "Vec<GasSourceEntry>")]
@@ -146,33 +146,33 @@ impl Borrow<Hash> for ScheduledExecution {
 impl Serializer for ScheduledExecution {
     fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
         Ok(Self {
+            kind: ScheduledExecutionKind::read(reader)?,
             hash: Arc::new(Hash::read(reader)?),
             contract: Hash::read(reader)?,
             chunk_id: u16::read(reader)?,
             params: Vec::read(reader)?,
             max_gas: u64::read(reader)?,
-            kind: ScheduledExecutionKind::read(reader)?,
             gas_sources: IndexMap::read(reader)?,
         })
     }
 
     fn write(&self, writer: &mut Writer) {
+        self.kind.write(writer);
         self.hash.write(writer);
         self.contract.write(writer);
         self.chunk_id.write(writer);
         self.params.write(writer);
         self.max_gas.write(writer);
-        self.kind.write(writer);
         self.gas_sources.write(writer);
     }
 
     fn size(&self) -> usize {
+        self.kind.size() +
         self.hash.size() +
         self.contract.size() +
         self.chunk_id.size() +
         self.params.size() +
         self.max_gas.size() +
-        self.kind.size() +
         self.gas_sources.size()
     }
 }
@@ -215,7 +215,7 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider<'ty>>(
                 return Ok(SysCallResult::Return(Primitive::Null.into()));
             }
 
-            if provider.has_scheduled_execution_at_topoheight(&metadata.metadata.contract_executor, execution_topoheight).await? {
+            if provider.has_scheduled_execution_at_execution_topoheight(&metadata.metadata.contract_executor, execution_topoheight).await? {
                 log!(state.log_level, "Scheduled execution for topoheight {} already exists", execution_topoheight);
                 return Ok(SysCallResult::Return(Primitive::Null.into()));
             }
