@@ -270,8 +270,8 @@ impl<'a> FinalizedChainState<'a> {
 
         // Apply all scheduled executions at their topoheight
         debug!("applying scheduled executions at topoheights");
-        for hash in self.contract_manager.executions.at_topoheight {
-            let execution = self.contract_manager.executions.executions.get(&hash)
+        for (_, execution_hash) in self.contract_manager.executions.at_topoheight {
+            let execution = self.contract_manager.executions.executions.get(&execution_hash)
                 .ok_or(BlockchainError::ScheduledExecutionNotFound)?;
 
             if let ScheduledExecutionKind::TopoHeight { execution_topoheight, .. } = execution.kind {
