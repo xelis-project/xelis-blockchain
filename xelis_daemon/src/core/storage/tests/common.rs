@@ -6,7 +6,7 @@ use indexmap::IndexSet;
 use xelis_common::{
     account::{BalanceType, VersionedBalance, VersionedNonce},
     asset::{AssetData, AssetOwner, MaxSupplyMode, VersionedAssetData},
-    block::{BlockHeader, BlockVersion, EXTRA_NONCE_SIZE},
+    block::{BlockHeader, BlockVersion, TopoHeight, EXTRA_NONCE_SIZE},
     config::XELIS_ASSET,
     contract::{ContractLog, ContractLogs, ContractModule, EventCallbackRegistration, ScheduledExecution, ScheduledExecutionKind, Source},
     crypto::{Hash, KeyPair, PublicKey},
@@ -441,15 +441,14 @@ pub async fn test_contract_scheduled_execution_storage<S: Storage>(mut storage: 
     };
     
     // Store scheduled execution
-    storage.set_contract_scheduled_execution_at_topoheight(
+    storage.set_contract_scheduled_execution_at_registration_topoheight(
         &contract_hash,
         topoheight,
         &execution,
-        execution_topoheight,
     ).await.context("Failed to set scheduled execution")?;
     
     // Check it exists (using execution_topoheight as the key)
-    let exists = storage.has_contract_scheduled_execution_at_topoheight(
+    let exists = storage.has_contract_scheduled_execution_at_execution_topoheight(
         &contract_hash,
         execution_topoheight,
     ).await.context("Failed to check scheduled execution")?;
@@ -457,10 +456,10 @@ pub async fn test_contract_scheduled_execution_storage<S: Storage>(mut storage: 
     assert!(exists, "Scheduled execution should exist");
     
     // Retrieve it (using execution_topoheight as the key)
-    let retrieved = storage.get_contract_scheduled_execution_at_topoheight(
+    let retrieved = storage.get_contract_scheduled_execution_at_execution_topoheight(
         &contract_hash,
         execution_topoheight,
-    ).await.context("Failed to retrieve scheduled execution")?;
+    ).await.context("Failed to retrieve scheduled execution")?.context("Scheduled execution not found")?;
     
     assert_eq!(retrieved.hash, execution.hash, "Hash mismatch");
     assert_eq!(retrieved.contract, contract_hash, "Contract mismatch");
@@ -496,16 +495,15 @@ pub async fn test_contract_scheduled_execution_retrieval<S: Storage>(mut storage
             gas_sources: Default::default(),
         };
         
-        storage.set_contract_scheduled_execution_at_topoheight(
+        storage.set_contract_scheduled_execution_at_registration_topoheight(
             &contract,
             topoheight + idx,  // Registration topoheight
             &execution,
-            execution_topoheight,  // Execution topoheight (key)
         ).await.context(format!("Failed to set execution for contract {}", idx))?;
     }
     
     // Get all executions planned for execution at the same topoheight
-    let mut executions = storage.get_contract_scheduled_executions_for_execution_topoheight(
+    let mut executions = storage.get_contracts_with_scheduled_executions_at_execution_topoheight(
         execution_topoheight,
     ).await.context("Failed to get scheduled executions for topoheight")?;
     
@@ -546,16 +544,15 @@ pub async fn test_contract_scheduled_execution_at_topoheight_range<S: Storage>(m
             gas_sources: Default::default(),
         };
         
-        storage.set_contract_scheduled_execution_at_topoheight(
+        storage.set_contract_scheduled_execution_at_registration_topoheight(
             &contract_hash,
             reg_topo,
             &execution,
-            100 + reg_topo,
         ).await.context(format!("Failed to set execution at topo {}", reg_topo))?;
     }
     
     // Query at a specific registration topoheight
-    let registered = storage.get_registered_contract_scheduled_executions_at_topoheight(
+    let registered = storage.get_contract_scheduled_executions_at_registration_topoheight(
         2u64,
     ).await.context("Failed to get registered executions")?;
     
@@ -674,11 +671,10 @@ pub async fn test_cleanup_below_topoheight_with_mixed_data<S: Storage>(mut stora
             gas_sources: Default::default(),
         };
         
-        storage.set_contract_scheduled_execution_at_topoheight(
+        storage.set_contract_scheduled_execution_at_registration_topoheight(
             &contract_hash,
             topo,
             &execution,
-            50 + topo,
         ).await.context(format!("Failed to set execution at topo {}", topo))?;
     }
     
@@ -688,7 +684,7 @@ pub async fn test_cleanup_below_topoheight_with_mixed_data<S: Storage>(mut stora
     assert_eq!(nonce_result.1.get_nonce(), 45, "Nonce should be 45");
     
     // Verify execution exists (use execution_topoheight 55 which is 50 + topo where topo=5)
-    let execution_exists = storage.has_contract_scheduled_execution_at_topoheight(
+    let execution_exists = storage.has_contract_scheduled_execution_at_execution_topoheight(
         &contract_hash,
         55u64,  // execution_topoheight for topo=5 is 50+5=55
     ).await.context("Failed to check execution")?;
@@ -744,11 +740,10 @@ pub async fn test_cleanup_all_data_types_at_topoheight<S: Storage>(mut storage: 
         max_gas: 4000,
         gas_sources: Default::default(),
     };
-    storage.set_contract_scheduled_execution_at_topoheight(
+    storage.set_contract_scheduled_execution_at_registration_topoheight(
         &contract_hash,
         target_topo,
         &execution,
-        60u64,
     ).await.context("Failed to set execution")?;
     
     // Save a block at target topoheight
@@ -783,7 +778,7 @@ pub async fn test_cleanup_all_data_types_at_topoheight<S: Storage>(mut storage: 
     ).await.context("Failed to get callback")?;
     assert!(callback_result.is_some(), "Callback should exist");
     
-    let exec_exists = storage.has_contract_scheduled_execution_at_topoheight(
+    let exec_exists = storage.has_contract_scheduled_execution_at_execution_topoheight(
         &contract_hash,
         60u64,  // execution_topoheight is 60
     ).await.context("Failed to check execution")?;
@@ -800,7 +795,7 @@ pub async fn test_cleanup_all_data_types_at_topoheight<S: Storage>(mut storage: 
     assert!(storage.get_event_callback_for_contract_at_maximum_topoheight(
         &contract_hash, 1, &listener_hash, target_topo,
     ).await?.is_none(), "event callback should be removed at cleaned topoheight");
-    assert!(!storage.has_contract_scheduled_execution_at_topoheight(
+    assert!(!storage.has_contract_scheduled_execution_at_execution_topoheight(
         &contract_hash, 60,
     ).await?, "scheduled execution should be removed at cleaned topoheight");
 
@@ -923,16 +918,15 @@ pub async fn test_versioned_scheduled_execution_in_range<S: Storage>(mut storage
             gas_sources: Default::default(),
         };
         
-        storage.set_contract_scheduled_execution_at_topoheight(
+        storage.set_contract_scheduled_execution_at_registration_topoheight(
             &contract_hash,
             reg_topo,
             &execution,
-            100 + reg_topo,
         ).await.context(format!("Failed to set execution at topo {}", reg_topo))?;
     }
     
     // Query scheduled executions in a range (including execution topoheight filtering)
-    let executions = storage.get_registered_contract_scheduled_executions_in_range(
+    let executions = storage.get_contract_scheduled_executions_in_registration_topoheight_range(
         0u64,
         5u64,
         Some(100u64),
@@ -2373,11 +2367,13 @@ pub async fn test_contract_module_rewind<S: Storage>(mut storage: S) -> Result<(
 }
 
 // Tests that a scheduled execution can be stored, retrieved, and that the versioned
-// cleanup (delete_scheduled_executions_above_topoheight) removes registrations above
+// cleanup (delete_scheduled_executions_above_registration_topoheight) removes registrations above
 // the cutoff while keeping registrations at or below it.
 pub async fn test_scheduled_execution_lifecycle<S: Storage>(mut storage: S) -> Result<()> {
     let contract = Hash::new([252u8; 32]);
     register_contract(&mut storage, &contract, 0).await?;
+    let other_contract = Hash::new([253u8; 32]);
+    register_contract(&mut storage, &other_contract, 0).await?;
 
     // Register executions at different registration topoheights, each targeting different execution topoheights
     for (reg_topo, exec_topo) in [(1u64, 10u64), (3, 20), (5, 30), (8, 40)] {
@@ -2390,33 +2386,98 @@ pub async fn test_scheduled_execution_lifecycle<S: Storage>(mut storage: S) -> R
             max_gas: 1000,
             gas_sources: Default::default(),
         };
-        storage.set_contract_scheduled_execution_at_topoheight(
-            &contract, reg_topo, &execution, exec_topo,
+        storage.set_contract_scheduled_execution_at_registration_topoheight(
+            &contract, reg_topo, &execution,
         ).await?;
+
+        // Interleave another contract's registrations using the same execution topoheights.
+        let mut other_execution = execution;
+        other_execution.contract = other_contract.clone();
+        other_execution.kind = ScheduledExecutionKind::TopoHeight {
+            execution_topoheight: exec_topo,
+            registration_topoheight: reg_topo + 1,
+        };
+        storage.set_contract_scheduled_execution_at_registration_topoheight(&other_contract, reg_topo + 1, &other_execution).await?;
     }
 
     // All 4 should be retrievable by their execution topoheight
     for exec_topo in [10u64, 20, 30, 40] {
-        assert!(storage.has_contract_scheduled_execution_at_topoheight(&contract, exec_topo).await?,
+        assert!(storage.has_contract_scheduled_execution_at_execution_topoheight(&contract, exec_topo).await?,
             "execution at exec_topo {} should exist", exec_topo);
-        let exec = storage.get_contract_scheduled_execution_at_topoheight(&contract, exec_topo).await?;
+        let exec = storage.get_contract_scheduled_execution_at_execution_topoheight(&contract, exec_topo).await?.context("Scheduled execution not found")?;
         assert_eq!(exec.contract, contract, "contract mismatch for exec_topo {}", exec_topo);
     }
 
     // Registrations at or below reg_topo 4 should survive deletion above reg_topo 4
-    storage.delete_scheduled_executions_above_topoheight(4).await?;
+    storage.delete_scheduled_executions_above_registration_topoheight(4).await?;
+
+    assert_eq!(storage.get_last_contract_scheduled_execution_registration_topoheight(&contract).await?, Some(3));
+    assert_eq!(storage.get_last_contract_scheduled_execution_registration_topoheight(&other_contract).await?, Some(4));
+    let surviving = storage.get_contract_scheduled_execution_at_maximum_registration_topoheight(&contract, 100).await?
+        .context("surviving scheduled execution version")?;
+    assert_eq!(surviving.0, 3);
+    assert_eq!(surviving.1.get_previous_topoheight(), Some(1));
+    for registration in [5, 8] {
+        assert!(!storage.has_contract_scheduled_execution_at_exact_registration_topoheight(&contract, registration).await?);
+    }
 
     // reg_topo 1 and 3 (exec_topo 10 and 20) must still exist
     for exec_topo in [10u64, 20] {
-        assert!(storage.has_contract_scheduled_execution_at_topoheight(&contract, exec_topo).await?,
+        assert!(storage.has_contract_scheduled_execution_at_execution_topoheight(&contract, exec_topo).await?,
             "exec_topo {} should still exist after rewind", exec_topo);
     }
 
     // reg_topo 5 and 8 (exec_topo 30 and 40) must be gone
     for exec_topo in [30u64, 40] {
-        assert!(!storage.has_contract_scheduled_execution_at_topoheight(&contract, exec_topo).await?,
+        assert!(!storage.has_contract_scheduled_execution_at_execution_topoheight(&contract, exec_topo).await?,
             "exec_topo {} should be deleted after rewind", exec_topo);
     }
+
+    // Roll back in descending registration topoheight order.
+    storage.delete_scheduled_executions_at_registration_topoheight(4).await?;
+    assert_eq!(storage.get_last_contract_scheduled_execution_registration_topoheight(&other_contract).await?, Some(2));
+    assert!(!storage.has_contract_scheduled_execution_at_exact_registration_topoheight(&other_contract, 4).await?);
+    assert!(!storage.has_contract_scheduled_execution_at_execution_topoheight(&other_contract, 20).await?);
+    assert!(storage.has_contract_scheduled_execution_at_execution_topoheight(&contract, 20).await?);
+
+    storage.delete_scheduled_executions_at_registration_topoheight(3).await?;
+    assert_eq!(storage.get_last_contract_scheduled_execution_registration_topoheight(&contract).await?, Some(1));
+    assert!(!storage.has_contract_scheduled_execution_at_exact_registration_topoheight(&contract, 3).await?);
+    assert!(!storage.has_contract_scheduled_execution_at_execution_topoheight(&contract, 20).await?);
+    assert!(storage.has_contract_scheduled_execution_at_execution_topoheight(&other_contract, 10).await?);
+
+    // Removing the oldest remaining registration clears the latest pointer.
+    storage.delete_scheduled_executions_at_registration_topoheight(2).await?;
+    assert_eq!(storage.get_last_contract_scheduled_execution_registration_topoheight(&other_contract).await?, None);
+    assert!(storage.get_contract_scheduled_execution_at_maximum_registration_topoheight(&other_contract, 3).await?.is_none());
+    assert!(!storage.has_contract_scheduled_execution_at_execution_topoheight(&other_contract, 10).await?);
+    assert!(storage.has_contract_scheduled_execution_at_execution_topoheight(&contract, 10).await?);
+
+    storage.delete_scheduled_executions_above_registration_topoheight(0).await?;
+    for hash in [&contract, &other_contract] {
+        assert_eq!(storage.get_last_contract_scheduled_execution_registration_topoheight(hash).await?, None);
+        for target in [10, 20, 30, 40] {
+            assert!(!storage.has_contract_scheduled_execution_at_execution_topoheight(hash, target).await?);
+        }
+    }
+
+    // Starting just below the upper boundary must remove its registration and execution index.
+    let execution = ScheduledExecution {
+        hash: Arc::new(Hash::new([254u8; 32])),
+        contract: contract.clone(),
+        kind: ScheduledExecutionKind::TopoHeight {
+            execution_topoheight: TopoHeight::MAX,
+            registration_topoheight: TopoHeight::MAX,
+        },
+        params: vec![],
+        chunk_id: 0,
+        max_gas: 1000,
+        gas_sources: Default::default(),
+    };
+    storage.set_last_contract_scheduled_execution_at_registration_topoheight(&contract, TopoHeight::MAX, &Versioned::new(execution, None)).await?;
+    storage.delete_scheduled_executions_above_registration_topoheight(TopoHeight::MAX - 1).await?;
+    assert_eq!(storage.get_last_contract_scheduled_execution_registration_topoheight(&contract).await?, None);
+    assert!(!storage.has_contract_scheduled_execution_at_execution_topoheight(&contract, TopoHeight::MAX).await?);
 
     Ok(())
 }
@@ -2439,13 +2500,13 @@ pub async fn test_scheduled_execution_range_query<S: Storage>(mut storage: S) ->
             max_gas: 500,
             gas_sources: Default::default(),
         };
-        storage.set_contract_scheduled_execution_at_topoheight(
-            &contract, reg_topo, &execution, exec_topo,
+        storage.set_contract_scheduled_execution_at_registration_topoheight(
+            &contract, reg_topo, &execution,
         ).await?;
     }
 
     // Query range [2, 5]: should return exactly the 4 executions registered at topos 2..=5
-    let stream = storage.get_registered_contract_scheduled_executions_in_range(2, 5, None).await?;
+    let stream = storage.get_contract_scheduled_executions_in_registration_topoheight_range(2, 5, None).await?;
     futures::pin_mut!(stream);
     let mut count = 0u64;
     while let Some(r) = stream.next().await {
@@ -2704,13 +2765,13 @@ pub async fn test_scheduled_execution_prune_keeps_future_execution<S: Storage>(m
         hash: Arc::new(Hash::new([250u8; 32])),
         contract: contract.clone(),
         kind: ScheduledExecutionKind::TopoHeight { execution_topoheight: 100, registration_topoheight: 1 },
-        params: vec![],
+        params: vec![Primitive::U64(42).into()],
         chunk_id: 0,
         max_gas: 1000,
         gas_sources: Default::default(),
     };
-    storage.set_contract_scheduled_execution_at_topoheight(
-        &contract, 1, &future_execution, 100,
+    storage.set_contract_scheduled_execution_at_registration_topoheight(
+        &contract, 1, &future_execution,
     ).await?;
 
     let past_execution = ScheduledExecution {
@@ -2722,21 +2783,21 @@ pub async fn test_scheduled_execution_prune_keeps_future_execution<S: Storage>(m
         max_gas: 1000,
         gas_sources: Default::default(),
     };
-    storage.set_contract_scheduled_execution_at_topoheight(
-        &contract, 2, &past_execution, 3,
+    storage.set_contract_scheduled_execution_at_registration_topoheight(
+        &contract, 2, &past_execution,
     ).await?;
 
     storage.delete_scheduled_executions_below_topoheight(10).await?;
 
-    assert!(storage.has_contract_scheduled_execution_at_topoheight(&contract, 100).await?,
+    assert!(storage.has_contract_scheduled_execution_at_execution_topoheight(&contract, 100).await?,
         "future execution must survive pruning below its execution topoheight");
-    assert!(!storage.has_contract_scheduled_execution_at_topoheight(&contract, 3).await?,
+    assert!(!storage.has_contract_scheduled_execution_at_execution_topoheight(&contract, 3).await?,
         "past due execution should be pruned");
 
-    let retrieved = storage.get_contract_scheduled_execution_at_topoheight(&contract, 100).await?;
+    let retrieved = storage.get_contract_scheduled_execution_at_execution_topoheight(&contract, 100).await?.context("Scheduled execution not found")?;
     assert_eq!(retrieved.hash, future_execution.hash, "future execution payload should stay intact");
 
-    let due_contracts = storage.get_contract_scheduled_executions_for_execution_topoheight(100).await?;
+    let due_contracts = storage.get_contracts_with_scheduled_executions_at_execution_topoheight(100).await?;
     let mut found = false;
     for result in due_contracts {
         if result? == contract {
@@ -2744,6 +2805,46 @@ pub async fn test_scheduled_execution_prune_keeps_future_execution<S: Storage>(m
         }
     }
     assert!(found, "future execution must remain indexed by execution topoheight");
+
+    assert!(!storage.has_contract_scheduled_execution_at_exact_registration_topoheight(&contract, 2).await?);
+    assert_eq!(storage.get_last_contract_scheduled_execution_registration_topoheight(&contract).await?, Some(1));
+
+    // Execution order differs from registration order, with a surviving version between expired ones.
+    for (registration, target) in [(3, 5), (4, 10), (5, 4), (6, 1000)] {
+        let mut execution = future_execution.clone();
+        execution.kind = ScheduledExecutionKind::TopoHeight {
+            execution_topoheight: target,
+            registration_topoheight: registration,
+        };
+        storage.set_contract_scheduled_execution_at_registration_topoheight(&contract, registration, &execution).await?;
+    }
+    storage.delete_scheduled_executions_below_topoheight(10).await?;
+    storage.delete_scheduled_executions_below_topoheight(10).await?;
+    for registration in [3, 5] {
+        assert!(!storage.has_contract_scheduled_execution_at_exact_registration_topoheight(&contract, registration).await?);
+    }
+    assert!(storage.has_contract_scheduled_execution_at_execution_topoheight(&contract, 10).await?);
+    let version = storage.get_contract_scheduled_execution_at_exact_registration_topoheight(&contract, 4).await?;
+    assert_eq!(version.get_previous_topoheight(), Some(1));
+    let (registration, _) = storage.get_contract_scheduled_execution_at_maximum_registration_topoheight(&contract, 3).await?
+        .context("history must skip deleted registrations")?;
+    assert_eq!(registration, 1);
+    assert_eq!(storage.get_last_contract_scheduled_execution_registration_topoheight(&contract).await?, Some(6));
+
+    // Removing the oldest surviving registration must leave no dangling history link.
+    storage.delete_scheduled_executions_below_topoheight(101).await?;
+    for registration in [1, 4] {
+        assert!(!storage.has_contract_scheduled_execution_at_exact_registration_topoheight(&contract, registration).await?);
+    }
+    let version = storage.get_contract_scheduled_execution_at_exact_registration_topoheight(&contract, 6).await?;
+    assert_eq!(version.get_previous_topoheight(), None);
+    assert_eq!(version.get().params, future_execution.params, "rewriting a history link must preserve the execution payload");
+    assert!(storage.has_contract_scheduled_execution_at_execution_topoheight(&contract, 1000).await?);
+
+    storage.delete_scheduled_executions_below_topoheight(1001).await?;
+    assert!(!storage.has_contract_scheduled_execution_at_exact_registration_topoheight(&contract, 6).await?);
+    assert!(!storage.has_contract_scheduled_execution_at_execution_topoheight(&contract, 1000).await?);
+    assert_eq!(storage.get_last_contract_scheduled_execution_registration_topoheight(&contract).await?, None);
 
     Ok(())
 }

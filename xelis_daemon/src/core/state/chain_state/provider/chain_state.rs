@@ -79,16 +79,16 @@ pub trait ChainStateProvider: TxVerificationProvider {
         topoheight: TopoHeight,
     ) -> Result<Vec<(Hash, EventCallbackRegistration)>, BlockchainError>;
 
-    /// Get the hashes of all scheduled executions planned for the given topoheight.
-    async fn get_contract_scheduled_executions_for_execution_topoheight(
+    /// Get the contract hashes with scheduled executions due at the given execution topoheight.
+    async fn get_contracts_with_scheduled_executions_at_execution_topoheight(
         &self,
-        topoheight: TopoHeight,
+        execution_topoheight: TopoHeight,
     ) -> Result<Vec<Hash>, BlockchainError>;
 
-    /// Get a specific scheduled execution registered for the given contract and topoheight.
-    async fn get_contract_scheduled_execution_at_topoheight(
+    /// Get the scheduled execution due for the given contract at the execution topoheight.
+    async fn get_contract_scheduled_execution_at_execution_topoheight(
         &self,
         contract: &Hash,
-        topoheight: TopoHeight,
+        execution_topoheight: TopoHeight,
     ) -> Result<ScheduledExecution, BlockchainError>;
 }

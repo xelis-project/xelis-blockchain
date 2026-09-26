@@ -167,8 +167,8 @@ impl<'ty> ContractInfoProvider<'ty> for MemoryStorage {
     }
 
     // Verify if we have already a registered execution for such contract at a specific topoheight
-    async fn has_scheduled_execution_at_topoheight(&self, contract: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error> {
-        let contains = self.has_contract_scheduled_execution_at_topoheight(contract, topoheight).await?;
+    async fn has_scheduled_execution_at_execution_topoheight(&self, contract: &Hash, execution_topoheight: TopoHeight) -> Result<bool, anyhow::Error> {
+        let contains = self.has_contract_scheduled_execution_at_execution_topoheight(contract, execution_topoheight).await?;
         Ok(contains)
     }
 

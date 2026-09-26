@@ -378,7 +378,7 @@ impl<S: Storage> P2pServer<S> {
             StepRequest::ContractsExecutions(min, max, page) => {
                 let page = page.unwrap_or(0);
 
-                let stream = storage.get_registered_contract_scheduled_executions_in_range(min, max, Some(max)).await?
+                let stream = storage.get_contract_scheduled_executions_in_registration_topoheight_range(min, max, Some(max)).await?
                     .skip(page as usize * MAX_ITEMS_PER_PAGE)
                     .take(MAX_ITEMS_PER_PAGE);
 
@@ -1168,7 +1168,7 @@ impl<S: Storage> P2pServer<S> {
             debug!("Storing {} scheduled executions for contracts", executions.len());
             let mut storage = self.blockchain.get_storage().write().await;
             for execution in executions {
-                storage.set_contract_scheduled_execution_at_topoheight(&execution.execution.contract, execution.registration_topoheight, &execution.execution, execution.execution_topoheight).await?;
+                storage.set_contract_scheduled_execution_at_registration_topoheight(&execution.execution.contract, execution.registration_topoheight, &execution.execution).await?;
             }
 
             next_page = page;

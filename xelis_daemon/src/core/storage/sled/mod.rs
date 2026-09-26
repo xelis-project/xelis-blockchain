@@ -185,10 +185,11 @@ pub struct SledStorage {
     // Contract outputs per TX
     // Key is the TX Hash that called the contract, value is a list of contract outputs
     pub(super) contracts_logs: Tree,
-    // Tree in {execution_topoheight}{contract} format for scheduled executions
-    pub(super) contracts_scheduled_executions: Tree,
-    // Tree in {topoheight}{contract}{execution_topoheight} => [empty]
-    pub(super) contracts_scheduled_executions_registrations: Tree,
+    // Contract hash -> latest scheduled-execution registration topoheight
+    pub(super) contract_scheduled_execution_pointers: Tree,
+    pub(super) versioned_contracts_scheduled_executions: Tree,
+    // {execution_topoheight}{contract} => {registration_topoheight}
+    pub(super) scheduled_execution_index: Tree,
     // Event callbacks: {contract}{event_id}{listener_contract} => topoheight
     pub(super) contracts_event_callbacks: Tree,
     // Versioned Event callbacks: {topoheight}{contract}{event_id}{listener_contract} => VersionedEventCallback
@@ -296,8 +297,9 @@ impl SledStorage {
             contracts_balances: open_tree(&sled, "contracts_balances")?,
             versioned_contracts_balances: open_tree(&sled, "versioned_contracts_balances")?,
             contracts_logs: open_tree(&sled, "contracts_logs")?,
-            contracts_scheduled_executions: open_tree(&sled, "contracts_scheduled_executions")?,
-            contracts_scheduled_executions_registrations: open_tree(&sled, "contracts_scheduled_executions_registrations")?,
+            contract_scheduled_execution_pointers: open_tree(&sled, "contract_scheduled_execution_pointers")?,
+            versioned_contracts_scheduled_executions: open_tree(&sled, "versioned_contracts_scheduled_executions")?,
+            scheduled_execution_index: open_tree(&sled, "scheduled_execution_index")?,
             assets_supply: open_tree(&sled, "assets_supply")?,
             contracts_event_callbacks: open_tree(&sled, "contracts_event_callbacks")?,
             versioned_contracts_event_callbacks: open_tree(&sled, "versioned_contracts_event_callbacks")?,

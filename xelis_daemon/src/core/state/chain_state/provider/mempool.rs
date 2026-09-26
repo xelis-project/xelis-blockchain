@@ -181,21 +181,22 @@ impl<'a, S: Storage> ChainStateProvider for MempoolProvider<'a, S> {
     }
 
     #[inline(always)]
-    async fn get_contract_scheduled_executions_for_execution_topoheight(
+    async fn get_contracts_with_scheduled_executions_at_execution_topoheight(
         &self,
-        topoheight: TopoHeight,
+        execution_topoheight: TopoHeight,
     ) -> Result<Vec<Hash>, BlockchainError> {
-        self.storage.get_contract_scheduled_executions_for_execution_topoheight(topoheight)
+        self.storage.get_contracts_with_scheduled_executions_at_execution_topoheight(execution_topoheight)
             .await?
             .collect::<Result<Vec<_>, _>>()
     }
 
     #[inline(always)]
-    async fn get_contract_scheduled_execution_at_topoheight(
+    async fn get_contract_scheduled_execution_at_execution_topoheight(
         &self,
         contract: &Hash,
-        topoheight: TopoHeight,
+        execution_topoheight: TopoHeight,
     ) -> Result<ScheduledExecution, BlockchainError> {
-        self.storage.get_contract_scheduled_execution_at_topoheight(contract, topoheight).await
+        self.storage.get_contract_scheduled_execution_at_execution_topoheight(contract, execution_topoheight).await?
+            .ok_or(BlockchainError::ScheduledExecutionNotFound)
     }
 }

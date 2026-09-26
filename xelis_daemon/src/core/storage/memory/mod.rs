@@ -12,7 +12,7 @@ use xelis_common::{
     account::{VersionedBalance, VersionedNonce},
     asset::VersionedAssetData,
     block::{BlockHeader, TopoHeight},
-    contract::{ContractLogs, ScheduledExecution},
+    contract::ContractLogs,
     crypto::{Hash, PublicKey},
     difficulty::{CumulativeDifficulty, Difficulty},
     immutable::Immutable,
@@ -40,6 +40,7 @@ use crate::core::{
         VersionedContractData,
         VersionedEventCallbackRegistration,
         VersionedSupply,
+        VersionedScheduledExecution,
     },
 };
 
@@ -79,8 +80,9 @@ pub(crate) struct ContractEntry {
     data: HashMap<ValueCell, BTreeMap<TopoHeight, VersionedContractData>>,
     transactions: LinkedHashSet<PooledArc<Hash>>,
     balances: HashMap<PooledArc<Hash>, BTreeMap<TopoHeight, VersionedContractBalance>>,
-    // Scheduled executions registered at said topoheight -> execution topoheight -> execution
-    scheduled_executions: BTreeMap<TopoHeight, BTreeMap<TopoHeight, ScheduledExecution>>,
+    // Registration topoheight -> versioned scheduled execution
+    scheduled_executions: BTreeMap<TopoHeight, VersionedScheduledExecution>,
+    scheduled_execution_pointer: Option<TopoHeight>,
     // Event callbacks registered at said topoheight
     // (event id, contract listener) -> registration topoheight
     events_callbacks: BTreeMap<u64, BTreeMap<PooledArc<Hash>, BTreeMap<TopoHeight, VersionedEventCallbackRegistration>>>,

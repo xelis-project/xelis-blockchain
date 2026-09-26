@@ -274,9 +274,9 @@ impl<'a> FinalizedChainState<'a> {
             let execution = self.contract_manager.executions.executions.get(&execution_hash)
                 .ok_or(BlockchainError::ScheduledExecutionNotFound)?;
 
-            if let ScheduledExecutionKind::TopoHeight { execution_topoheight, .. } = execution.kind {
+            if let ScheduledExecutionKind::TopoHeight { .. } = execution.kind {
                 trace!("storing scheduled execution of contract {} with caller {} at topoheight {}", execution.contract, execution.hash, self.topoheight);
-                storage.set_contract_scheduled_execution_at_topoheight(&execution.contract, self.topoheight, &execution, execution_topoheight).await?;
+                storage.set_contract_scheduled_execution_at_registration_topoheight(&execution.contract, self.topoheight, &execution).await?;
             } else {
                 warn!("scheduled execution {} kind mismatch, expected TopoHeight", execution.hash);
             }

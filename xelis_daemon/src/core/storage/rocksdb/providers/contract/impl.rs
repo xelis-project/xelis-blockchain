@@ -244,7 +244,8 @@ impl RocksStorage {
                 let id = self.get_next_contract_id()?;
                 let contract = Contract {
                     id,
-                    module_pointer: None
+                    module_pointer: None,
+                    scheduled_execution_pointer: None
                 };
 
                 self.insert_into_disk(Column::ContractById, &id.to_be_bytes(), hash)?;

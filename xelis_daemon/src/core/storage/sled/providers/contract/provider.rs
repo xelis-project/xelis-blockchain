@@ -73,9 +73,9 @@ impl<'ty> ContractProvider<'ty> for SledStorage {
     }
 
     // Verify if we have already a registered execution for such contract at a specific topoheight
-    async fn has_scheduled_execution_at_topoheight(&self, contract: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error> {
-        trace!("has scheduled execution for contract {} at topoheight {}", contract, topoheight);
-        let contains = self.has_contract_scheduled_execution_at_topoheight(contract, topoheight).await?;
+    async fn has_scheduled_execution_at_execution_topoheight(&self, contract: &Hash, execution_topoheight: TopoHeight) -> Result<bool, anyhow::Error> {
+        trace!("has scheduled execution for contract {} at topoheight {}", contract, execution_topoheight);
+        let contains = self.has_contract_scheduled_execution_at_execution_topoheight(contract, execution_topoheight).await?;
         Ok(contains)
     }
 

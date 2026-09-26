@@ -1,102 +1,85 @@
 use anyhow::Context;
 use pooled_arc::PooledArc;
 use async_trait::async_trait;
-use futures::stream;
-use xelis_common::{
-    block::TopoHeight,
-    contract::ScheduledExecution,
-    crypto::Hash,
-};
-use futures::Stream;
+use futures::{stream, Stream};
+use xelis_common::{block::TopoHeight, contract::ScheduledExecution, crypto::Hash};
 use crate::core::{
     error::BlockchainError,
-    storage::ContractScheduledExecutionProvider,
+    storage::{ContractScheduledExecutionProvider, VersionedScheduledExecution},
 };
 use super::super::super::MemoryStorage;
 
 #[async_trait]
 impl ContractScheduledExecutionProvider for MemoryStorage {
-    async fn set_contract_scheduled_execution_at_topoheight(&mut self, contract: &Hash, topoheight: TopoHeight, execution: &ScheduledExecution, execution_topoheight: TopoHeight) -> Result<(), BlockchainError> {
-        let shared = PooledArc::from_ref(contract);
-        self.contracts
-            .entry(shared.clone())
-            .or_default()
-            .scheduled_executions
-            .entry(topoheight)
-            .or_default()
-            .insert(execution_topoheight, execution.clone());
+    async fn get_last_contract_scheduled_execution_registration_topoheight(&self, contract: &Hash) -> Result<Option<TopoHeight>, BlockchainError> {
+        Ok(self.contracts.get(contract).and_then(|entry| entry.scheduled_execution_pointer))
+    }
 
-        self.scheduled_executions_per_topoheight
-            .entry(execution_topoheight)
-            .or_default()
-            .insert(shared, topoheight);
-
+    async fn set_last_contract_scheduled_execution_at_registration_topoheight(&mut self, contract: &Hash, registration_topoheight: TopoHeight, version: &VersionedScheduledExecution) -> Result<(), BlockchainError> {
+        let entry = self.contracts.entry(PooledArc::from_ref(contract)).or_default();
+        entry.scheduled_executions.insert(registration_topoheight, version.clone());
+        entry.scheduled_execution_pointer = Some(registration_topoheight);
+        if let Some(target) = version.get().kind.execution_topoheight() {
+            self.scheduled_executions_per_topoheight.entry(target).or_default()
+                .insert(PooledArc::from_ref(contract), registration_topoheight);
+        }
         Ok(())
     }
 
-    async fn has_contract_scheduled_execution_at_topoheight(&self, contract: &Hash, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
-        Ok(self.scheduled_executions_per_topoheight.get(&topoheight)
-            .map_or(false, |executions| executions.contains_key(contract))
-        )
+    async fn get_contract_scheduled_execution_at_exact_registration_topoheight(&self, contract: &Hash, registration_topoheight: TopoHeight) -> Result<VersionedScheduledExecution, BlockchainError> {
+        self.contracts.get(contract).and_then(|entry| entry.scheduled_executions.get(&registration_topoheight)).cloned()
+            .with_context(|| format!("Scheduled execution not found for contract {} at registration topoheight {}", contract, registration_topoheight)).map_err(Into::into)
     }
 
-    async fn get_contract_scheduled_execution_at_topoheight(&self, contract: &Hash, topoheight: TopoHeight) -> Result<ScheduledExecution, BlockchainError> {
-        self.scheduled_executions_per_topoheight.get(&topoheight)
-            .and_then(|executions| executions.get(contract))
-            .and_then(|&reg_topo| self.contracts.get(contract)
-                .and_then(|contract_data| contract_data.scheduled_executions.get(&reg_topo))
-                .and_then(|executions_at_topo| executions_at_topo.get(&topoheight))
-            )
-            .cloned()
-            .with_context(|| format!("Scheduled execution not found for contract {} at topoheight {}", contract, topoheight))
-            .map_err(|e| e.into())
+    async fn has_contract_scheduled_execution_at_exact_registration_topoheight(&self, contract: &Hash, registration_topoheight: TopoHeight) -> Result<bool, BlockchainError> {
+        Ok(self.contracts.get(contract).is_some_and(|entry| entry.scheduled_executions.contains_key(&registration_topoheight)))
     }
 
-    async fn get_contract_scheduled_executions_for_execution_topoheight<'a>(&'a self, topoheight: TopoHeight) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + Send + 'a, BlockchainError> {
-        Ok(self.scheduled_executions_per_topoheight.get(&topoheight)
-            .into_iter()
-            .flat_map(|executions| executions.keys())
-            .map(|contract| Ok(contract.as_ref().clone()))
-        )
+    async fn has_contract_scheduled_execution_at_execution_topoheight(&self, contract: &Hash, execution_topoheight: TopoHeight) -> Result<bool, BlockchainError> {
+        Ok(self.scheduled_executions_per_topoheight.get(&execution_topoheight).is_some_and(|items| items.contains_key(contract)))
     }
 
-    async fn get_registered_contract_scheduled_executions_at_topoheight<'a>(&'a self, topoheight: TopoHeight) -> Result<impl Iterator<Item = Result<(TopoHeight, Hash), BlockchainError>> + Send + 'a, BlockchainError> {
-        Ok(self.contracts.iter()
-            .flat_map(move |(contract, contract_data)| contract_data.scheduled_executions.get(&topoheight)
-                .into_iter()
-                .flat_map(move |executions| executions.iter()
-                    .map(move |(&exec_topo, _)| Ok((exec_topo, contract.as_ref().clone()))))
-            )
-        )
+    async fn set_contract_scheduled_execution_at_registration_topoheight(&mut self, contract: &Hash, registration_topoheight: TopoHeight, execution: &ScheduledExecution) -> Result<(), BlockchainError> {
+        let previous = self.get_last_contract_scheduled_execution_registration_topoheight(contract).await?;
+        let version = VersionedScheduledExecution::new(execution.clone(), previous);
+        self.set_last_contract_scheduled_execution_at_registration_topoheight(contract, registration_topoheight, &version).await
     }
 
-    async fn get_contract_scheduled_executions_at_topoheight<'a>(&'a self, topoheight: TopoHeight) -> Result<impl Iterator<Item = Result<ScheduledExecution, BlockchainError>> + Send + 'a, BlockchainError> {
-        Ok(self.scheduled_executions_per_topoheight.get(&topoheight)
-            .into_iter()
-            .flat_map(|executions| executions.iter())
-            .filter_map(move |(contract, reg_topo)| {
-                self.contracts.get(contract)
-                    .and_then(|contract_data| contract_data.scheduled_executions.get(reg_topo))
-                    .and_then(|executions_at_topo| executions_at_topo.get(&topoheight))
-                    .cloned()
+    async fn get_contract_scheduled_execution_at_execution_topoheight(&self, contract: &Hash, execution_topoheight: TopoHeight) -> Result<Option<ScheduledExecution>, BlockchainError> {
+        let Some(registration_topoheight) = self.scheduled_executions_per_topoheight.get(&execution_topoheight).and_then(|items| items.get(contract)) else { return Ok(None); };
+        Ok(Some(self.get_contract_scheduled_execution_at_exact_registration_topoheight(contract, *registration_topoheight).await?.get().clone()))
+    }
+
+    async fn get_contracts_with_scheduled_executions_at_execution_topoheight<'a>(&'a self, execution_topoheight: TopoHeight) -> Result<impl Iterator<Item = Result<Hash, BlockchainError>> + Send + 'a, BlockchainError> {
+        Ok(self.scheduled_executions_per_topoheight.get(&execution_topoheight).into_iter().flat_map(|items| items.keys()).map(|contract| Ok(contract.as_ref().clone())))
+    }
+
+    async fn get_contract_scheduled_executions_at_registration_topoheight<'a>(&'a self, registration_topoheight: TopoHeight) -> Result<impl Iterator<Item = Result<(TopoHeight, Hash), BlockchainError>> + Send + 'a, BlockchainError> {
+        Ok(self.contracts.iter().filter_map(move |(contract, entry)| {
+            entry.scheduled_executions.get(&registration_topoheight).map(|version| {
+                let target = version.get().kind.execution_topoheight().unwrap_or(registration_topoheight);
+                Ok((target, contract.as_ref().clone()))
             })
-            .map(Ok)
-        )
+        }))
     }
 
-    // Returns a stream of (execution_topoheight, registration_topoheight, execution)
-    async fn get_registered_contract_scheduled_executions_in_range<'a>(&'a self, minimum_topoheight: TopoHeight, maximum_topoheight: TopoHeight, min_execution_topoheight: Option<TopoHeight>) -> Result<impl Stream<Item = Result<(TopoHeight, TopoHeight, ScheduledExecution), BlockchainError>> + Send + 'a, BlockchainError> {
-        Ok(stream::iter(self.contracts.iter()
-            .flat_map(move |(_, contract_data)| contract_data.scheduled_executions.range(minimum_topoheight..=maximum_topoheight)
-                .flat_map(move |(&reg_topo, executions_at_topo)| executions_at_topo.range(min_execution_topoheight.unwrap_or(0)..)
-                    .filter_map(move |(&exec_topo, execution)| {
-                        if min_execution_topoheight.map_or(true, |min_exec| exec_topo >= min_exec) {
-                            Some(Ok((exec_topo, reg_topo, execution.clone())))
-                        } else {
-                            None
-                        }
-                    })
-                )
-            )))
+    async fn get_contract_scheduled_executions_at_execution_topoheight<'a>(&'a self, execution_topoheight: TopoHeight) -> Result<impl Iterator<Item = Result<ScheduledExecution, BlockchainError>> + Send + 'a, BlockchainError> {
+        Ok(self.scheduled_executions_per_topoheight.get(&execution_topoheight).into_iter().flat_map(|items| items.iter()).filter_map(move |(contract, registration)| {
+            self.contracts.get(contract).and_then(|entry| entry.scheduled_executions.get(registration)).map(|version| Ok(version.get().clone()))
+        }))
+    }
+
+    async fn get_contract_scheduled_executions_in_registration_topoheight_range<'a>(&'a self, minimum_registration_topoheight: TopoHeight, maximum_registration_topoheight: TopoHeight, min_execution_topoheight: Option<TopoHeight>) -> Result<impl Stream<Item = Result<(TopoHeight, TopoHeight, ScheduledExecution), BlockchainError>> + Send + 'a, BlockchainError> {
+        let entries = self.contracts.values().flat_map(move |entry| {
+            entry.scheduled_executions.range(minimum_registration_topoheight..=maximum_registration_topoheight).filter_map(move |(&registration, version)| {
+                let execution_topoheight = version.get().kind.execution_topoheight().unwrap_or(registration);
+                if min_execution_topoheight.is_none_or(|min| execution_topoheight >= min) {
+                    Some(Ok((execution_topoheight, registration, version.get().clone())))
+                } else {
+                    None
+                }
+            })
+        });
+        Ok(stream::iter(entries))
     }
 }

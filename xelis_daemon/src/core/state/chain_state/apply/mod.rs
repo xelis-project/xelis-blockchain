@@ -952,12 +952,12 @@ impl<'s, 'b, P: ApplicableChainStateProvider> ApplicableChainState<'s, 'b, P> {
 
         let topoheight = self.inner.topoheight;
 
-        let mut executions = self.inner.provider.get_contract_scheduled_executions_for_execution_topoheight(topoheight).await?;
+        let mut executions = self.inner.provider.get_contracts_with_scheduled_executions_at_execution_topoheight(topoheight).await?;
 
         executions.sort();
 
         for hash in executions.iter() {
-            let execution = self.inner.provider.get_contract_scheduled_execution_at_topoheight(hash, topoheight).await?;
+            let execution = self.inner.provider.get_contract_scheduled_execution_at_execution_topoheight(hash, topoheight).await?;
 
             debug!(
                 "executing scheduled execution {} for contract {} at execution topoheight {}",
