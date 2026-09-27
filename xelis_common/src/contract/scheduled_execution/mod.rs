@@ -15,7 +15,6 @@ use xelis_vm::{
     FnReturnType,
     Primitive,
     SysCallResult,
-    ModuleValidator,
     ValueCell,
     traits::{JSONHelper, Serializable}
 };
@@ -260,12 +259,6 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider<'ty>>(
         .map(|v| v.into_owned().into())
         .collect();
 
-    let validator = ModuleValidator::new(&metadata.module, &metadata.environment);
-    validator.verify_invoke_chunk(chunk_id as usize, params.iter())
-        .map_err(|e| {
-            log!(state.log_level, "Scheduled execution for chunk {} has invalid parameters: {}", chunk_id, e);
-            EnvironmentError::Static("Invalid parameters for scheduled execution")
-        })?;
 
     let params_size = params.size();
     if params_size > MAX_VALUE_SIZE {
@@ -280,10 +273,7 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider<'ty>>(
     };
 
     // build the caller hash
-    let hash = hash_multiple(&[
-        metadata.metadata.contract_executor.as_bytes(),
-        &kind.to_bytes(),
-    ]);
+    let hash = kind.get_hash(&metadata.metadata.contract_executor);
 
     // Reject duplicates before reserving gas. Account-paid scheduling records the
     // reservation through gas allowance, so doing this after insert failure would

@@ -1,7 +1,11 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use xelis_vm::{traits::{JSONHelper, Serializable}, ValueCell};
-use crate::{block::TopoHeight, serializer::*};
+use crate::{
+    block::TopoHeight,
+    crypto::{Hash, hash_multiple},
+    serializer::*
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -18,6 +22,31 @@ impl ScheduledExecutionKind {
         match self {
             ScheduledExecutionKind::TopoHeight { .. } => 0,
             ScheduledExecutionKind::BlockEnd => 1
+        }
+    }
+
+    pub fn from_id(id: u8) -> Option<Self> {
+        match id {
+            0 => Some(ScheduledExecutionKind::TopoHeight {
+                execution_topoheight: TopoHeight::default(),
+                registration_topoheight: TopoHeight::default()
+            }),
+            1 => Some(ScheduledExecutionKind::BlockEnd),
+            _ => None
+        }
+    }
+
+    // Returns a hash of the scheduled execution kind and the executor's hash
+    pub fn get_hash(&self, executor: &Hash) -> Hash {
+        match self {
+            ScheduledExecutionKind::TopoHeight { execution_topoheight, .. } => {
+                hash_multiple(&[
+                    executor.as_bytes(),
+                    &[self.id()],
+                    &execution_topoheight.to_bytes(),
+                ])
+            },
+            ScheduledExecutionKind::BlockEnd => hash_multiple(&[executor.as_bytes(), &[self.id()]])
         }
     }
 }
