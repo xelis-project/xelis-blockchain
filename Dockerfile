@@ -35,7 +35,7 @@ RUN XELIS_COMMIT_HASH=${commit_hash} cargo build --release --bin $app
 
 # ---
 
-FROM gcr.io/distroless/cc-debian12
+FROM gcr.io/distroless/cc-debian13
 
 ARG app
 
