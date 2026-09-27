@@ -100,6 +100,7 @@ impl Serializer for BlockMetadata {
         + self.difficulty.size()
         + self.cumulative_difficulty.size()
         + self.p.size()
+        + self.size_ema.size()
         + self.executed_transactions.size()
     }
 }
