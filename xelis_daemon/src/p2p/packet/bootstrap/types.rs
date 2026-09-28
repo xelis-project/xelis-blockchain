@@ -100,10 +100,37 @@ impl Serializer for BlockMetadata {
         + self.difficulty.size()
         + self.cumulative_difficulty.size()
         + self.p.size()
+        + self.size_ema.size()
         + self.executed_transactions.size()
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_block_metadata_size() {
+        let metadata = BlockMetadata {
+            hash: Hash::zero(),
+            topoheight_metadata: TopoHeightMetadata {
+                block_reward: 0,
+                emitted_supply: 0,
+                total_fees: 0,
+                total_fees_burned: 0,
+                is_side_block: false,
+            },
+            mergeset: MergeSet::default(),
+            difficulty: VarUint::one(),
+            cumulative_difficulty: VarUint::one(),
+            p: VarUint::zero(),
+            size_ema: 0,
+            executed_transactions: IndexSet::new(),
+        };
+
+        assert_eq!(metadata.size(), metadata.to_bytes().len());
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ScheduledExecutionMetadata {
