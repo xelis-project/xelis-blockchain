@@ -429,6 +429,8 @@ pub fn register_methods<T: ShareableTid<'static>, S: Storage>(handler: &mut RPCH
     handler.register_method_with_params(RpcMethod::with_descriptions("get_contract_logs", ["Retrieve all contract logs for a specific caller (transaction hash).", "Logs include information about gas refunds, transfers, asset minting/burning, scheduled executions, events, and more."]), async_handler!(get_contract_logs::<S>));
     handler.register_method_with_params(("get_contract_scheduled_executions_at_execution_topoheight", "Retrieve the scheduled contract executions at a specific topoheight."), async_handler!(get_contract_scheduled_executions_at_execution_topoheight::<S>));
     handler.register_method_with_params(("get_contract_scheduled_executions_at_registration_topoheight", "Retrieve the registered scheduled contract executions at a specific registration topoheight."), async_handler!(get_contract_scheduled_executions_at_registration_topoheight::<S>));
+    handler.register_method_with_params(("get_contract_scheduled_execution", "Retrieve the latest registered scheduled execution for the provided contract."), async_handler!(get_contract_scheduled_execution::<S>));
+    handler.register_method_with_params(("has_contract_scheduled_execution", "Verify if a scheduled execution registration exists for the provided contract."), async_handler!(has_contract_scheduled_execution::<S>));
     handler.register_method_with_params(("get_contract_scheduled_execution_at_topoheight", "Retrieve the scheduled contract execution for the provided contract and topoheight."), async_handler!(get_contract_scheduled_execution_at_topoheight::<S>));
 
     handler.register_method_with_params(("get_contracts_outputs", "Retrieve contract transfers made to an address at a specific topoheight."), async_handler!(get_contracts_outputs::<S>));
@@ -437,6 +439,7 @@ pub fn register_methods<T: ShareableTid<'static>, S: Storage>(handler: &mut RPCH
     handler.register_method_with_params(("has_contract_data", "Verify if contract data exists for the requested key."), async_handler!(has_contract_data::<S>));
     handler.register_method_with_params(("get_contract_data_at_topoheight", "Retrieve the contract data with the requested key at a specific topoheight."), async_handler!(get_contract_data_at_topoheight::<S>));
     handler.register_method_with_params(("get_contract_balance", "Retrieve the contract balance"), async_handler!(get_contract_balance::<S>));
+    handler.register_method_with_params(("has_contract_balance", "Verify if a contract balance exists for the requested asset."), async_handler!(has_contract_balance::<S>));
     handler.register_method_with_params(("get_contract_balance_at_topoheight", "Retrieve the contract balance at a specific topoheight."), async_handler!(get_contract_balance_at_topoheight::<S>));
     handler.register_method_with_params(("get_contract_assets", "Retrieve all asset hashes that a contract has balances for."), async_handler!(get_contract_assets::<S>));
     handler.register_method_with_params(("get_contracts", "Retrieve all deployed contract hashes with optional pagination and topoheight filtering."), async_handler!(get_contracts::<S>));
@@ -2056,6 +2059,28 @@ async fn get_contract_scheduled_executions_at_registration_topoheight<S: Storage
     Ok(executions)
 }
 
+async fn get_contract_scheduled_execution<S: Storage>(context: &Context<'_, '_>, params: GetContractScheduledExecutionParams<'_>) -> Result<RPCVersioned<VersionedScheduledExecution>, InternalRpcError> {
+    let blockchain = chain_from_context::<S>(context)?;
+    let storage = blockchain.get_storage().read().await;
+
+    let topoheight = storage.get_last_contract_scheduled_execution_registration_topoheight(&params.contract).await?
+        .context("No scheduled execution found for requested contract")?;
+
+    let version = storage.get_contract_scheduled_execution_at_exact_registration_topoheight(&params.contract, topoheight).await?;
+
+    Ok(RPCVersioned {
+        topoheight,
+        version,
+    })
+}
+
+async fn has_contract_scheduled_execution<S: Storage>(context: &Context<'_, '_>, params: HasContractScheduledExecutionParams<'_>) -> Result<bool, InternalRpcError> {
+    let blockchain = chain_from_context::<S>(context)?;
+    let storage = blockchain.get_storage().read().await;
+
+    Ok(storage.get_last_contract_scheduled_execution_registration_topoheight(&params.contract).await?.is_some())
+}
+
 async fn get_contract_scheduled_execution_at_topoheight<S: Storage>(context: &Context<'_, '_>, params: GetContractScheduledExecutionAtTopoHeightParams<'_>) -> Result<VersionedScheduledExecution, InternalRpcError> {
     let blockchain = chain_from_context::<S>(context)?;
     let storage = blockchain.get_storage().read().await;
@@ -2206,6 +2231,13 @@ async fn get_contract_balance<S: Storage>(context: &Context<'_, '_>, params: Get
         topoheight,
         version,
     })
+}
+
+async fn has_contract_balance<S: Storage>(context: &Context<'_, '_>, params: HasContractBalanceParams<'_>) -> Result<bool, InternalRpcError> {
+    let blockchain = chain_from_context::<S>(context)?;
+    let storage = blockchain.get_storage().read().await;
+
+    Ok(storage.has_contract_balance_for(&params.contract, &params.asset).await?)
 }
 
 async fn get_contract_assets<S: Storage>(context: &Context<'_, '_>, params: GetContractAssetsParams<'_>) -> Result<Vec<Hash>, InternalRpcError> {
