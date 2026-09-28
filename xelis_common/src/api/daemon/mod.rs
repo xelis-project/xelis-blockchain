@@ -1109,6 +1109,18 @@ pub struct GetContractScheduledExecutionsAtTopoHeightParams {
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
+pub struct GetContractScheduledExecutionParams<'a> {
+    /// Contract hash.
+    pub contract: Cow<'a, Hash>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct HasContractScheduledExecutionParams<'a> {
+    /// Contract hash.
+    pub contract: Cow<'a, Hash>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetContractScheduledExecutionAtTopoHeightParams<'a> {
     /// Contract hash.
     pub contract: Cow<'a, Hash>,
@@ -1169,6 +1181,14 @@ pub struct GetContractDataAtTopoHeightParams<'a> {
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct GetContractBalanceParams<'a> {
+    /// Contract hash.
+    pub contract: Cow<'a, Hash>,
+    /// Asset hash.
+    pub asset: Cow<'a, Hash>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+pub struct HasContractBalanceParams<'a> {
     /// Contract hash.
     pub contract: Cow<'a, Hash>,
     /// Asset hash.
