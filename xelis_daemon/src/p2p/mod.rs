@@ -83,8 +83,8 @@ use xelis_common::{
         task::JoinHandle,
         time::{interval, sleep, timeout},
         ThreadPool,
-        Executor,
-        Scheduler,
+        SequentialExecutor,
+        OrderedConcurrentExecutor,
     },
     transaction::Transaction
 };
@@ -1613,9 +1613,9 @@ impl<S: Storage> P2pServer<S> {
         // All blocks being in the process
         let mut pending_requests = HashSet::new();
         // All pending blocks
-        let mut scheduler = Scheduler::new(Some(PEER_OBJECTS_CONCURRENCY));
+        let mut scheduler = OrderedConcurrentExecutor::new(Some(PEER_OBJECTS_CONCURRENCY));
         // Sequential blocks executor
-        let mut blocks_executor = Executor::new();
+        let mut blocks_executor = SequentialExecutor::new();
 
         'main: loop {
             select! {
@@ -1731,9 +1731,9 @@ impl<S: Storage> P2pServer<S> {
         let mut pending_requests = HashSet::new();
 
         let mut server_exit = self.exit_sender.subscribe();
-        let mut futures = Scheduler::new(Some(PEER_OBJECTS_CONCURRENCY));
+        let mut futures = OrderedConcurrentExecutor::new(Some(PEER_OBJECTS_CONCURRENCY));
         // Sequential executor for TXs
-        let mut txs_executor = Executor::new();
+        let mut txs_executor = SequentialExecutor::new();
 
         'main: loop {
             select! {
@@ -2546,7 +2546,7 @@ impl<S: Storage> P2pServer<S> {
     // Listen to incoming packets from a connection
     // Packet is read from the same task always, while its handling is delegated to a unique task
     async fn listen_connection(self: &Arc<Self>, peer: &Arc<Peer>, mut receiver: mpsc::Receiver<Packet<'static>>) -> Result<(), P2pError> {
-        let mut executor = Executor::new();
+        let mut executor = SequentialExecutor::new();
         let mut peer_exit = peer.get_exit_receiver();
 
         loop {

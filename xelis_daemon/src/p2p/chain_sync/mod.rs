@@ -25,8 +25,8 @@ use xelis_common::{
         select,
         time::{interval, sleep},
         sync::Mutex,
-        Executor,
-        Scheduler
+        SequentialExecutor,
+        OrderedConcurrentExecutor
     },
     transaction::Transaction
 };
@@ -276,7 +276,7 @@ impl<S: Storage> P2pServer<S> {
             };
 
             // Request blocks from the peer in chunks
-            let mut futures = Scheduler::new(capacity);
+            let mut futures = OrderedConcurrentExecutor::new(capacity);
             for hash in all_blocks.drain(..) {
                 let hash= Arc::new(hash);
                 if !processed.insert(hash.clone()) {
@@ -302,7 +302,7 @@ impl<S: Storage> P2pServer<S> {
             }
 
             // Process the chunk
-            let mut blocks_executor = Executor::new();
+            let mut blocks_executor = SequentialExecutor::new();
             let mut exit_signal = self.exit_sender.subscribe();
             let mut validated_in_chunk = 0u64;
             let mut found_higher_difficulty = false;
@@ -425,7 +425,7 @@ impl<S: Storage> P2pServer<S> {
             Some(1)
         };
 
-        let mut scheduler = Scheduler::new(capacity);
+        let mut scheduler = OrderedConcurrentExecutor::new(capacity);
         for (hash, (emulated_topoheight, data)) in chain_validator.blocks().into_iter() {
             let hash = Immutable::Arc(hash);
             trace!("Processing block {} from chain validator with emulated topoheight {}", hash, emulated_topoheight);
@@ -461,7 +461,7 @@ impl<S: Storage> P2pServer<S> {
             scheduler.push_back(future);
         }
 
-        let mut blocks_executor = Executor::new();
+        let mut blocks_executor = SequentialExecutor::new();
         loop {
             select! {
                 biased;
@@ -741,7 +741,7 @@ impl<S: Storage> P2pServer<S> {
                 Some(1)
             };
 
-            let mut futures = Scheduler::new(capacity);
+            let mut futures = OrderedConcurrentExecutor::new(capacity);
 
             for hash in blocks {
                 debug!("processing block request {}", hash);
@@ -771,7 +771,7 @@ impl<S: Storage> P2pServer<S> {
             // All blocks processed during our syncing
             let mut blocks_processed = 0;
             // Blocks executor for sequential processing
-            let mut blocks_executor = Executor::new();
+            let mut blocks_executor = SequentialExecutor::new();
 
             'main: loop {
                 select! {
