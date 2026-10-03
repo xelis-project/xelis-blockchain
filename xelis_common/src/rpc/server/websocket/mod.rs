@@ -32,7 +32,7 @@ use crate::{
     config::MAX_BLOCK_SIZE,
     immutable::Immutable,
     tokio::{
-        Executor,
+        SequentialExecutor,
         select,
         sync::{
             OwnedSemaphorePermit,
@@ -494,9 +494,9 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static + Send + Sync {
         let mut interval = actix_rt::time::interval(KEEP_ALIVE_INTERVAL);
         let mut last_pong_received = Instant::now();
         // executor for handling messages
-        // we use Executor to limit the number of concurrent tasks to 1 per session
+        // we use SequentialExecutor to limit the number of concurrent tasks to 1 per session
         // but allow queuing multiple tasks
-        let mut executor = Executor::new();
+        let mut executor = SequentialExecutor::new();
 
         let reason = loop {
             select! {

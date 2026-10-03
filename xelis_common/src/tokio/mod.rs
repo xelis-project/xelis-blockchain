@@ -1,14 +1,8 @@
 #[cfg(feature = "tokio")]
-mod scheduler;
+mod executors;
 
 #[cfg(feature = "tokio")]
-pub use scheduler::Scheduler;
-
-#[cfg(feature = "tokio")]
-mod executor;
-
-#[cfg(feature = "tokio")]
-pub use executor::Executor;
+pub use executors::*;
 
 #[cfg(feature = "tokio")]
 mod thread_pool;

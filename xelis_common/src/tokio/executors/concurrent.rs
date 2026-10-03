@@ -28,14 +28,18 @@ impl<F: Future> fmt::Debug for State<F> {
 }
 
 pin_project! {
-    pub struct Scheduler<F: Future> {
+    /// Poll a window of queued futures concurrently and yield results in queue order.
+    /// Completed results remain buffered behind earlier entries and occupy window slots.
+    /// Futures run in the caller; this executor does not spawn tasks.
+    pub struct OrderedConcurrentExecutor<F: Future> {
         states: VecDeque<State<F>>,
         n: Option<usize>
     }
 }
 
-impl<F: Future> Scheduler<F> {
+impl<F: Future> OrderedConcurrentExecutor<F> {
     #[inline]
+    /// Set the queue window size: `None` polls all entries; zero polls none.
     pub fn new(n: impl Into<Option<usize>>) -> Self {
         Self {
             states: VecDeque::new(),
@@ -101,7 +105,7 @@ impl<F: Future> Scheduler<F> {
     }
 }
 
-impl<F: Future> Stream for Scheduler<F> {
+impl<F: Future> Stream for OrderedConcurrentExecutor<F> {
     type Item = F::Output;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -163,8 +167,8 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_scheduler() {
-        let mut scheduler = Scheduler::new(1);
+    async fn test_ordered_concurrent_executor() {
+        let mut scheduler = OrderedConcurrentExecutor::new(1);
 
         async fn foo(duration: Duration, msg: &'static str) -> &'static str {
             sleep(duration).await;

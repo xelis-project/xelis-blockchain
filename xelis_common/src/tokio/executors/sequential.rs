@@ -4,12 +4,15 @@ use futures::Stream;
 use pin_project_lite::pin_project;
 
 pin_project! {
-    pub struct Executor<F: Future> {
+    /// Poll only the first queued future until it completes, then yield its result.
+    /// Later futures do not start until earlier entries are removed.
+    /// Futures run in the caller; this executor does not spawn tasks.
+    pub struct SequentialExecutor<F: Future> {
         futures: VecDeque<Pin<Box<F>>>
     }
 }
 
-impl<F: Future> Executor<F> {
+impl<F: Future> SequentialExecutor<F> {
     pub fn new() -> Self {
         Self {
             futures: VecDeque::new()
@@ -33,7 +36,7 @@ impl<F: Future> Executor<F> {
     }
 }
 
-impl<F: Future> Stream for Executor<F> {
+impl<F: Future> Stream for SequentialExecutor<F> {
     type Item = F::Output;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
