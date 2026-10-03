@@ -696,6 +696,7 @@ async fn show_mempool<S: Storage>(manager: &CommandManager, mut args: ArgumentMa
     let context = manager.get_context().lock()?;
     let blockchain: &Arc<Blockchain<S>> = context.get()?;
     let mempool = blockchain.get_mempool().read().await;
+    let mempool = mempool.read().await;
 
     manager.message("Mempool:");
     manager.message(format!("- Transactions: {}", mempool.get_txs().iter().len()));
@@ -794,6 +795,7 @@ async fn broadcast_txs<S: Storage>(manager: &CommandManager, _: ArgumentManager)
     // due to the broadcast_tx_hash locking storage for ping.
     let txs = {
         let mempool = blockchain.get_mempool().read().await;
+        let mempool = mempool.read().await;
         mempool.get_txs()
             .keys()
             .cloned()

@@ -702,7 +702,7 @@ impl<S: Storage> P2pServer<S> {
         // Otherwise he may get them in incorrect order
         let has_any_tx = {
             let mempool = self.blockchain.get_mempool().read().await;
-            mempool.size() > 0
+            mempool.size().await > 0
         };
 
         Ok(handshake.create_peer(connection, priority, self.peer_list.clone(), !has_any_tx, self.timeouts))
@@ -2412,6 +2412,7 @@ impl<S: Storage> P2pServer<S> {
 
                 let (is_last, packet) = {
                     let mempool = self.blockchain.get_mempool().read().await;
+                    let mempool = mempool.read().await;
                     let txs = mempool.get_txs()
                         .keys()
                         .skip(skip)

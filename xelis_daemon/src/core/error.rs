@@ -289,6 +289,10 @@ pub enum BlockchainError {
     InvalidGenesisHash,
     #[error("Invalid tx nonce {} for mempool cache, range: [{}-{}]", _0, _1, _2)]
     InvalidTxNonceMempoolCache(Nonce, Nonce, Nonce),
+    #[error("Transaction source does not match the mempool verification sender")]
+    MempoolSenderMismatch,
+    #[error("Mempool sender cache changed during transaction verification")]
+    MempoolCacheChanged,
     #[error("Invalid asset ID: {}", _0)]
     AssetNotFound(Hash),
     #[error("No balance found on disk for {}", _0)]

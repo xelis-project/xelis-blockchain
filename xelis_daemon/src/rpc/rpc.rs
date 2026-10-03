@@ -23,7 +23,7 @@ use crate::{
             get_pow_algorithm_for_version,
             get_version_at_height
         },
-        mempool::Mempool,
+        mempool::MempoolBackend,
         storage::*,
     },
     p2p::Peer,
@@ -287,7 +287,7 @@ pub async fn get_transaction_response<'a, S: Storage>(blockchain: &Blockchain<S>
 }
 
 // first check on disk, then check in mempool
-pub async fn get_transaction_response_for_hash<'a, S: Storage>(blockchain: &Blockchain<S>, storage: &S, mempool: &Mempool, hash: Cow<'a, Hash>) -> Result<Value, InternalRpcError> {
+pub async fn get_transaction_response_for_hash<'a, S: Storage>(blockchain: &Blockchain<S>, storage: &S, mempool: &MempoolBackend, hash: Cow<'a, Hash>) -> Result<Value, InternalRpcError> {
     match storage.get_transaction(&hash).await {
         Ok(tx) => {
             let tx = get_transaction_response(blockchain, storage, &tx, hash, false, None).await?;
@@ -945,8 +945,9 @@ async fn get_transaction<S: Storage>(context: &Context<'_, '_>, params: GetTrans
     let blockchain = chain_from_context::<S>(context)?;
     let storage = blockchain.get_storage().read().await;
     let mempool = blockchain.get_mempool().read().await;
+    let mempool_backend = mempool.read().await;
 
-    get_transaction_response_for_hash(blockchain, &*storage, &mempool, params.hash).await
+    get_transaction_response_for_hash(blockchain, &*storage, &mempool_backend, params.hash).await
 }
 
 async fn get_transaction_executor<S: Storage>(context: &Context<'_, '_>, params: GetTransactionExecutorParams<'_>) -> Result<GetTransactionExecutorResult<'static>, InternalRpcError> {
@@ -1024,9 +1025,10 @@ async fn get_mempool<S: Storage>(context: &Context<'_, '_>, params: GetMempoolPa
     let blockchain = chain_from_context::<S>(context)?;
     let storage = blockchain.get_storage().read().await;
     let mempool = blockchain.get_mempool().read().await;
+    let mempool_backend = mempool.read().await;
     let mut transactions = Vec::with_capacity(maximum);
 
-    let txs = mempool.get_txs();
+    let txs = mempool_backend.get_txs();
     let total = txs.len();
     for (hash, sorted_tx) in txs.iter().skip(skip).take(maximum) {
         let tx = get_transaction_response(blockchain, &*storage, sorted_tx.get_tx(), Cow::Borrowed(hash), true, Some(sorted_tx.get_first_seen())).await?;
@@ -1047,7 +1049,8 @@ async fn get_mempool_summary<S: Storage>(context: &Context<'_, '_>, params: GetM
 
     let blockchain = chain_from_context::<S>(context)?;
     let mempool = blockchain.get_mempool().read().await;
-    let txs = mempool.get_txs();
+    let mempool_backend = mempool.read().await;
+    let txs = mempool_backend.get_txs();
     let total = txs.len();
     let mut transactions = Vec::new();
 
@@ -1088,7 +1091,8 @@ async fn get_estimated_fee_rates<S: Storage>(context: &Context<'_, '_>) -> Resul
     let (base_fee, _) = blockchain.get_required_base_fee(&*storage, tips.iter()).await?;
 
     let mempool = blockchain.get_mempool().read().await;
-    let estimated = mempool.estimate_fee_rates(base_fee)?;
+    let mempool_backend = mempool.read().await;
+    let estimated = mempool_backend.estimate_fee_rates(base_fee)?;
     Ok(estimated)
 }
 
@@ -1210,9 +1214,10 @@ async fn get_transactions<S: Storage>(context: &Context<'_, '_>, params: GetTran
     let blockchain = chain_from_context::<S>(context)?;
     let storage = blockchain.get_storage().read().await;
     let mempool = blockchain.get_mempool().read().await;
+    let mempool_backend = mempool.read().await;
     let mut transactions: Vec<Option<_>> = Vec::with_capacity(hashes.len());
     for hash in hashes {
-        let tx = match get_transaction_response_for_hash(blockchain, &*storage, &mempool, Cow::Borrowed(&hash)).await {
+        let tx = match get_transaction_response_for_hash(blockchain, &*storage, &mempool_backend, Cow::Borrowed(&hash)).await {
             Ok(data) => Some(data),
             Err(e) => {
                 debug!("Error while retrieving tx {} from storage: {}", hash, e);
@@ -1708,7 +1713,8 @@ async fn get_mempool_cache<S: Storage>(context: &Context<'_, '_>, params: GetMem
     }
 
     let mempool = blockchain.get_mempool().read().await;
-    let cache = mempool.get_cache_for(params.address.get_public_key())
+    let mempool_backend = mempool.read().await;
+    let cache = mempool_backend.get_cache_for(params.address.get_public_key())
         .context("Account not found while retrieving mempool cache")?;
 
     Ok(json!(cache))

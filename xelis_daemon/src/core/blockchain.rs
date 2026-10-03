@@ -921,7 +921,7 @@ impl<S: Storage> Blockchain<S> {
     // Get the count of transactions available in the mempool
     pub async fn get_mempool_size(&self) -> usize {
         trace!("get mempool size");
-        self.mempool.read().await.size()
+        self.mempool.read().await.size().await
     }
 
     // Get the current top block hash in chain
@@ -1192,14 +1192,9 @@ impl<S: Storage> Blockchain<S> {
     ) -> Result<(), BlockchainError> {
         debug!("add tx to mempool internal {} (broadcast = {})", hash, broadcast);
 
-        let hash = {
-            debug!("locking mempool to add tx");
-            let mut mempool = self.mempool.write().await;
-            debug!("mempool locked to add tx");
-
-            if mempool.contains_tx(&hash) {
-                return Err(BlockchainError::TxAlreadyInMempool(hash.into_owned()))
-            }
+        let (hash, sorted_tx) = {
+            debug!("locking mempool lifecycle for admission");
+            let mempool = self.mempool.read().await;
 
             let chain_cache = storage.chain_cache().await;
 
@@ -1207,23 +1202,6 @@ impl<S: Storage> Blockchain<S> {
             let stable_height = chain_cache.stable_height;
             let current_topoheight = chain_cache.topoheight;
             let height = chain_cache.height;
-
-            // get the highest nonce available
-            // if presents, it means we have at least one tx from this owner in mempool
-            if let Some(cache) = mempool.get_cache_for(tx.get_source()) {
-                // we accept to delete a tx from mempool if the new one has a higher fee
-                if cache.has_tx_with_same_nonce(tx.get_nonce()) {
-                    // A TX with the same nonce is already in mempool
-                    debug!("TX {} nonce is already used by another TX", hash);
-                    return Err(BlockchainError::TxNonceAlreadyUsed(tx.get_nonce()))
-                }
-
-                // check that the nonce is in the range
-                if !(tx.get_nonce() <= cache.get_max() + 1 && tx.get_nonce() >= cache.get_min()) {
-                    debug!("TX {} nonce is not in the range of the pending TXs for this owner, received: {}, expected between {} and {}", hash, tx.get_nonce(), cache.get_min(), cache.get_max());
-                    return Err(BlockchainError::InvalidTxNonceMempoolCache(tx.get_nonce(), cache.get_min(), cache.get_max()))
-                }
-            }
 
             // Put the hash behind an Arc to share it cheaply
             let hash = hash.into_arc();
@@ -1233,7 +1211,7 @@ impl<S: Storage> Blockchain<S> {
 
             // NOTE: we do not verify / clean against requested base fee
             // to ensure no TX is orphaned, but only delayed until the chain congestion reduce
-            mempool.add_tx(storage, &self.environments, stable_topoheight, current_topoheight, self.min_fee_per_kb, stable_height, hash.clone(), tx.clone(), tx_size, version).await?;
+            let sorted_tx = mempool.add_tx(storage, &self.environments, stable_topoheight, current_topoheight, self.min_fee_per_kb, stable_height, hash.clone(), tx.clone(), tx_size, version).await?;
 
             debug!("TX {} has been added to the mempool", hash);
 
@@ -1241,7 +1219,7 @@ impl<S: Storage> Blockchain<S> {
             histogram!("xelis_mempool_tx_added_ms").record(start.elapsed().as_millis() as f64);
             counter!("xelis_txs_verified").increment(1u64);
 
-            hash
+            (hash, sorted_tx)
         };
 
         if broadcast {
@@ -1269,9 +1247,6 @@ impl<S: Storage> Blockchain<S> {
 
                 if rpc.is_event_tracked(&NotifyEvent::TransactionAddedInMempool).await {
                     let json = {
-                        let mempool = self.mempool.read().await;
-                        let sorted_tx = mempool.get_sorted_tx(&hash)?;
-    
                         let data = MempoolTransactionSummary {
                             size: sorted_tx.get_size(),
                             hash: Cow::Borrowed(&hash),
@@ -1316,7 +1291,7 @@ impl<S: Storage> Blockchain<S> {
         {
             let mempool = self.mempool.read().await;
             debug!("mempool lock acquired for has tx {}", hash);
-            if mempool.contains_tx(hash) {
+            if mempool.contains_tx(hash).await {
                 debug!("TX {} found in mempool", hash);
                 return Ok(true)
             }
@@ -1348,7 +1323,7 @@ impl<S: Storage> Blockchain<S> {
         {
             let mempool = self.mempool.read().await;
             debug!("mempool lock acquired for is tx included {}", hash);
-            if mempool.contains_tx(hash) {
+            if mempool.contains_tx(hash).await {
                 debug!("TX {} found in mempool", hash);
                 return Ok(true)
             }
@@ -1384,6 +1359,7 @@ impl<S: Storage> Blockchain<S> {
         {
             debug!("Locking mempool for get tx {}", hash);
             let mempool = self.mempool.read().await;
+            let mempool = mempool.read().await;
             debug!("Mempool locked for get tx {}", hash);
             if let Ok(tx) =  mempool.get_tx(hash) {
                 debug!("found {} in mempool", hash);
@@ -1530,6 +1506,7 @@ impl<S: Storage> Blockchain<S> {
 
         trace!("Locking mempool for building block template");
         let mempool = self.mempool.read().await;
+        let mempool = mempool.read().await;
         trace!("Mempool locked for building block template");
 
         let start = Instant::now();
@@ -1582,7 +1559,7 @@ impl<S: Storage> Blockchain<S> {
         let mut chain_state = ChainState::new(storage, &self.environments, base_topoheight, nearest_base_topoheight, expected_topoheight, block.get_version(), base_fee, base_height);
 
         if !tx_selector.is_empty() {
-            let tx_cache = TxCache::new(storage, &mempool, self.disable_zkp_cache);
+            let tx_cache = TxCache::new(storage, &*mempool, self.disable_zkp_cache);
             let mut failed_sources = HashSet::new();
             // Search all txs that were processed in tips
             // This help us to determine if a TX was already included or not based on our DAG
@@ -1711,6 +1688,7 @@ impl<S: Storage> Blockchain<S> {
         let storage = self.storage.read().await;
         debug!("storage read acquired for build block from header");
         let mempool = self.mempool.read().await;
+        let mempool = mempool.read().await;
         debug!("Mempool lock acquired for building block from header");
 
         for hash in header.get_txs_hashes() {
@@ -2243,9 +2221,10 @@ impl<S: Storage> Blockchain<S> {
 
                 debug!("locking mempool read mode for cache usage");
                 let mempool = self.mempool.read().await;
+                let mempool = mempool.read().await;
                 debug!("mempool locked for cache usage");
 
-                let tx_cache = TxCache::new(&*storage, &mempool, self.disable_zkp_cache);
+                let tx_cache = TxCache::new(&*storage, &*mempool, self.disable_zkp_cache);
 
                 // Track how much time it takes to verify them all
                 let start = Instant::now();
@@ -3536,6 +3515,7 @@ impl<S: Storage> Blockchain<S> {
             let mut tmp = BlockSizeEma::default(ema);
             let header_size = BlockHeader::estimate_size(tips.len().min(TIPS_LIMIT));
             let mempool = self.mempool.read().await;
+            let mempool = mempool.read().await;
 
             let mut block_size = header_size;
 

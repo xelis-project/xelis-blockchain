@@ -12,16 +12,16 @@ use xelis_common::{
 };
 use crate::core::{
     error::BlockchainError,
-    mempool::Mempool,
+    mempool::AccountCache,
     state::{FeeProvider, search_versioned_balance_for_reference},
     storage::{Storage, VersionedContractBalance, VersionedContractModule, VersionedSupply},
 };
 use super::{ReferenceProvider, TxVerificationProvider, ChainStateProvider};
 
-/// Account-state provider that checks the mempool cache before falling back to storage.
+/// Account-state provider using a stable sender-cache snapshot before storage.
 /// Used during mempool TX validation.
 pub struct MempoolProvider<'a, S: Storage> {
-    pub mempool: &'a Mempool,
+    pub cache: Option<(&'a PublicKey, &'a AccountCache)>,
     pub storage: &'a S,
 }
 
@@ -93,7 +93,7 @@ impl<'a, S: Storage> ChainStateProvider for MempoolProvider<'a, S> {
         topoheight: TopoHeight,
     ) -> Result<(VersionedNonce, Option<(VersionedState, Option<MultiSigPayload>)>), BlockchainError> {
         // If the mempool has a pending cache for this key, use it
-        if let Some(cache) = self.mempool.get_cache_for(key) {
+        if let Some((_, cache)) = self.cache.filter(|(k, _)| *k == key) {
             let nonce = VersionedNonce::new(cache.get_next_nonce(), None);
             let multisig = cache.get_multisig().as_ref().map(|m| (VersionedState::New, Some(m.clone())));
 
@@ -110,8 +110,8 @@ impl<'a, S: Storage> ChainStateProvider for MempoolProvider<'a, S> {
         topoheight: TopoHeight,
         reference: &Reference,
     ) -> Result<(bool, bool, VersionedBalance), BlockchainError> {
-        if let Some(ct) = self.mempool.get_cache_for(key)
-            .and_then(|cache| cache.get_balances().get(asset).cloned())
+        if let Some(ct) = self.cache.filter(|(k, _)| *k == key)
+            .and_then(|(_, cache)| cache.get_balances().get(asset).cloned())
         {
             let version = VersionedBalance::new(CiphertextCache::Decompressed(None, ct), None);
             return Ok((false, false, version));
