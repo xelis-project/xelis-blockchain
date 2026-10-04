@@ -205,6 +205,8 @@ pub struct P2pServer<S: Storage> {
     flags: Flags,
     sync_from_priority_only: bool,
     reorg_from_priority_only: bool,
+    // Concurrent threads count for verifying transactions received from peers
+    txs_verification_concurrency: usize,
 }
 
 impl<S: Storage> P2pServer<S> {
@@ -241,6 +243,7 @@ impl<S: Storage> P2pServer<S> {
         timeouts: P2pTimeouts,
         sync_from_priority_only: bool,
         reorg_from_priority_only: bool,
+        txs_verification_concurrency: usize,
     ) -> Result<Arc<Self>, P2pError> {
         if tag.as_ref().is_some_and(|tag| tag.len() == 0 || tag.len() > 16) {
             return Err(P2pError::InvalidTag);
@@ -340,6 +343,7 @@ impl<S: Storage> P2pServer<S> {
             flags,
             sync_from_priority_only,
             reorg_from_priority_only,
+            txs_verification_concurrency,
         };
 
         let arc = Arc::new(server);
@@ -1733,7 +1737,7 @@ impl<S: Storage> P2pServer<S> {
         let mut server_exit = self.exit_sender.subscribe();
         let mut futures = OrderedConcurrentExecutor::new(Some(PEER_OBJECTS_CONCURRENCY));
         // Sequential executor for TXs
-        let mut txs_executor = SequentialExecutor::new();
+        let mut txs_executor = OrderedConcurrentExecutor::new(self.txs_verification_concurrency);
 
         'main: loop {
             select! {

@@ -385,11 +385,11 @@ impl<S: Storage> Blockchain<S> {
         // create P2P Server
         if !config.p2p.disable {
             let dir_path = config.dir_path;
-            let config = config.p2p;
+            let p2p = config.p2p;
             info!("Starting P2p server...");
             // setup exclusive nodes
-            let mut exclusive_nodes: Vec<SocketAddr> = Vec::with_capacity(config.exclusive_nodes.len());
-            for peer in config.exclusive_nodes {
+            let mut exclusive_nodes: Vec<SocketAddr> = Vec::with_capacity(p2p.exclusive_nodes.len());
+            for peer in p2p.exclusive_nodes {
                 for peer in peer.split(",") {
                     match peer.parse() {
                         Ok(addr) => {
@@ -414,55 +414,56 @@ impl<S: Storage> Blockchain<S> {
                 }
             }
 
-            let proxy_auth = if let (Some(username), Some(password)) = (config.proxy.username, config.proxy.password) {
+            let proxy_auth = if let (Some(username), Some(password)) = (p2p.proxy.username, p2p.proxy.password) {
                 Some((username, password))
             } else {
                 None
             };
 
-            let proxy = if let (Some(proxy), Some(addr)) = (config.proxy.kind, &config.proxy.address) {
+            let proxy = if let (Some(proxy), Some(addr)) = (p2p.proxy.kind, &p2p.proxy.address) {
                 Some((proxy, addr.parse()?, proxy_auth))
             } else {
                 None
             };
 
             match P2pServer::new(
-                config.concurrency_task_count_limit,
+                p2p.concurrency_task_count_limit,
                 dir_path,
-                config.tag,
-                config.max_peers,
-                config.bind_address,
+                p2p.tag,
+                p2p.max_peers,
+                p2p.bind_address,
                 Arc::clone(&arc),
                 exclusive_nodes,
-                config.allow_fast_sync,
-                config.allow_boost_sync,
-                config.allow_priority_blocks,
-                config.max_chain_response_size,
-                !config.disable_ip_sharing,
-                config.max_outgoing_peers,
-                config.dh_private_key.map(|v| v.into()),
-                config.on_dh_key_change,
-                config.stream_concurrency,
-                config.temp_ban_duration.into(),
-                config.fail_count_limit,
-                config.disable_reexecute_blocks_on_sync,
-                config.block_propagation_log_level.into(),
-                config.disable_fetching_txs_propagated,
-                config.handle_peer_packets_in_dedicated_task,
-                config.enable_compression,
-                config.disable_fast_sync_support,
+                p2p.allow_fast_sync,
+                p2p.allow_boost_sync,
+                p2p.allow_priority_blocks,
+                p2p.max_chain_response_size,
+                !p2p.disable_ip_sharing,
+                p2p.max_outgoing_peers,
+                p2p.dh_private_key.map(|v| v.into()),
+                p2p.on_dh_key_change,
+                p2p.stream_concurrency,
+                p2p.temp_ban_duration.into(),
+                p2p.fail_count_limit,
+                p2p.disable_reexecute_blocks_on_sync,
+                p2p.block_propagation_log_level.into(),
+                p2p.disable_fetching_txs_propagated,
+                p2p.handle_peer_packets_in_dedicated_task,
+                p2p.enable_compression,
+                p2p.disable_fast_sync_support,
                 proxy,
-                config.outgoing_connection_timeout.into(),
-                config.ping_interval.into(),
-                config.heartbeat_interval.into(),
-                config.ping_timeout.into(),
-                config.timeouts,
-                config.sync_from_priority_only,
-                config.reorg_from_priority_only,
+                p2p.outgoing_connection_timeout.into(),
+                p2p.ping_interval.into(),
+                p2p.heartbeat_interval.into(),
+                p2p.ping_timeout.into(),
+                p2p.timeouts,
+                p2p.sync_from_priority_only,
+                p2p.reorg_from_priority_only,
+                config.txs_verification_threads_count,
             ) {
-                Ok(p2p) => {
-                    *arc.p2p.write().await = Some(p2p.clone());
-                    p2p.connect_to_priority_nodes(config.priority_nodes);
+                Ok(server) => {
+                    *arc.p2p.write().await = Some(server.clone());
+                    server.connect_to_priority_nodes(p2p.priority_nodes);
                 },
                 Err(e) => error!("Error while starting P2p server: {}", e)
             };
