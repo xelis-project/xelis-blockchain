@@ -77,7 +77,7 @@ impl<S: Storage> P2pServer<S> {
         // This can be configured by the node operator, it will be adjusted between protocol bounds
         // and based on peer configuration
         // This will allow to boost-up syncing for those who want and can be used to use low resources for low devices
-        let requested_max_size = self.max_chain_response_size;
+        let requested_max_size = self.config.max_chain_response_size;
 
         let packet = {
             debug!("locking storage for sync chain request");
@@ -525,7 +525,7 @@ impl<S: Storage> P2pServer<S> {
                 BlockchainError::P2pError(_) | BlockchainError::InvalidBlockVersion => {
                     debug!("Peer {} sent us an invalid chain during validation: {}", peer, e);
                     // Peer disconnected while trying to reorg us, tempban it
-                    if let Err(e) = peer.close_and_temp_ban(self.temp_ban_time).await {
+                    if let Err(e) = peer.close_and_temp_ban(self.config.temp_ban_duration.into()).await {
                         debug!("Couldn't tempban {}: {}", peer, e);
                     }
                 },
@@ -631,7 +631,7 @@ impl<S: Storage> P2pServer<S> {
                 warn!("Rewinding chain without checking because {} is a priority node (pop count: {})", peer, pop_count);
                 // User trust him as a priority node, rewind chain without checking, allow to go below stable height also
                 self.blockchain.rewind_chain(pop_count, false).await?;
-            } else if self.reorg_from_priority_only {
+            } else if self.config.reorg_from_priority_only {
                 warn!("Ignoring reorg request from non-priority node {} because reorg_from_priority_only is enabled", peer);
                 return Err(P2pError::ReorgFromPriorityOnly.into());
             } else {
@@ -814,7 +814,7 @@ impl<S: Storage> P2pServer<S> {
                                         if matches!(e, BlockchainError::InvalidBlockVersion) {
                                             debug!("Peer {} sent us an invalid block version during chain sync: {}", peer, e);
                                             // Peer sent us an invalid block, tempban it
-                                            if let Err(e) = peer.close_and_temp_ban(self.temp_ban_time).await {
+                                            if let Err(e) = peer.close_and_temp_ban(self.config.temp_ban_duration.into()).await {
                                                 debug!("Couldn't tempban {}: {}", peer, e);
                                             }
                                         } else {
@@ -896,7 +896,7 @@ impl<S: Storage> P2pServer<S> {
     async fn try_re_execution_block(&self, peer: &Arc<Peer>, hash: Immutable<Hash>, storage: StorageHolder<'_, S>) -> Result<(), BlockchainError> {
         trace!("check re execution block {}", hash);
         
-        if self.disable_reexecute_blocks_on_sync {
+        if self.config.disable_reexecute_blocks_on_sync {
             trace!("re execute blocks on sync is disabled");
             return Ok(())
         }
@@ -939,7 +939,7 @@ impl<S: Storage> P2pServer<S> {
             Ok(pre_verify) => Ok(pre_verify),
             Err(e) => {
                 debug!("Mark {} as sync chain failed during pre-verification: {}", peer, e);
-                peer.close_and_temp_ban(self.temp_ban_time).await?;
+                peer.close_and_temp_ban(self.config.temp_ban_duration.into()).await?;
                 Err(e)
             }
         }

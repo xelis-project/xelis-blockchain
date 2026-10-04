@@ -134,7 +134,7 @@ impl<S: Storage> P2pServer<S> {
 
                         Ok::<_, BlockchainError>(supply)
                     })
-                    .buffered(self.stream_concurrency)
+                    .buffered(self.config.stream_concurrency)
                     .try_collect()
                     .await?;
 
@@ -162,7 +162,7 @@ impl<S: Storage> P2pServer<S> {
                         let summary = storage.get_account_summary_for(&key, &asset, min, max).await?;
                         Ok::<_, BlockchainError>((asset, summary))
                     })
-                    .buffered(self.stream_concurrency)
+                    .buffered(self.config.stream_concurrency)
                     .try_collect::<IndexMap<_, _>>()
                     .await?;
 
@@ -235,7 +235,7 @@ impl<S: Storage> P2pServer<S> {
 
                         Ok::<_, BlockchainError>((nonce, multisig))
                     })
-                    .buffered(self.stream_concurrency)
+                    .buffered(self.config.stream_concurrency)
                     .try_collect()
                     .await?;
 
@@ -318,7 +318,7 @@ impl<S: Storage> P2pServer<S> {
                         let balance = storage.get_contract_balance_at_maximum_topoheight(contract, &asset, topoheight).await?;
                         Ok::<_, BlockchainError>(balance.map(|(_, v)| (asset, v.take())))
                     })
-                    .buffered(self.stream_concurrency)
+                    .buffered(self.config.stream_concurrency)
                     .boxed()
                     .filter_map(|res| async move { res.transpose() })
                     .try_collect::<IndexMap<Hash, u64>>().await?;
@@ -449,7 +449,7 @@ impl<S: Storage> P2pServer<S> {
 
                         Ok::<_, BlockchainError>(BlockMetadata { hash, topoheight_metadata, mergeset, difficulty, cumulative_difficulty, p, size_ema, executed_transactions })
                     })
-                    .buffered(self.stream_concurrency)
+                    .buffered(self.config.stream_concurrency)
                     .try_collect()
                     .await?;
 
@@ -702,7 +702,7 @@ impl<S: Storage> P2pServer<S> {
                     let lowest_topoheight = stable_topoheight - PRUNE_SAFETY_LIMIT;
 
                     stream::iter(blocks.into_iter().enumerate().map(Ok))
-                        .try_for_each_concurrent(self.stream_concurrency, |(i, metadata)| async move {
+                        .try_for_each_concurrent(self.config.stream_concurrency, |(i, metadata)| async move {
                             let topoheight = lowest_topoheight + i as u64;
                             trace!("Processing block metadata {} at topoheight {}", metadata.hash, topoheight);
                             // check that we don't already have this block in storage
@@ -885,7 +885,7 @@ impl<S: Storage> P2pServer<S> {
             // Handle all assets for this key
             let blockchain = &self.blockchain;
             stream::iter(balances.into_iter().map(Ok))
-                .try_for_each_concurrent(self.stream_concurrency, |(asset, summary)| async move {
+                .try_for_each_concurrent(self.config.stream_concurrency, |(asset, summary)| async move {
                     // check that the account have balance for this asset
                     if let Some(account) = summary {
                         debug!("Fetching balance {} history for {}", asset, key.as_address(blockchain.get_network().is_mainnet()));
@@ -974,7 +974,7 @@ impl<S: Storage> P2pServer<S> {
         start = Instant::now();
 
         stream::iter(keys.iter().map(Ok))
-            .try_for_each_concurrent(self.stream_concurrency, |key| async move {
+            .try_for_each_concurrent(self.config.stream_concurrency, |key| async move {
                 self.handle_balances(peer, key, our_topoheight, stable_topoheight).await
             }).await?;
 
@@ -1107,7 +1107,7 @@ impl<S: Storage> P2pServer<S> {
         }
 
         stream::iter(contracts.iter().map(Ok::<_, P2pError>))
-            .try_for_each_concurrent(self.stream_concurrency, |contract| async move {
+            .try_for_each_concurrent(self.config.stream_concurrency, |contract| async move {
                 self.handle_contract_module(peer, contract, our_topoheight, stable_topoheight).await?;
                 Ok(())
             }).await?;
@@ -1138,7 +1138,7 @@ impl<S: Storage> P2pServer<S> {
             skip += contracts.len();
 
             stream::iter(contracts.iter().map(Ok))
-                .try_for_each_concurrent(self.stream_concurrency, |contract| async move {
+                .try_for_each_concurrent(self.config.stream_concurrency, |contract| async move {
                     try_join!(
                         self.handle_contract_stores(peer, contract, stable_topoheight),
                         self.handle_contract_balances(peer, contract, stable_topoheight),

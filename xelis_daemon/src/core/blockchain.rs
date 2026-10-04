@@ -81,7 +81,6 @@ use xelis_common::{
         spawn_task,
         is_multi_threads_supported,
         task::spawn_blocking,
-        net::lookup_host,
         sync::{RwLock, Semaphore}
     },
     varuint::VarUint,
@@ -132,7 +131,6 @@ use std::{
         VecDeque
     },
     iter,
-    net::SocketAddr,
     sync::Arc,
     time::{Duration, Instant}
 };
@@ -384,86 +382,16 @@ impl<S: Storage> Blockchain<S> {
         let arc = Arc::new(blockchain);
         // create P2P Server
         if !config.p2p.disable {
-            let dir_path = config.dir_path;
-            let p2p = config.p2p;
             info!("Starting P2p server...");
-            // setup exclusive nodes
-            let mut exclusive_nodes: Vec<SocketAddr> = Vec::with_capacity(p2p.exclusive_nodes.len());
-            for peer in p2p.exclusive_nodes {
-                for peer in peer.split(",") {
-                    match peer.parse() {
-                        Ok(addr) => {
-                            exclusive_nodes.push(addr);
-                        }
-                        Err(e) => {
-                            match lookup_host(&peer).await {
-                                Ok(it) => {
-                                    info!("Valid host found for {}", peer);
-                                    for addr in it {
-                                        info!("IP from DNS resolution: {}", addr);
-                                        exclusive_nodes.push(addr);
-                                    }
-                                },
-                                Err(e2) => {
-                                    error!("Error while parsing {} as exclusive node address: {}, {}", peer, e, e2);
-                                }
-                            };
-                            continue;
-                        }
-                    };
-                }
-            }
-
-            let proxy_auth = if let (Some(username), Some(password)) = (p2p.proxy.username, p2p.proxy.password) {
-                Some((username, password))
-            } else {
-                None
-            };
-
-            let proxy = if let (Some(proxy), Some(addr)) = (p2p.proxy.kind, &p2p.proxy.address) {
-                Some((proxy, addr.parse()?, proxy_auth))
-            } else {
-                None
-            };
-
             match P2pServer::new(
-                p2p.concurrency_task_count_limit,
-                dir_path,
-                p2p.tag,
-                p2p.max_peers,
-                p2p.bind_address,
+                config.p2p,
+                config.dir_path,
                 Arc::clone(&arc),
-                exclusive_nodes,
-                p2p.allow_fast_sync,
-                p2p.allow_boost_sync,
-                p2p.allow_priority_blocks,
-                p2p.max_chain_response_size,
-                !p2p.disable_ip_sharing,
-                p2p.max_outgoing_peers,
-                p2p.dh_private_key.map(|v| v.into()),
-                p2p.on_dh_key_change,
-                p2p.stream_concurrency,
-                p2p.temp_ban_duration.into(),
-                p2p.fail_count_limit,
-                p2p.disable_reexecute_blocks_on_sync,
-                p2p.block_propagation_log_level.into(),
-                p2p.disable_fetching_txs_propagated,
-                p2p.handle_peer_packets_in_dedicated_task,
-                p2p.enable_compression,
-                p2p.disable_fast_sync_support,
-                proxy,
-                p2p.outgoing_connection_timeout.into(),
-                p2p.ping_interval.into(),
-                p2p.heartbeat_interval.into(),
-                p2p.ping_timeout.into(),
-                p2p.timeouts,
-                p2p.sync_from_priority_only,
-                p2p.reorg_from_priority_only,
                 config.txs_verification_threads_count,
-            ) {
+            ).await {
                 Ok(server) => {
                     *arc.p2p.write().await = Some(server.clone());
-                    server.connect_to_priority_nodes(p2p.priority_nodes);
+                    server.connect_to_priority_nodes();
                 },
                 Err(e) => error!("Error while starting P2p server: {}", e)
             };
