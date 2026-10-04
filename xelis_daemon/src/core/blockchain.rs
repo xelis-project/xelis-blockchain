@@ -243,72 +243,7 @@ tid! { impl<'a, S: 'static> TidAble<'a> for Blockchain<S> where S: Storage }
 
 impl<S: Storage> Blockchain<S> {
     pub async fn new(mut config: BlockchainConfig, network: Network, storage: S) -> Result<Arc<Self>, Error> {
-        // Do some checks on config params
-        {
-            if config.simulator.is_some() && network != Network::Devnet {
-                error!("Impossible to enable simulator mode except in dev network!");
-                return Err(BlockchainError::InvalidNetwork.into())
-            }
-    
-            if let Some(keep_only) = config.auto_prune_keep_n_blocks {
-                if keep_only < PRUNE_SAFETY_LIMIT {
-                    error!("Auto prune mode should keep at least 80 blocks");
-                    return Err(BlockchainError::AutoPruneMode.into())
-                }
-            }
-
-            if config.p2p.allow_boost_sync && config.p2p.allow_fast_sync {
-                error!("Boost sync and fast sync can't be enabled at the same time!");
-                return Err(BlockchainError::ConfigSyncMode.into())
-            }
-
-            if config.skip_pow_verification {
-                warn!("PoW verification is disabled! This is dangerous in production!");
-            }
-
-            if config.txs_verification_threads_count == 0 {
-                error!("TXs threads count must be above 0");
-                return Err(BlockchainError::InvalidConfig.into());
-            } else {
-                info!("Will use {} threads for TXs verification", config.txs_verification_threads_count);
-            }
-
-            if config.rpc.threads == 0 {
-                error!("RPC threads count must be above 0");
-                return Err(BlockchainError::InvalidConfig.into())
-            }
-
-            if config.rpc.max_connections_per_ip == Some(0) {
-                error!("RPC max connections per IP must be above 0");
-                return Err(BlockchainError::InvalidConfig.into())
-            }
-
-            if config.p2p.proxy.kind.is_some() != config.p2p.proxy.address.is_some() {
-                error!("P2P Proxy must be specified with an address");
-                return Err(BlockchainError::InvalidConfig.into())
-            }
-
-            if config.p2p.proxy.username.is_some() != config.p2p.proxy.password.is_some() {
-                error!("P2P Proxy auth username/password mismatch");
-                return Err(BlockchainError::InvalidConfig.into())
-            }
-
-            if config.p2p.max_outgoing_peers > config.p2p.max_peers {
-                warn!("max outgoing peers is above max peers, cap it to max peers");
-                config.p2p.max_outgoing_peers = config.p2p.max_peers;
-            }
-
-            let priority_len = config.p2p.priority_nodes.len();
-            if priority_len > config.p2p.max_outgoing_peers {
-                warn!("{} priority nodes configured while max outgoing peers is set to {}, increasing max outgoing peers", priority_len, config.p2p.max_outgoing_peers);
-                config.p2p.max_outgoing_peers = priority_len;
-            }
-
-            if config.mempool.min_fee_per_kb < FEE_PER_KB {
-                error!("Minimum fee per kB must be at least {}", FEE_PER_KB);
-                return Err(BlockchainError::InvalidConfig.into())
-            }
-        }
+        config.validate(network)?;
 
         let on_disk = storage.has_blocks().await?;
         let environments = ContractVersion::variants()

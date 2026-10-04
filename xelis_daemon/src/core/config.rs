@@ -1,10 +1,12 @@
 use std::time::Duration;
 use human_bytes::human_bytes;
+use log::{error, info, warn};
 use humantime::Duration as HumanDuration;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use xelis_common::{
     config::FEE_PER_KB,
     crypto::Hash,
+    network::Network,
     prompt::LogLevel,
     utils::detect_available_parallelism,
     rpc::server::websocket::{
@@ -18,7 +20,7 @@ use crate::{
     p2p::{KeyVerificationAction, WrappedSecret, P2pTimeouts}
 };
 
-use super::simulator::Simulator;
+use super::{error::BlockchainError, simulator::Simulator};
 
 // Functions helpers for serde default values
 fn default_p2p_bind_address() -> String {
@@ -808,6 +810,77 @@ pub struct BlockchainConfig {
     #[clap(long)]
     #[serde(default)]
     pub enable_snapshot_on_reorg: bool,
+}
+
+impl BlockchainConfig {
+    /// Validate configuration settings and adjust outgoing peer limits.
+    pub fn validate(&mut self, network: Network) -> Result<(), BlockchainError> {
+        if self.simulator.is_some() && network != Network::Devnet {
+            error!("Impossible to enable simulator mode except in dev network!");
+            return Err(BlockchainError::InvalidNetwork)
+        }
+
+        if let Some(keep_only) = self.auto_prune_keep_n_blocks {
+            if keep_only < PRUNE_SAFETY_LIMIT {
+                error!("Auto prune mode should keep at least 80 blocks");
+                return Err(BlockchainError::AutoPruneMode)
+            }
+        }
+
+        if self.p2p.allow_boost_sync && self.p2p.allow_fast_sync {
+            error!("Boost sync and fast sync can't be enabled at the same time!");
+            return Err(BlockchainError::ConfigSyncMode)
+        }
+
+        if self.skip_pow_verification {
+            warn!("PoW verification is disabled! This is dangerous in production!");
+        }
+
+        if self.txs_verification_threads_count == 0 {
+            error!("TXs threads count must be above 0");
+            return Err(BlockchainError::InvalidConfig);
+        } else {
+            info!("Will use {} threads for TXs verification", self.txs_verification_threads_count);
+        }
+
+        if self.rpc.threads == 0 {
+            error!("RPC threads count must be above 0");
+            return Err(BlockchainError::InvalidConfig)
+        }
+
+        if self.rpc.max_connections_per_ip == Some(0) {
+            error!("RPC max connections per IP must be above 0");
+            return Err(BlockchainError::InvalidConfig)
+        }
+
+        if self.p2p.proxy.kind.is_some() != self.p2p.proxy.address.is_some() {
+            error!("P2P Proxy must be specified with an address");
+            return Err(BlockchainError::InvalidConfig)
+        }
+
+        if self.p2p.proxy.username.is_some() != self.p2p.proxy.password.is_some() {
+            error!("P2P Proxy auth username/password mismatch");
+            return Err(BlockchainError::InvalidConfig)
+        }
+
+        if self.p2p.max_outgoing_peers > self.p2p.max_peers {
+            warn!("max outgoing peers is above max peers, cap it to max peers");
+            self.p2p.max_outgoing_peers = self.p2p.max_peers;
+        }
+
+        let priority_len = self.p2p.priority_nodes.len();
+        if priority_len > self.p2p.max_outgoing_peers {
+            warn!("{} priority nodes configured while max outgoing peers is set to {}, increasing max outgoing peers", priority_len, self.p2p.max_outgoing_peers);
+            self.p2p.max_outgoing_peers = priority_len;
+        }
+
+        if self.mempool.min_fee_per_kb < FEE_PER_KB {
+            error!("Minimum fee per kB must be at least {}", FEE_PER_KB);
+            return Err(BlockchainError::InvalidConfig)
+        }
+
+        Ok(())
+    }
 }
 
 impl Default for BlockchainConfig {
