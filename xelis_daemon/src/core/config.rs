@@ -495,7 +495,8 @@ pub struct P2pConfig {
     #[clap(long)]
     #[serde(default)]
     pub disable_ip_sharing: bool,
-    /// Maximum number of concurrent tasks accepting new P2P connections.
+    /// Maximum number of incoming P2P connections undergoing admission and handshake.
+    /// Must be greater than zero; further connections wait in the TCP backlog.
     #[clap(name = "p2p-concurrency-task-count-limit", long, default_value_t = default_p2p_concurrency_task_count_limit())]
     #[serde(default = "default_p2p_concurrency_task_count_limit")]
     pub concurrency_task_count_limit: usize,

@@ -22,7 +22,6 @@ use std::{
     time::Instant,
     borrow::Cow,
     collections::HashSet,
-    io,
     net::{IpAddr, SocketAddr},
     num::NonZeroUsize,
     cmp::Ordering as CmpOrdering,
@@ -40,7 +39,7 @@ use tokio_socks::tcp::{Socks4Stream, Socks5Stream};
 use bytes::{Bytes, BytesMut};
 use rand::{RngExt, seq::IteratorRandom};
 use futures::{
-    stream::{self, FuturesOrdered},
+    stream::{self, FuturesOrdered, FuturesUnordered},
     Stream,
     StreamExt,
     TryStreamExt
@@ -82,7 +81,6 @@ use xelis_common::{
         },
         task::JoinHandle,
         time::{interval, sleep, timeout},
-        ThreadPool,
         SequentialExecutor,
         OrderedConcurrentExecutor,
     },
@@ -176,6 +174,10 @@ impl<S: Storage> P2pServer<S> {
 
         if config.max_peers == 0 {
             return Err(P2pError::InvalidMaxPeers);
+        }
+
+        if config.concurrency_task_count_limit == 0 {
+            return Err(P2pError::InvalidConnectionConcurrency);
         }
 
         if config.temp_ban_duration.is_zero() {
@@ -407,7 +409,7 @@ impl<S: Storage> P2pServer<S> {
         // start another task for peerlist loop
         spawn_task("p2p-peerlist", Arc::clone(&self).peerlist_loop());
 
-        spawn_task("p2p-incoming-connections", Arc::clone(&self).handle_incoming_connections(listener, self.config.concurrency_task_count_limit));
+        spawn_task("p2p-incoming-connections", Arc::clone(&self).handle_incoming_connections(listener));
 
         spawn_task("p2p-requests-cache", Arc::clone(&self).requests_cache_task());
 
@@ -454,9 +456,7 @@ impl<S: Storage> P2pServer<S> {
     // This task will handle an incoming connection request
     // It will verify if we can accept this connection
     // If we can, we will create a new peer and send it to the listener
-    async fn handle_incoming_connection(self: &Arc<Self>, res: io::Result<(TcpStream, SocketAddr)>, thread_pool: &ThreadPool) -> Result<(), P2pError> {
-        let (mut stream, addr) = res?;
-
+    async fn handle_incoming_connection(&self, mut stream: TcpStream, addr: SocketAddr) -> Result<(), P2pError> {
         // Verify if we can accept new connections
         let mut reject = true;
 
@@ -479,41 +479,42 @@ impl<S: Storage> P2pServer<S> {
         }
 
         let connection = Connection::new(stream, addr, false, self.config.timeouts);
-        let zelf = Arc::clone(&self);
-        thread_pool.execute(async move {
-            let mut buffer = [0; 512];
-            match zelf.create_verified_peer(&mut buffer, connection, false).await {
-                Ok((peer, rx)) => {
-                    if let Err(e) = zelf.peer_sender.send((peer, rx)).await {
-                        error!("Error while sending new connection to listener: {}", e);
-                    }
-                },
-                Err(e) => {
-                    debug!("Error while handling incoming connection {}: {}", addr, e);
-                    if let Err(e) = zelf.peer_list.increase_fail_count_for_peerlist_entry(&addr.ip(), true).await {
-                        error!("Error while increasing fail count for incoming peer {} while verifying it: {}", addr, e);
-                    }
+        let mut buffer = [0; 512];
+        match self.create_verified_peer(&mut buffer, connection, false).await {
+            Ok((peer, rx)) => {
+                self.peer_sender.send((peer, rx)).await
+                    .context("Error while sending incoming peer to task")?;
+            },
+            Err(e) => {
+                debug!("Error while handling incoming connection {}: {}", addr, e);
+                if let Err(e) = self.peer_list.increase_fail_count_for_peerlist_entry(&addr.ip(), true).await {
+                    error!("Error while increasing fail count for incoming peer {} while verifying it: {}", addr, e);
                 }
-            };
-        }).await?;
+            }
+        };
 
         Ok(())
     }
 
-    // This task will handle all incoming connections requests
-    // Based on the concurrency set, it will create a thread pool to handle requests and wait when
-    // a worker is free to accept a new connection
-    async fn handle_incoming_connections(self: Arc<Self>, listener: TcpListener, concurrency: usize) {
-        let mut thread_pool = ThreadPool::new(concurrency);
+    // Poll admission checks and handshakes concurrently without a worker queue.
+    // Stop accepting while at capacity, leaving pending sockets in the TCP backlog.
+    // Keeping the futures here lets shutdown cancel every pending connection.
+    async fn handle_incoming_connections(self: Arc<Self>, listener: TcpListener) {
+        let mut connections = FuturesUnordered::new();
         let mut exit_receiver = self.exit_sender.subscribe();
-        loop {
+        while self.is_running() {
             select! {
                 biased;
                 _ = exit_receiver.recv() => {
                     debug!("Received exit message, exiting incoming connections task");
                     break;
                 }
-                res = listener.accept() => {
+                result = connections.next(), if !connections.is_empty() => {
+                    if let Some(Err(e)) = result {
+                        debug!("Error while handling incoming connection: {}", e);
+                    }
+                }
+                res = listener.accept(), if connections.len() < self.config.concurrency_task_count_limit => {
                     trace!("New listener result received (is err: {})", res.is_err());
                     counter!("xelis_p2p_incoming_connections_total").increment(1u64);
 
@@ -521,15 +522,16 @@ impl<S: Storage> P2pServer<S> {
                         break;
                     }
 
-                    self.handle_incoming_connection(res, &thread_pool).await.unwrap_or_else(|e| {
-                        debug!("Error while handling incoming connection: {}", e);
-                    });
+                    match res {
+                        Ok((stream, addr)) => connections.push(self.handle_incoming_connection(stream, addr)),
+                        Err(e) => debug!("Error while accepting incoming connection: {}", e),
+                    }
                 }
             }
         }
 
-        thread_pool.stop();
-
+        // Includes handshakes waiting for I/O and peers waiting for channel capacity.
+        drop(connections);
         debug!("incoming connections task has exited");
     }
 

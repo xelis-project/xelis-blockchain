@@ -63,6 +63,8 @@ pub enum P2pError {
     InvalidMaxChainResponseSize,
     #[error("Invalid max peers, it must be greater than 0")]
     InvalidMaxPeers,
+    #[error("Invalid incoming connection concurrency, it must be greater than 0")]
+    InvalidConnectionConcurrency,
     #[error("Already closed")]
     AlreadyClosed,
     #[error("Incompatible with configured exclusive nodes")]
