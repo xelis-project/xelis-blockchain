@@ -2108,12 +2108,10 @@ impl<S: Storage> Blockchain<S> {
                     }
 
                     debug!("using multi-threading mode to verify the transactions in {} batches", batches_count);
-                    let mut batches = vec![Vec::new(); batches_count];
-
-                    // TODO: load balance more!
-                    for (i, group) in txs_grouped.into_values().enumerate() {
-                        batches[i % batches_count].extend(group);
-                    }
+                    // Keep each sender's transactions together and in order, while
+                    // balancing the estimated proof work across blocking threads.
+                    let batches = balance_verification_batches(txs_grouped.values(), batches_count,
+                        |group| group.values().map(|tx| 1 + tx.get_outputs_count() as u128).sum());
 
                     let storage = &*storage;
                     let environments = &self.environments;
@@ -2122,10 +2120,10 @@ impl<S: Storage> Blockchain<S> {
                     // We run the batches in concurrent tasks
                     // But, because Transaction#verify_batch is actually spawning a blocking thread
                     // it will be multi-threaded by N threads
-                    stream::iter(batches.into_iter().map(Ok))
+                    stream::iter(batches.map(Ok))
                         .try_for_each_concurrent(self.txs_verification_threads_count, async |txs| {
                             let mut chain_state = ChainState::new(storage, environments, base_topoheight, nearest_base_topoheight, expected_topoheight, version, base_fee, base_height);
-                            Transaction::verify_batch(txs.iter().map(|(hash, tx)| (tx, hash.as_ref())), &mut chain_state, cache).await
+                            Transaction::verify_batch(txs.map(|(hash, tx)| (tx, hash.as_ref())), &mut chain_state, cache).await
                         }).await
                 } else {
                     // Verify all valid transactions in one batch
@@ -3580,9 +3578,193 @@ pub fn get_block_dev_fee(height: u64) -> u64 {
     percentage
 }
 
+// Schedule the heaviest sender groups first onto the least-loaded batch.
+// Output count estimates proof work; the per-TX cost also accounts for groups
+// with few outputs. This affects scheduling only, not transaction ordering
+// within a sender or the verification rules.
+fn balance_verification_batches<T, G>(groups: impl IntoIterator<Item = G>, batches_count: usize, group_cost: impl Fn(&G) -> u128) -> impl Iterator<Item = impl Iterator<Item = T>>
+where
+    G: IntoIterator<Item = T>,
+{
+    struct Group<I> {
+        weight: u128,
+        original_index: usize,
+        transactions: I,
+        batch_index: usize,
+    }
+
+    struct Batch<I> {
+        weight: u128,
+        group_count: usize,
+        groups: Vec<I>,
+    }
+
+    assert!(batches_count > 0);
+    // Keep the original group buffers; only allocate scheduling metadata.
+    let mut groups = groups.into_iter().enumerate().map(|(index, group)| Group {
+        weight: group_cost(&group),
+        original_index: index,
+        transactions: group.into_iter(),
+        batch_index: 0,
+    }).collect::<Vec<_>>();
+
+    groups.sort_by(|a, b| b.weight.cmp(&a.weight)
+        .then_with(|| a.original_index.cmp(&b.original_index)));
+
+    let mut batches = (0..batches_count).map(|_| Batch {
+        weight: 0,
+        group_count: 0,
+        groups: Vec::new(),
+    }).collect::<Vec<_>>();
+
+    // Assign groups and count the space required by each batch.
+    for group in &mut groups {
+        let (index, batch) = batches.iter_mut()
+            .enumerate()
+            .min_by_key(|(_, batch)| batch.weight)
+            .expect("at least one verification batch");
+
+        group.batch_index = index;
+        batch.weight += group.weight;
+        batch.group_count += 1;
+    }
+
+    // Store only group iterators; transactions stay in their original buffers.
+    for batch in &mut batches {
+        batch.groups = Vec::with_capacity(batch.group_count);
+    }
+    for group in groups {
+        batches[group.batch_index].groups.push(group.transactions);
+    }
+
+    batches.into_iter().map(|batch| batch.groups.into_iter().flatten())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // These fixtures exercise scheduling only, without cryptographic proofs.
+    // Each group belongs to one sender, with transactions in nonce order.
+    #[derive(Debug, PartialEq, Eq)]
+    struct VerificationTransaction {
+        sender: &'static str,
+        nonce: usize,
+        outputs: usize,
+    }
+
+    fn sender_transactions(sender: &'static str, output_counts: &[usize]) -> Vec<VerificationTransaction> {
+        output_counts.iter().enumerate().map(|(nonce, outputs)| VerificationTransaction {
+            sender,
+            nonce,
+            outputs: *outputs,
+        }).collect()
+    }
+
+    fn verification_batches(groups: &[Vec<VerificationTransaction>], threads: usize) -> Vec<Vec<&VerificationTransaction>> {
+        // Match production: borrow existing groups and estimate cost as
+        // one unit per transaction plus one unit per output. Collect the
+        // returned iterators here only so tests can inspect their contents.
+        balance_verification_batches(groups.iter(), threads,
+            |group| group.iter().map(|tx| 1 + tx.outputs as u128).sum())
+            .map(|batch| batch.collect()).collect()
+    }
+
+    #[test]
+    fn test_verification_batches_balance_output_cost() {
+        // All groups contain one transaction, but their output counts differ.
+        // Costs are Alice=5, Bob=8, Carol=6, Dave=7. Round-robin would give
+        // thread loads 11 and 15; balancing can give 13 to both threads.
+        let groups = vec![
+            sender_transactions("alice", &[4]),
+            sender_transactions("bob", &[7]),
+            sender_transactions("carol", &[5]),
+            sender_transactions("dave", &[6]),
+        ];
+        let batches = verification_batches(&groups, 2);
+        let senders = batches.iter().map(|batch| batch.iter().map(|tx| tx.sender).collect::<Vec<_>>()).collect::<Vec<_>>();
+        let costs = batches.iter().map(|batch| batch.iter().map(|tx| 1 + tx.outputs).sum::<usize>()).collect::<Vec<_>>();
+
+        // Bob goes first, then Dave to the other thread. Carol joins Dave,
+        // and Alice joins Bob: 8+5 versus 7+6.
+        assert_eq!(senders, vec![vec!["bob", "alice"], vec!["dave", "carol"]]);
+        assert_eq!(costs, vec![13, 13], "both threads should receive equal estimated work");
+    }
+
+    #[test]
+    fn test_verification_batches_keep_each_sender_together_and_in_nonce_order() {
+        let groups = vec![
+            sender_transactions("alice", &[1, 7]),
+            sender_transactions("bob", &[6]),
+            sender_transactions("carol", &[5]),
+            sender_transactions("dave", &[1, 1]),
+        ];
+        let batches = verification_batches(&groups, 2);
+        let input_count: usize = groups.iter().map(Vec::len).sum();
+        let output_count: usize = batches.iter().map(Vec::len).sum();
+        assert_eq!(output_count, input_count, "batching must not add or drop transactions");
+
+        for group in &groups {
+            let sender = group[0].sender;
+            let sender_batches = batches.iter().filter(|batch| batch.iter().any(|tx| tx.sender == sender)).collect::<Vec<_>>();
+            // Checking each batch matters: flattening all batches first could
+            // hide a sender's transactions being split across threads.
+            assert_eq!(sender_batches.len(), 1, "all transactions from {sender} must be in one batch");
+            let actual = sender_batches[0].iter().copied().filter(|tx| tx.sender == sender).collect::<Vec<_>>();
+            let expected = group.iter().collect::<Vec<_>>();
+            assert_eq!(actual, expected, "{sender}'s transactions must appear once, in nonce order");
+
+            // The output must reference the original transactions, rather
+            // than copies placed in a separate transaction buffer.
+            for (actual, original) in actual.iter().zip(group) {
+                assert_eq!(*actual, original, "transaction references must be preserved");
+            }
+        }
+    }
+
+    #[test]
+    fn test_verification_batches_assign_equal_cost_groups_predictably() {
+        // Every sender has two transactions with one output each: cost 4.
+        // Equal-cost groups keep their input order, and equal-load threads
+        // favor the first thread. This gives Alice/Carol and Bob/Dave.
+        let groups = vec![
+            sender_transactions("alice", &[1, 1]),
+            sender_transactions("bob", &[1, 1]),
+            sender_transactions("carol", &[1, 1]),
+            sender_transactions("dave", &[1, 1]),
+        ];
+        let batches = verification_batches(&groups, 2);
+        assert_eq!(batches, vec![
+            groups[0].iter().chain(&groups[2]).collect::<Vec<_>>(),
+            groups[1].iter().chain(&groups[3]).collect::<Vec<_>>(),
+        ], "equal costs must produce deterministic assignments");
+    }
+
+    #[test]
+    fn test_verification_batches_single_sender_preserves_nonce_order() {
+        // Output cost varies, but transactions within a sender must never
+        // be sorted by cost: verification needs their original nonce order.
+        let groups = vec![sender_transactions("alice", &[1, 8, 2])];
+        let batches = verification_batches(&groups, 1);
+        assert_eq!(batches, vec![groups[0].iter().collect::<Vec<_>>()]);
+    }
+
+    #[test]
+    fn test_verification_batches_allow_more_threads_than_senders() {
+        // Extra threads have empty batches; the sole sender is not split
+        // just to fill them. Production normally caps the thread count.
+        let groups = vec![sender_transactions("alice", &[1, 8, 2])];
+        let batches = verification_batches(&groups, 3);
+        assert_eq!(batches, vec![groups[0].iter().collect::<Vec<_>>(), vec![], vec![]]);
+    }
+
+    #[test]
+    fn test_verification_batches_empty_input() {
+        // No sender groups means every requested batch is empty.
+        let batches = verification_batches(&[], 2);
+        assert_eq!(batches.len(), 2);
+        assert!(batches.iter().all(Vec::is_empty));
+    }
 
     #[test]
     fn test_reward_side_block_percentage() {
