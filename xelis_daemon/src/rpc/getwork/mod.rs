@@ -21,7 +21,7 @@ use log::{debug, error, trace, warn};
 use lru::LruCache;
 use serde::Serialize;
 use xelis_common::{
-    tokio::{sync::Mutex, time::sleep},
+    tokio::{sync::Mutex, task::JoinHandle, time::sleep},
     api::daemon::{
         GetBlockTemplateResult,
         GetMinerWorkResult,
@@ -100,6 +100,8 @@ pub struct GetWorkServer<S: Storage> {
     notify_job_concurrency: usize,
     // Check miner heartbeat every N ms, if a miner doesn't send a heartbeat in this time, we disconnect it
     check_heartbeat: bool,
+    // Retain the notifier so shutdown can cancel it and release its server reference.
+    notifier_task: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl<S: Storage> GetWorkServer<S> {
@@ -113,15 +115,32 @@ impl<S: Storage> GetWorkServer<S> {
             is_job_dirty: AtomicBool::new(false),
             notify_rate_limit_ms,
             notify_job_concurrency,
-            check_heartbeat
+            check_heartbeat,
+            notifier_task: Mutex::new(None),
         });
 
         if notify_rate_limit_ms > 0 {
             let zelf = Arc::clone(&server);
-            spawn_task("getwork-notifier", zelf.task_notifier());
+            let task = spawn_task("getwork-notifier", zelf.task_notifier());
+            // The server has not been published yet; nobody else can lock this field.
+            *server.notifier_task.try_lock().expect("new notifier task mutex is unlocked") = Some(task);
         }
 
         server
+    }
+
+    pub async fn stop(&self) {
+        let mut notifier = self.notifier_task.lock().await;
+        if let Some(task) = notifier.as_mut() {
+            task.abort();
+            if let Err(e) = task.await {
+                if !e.is_cancelled() {
+                    error!("Error while joining GetWork notifier: {}", e);
+                }
+            }
+            // Keep the handle until joining completes, including if stop is cancelled.
+            *notifier = None;
+        }
     }
 
     // check if the last notify is older than the rate limit

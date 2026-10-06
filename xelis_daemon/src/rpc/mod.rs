@@ -222,6 +222,7 @@ impl<S: Storage> DaemonRpcServer<S> {
         }
 
         if let Some(getwork) = &self.getwork {
+            getwork.get_handler().stop().await;
             if let Err(e) = getwork.clear_connections().await {
                 error!("Error while clearing GetWork WebSocket connections: {}", e);
             }
