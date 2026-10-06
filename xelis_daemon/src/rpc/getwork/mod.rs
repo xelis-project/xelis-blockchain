@@ -21,7 +21,7 @@ use log::{debug, error, trace, warn};
 use lru::LruCache;
 use serde::Serialize;
 use xelis_common::{
-    tokio::{sync::Mutex, task::JoinHandle, time::sleep},
+    tokio::{sync::{Mutex, RwLock}, task::JoinHandle, time::sleep},
     api::daemon::{
         GetBlockTemplateResult,
         GetMinerWorkResult,
@@ -76,6 +76,23 @@ pub enum BlockResult {
 
 pub type SharedGetWorkServer<S> = Arc<GetWorkServer<S>>;
 
+// Keep the latest hash and its cached header under the same lock.
+struct MiningJobs {
+    cache: LruCache<Hash, (BlockHeader, Difficulty)>,
+    latest: Option<Hash>,
+}
+
+impl MiningJobs {
+    fn new(capacity: NonZeroUsize) -> Self {
+        Self { cache: LruCache::new(capacity), latest: None }
+    }
+
+    fn insert(&mut self, hash: Hash, header: BlockHeader, difficulty: Difficulty) {
+        self.cache.put(hash.clone(), (header, difficulty));
+        self.latest = Some(hash);
+    }
+}
+
 pub struct GetWorkServer<S: Storage> {
     // Contains all miners connected to the getwork server
     // The key is the session, and the value is the representation of a miner statistics
@@ -84,9 +101,7 @@ pub struct GetWorkServer<S: Storage> {
     // all potential jobs sent to miners
     // we can keep them in cache up to STABLE_LIMIT blocks
     // so even a late miner have a chance to not be orphaned and be included in chain
-    mining_jobs: Mutex<LruCache<Hash, (BlockHeader, Difficulty)>>,
-    // last header hash used for job
-    last_header_hash: Mutex<Option<Hash>>,
+    mining_jobs: RwLock<MiningJobs>,
     // used only when a new TX is received in mempool
     last_notify: AtomicU64,
     // used to know if we can notify miners again
@@ -109,8 +124,7 @@ impl<S: Storage> GetWorkServer<S> {
         let server = Arc::new(Self {
             miners: Mutex::new(HashMap::new()),
             blockchain,
-            mining_jobs: Mutex::new(LruCache::new(NonZeroUsize::new(128).expect("Non zero mining jobs cache"))),
-            last_header_hash: Mutex::new(None),
+            mining_jobs: RwLock::new(MiningJobs::new(NonZeroUsize::new(128).expect("Non zero mining jobs cache"))),
             last_notify: AtomicU64::new(0),
             is_job_dirty: AtomicBool::new(false),
             notify_rate_limit_ms,
@@ -197,17 +211,15 @@ impl<S: Storage> GetWorkServer<S> {
     async fn send_new_job(&self, session: &WebSocketSessionShared<Self>, key: &PublicKey) -> Result<(), anyhow::Error> {
         debug!("Sending new job to miner");
         let (version, mut job, height, difficulty) = {
-            debug!("locking last header hashfor new job");
-            let mut hash = self.last_header_hash.lock().await;
+            debug!("locking mining jobs for new job");
+            let mut mining_jobs = self.mining_jobs.write().await;
 
             // if we have a job in cache, and we are rate limited, we can send it
             // otherwise, we generate a new job
-            if let Some(hash) = hash.as_ref() {
+            if let Some(hash) = mining_jobs.latest.as_ref() {
                 debug!("job found in cache, sending it");
-                let mining_jobs = self.mining_jobs.lock().await;
-                debug!("mining jobs locked for new job");
 
-                let (header, diff) = mining_jobs.peek(hash)
+                let (header, diff) = mining_jobs.cache.peek(hash)
                     .ok_or(InternalRpcError::InternalError("No mining job found".into()))?;
 
                 let job = MinerWork::new(header.get_work_hash(), get_current_time_in_millis());
@@ -233,13 +245,7 @@ impl<S: Storage> GetWorkServer<S> {
 
                 // save the mining job, and set it as last job
                 let header_work_hash = job.get_header_work_hash();
-                *hash = Some(header_work_hash.clone());
-                {
-                    debug!("job found in cache, sending it");
-                    let mut mining_jobs = self.mining_jobs.lock().await;
-                    debug!("mining jobs locked for new job");
-                    mining_jobs.put(header_work_hash.clone(), (header, difficulty));
-                }
+                mining_jobs.insert(header_work_hash.clone(), header, difficulty);
 
                 (version, job, height, difficulty)
             }
@@ -333,17 +339,10 @@ impl<S: Storage> GetWorkServer<S> {
         // save the header used for job in cache
         let header_work_hash = job.get_header_work_hash();
         {
-            debug!("locking last header hash for notify new job");
-            let mut last_header_hash = self.last_header_hash.lock().await;
-            debug!("last header hash locked for notify new job");
-            *last_header_hash = Some(header_work_hash.clone());
-        }
-
-        {
             debug!("locking mining jobs for notify new job");
-            let mut mining_jobs = self.mining_jobs.lock().await;
+            let mut mining_jobs = self.mining_jobs.write().await;
             debug!("mining jobs locked for notify new job");
-            mining_jobs.put(header_work_hash.clone(), (header, difficulty));
+            mining_jobs.insert(header_work_hash.clone(), header, difficulty);
         }
 
         if !miners_empty {
@@ -402,8 +401,8 @@ impl<S: Storage> GetWorkServer<S> {
 
         let mut miner_header;
         {
-            let mining_jobs = self.mining_jobs.lock().await;
-            if let Some((header, _)) = mining_jobs.peek(job.get_header_work_hash()) {
+            let mining_jobs = self.mining_jobs.read().await;
+            if let Some((header, _)) = mining_jobs.cache.peek(job.get_header_work_hash()) {
                 // job is found in cache, clone it and put miner data inside
                 miner_header = header.clone();
                 if !miner_header.apply_miner_work(job) {
