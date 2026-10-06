@@ -199,6 +199,8 @@ pub struct Blockchain<S: Storage> {
     // Pre verify N blocks at same time
     // By default, set to N threads available
     pre_verify_block_semaphore: Semaphore,
+    // Limit concurrent mempool admissions across RPC, P2P and chain sync.
+    txs_verification_semaphore: Semaphore,
     // Contract environment stdlib
     environments: ContractEnvironments,
     // P2p module
@@ -257,6 +259,7 @@ impl<S: Storage> Blockchain<S> {
             storage: RwLock::new(storage),
             storage_semaphore: Semaphore::new(1),
             pre_verify_block_semaphore: Semaphore::new(config.pre_verify_block_threads_count),
+            txs_verification_semaphore: Semaphore::new(config.txs_verification_threads_count),
             environments,
             p2p: RwLock::new(None),
             rpc: RwLock::new(None),
@@ -1024,6 +1027,8 @@ impl<S: Storage> Blockchain<S> {
     // Add a tx to the mempool with the given hash, it is not computed and the TX is transformed into an Arc
     pub async fn add_tx_to_mempool_with_hash(&self, tx: Arc<Transaction>, hash: Immutable<Hash>, broadcast: bool) -> Result<(), BlockchainError> {
         debug!("add tx to mempool with hash {}", hash);
+        // Acquire before storage so queued admissions do not block chain writes.
+        let _permit = self.txs_verification_semaphore.acquire().await?;
         let storage = self.storage.read().await;
         debug!("storage read acquired to add tx to mempool with hash");
         self.add_tx_to_mempool_with_storage_and_hash(&storage, tx, hash, broadcast).await

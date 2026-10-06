@@ -757,6 +757,7 @@ pub struct BlockchainConfig {
     #[clap(long)]
     pub checkpoints: Vec<Hash>,
     /// Number of threads used for transaction verification.
+    /// Also limits concurrent transactions admitted to the mempool.
     ///
     /// Defaults to the detected CPU parallelism. Set to `1` to run on the main
     /// verification thread.
