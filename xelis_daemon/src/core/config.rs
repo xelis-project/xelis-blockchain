@@ -845,6 +845,12 @@ impl BlockchainConfig {
             info!("Will use {} threads for TXs verification", self.txs_verification_threads_count);
         }
 
+        // A semaphore with no permits would leave block pre-verification waiting forever.
+        if self.pre_verify_block_threads_count == 0 {
+            error!("Block pre-verification threads count must be above 0");
+            return Err(BlockchainError::InvalidConfig)
+        }
+
         if self.rpc.threads == 0 {
             error!("RPC threads count must be above 0");
             return Err(BlockchainError::InvalidConfig)
@@ -852,6 +858,12 @@ impl BlockchainConfig {
 
         if self.rpc.max_connections_per_ip == Some(0) {
             error!("RPC max connections per IP must be above 0");
+            return Err(BlockchainError::InvalidConfig)
+        }
+
+        // Tokio interval rejects a zero period when a peer's write task starts.
+        if self.p2p.heartbeat_interval.as_ref().is_zero() {
+            error!("P2P heartbeat interval must be above 0");
             return Err(BlockchainError::InvalidConfig)
         }
 
