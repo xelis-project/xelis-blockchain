@@ -346,10 +346,14 @@ impl RocksStorage {
         let mut iterator = self.db.iterator_cf(&cf, InternalIteratorMode::Start);
 
         if let Some(snapshot) = self.snapshot.as_ref() {
-            return Ok(snapshot.is_empty(column, iterator))
+            return snapshot.is_empty(column, iterator)
+                .with_context(|| format!("Error while checking if column {:?} is empty", column))
+                .map_err(Into::into)
         }
 
-        Ok(iterator.next().is_none())
+        let next = iterator.next().transpose()
+            .with_context(|| format!("Error while checking if column {:?} is empty", column))?;
+        Ok(next.is_none())
     }
 
     // Count how many entries we have stored in a column
@@ -357,13 +361,17 @@ impl RocksStorage {
         trace!("count entries {:?}", column);
         self.run_blocking(|| {
             let cf = cf_handle!(self.db, column);
-            let iterator = self.db.iterator_cf(&cf, InternalIteratorMode::Start);
+            let mut iterator = self.db.iterator_cf(&cf, InternalIteratorMode::Start);
 
             if let Some(snapshot) = self.snapshot.as_ref() {
-                return Ok(snapshot.count_entries(column, iterator))
+                return snapshot.count_entries(column, iterator)
+                    .with_context(|| format!("Error while counting entries in column {:?}", column))
+                    .map_err(Into::into)
             }
 
-            Ok(iterator.count())
+            let count = iterator.try_fold(0, |count, entry| entry.map(|_| count + 1))
+                .with_context(|| format!("Error while counting entries in column {:?}", column))?;
+            Ok(count)
         })
     }
 

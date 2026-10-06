@@ -79,28 +79,24 @@ impl<C: Hash + Eq> Snapshot<C> {
     }
 
     /// Count entries based on our snapshot state and the provided iterator for remaining entries on disk
-    pub fn count_entries<I: AsRef<[u8]>, E: StdError + Send + Sync + 'static>(&self, column: C, iterator: impl Iterator<Item = Result<(I, I), E>>) -> usize {
+    pub fn count_entries<I: AsRef<[u8]>, E: StdError + Send + Sync + 'static>(&self, column: C, mut iterator: impl Iterator<Item = Result<(I, I), E>>) -> Result<usize, E> {
         let changes = self.trees.get(&column);
-        iterator.map(|res| {
+        let pending = changes.map_or(0, |changes| changes.writes.values()
+            .filter(|v| v.is_some())
+            .count()
+        );
+        iterator.try_fold(pending, |count, res| {
             let (k, _) = res?;
 
-            let is_deleted = changes.map_or(false, |changes| changes.writes.get(k.as_ref())
-                .map_or(false, |v| v.is_none())
+            let is_overridden = changes.map_or(false, |changes| changes.writes.contains_key(k.as_ref())
             );
 
-            let v = if is_deleted {
-                None
-            } else {
-                Some(())
-            };
-
-            Ok::<_, E>(v)
-        }).filter_map(Result::transpose)
-        .count()
+            Ok(count + usize::from(!is_overridden))
+        })
     }
 
     /// Check if snapshot is empty based on our snapshot state and the provided iterator for remaining entries on disk
-    pub fn is_empty<I: AsRef<[u8]>, E: StdError + Send + Sync + 'static>(&self, column: C, iterator: impl Iterator<Item = Result<(I, I), E>>) -> bool {
+    pub fn is_empty<I: AsRef<[u8]>, E: StdError + Send + Sync + 'static>(&self, column: C, iterator: impl Iterator<Item = Result<(I, I), E>>) -> Result<bool, E> {
         let changes = self.trees.get(&column);
 
         if let Some(batch) = changes.as_ref() {
@@ -108,28 +104,23 @@ impl<C: Hash + Eq> Snapshot<C> {
                 .find(|(_, v)| v.is_some());
     
             if any.is_some() {
-                return true
+                return Ok(false)
             }
         }
 
-        let next = iterator.map(|res| {
+        for res in iterator {
             let (k, _) = res?;
 
             let is_deleted = changes.map_or(false, |changes| changes.writes.get(k.as_ref())
                 .map_or(false, |v| v.is_none())
             );
 
-            let v = if is_deleted {
-                None
-            } else {
-                Some(())
-            };
+            if !is_deleted {
+                return Ok(false)
+            }
+        }
 
-            Ok::<_, E>(v)
-        }).filter_map(Result::transpose)
-        .next();
-
-        next.is_none()
+        Ok(true)
     }
 
     /// Returns the previous value if any
@@ -325,5 +316,85 @@ impl<C: Hash + Eq> Snapshot<C> {
     {
         self.lazy_iter::<K, (), I, E>(column, mode, iterator)
             .map(|res| res.map(|(k, _)| k))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::convert::Infallible;
+    use super::*;
+
+    fn disk_entries(keys: &[u8]) -> impl Iterator<Item = Result<(Vec<u8>, Vec<u8>), Infallible>> + '_ {
+        keys.iter().map(|key| Ok((vec![*key], vec![0])))
+    }
+
+    fn assert_entries(snapshot: &Snapshot<u8>, column: u8, disk: &[u8], expected: usize) {
+        assert_eq!(snapshot.count_entries(column, disk_entries(disk)).unwrap(), expected);
+        assert_eq!(snapshot.is_empty(column, disk_entries(disk)).unwrap(), expected == 0);
+    }
+
+    #[test]
+    fn snapshot_entries_include_inserts_and_overwrites() {
+        let mut snapshot = Snapshot::new(StorageCache::default());
+        assert_entries(&snapshot, 0, &[], 0);
+        assert_entries(&snapshot, 0, &[1, 2], 2);
+
+        snapshot.put(0, vec![3], vec![30]);
+        assert_entries(&snapshot, 0, &[], 1);
+        assert_entries(&snapshot, 0, &[1, 2], 3);
+
+        snapshot.put(0, vec![1], vec![10]);
+        snapshot.put(0, vec![1], vec![11]);
+        assert_entries(&snapshot, 0, &[1, 2], 3);
+        assert_entries(&snapshot, 1, &[1, 2], 2);
+        assert_entries(&snapshot, 1, &[], 0);
+    }
+
+    #[test]
+    fn snapshot_entries_apply_deletions_and_reinsertions() {
+        let mut snapshot = Snapshot::new(StorageCache::default());
+        snapshot.delete(0, vec![9]);
+        assert_entries(&snapshot, 0, &[], 0);
+        assert_entries(&snapshot, 0, &[1, 2], 2);
+
+        snapshot.delete(0, vec![1]);
+        assert_entries(&snapshot, 0, &[1, 2], 1);
+        snapshot.delete(0, vec![2]);
+        assert_entries(&snapshot, 0, &[1, 2], 0);
+
+        snapshot.put(0, vec![3], vec![30]);
+        snapshot.delete(0, vec![3]);
+        assert_entries(&snapshot, 0, &[1, 2], 0);
+
+        snapshot.put(0, vec![1], vec![10]);
+        assert_entries(&snapshot, 0, &[1, 2], 1);
+        snapshot.delete(0, vec![1]);
+        assert_entries(&snapshot, 0, &[1, 2], 0);
+    }
+
+    #[test]
+    fn snapshot_entries_propagate_iterator_errors() {
+        use std::io::{Error, ErrorKind};
+
+        fn failing_entries() -> impl Iterator<Item = Result<(Vec<u8>, Vec<u8>), Error>> {
+            [Ok((vec![1], vec![0])), Err(Error::new(ErrorKind::Other, "iterator failure"))].into_iter()
+        }
+
+        let mut snapshot = Snapshot::new(StorageCache::default());
+        let error = snapshot.count_entries(0, failing_entries()).unwrap_err();
+        assert_eq!(error.to_string(), "iterator failure");
+
+        let error_only = failing_entries().skip(1);
+        let error = snapshot.is_empty(0, error_only).unwrap_err();
+        assert_eq!(error.to_string(), "iterator failure");
+
+        snapshot.delete(0, vec![1]);
+        let error = snapshot.is_empty(0, failing_entries()).unwrap_err();
+        assert_eq!(error.to_string(), "iterator failure");
+
+        snapshot.put(0, vec![2], vec![20]);
+        let error = snapshot.count_entries(0, failing_entries()).unwrap_err();
+        assert_eq!(error.to_string(), "iterator failure");
+        assert!(!snapshot.is_empty(0, failing_entries()).unwrap());
     }
 }
