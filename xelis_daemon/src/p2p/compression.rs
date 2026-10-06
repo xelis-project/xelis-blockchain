@@ -52,52 +52,60 @@ impl Compression {
             return Err(CompressionError::Initialized);
         }
 
-        let buffer = vec![0; snap::raw::max_compress_len(PEER_MAX_PACKET_SIZE as usize)];
-        self.encoder = Some(Mutex::new((Encoder::new(), buffer)));
-
-        let buffer = vec![0; PEER_MAX_PACKET_SIZE as usize];
-        self.decoder = Some(Mutex::new((Decoder::new(), buffer)));
+        self.encoder = Some(Mutex::new((Encoder::new(), Vec::new())));
+        self.decoder = Some(Mutex::new((Decoder::new(), Vec::new())));
 
         Ok(())        
     }
 
-    // Compress the input buffer if its size is greater than COMPRESSION_THRESHOLD
+    // Compress above COMPRESSION_THRESHOLD only when the result is smaller
     // If it was not enabled, it will simply be a no-op
     pub async fn compress(&self, input: &mut impl Buffer) -> Result<(), CompressionError> {
         if let Some(mutex) = self.encoder.as_ref() {
-            let should_compress = input.len() > COMPRESSION_THRESHOLD;
-            if should_compress {    
+            let len = input.len();
+            if len > PEER_MAX_PACKET_SIZE as usize {
+                return Err(CompressionError::Compression);
+            }
+
+            let mut compressed = false;
+            if len > COMPRESSION_THRESHOLD {
                 let start = Instant::now();
 
                 let mut lock = mutex.lock().await;
                 let (encoder, buffer) = &mut *lock;
+                let required = snap::raw::max_compress_len(len);
+                Self::grow_buffer(buffer, required)?;
 
-                let mut n = encoder.compress(input.as_ref(), buffer)
+                let n = encoder.compress(input.as_ref(), &mut buffer[..required])
                 .map_err(|_| CompressionError::Compression)?;
 
-                let len = input.len();
-                if len < n {
-                    input.extend_from_slice(&buffer[len..n])
-                        .map_err(|_| CompressionError::Buffer)?;
-    
-                    n = input.len();
-                } else {
+                if n < len {
                     input.truncate(n);
+                    input.as_mut().copy_from_slice(&buffer[..n]);
+                    compressed = true;
                 }
 
-                // now, re inject the compressed data in our input buffer
-                input.as_mut().copy_from_slice(&buffer[..n]);
-
                 let elapsed = start.elapsed();
-                trace!("Packet compressed from {} to {} in {:?}", human_bytes(len as f64), human_bytes(n as f64), elapsed);
+                trace!("Packet compression from {} to {} in {:?}, used: {}", human_bytes(len as f64), human_bytes(n as f64), elapsed, compressed);
                 histogram!("xelis_p2p_compress").record(elapsed.as_millis() as f64);
             }
 
             // if the packet was compressed, we need to add a byte at the end to indicate that
-            input.extend_from_slice(&[should_compress as u8])
+            input.extend_from_slice(&[compressed as u8])
                 .map_err(|_| CompressionError::Buffer)?;
         }
 
+        Ok(())
+    }
+
+    // Reuse the largest buffer seen so far without geometric capacity growth.
+    // Callers validate packet sizes before asking for more memory.
+    fn grow_buffer(buffer: &mut Vec<u8>, required: usize) -> Result<(), CompressionError> {
+        if required > buffer.len() {
+            buffer.try_reserve_exact(required - buffer.len())
+                .map_err(|_| CompressionError::Buffer)?;
+            buffer.resize(required, 0);
+        }
         Ok(())
     }
 
@@ -115,10 +123,17 @@ impl Compression {
 
             if compressed {
                 let start = Instant::now();
+                let required = snap::raw::decompress_len(buf.as_ref())
+                    .map_err(|_| CompressionError::Decompression)?;
+                if required > PEER_MAX_PACKET_SIZE as usize {
+                    return Err(CompressionError::Decompression);
+                }
+
                 let mut lock = mutex.lock().await;
                 let (decoder, buffer) = &mut *lock;
+                Self::grow_buffer(buffer, required)?;
 
-                let mut n = decoder.decompress(buf.as_ref(), buffer)
+                let mut n = decoder.decompress(buf.as_ref(), &mut buffer[..required])
                     .map_err(|_| CompressionError::Decompression)?;
 
                 let len = buf.len();
