@@ -4,438 +4,288 @@ XELIS is the world's first **BlockDAG** with **Privacy**, **Speed**, **Scalabili
 
 ## Features
 
-The main features of XELIS are the following:
-- **BlockDAG**: enabled to improve the scalability and the security of the network by reducing orphaned blocks rate.
-- **Egalitarian PoW**: Unique PoW algorithm built to allow any CPU or GPU to mine XELIS easily using [xelis-hash](https://github.com/xelis-project/xelis-hash).
-- **Kalman Filter**: Difficulty adjustment algorithm using Kalman Filter to adjust the difficulty at each block instantly and smoothly to prevent any stuck-chain or dishonest miners mining at lower difficulty. 
-- **Privacy**: Homomorphic Encryption allows to have encrypted balances and encrypted transfered amounts.
-- **Smart Contracts**: allows to create unstoppable decentralized applications by deploying programs on the network, executed in our sandboxed environment [xelis-vm](https://github.com/xelis-project/xelis-vm).
-- **Confidential Asset**: Any asset deployed on XELIS network will have the same privacy and functionality like XELIS in any wallet.
-- **Event system**: every event happening on the network (daemon or wallet) can be detected and notified easily.
-- **Instant Synchronization**: Your wallet balances and history is synced in few seconds. No need to sync the whole chain to use your wallet.
-- **Pruning Mode**: Reduce the blockchain size by deleting blocks, transactions and versioned balances.
-- **Smart Contracts**: Create and deploy unstoppable decentralized applications.
-- **Extra Data**: Send extra data in a transaction to transfer easily data to a wallet. This is secure and encrypted, readable only by the parties of a transaction.
-- **Integrated addresses**: Auto-integrate extra-data in a transaction when using an integrated address.
-- **Easy to use**: We aims to provide the most easiest platform to build and use daily.
+- **BlockDAG**: merges parallel mining branches into a topological execution order, reducing orphaned work.
+- **Proof of work**: CPU and GPU mining using [xelis-hash](https://github.com/xelis-project/xelis-hash).
+- **Difficulty adjustment**: a Gamma rate filter models Poisson block arrivals using observed DAG work and elapsed time. It adapts its smoothing to hashrate changes and limits upward rate changes, then scales the filtered hashrate by the target block time to determine difficulty (previously a Kalman filter was estimating network hashrate from observed DAG work and timestamps, adjusting difficulty for each block).
+- **Confidential transactions**: Twisted ElGamal encryption, Pedersen commitments, and zero-knowledge proofs protect transfer amounts and account balances.
+- **Smart contracts**: deploy and invoke programs in the sandboxed [xelis-vm](https://github.com/xelis-project/xelis-vm), with persistent storage, asset creation, events, and scheduled execution.
+- **Native assets**: registered assets support confidential transfers and encrypted balances.
+- **Multisignature accounts**: configure signing thresholds and participants for account transactions.
+- **Wallet synchronization**: retrieve balances and transaction history from a daemon without downloading the full blockchain.
+- **Pruning and fast sync**: reduce retained history or bootstrap from a trusted peer's chain state.
+- **Extra data and blobs**: attach private, public, or proprietary data to transfers, or send data without an asset transfer.
+- **Integrated addresses**: embed structured data in an address for payment identification and application integration.
+- **Event subscriptions**: receive daemon, wallet, and contract notifications through WebSocket APIs.
 
-For more, see the [full documentation](https://docs.xelis.io).
+See the [documentation](https://docs.xelis.io) for additional guides.
 
 ## Networks
 
-For easy of use, we provide different built-in networks:
-- Mainnet: Released April 20, 2024.
-- Testnet: Running
-- Devnet: this network is used for local development purpose where you want to create your own local chain. It has no peers
+The built-in networks are:
 
-You can switch between networks by using the `--network` option.
-By default, the network is set to `mainnet`.
+- `mainnet`: the production network and the default selection.
+- `testnet`: a separate network for testing.
+- `devnet`: local development, with no built-in seed nodes. Peers can be configured explicitly, and simulator mode is available.
 
-## Acknowledgments
-
-[@cchudant](https://github.com/cchudant):
-- Optimized decoding RistrettoPoint implementation (ECDLP).
-- Twisted ElGamal implementation along ZK-Proofs integration for Confidential Transactions.
-- To read more, please see [XELIS-HE](https://github.com/xelis-project/xelis-he) framework created by him.
-
-[@deroholic](https://github.com/deroholic):
-- Difficulty adjustment algorithm using Kalman-Filter.
-
-Thank you to every people testing actively the code base, honest miners and every future contributors!
+Select a network with `--network mainnet`, `--network testnet`, or `--network devnet`.
 
 ## How to build
 
-Building this project requires a working [Rust](https://rustup.rs) (stable) toolchain and `clang`, `cmake` packages installed (required by `rustls` and its crypto provider `aws-lc-rs`).
+Install a [Rust](https://rustup.rs) toolchain and native build tools. The Docker build installs `clang`, `cmake`, and `libclang-dev`; these support the native cryptography and RocksDB dependencies. Native builds also require a C/C++ compiler and the corresponding platform development tools.
 
-It's expected to be cross-platform and guaranteed to work on Linux, Windows, MacOS platforms.
+The workspace contains three binaries:
 
-### Build from sub project
+| Binary | Purpose |
+| --- | --- |
+| `xelis_daemon` | Validate and store the blockchain, connect to peers, and serve RPC and mining work |
+| `xelis_wallet` | Manage keys, balances, transactions, and dApp permissions |
+| `xelis_miner` | Mine blocks through the daemon's GetWork API |
 
-Go to one of following folder you want to build from source: `xelis_daemon`, `xelis_miner` or `xelis_wallet`.
-To build a release (optimized) version:
-`cargo build --release`
+### Build from the workspace
 
-### Build from workspace
+Build all binaries in release mode:
 
-To build a specific binary from workspace (parent folder) directly, use the option `--bin` with `xelis_daemon`, `xelis_miner` or `xelis_wallet` as value.
-Example: `cargo build --release --bin xelis_miner`
+```sh
+cargo build --release
+```
 
-To build all at once just use `cargo build --release`
+Build or run a specific binary:
 
-You can also build a debug version (just remove `--release` option) or run it directly from cargo:
-`cargo run`
+```sh
+cargo build --release --bin xelis_daemon
+cargo build --release --bin xelis_wallet
+cargo build --release --bin xelis_miner
+cargo run --release --bin xelis_daemon -- --network devnet
+```
 
-### Build from Docker
+Release binaries are written to `target/release/`. Omit `--release` for a debug build.
 
-To build using Docker, use the following command, using the `app` build argument to chose which project to build:
-`docker build -t xelis-daemon:master --build-arg app=xelis_daemon .`
+You can also run `cargo build --release` from `xelis_daemon`, `xelis_wallet`, or `xelis_miner` to build that package.
+
+The daemon enables RocksDB and sled support by default and selects RocksDB as its default backend. Use `--use-db-backend rocksdb`, `--use-db-backend sled`, or `--use-db-backend memory` to select an available backend. The memory backend does not persist data across restarts.
+
+### Build with Docker
+
+Select the binary with the `app` build argument:
+
+```sh
+docker build -t xelis-daemon:local --build-arg app=xelis_daemon .
+```
+
+Use `app=xelis_wallet` or `app=xelis_miner` for the other binaries. The image runs the selected binary as its entrypoint and uses `/var/run/xelis/data` as its working directory.
 
 ## Funding
 
-XELIS is a community driven project and is not funded by any company or organization.
-To helps the development, the success and provide a better support of XELIS, we set a dev fee percentage starting at 10% on block reward.
+A share of each block's emission reward is paid to the developer address. The schedule is based on block height:
 
-Current dev fee curve is as following:
+| Block height | Developer share |
+| --- | --- |
+| `0` through `3,249,999` | 10% |
+| `3,250,000` onward | 5% |
 
-- 10% from block 0 to 3,250,000 (expected time is ~1.5 years with BlockDAG).
-- 5% from 3,250,001 until the project being developed is stable on major facets of the ecosystem in order to reduce it.
+The remaining emission reward goes to the miner. This share applies to the block reward, separately from transaction fees.
 
-## Config
+## Network parameters
 
-### Network
+| Parameter | Value |
+| --- | --- |
+| Target block time | 5 seconds |
+| Mainnet address prefix | `xel` |
+| Testnet/devnet address prefix | `xet` |
+| Native coin precision | 8 decimals; 100,000,000 atomic units per XEL |
+| Maximum emission supply | 18,400,000 XEL |
+| Maximum block size, including transactions | 1.25 MiB (1,310,720 bytes) |
+| Maximum transaction size | 1 MiB (1,048,576 bytes) |
+| Maximum parents per block | 3 |
+| Stability window | 24 block heights |
+| Difficulty adjustment | Every block |
+| Emission adjustment | Every ordered block, based on previously emitted supply |
 
-- Expected Block Time is `15` seconds
-- Address prefix is `xel` on mainnet and `xet` for testnet/devnet
-- Transaction fee is based on various parameters (fee is `0.0001` XEL per KB, `0.001` XEL per account creation, `0.00005` XEL per transfer)
-- Up to `8` decimals
-- Maximum supply: `18.4` millions
-- Maximum block size: `1.25` MB
-- Difficulty adjustment algorithm: retarget at every block
-- Block reward emission: retarget at every block (Smooth decrease)
+### Transaction fees
 
-### Daemon
+The transaction fee combines a size-based base fee, operation costs, and any miner tip:
 
-- Default P2P port is `2125`
-- Defaut RPC Server port is `8080`
+- The minimum base fee is `0.0001 XEL` per 1,024 bytes, with transaction size rounded up to the next full unit.
+- The required base fee rises with a moving average of block size. Its curve is approximately `minimum_base_fee × (1 + 10 × utilization²)`, where utilization is the average block size divided by the maximum block size. Consensus uses fixed-point integer arithmetic.
+- Each transfer output adds `0.00005 XEL`.
+- Each newly registered destination account adds `0.001 XEL`.
+- Each additional multisignature signature adds `0.00005 XEL`.
+- Contract deployment requires burning `1 XEL`, in addition to transaction fees and any execution gas.
+- Asset creation costs `1 XEL` within contract execution.
 
-### Wallet
+The protocol burns 30% of the size-based base fee above its minimum. Contract gas also has a 30% burn share. Use the daemon and wallet fee-estimation APIs to determine fees for a transaction under current network conditions.
 
-- Default RPC Server port is `8081`
+### Service addresses
+
+| Service | Address or configuration |
+| --- | --- |
+| Daemon P2P | `0.0.0.0:2125` by default |
+| Daemon RPC and GetWork | `0.0.0.0:8080` by default |
+| Wallet daemon connection | `http://127.0.0.1:8080` by default |
+| Wallet RPC | Enabled with an explicit `--rpc-bind-address` |
+| Wallet XSWD | `127.0.0.1:44325`, path `/xswd` |
 
 ## BlockDAG
 
-XELIS use a blockDAG with following rules:
-- A block is considered `Sync Block` when the block height is less than `TOP_HEIGHT - STABLE_LIMIT` and it's the unique block at a specific height (or only ordered block at its height and don't have lower cumulative difficulty than previous blocks).
-- A block is considered `Side Block` when block height is less than or equal to height of past 8 topological blocks.
-- A block is considered `Orphaned` when the block is not ordered in DAG (no topological height for it).
-- A height is not unique anymore.
-- Topo height is unique for each block, but can change when the DAG is re-ordered up to `TOP_HEIGHT - STABLE_LIMIT`.
-- You can have up to 3 previous blocks in a block.
-- For mining, you have to mine on one of 3 of the most heavier tips.
-- Block should not have deviated too much from main chain / heavier tips.
-- Maximum 9% of difficulty difference between Tips selected in the same block.
-- Side Blocks receive only 30% of block reward.
-- Supply is re-calculated each time the block is re-ordered because its based on topo order.
-- Transactions and miner rewards are re-computed when a new block is added and the block there linked to is not yet in stable topo height. 
-- A same transaction can be added in more than a block if they are not in the same tip branch. Client protocol will execute it only one time.
+A block references up to three parent blocks, also called tips. Its height is one greater than the highest parent height, so multiple blocks can share a height.
 
-Topoheight represents how many unique blocks there is in the blockchain ordered by DAG.
+The DAG uses GHOSTDAG-style merge sets and blue/red classification with an anticone bound of `3`. Cumulative difficulty represents blue work: the selected parent's accumulated work, the block's own work, and the work of additional blue blocks in its merge set. Red blocks do not contribute to this score. Tips are ranked by this score, with deterministic hash ordering to break ties.
 
-A block ordered is a valid and executed one.
+An ordered block receives a unique **topoheight**, which identifies its position in the execution order. Topoheight differs from block height. Order can change during a reorganization of the unstable portion of the DAG, requiring affected transactions, rewards, and supply to be recomputed.
 
-Topoheight order is unstable and may change until the blocks are in the stable height.
+- A **sync block** is an ordered block at least 24 heights behind the height being checked, with no other ordered block at its height. Genesis is a sync block.
+- A **side block** is an ordered block with another block at the same height ordered before it. Side blocks receive the full emission reward.
+- An **orphaned block** has no position in the current topological execution order.
+- Additional selected tips must pass the difficulty check against the best tip: their individual difficulty must exceed `floor(best_tip_difficulty × 91 / 100)`.
+- Parent selection and block validation also enforce ancestry and distance rules to prevent merging branches that diverge too far from the accepted DAG.
 
-Longest chain is the one selected by nodes. But for tips branches conflicts, cumulative difficulty is used to select the main chain.
+Emission decreases as emitted supply approaches its maximum. In atomic units, the base reward is `(maximum_supply - emitted_supply) >> 20`, scaled by the 5-second target relative to 180 seconds. Burned coins are tracked separately from emitted supply.
 
-## Homomorphic Encryption
+## Homomorphic encryption
 
-ElGamal cryptosystem was choosen because it's a well known and studied encryption algorithm which has homomorphism features.
-We use a variant named "Twisted ElGamal" which give us a full integration with Pedersen commitments, useful for Bulletproofs compatibility and also saving space and time by avoiding an intermediate proof.
+XELIS uses **Twisted ElGamal** over the Ristretto group, together with Pedersen commitments and Bulletproof range proofs. Homomorphic operations let validators update encrypted balances without learning confidential amounts. Equality and validity proofs establish that the encrypted values and commitments agree.
 
-Twisted ElGamal is fast and is used with the Ristretto group over the popular elliptic curve "Curve25519" to provide a good level of security (~128 bits of security).
-Homomorphic operations available using ElGamal are addition/subtraction between ciphertexts and/or plaintext and multiplication against plaintext value.
-
-Homomorphic Encryption (HE) through Twisted ElGamal is used to provide privacy on transactions (transferred amounts) and accounts balances by doing computation while in their encrypted form.
-Each balances, transaction assets values are in encrypted form and nobody can determine the real value of it except involved parties.
+Confidentiality applies to transfer amounts and account balances. Addresses, transaction structure, fees, public burns, and public contract data remain visible. Native assets use the same confidential transfer mechanisms as XEL.
 
 ## Mining
 
-Mining capabilities of XELIS are a bit differents from others chains because of standards being not implemented.
-Each job send to a miner is a `MinerWork` instance in hex format.
+GetWork is available over WebSocket at `/getwork/{address}/{worker}` on the daemon RPC server. Mining jobs contain a hexadecimal `MinerWork` value.
 
-The `MinerWork` is in following format:
-- header work hash: 32 bytes
-- timestamp (u64 for milliseconds): 8 bytes (BigEndian)
-- nonce (u64): 8 bytes (BigEndian)
-- extra nonce: 32 bytes
-- miner public key: 32 bytes
+The serialized mining work is **112 bytes**:
 
-The total block work size should be equal to 120 bytes.
-Header work hash is the immutable part of a block work, its a hash calculated using `Blake3` hashing algorithm with the following format as input:
-- block version: 1 byte
-- block height (u64): 8 bytes (BigEndian)
-- Hash of the tips: 32 bytes
-- Hash of the transactions hashes: 32 bytes
+| Field | Size | Encoding |
+| --- | --- | --- |
+| Header work hash | 32 bytes | BLAKE3 digest |
+| Timestamp | 8 bytes | Unsigned milliseconds, big-endian |
+| Nonce | 8 bytes | Unsigned integer, big-endian |
+| Extra nonce | 32 bytes | Raw bytes |
+| Miner public key | 32 bytes | Compressed public key |
 
-The header work has to be equal to 73 bytes exactly and its hash to 32 bytes.
+The header work hash is BLAKE3 over this **73-byte** immutable header work:
 
-**WARNING**: Miner key is not included in the immutable of the block work (aka header work hash).
-This is done so a block template can be generic and easily updatable for any miner without re-generating a new block template each time.
+| Field | Size |
+| --- | --- |
+| Block version | 1 byte |
+| Block height, big-endian | 8 bytes |
+| Tips hash | 32 bytes |
+| Transaction hashes digest | 32 bytes |
 
-For pool development, you must verify that the miner public key in a received share is yours as it can be updated.
+The tips hash is BLAKE3 over the concatenated parent hashes in header order. The transaction hashes digest is BLAKE3 over the concatenated transaction hashes in header order.
 
-All hashes are calculated using the `Blake3` hashing algorithm except the Proof-Of-Work hash, which use [xelis-hash](https://github.com/xelis-project/xelis-hash).
+The miner public key is outside the immutable header work hash, allowing the same template to be used for different miners. Pools must verify that submitted shares contain the expected payout public key.
 
-POW Hash should be calculated from the `MinerWork` format and compared against the target difficulty.
+Block and transaction identifiers use BLAKE3. Proof of work uses **xelis-hash** over the 112-byte mining work, and the result must satisfy the target difficulty. Miners should refresh the timestamp while working on a job. New jobs are sent as templates change, subject to the configured GetWork notification rate limit.
 
-**NOTE**: It is recommended to use the GetWork WebSocket server to be notified of new block work and submit correct work.
+## Transaction execution
 
-Mining jobs from GetWork are only sent when a new block is found or when a new TX is added in mempool.
-Miners software are recommended to update themselves the block timestamp (or at least every 500ms) for best network difficulty calculation.
+A transaction can appear in competing DAG branches while executing only once in the accepted topological order. A block cannot repeat transactions already present in its relevant parent history or already executed at the stable point. Duplicate inclusion across independent branches does not require rejecting the entire merged block.
 
-## Client Protocol
+Transactions are checked against the state derived from the block's parents. During topological execution, the daemon checks execution status and account state before applying a transaction. Conflicting transactions from the same account can become orphaned after a reorganization.
 
-XELIS integrate along with BlockDAG a way to accept multiple times the same TX and only execute it one time.
-Instead of excluding the whole block because we have a collision with another blockDAG branch for a TX, we just don't execute the TX and keep its hash.
+Each account has a nonce. A transaction must use the expected nonce, which increments after execution. Transactions also include a block reference used to validate the balance state they were built against.
 
-The same TX can be contained in multiple blocks only if:
-- TX is not executed in stable height
-- TX is not included in block Tips (previous blocks)
+## Transactions
 
-Also, for more security, user account should only do TXs on the same chain/tip to prevent any orphaned TX.
-An orphaned TX can happens when two differents TXs (but same owner) with the same nonce are sent in two differents branchs. 
+Supported transaction types are:
 
-During the generation of the DAG order (linking unique topoheight to a block hash), the first block being ordered will execute the TX first.
+- **Transfers**: send registered assets to multiple destinations, with up to 255 outputs.
+- **Burn**: publicly burn a nonzero amount of a registered asset.
+- **MultiSig**: configure or reset an account's multisignature policy, with up to 255 participants.
+- **InvokeContract**: call a contract entry point with parameters, asset deposits, and a gas budget.
+- **DeployContract**: deploy validated contract bytecode, optionally invoking its constructor with deposits and gas.
+- **Blob**: send opaque data to up to 255 destinations without an asset transfer. A private blob has exactly one destination.
 
-This feature allows to accept others branch tips even if transactions are the same and prevent more orphans blocks when branches are merged.
+The transaction structure includes:
 
-## Transaction
+| Field | Purpose |
+| --- | --- |
+| `version` | Transaction format |
+| `source` | Sender's compressed public key |
+| `data` | Transaction type and payload |
+| `fee` | Transaction fee, including any tip |
+| `fee_limit` | Maximum fee the sender authorizes |
+| `nonce` | Account sequence number |
+| `source_commitments` | Per-asset source commitments and equality proofs |
+| `range_proof` | Aggregated range proof |
+| `reference` | Referenced block hash and topoheight |
+| `multisig` | Optional additional signatures |
+| `signature` | Source signature |
 
-Transaction types supported:
-- Transfer: possibility to send many assets to many addresses in the same TX (up to 255 outputs inside).
-- Burn: publicly burn amount of a specific asset and use this TX as proof of burn (coins are completely deleted from circulation).
-- Call Contract: call a Smart Contract with specific parameters and list of assets to deposit.
-- Deploy Contract: deploy a new (valid) Smart Contract on chain.
+Amounts and fees use atomic units. Contract parameters are limited to 256 KiB, and the maximum gas budget per transaction is 5 XEL.
 
-At this moment, transactions have the following data.
-|   Field   |       Type      |                                   Comment                                  |
-|:---------:|:---------------:|:--------------------------------------------------------------------------:|
-|   source  |    PublicKey    |                         Signer of this transaction                         |
-|    data   | TransactionType |                 Type with data included of this transaction                |
-|    fee    |     Integer     |             Fees to be paid by the owner for including this TX             |
-|   nonce   |     Integer     | Matching nonce of balance to be validated and prevent any replay TX attack |
-| signature |    Signature    |          Valid signature to prove that the owner validated this TX         |
+## Integrated addresses and extra data
 
-Transactions support any registered asset natively.
+An integrated address contains a normal address plus structured data, such as a payment identifier. The wallet incorporates this data into the transfer payload when sending to the address.
 
-To prevent any replay attack or double spending, each TX should include a nonce that match the account balance.
-After each TX, the nonce is incremented by 1.
+- Integrated address data is limited to 1 KiB.
+- Each transfer's serialized extra data is limited to 1 KiB, including encoding and encryption overhead.
+- The total serialized extra data across a transfer transaction is limited to 32 KiB.
+- Blob data is also limited to 32 KiB.
 
-## Integrated Address
+Extra data supports private, public, and proprietary formats. Private data uses separate encryption handles for the sender and receiver, allowing both to decrypt it. Public data is readable on chain; proprietary data follows the application's encoding. Integrated addresses themselves expose their embedded data to anyone who receives the address.
 
-Integrated address are base address with custom data integrated.
-For example, you can integrate in it a unique identifier that will be integrated in the future transaction done using it.
-Its helpful to determine easily which account to link a transaction with an account/order on service side.
+## P2P network
 
-Maximum data allowed is 1KB (same as a transfer payload).
+Peers communicate over TCP using custom binary serialization. X25519 Diffie–Hellman establishes a shared secret for exchanging directional encryption keys. Subsequent packets use ChaCha20-Poly1305, with outgoing keys rotated after 1 GiB of encrypted traffic.
 
-Every data is integrated in the transaction payload when using an integrated address.
+The daemon supports cached peer-key verification policies. Packet encryption protects packet contents; peer identity verification depends on the configured key policy.
 
-## P2p (Encrypted Network)
+Read and write tasks handle each peer independently. Per-peer caches track propagated transactions and blocks to avoid redundant announcements. Optional Snappy compression can be enabled with `--enable-p2p-compression` for packets larger than 1 KiB.
 
-All transfered data are using a custom Serializer/Deserializer made by hand to transform a struct representation in raw bytes directly.
-This serialization is done using the fixed position of each fields and their corresponding bits size.
+### Pruning
 
-Before sending a packet, we're encrypting it using ChaCha20-Poly1305 algorithm to prevent network traffic analysis and authenticate each transfered data.
+Pruning removes old blocks, transactions, and obsolete historical state while retaining the state needed to operate the node. It occurs at a sync block and keeps a safety margin of at least **80 topological blocks**.
 
-Every data transfered is done through the Packet system which allow easily to read & transfer data and doing the whole serialization itself.
+Use `--auto-prune-keep-n-blocks <count>` for automatic pruning. A wallet cannot retrieve history or mining rewards older than the daemon's pruning boundary, but current balances remain available and previously synchronized wallet history remains stored locally.
 
-The connection for a new peer (took from the queue or a new incoming connections) is executed through a unique tokio task with the same allocated buffer for handshake.
-This prevents any DoS attack on creating multiple task and verifying connection.
+### Synchronization
 
-When the peer is verified and valid, we create him his own tasks. One for reading incoming packets and one for writing packets to him.
-By separating both directions in two differents task it prevents blocking the communication of opposed side.
+- **Regular sync**: download and validate blockchain data from peers.
+- **Fast sync**: enable with `--allow-fast-sync` to bootstrap from a peer's state at a stable point. This skips local verification of the full historical chain and should use trusted peers.
+- **Boost sync**: enable with `--allow-boost-sync` to request blocks in parallel while still validating them locally. This uses more resources to speed up full-chain synchronization.
 
-For transactions propagation, we keep in cache last N transactions sent or received from a peer to not send the same data twice during propagation.
-
-The daemon also have 3 tokio tasks running:
-- Maintains connections with seed nodes
-- Chain sync (which select a random peer for syncing its chain)
-- Ping task which build a generic ping packet which is send to every peers connected (or build a specific one for each when its necessary)
-
-### Pruning Mode
-
-This allows anyone who want to run a light node to reduce the blockchain size by deleting blocks, transactions and versioned balances.
-The pruned topoheight can only be at a `Sync Block` and behind at least `PRUNE_SAFETY_LIMIT` blocks of the top topoheight.
-
-For wallets connected to a pruned node, you can't retrieve transactions history and miner rewards which happened before the pruned topoheight.
-But your balances are still up-to-date with the chain and if your wallets already synced them, they stay in your wallet database.
-
-The security of the chain is not reduced as all your blocks were already verified by your own node locally.
-
-### Fast Sync
-
-Fast sync mode allow you to sync really fast the necessary data only to run a correct and valid version of the chain. For this we request a peer
-to send us its chain state at a stable point, which include all accounts nonces, assets, balances, top blocks.
-So in future, when the chain will be really heavy, anyone can still join it by using fast sync system, which is compatible with the pruning mode.
-
-**WARNING**: You should use fast sync mode only with a trusted peer, because they can send you a potential fake chain.
-
-### Boost Sync
-
-This is requesting the full chain to others nodes, but faster.
-Boost sync mode can be enabled using `--allow-boost-sync-mode`. This mode use more resources but sync much faster.
-It is faster because it's requesting blocks to sync in parallel, instead of traditional synchronization that would just request one block, verify it, execute it, repeat.
-It's not enabled by default to prevent too much load on nodes. 
-
-This is the perfect mix between Fast sync and traditional chain sync, to have the full ledger while being faster.
+Fast sync and boost sync cannot be enabled together. Both are disabled by default.
 
 ### Packets
 
-This parts explains the most importants packets used in XELIS network to communicate over the P2p network.
-
-#### Key Exchange
-
-Key Exchange is the real first packet to be sent when creating a new connection.
-This allow to exchange symetric encryption keys between peer to establish an encrypted communication channel over TCP.
-
-Currently, we are using ChaCha20-Poly1305 algorithm to encrypt / decrypt every packets.
-
-This packet can be sent later to rotate the key of a peer.
-This is currently done every 1 GB of data sent.
-
-We're using two different symetric keys for encryption per Peer.
-One key is from us, to encrypt our packet, and the other key is to decrypt peer's packets.
-
-#### Handshake
-
-Handshake packet must be the first packet sent with the blockchain state inside to upgrade a connection to a peer.
-If valid, the peer will send the same packet with is own blockchain state.
-
-Except at beginning, this packet should never be sent again.
-
-#### Ping
-
-Ping packet is sent at an regular interval and inform peers of the our blockchain state.
-Every 15 minutes, the packet can contains up to `MAX_LEN` sockets addresses (IPv4 or IPv6) to help others nodes to extends theirs peers list.
-
-#### Chain Sync
-
-We select randomly a peer which is higher in height from the peers list than us and send him a chain request.
-
-The chain request includes last `CHAIN_SYNC_REQUEST_MAX_BLOCKS` blocks hashes of our chain with theirs topoheight espaced exponentially.
-This data is used by the select peer to try to find a common point with our chain and his own (block hash must be at same topoheight as other peer).
-If selected peer found a common point, he add up to `CHAIN_SYNC_RESPONSE_MAX_BLOCKS` blocks hashes ordered by block height.
-
-Through the "ask and await" request object system, we ask the complete block (block header with transactions included) and add it to chain directly.
-
-Chain sync is requested with a minimum interval of `CHAIN_SYNC_DELAY` seconds.
-
-#### Block Propagation
-
-Block propagation packet contains the block header only. Its sent to all peers who have theirs height minus our height less than `STABLE_LIMIT`.
-To build the block, we retrieve transactions from mempool.
-If a transaction is not found in the mempool, we request it from the same peer in order to build it.
-
-#### Transaction Propagation
-
-Transaction propagation packet contains the hash only to prevent sending the TX.
-Its also backed by a cache per peer to knows if the transaction was already received from him / send to him.
+- **Key exchange** establishes encryption before the blockchain handshake and also supports key rotation.
+- **Handshake** exchanges network identity and blockchain state when establishing a peer connection.
+- **Ping** advertises peer state, by default every 10 seconds. Peer address sharing runs at a 5-minute interval and includes up to 16 addresses.
+- **Chain sync** requests hashes and topoheights to locate a common chain point, then fetches missing blocks. Requests include up to 64 block identifiers; responses default to 4,096 blocks and are configurable. The minimum request interval per peer is 1 second.
+- **Block propagation** announces a header; missing transactions are fetched to reconstruct the block.
+- **Transaction propagation** announces transaction hashes, with per-peer caches avoiding repeated announcements.
 
 ## Storage
 
-All theses data are saved in plaintext.
+The daemon storage supports RocksDB, sled, or memory as backend.
+RocksDB is preferred when both persistent backends are enabled.
 
-|          Tree         |  Key Type  |     Value Type    |                         Comment                        |
-|:---------------------:|:----------:|:-----------------:|:------------------------------------------------------:|
-|      transactions     |    Hash    |    Transaction    |      Save the whole transaction based on its hash      |
-|         blocks        |    Hash    |    Block Header   |      Save the block header only based on its hash      |
-|    blocks_at_height   |   Integer  |   Array of Hash   |        Save all blocks hash at a specific height       |
-|         extra         |    Bytes   |  No specific type |Save the highest topo height, pruned topoheight and TIPS|
-|      topo_by_hash     |    Hash    |      Integer      |       Save a block hash at a specific topo height      |
-|      hash_by_topo     |   Integer  |        Hash       |      Save a topo height for a specific block hash      |
-| cumulative_difficulty |    Hash    |      Integer      |   Save the cumulative difficulty for each block hash   |
-| difficulty_covariance |    Hash    |      Integer      |   Save the difficulty covariance for each block hash   |
-| blocks_execution_order|    Hash    |      Integer      |Save the order by storing a position for each block hash|
-|         assets        |    Hash    |      Integer      |  Verify if an assets exist and its registration height |
-|        rewards        |   Integer  |      Integer      |                  Save the block reward                 |
-|         supply        |   Integer  |      Integer      |  Calculated supply (past + block reward) at each block |
-|       difficulty      |    Hash    |      Integer      |                Difficulty for each block               |
-|       tx_blocks       |    Hash    |   Array of Hash   |      All blocks in which this TX hash is included      |
-|       balances        |   Custom   |      Integer      |          Last topoheight of versioned balance          |
-|         nonces        | Public Key |      Integer      |     Store the highest topoheight of versioned nonce    |
-|  versioned_balances   |   Custom   | Versioned Balance |   Key is composed of topoheight + asset + public key   |
-|   versioned_nonces    |   Custom   |  Versioned Nonce  |       Key is composed of topoheight + public key       |
+Daemon storage does not add encryption at rest. Confidential amounts remain encrypted in the stored transactions and balances; public chain data remains public. Pruning retains a baseline for historical state at the cutoff and rejects rewinds below that boundary.
 
-**NOTE**:
-- Tree `balances` has a custom key which is composed of 32 bytes of Public Key and 32 bytes of Asset.
-- Balances and nonces are versioned, which means they are stored each time a change happened in chain.
-- Using a Tree per version is too heavy because of overhead per trees, solution is to hash a generated key based on properties.
-- Assets registered have in value their topoheight at which it was registered.
-- Supply and block rewards are only stored when the block is topologically ordered
-
-The database engine used is sled. It may changes in future.
-
-Current overhead per block:
-- Tree `blocks` saving Block header (132 bytes with no TXs) value using Hash (32 bytes) key.
-- Trees `topo_by_hash` and `hash_by_topo` saving both Hash (32 bytes) <=> topoheight (8 bytes) pointers. (x2)
-- Tree `difficulty` saving Difficulty value of a block (up to 33 bytes) using Hash (32 bytes) key.
-- Tree `cumulative_difficulty` saving the cumulative difficulty value (up to 33 bytes) of a topoheight (8 bytes).
-- Tree `rewards` saving block reward value (8 bytes) using topoheight (8 bytes) key.
-- Tree `supply` saving current emitted supply value (8 bytes) using topoheight (8 bytes) key.
-- Tree `versioned_balances` is updated at each block (for miner rewards), and also for each account that had interactions (transactions): 72 bytes for key and 16 bytes for value.
-- Tree `versioned_nonces` is updated for each account that send at least one TX per topoheight: 40 bytes for key and 16 bytes for value
-
-At this moment with current implementation, minimal overhead per new account is 208 bytes for keys and 56 bytes for values:
-- `balances` Public Key + Asset (64 bytes) => topoheight of last versioned balance (8 bytes)
-- `nonces` Public Key (32 bytes) => topoheight of last versioned nonce (8 bytes)
-- `versioned_balances` Public Topoheight + Key + Asset (72 bytes) => Versioned Balance (16 bytes)
-- `versioned_nonces` Topoheight + Public Key (40 bytes) => Versioned Nonce (16 bytes)
-
-An optimized version could be done to reduce further the disk usage by creating pointers.
-Instead of saving multiple times the whole Public Key (32 bytes), we create a pointer table to which a u64 value is assigned.
-And we store this u64 id instead of the whole Public Key, asset..
 
 ## Wallet
 
-Wallet keep tracks of all your transactions on chain, all your assets you own.
+The wallet manages keys, tracked assets, encrypted balances, transaction history, and pending transactions. It connects to a daemon for chain data and can also operate offline.
 
-When creating a new wallet, it generate a new random secure "master key" which will be encrypted by a password hashed.
-This master key allows to change easily the password of your wallet because you only have to save new encrypted version of it.
+A randomly generated master key encrypts wallet storage. The password-derived key encrypts this master key, allowing password changes without re-encrypting the entire database.
 
-The master key is also the one which will be able to decrypt/encrypt all your wallet storage.
+Wallets default to **Argon2id with 128 MiB of memory, parallelism 4, and 16 iterations**. Password hashing parameters are stored with the wallet.
 
-This way allow to save securely and easily data on any device.
+Wallet storage uses:
 
-Password hashing algorithm used is Argon2id with a configuration of 15 MB and 16 iterations.
-
-### Storage
-
-Wallet implement a fully-encrypted storage system with following features:
-- Tree names are hashed with generated salt
-- Keys data are hashed with generated salt
-- Values are encrypted using XChaCha20Poly1305 and a random newly generated nonce each time its saved. 
-
-Exception for assets list which has its key encrypted to be able to retrieve them later.
-
-Hash algorithm used is Blake3 for keys / tree names.
-The random salt generated is a 64 bytes length.
-This simple system prevent someone to read / use the data without the necessary secret key.
-
-### Extra Data
-
-This protocol allows to transfer data through a custom wallet address called `integrated address`.
-It will simply integrate encoded data in the wallet address which can be used to send specific data to the wallet when creating a transaction.
-Each transaction can reserve up to 1 KB of space (for encrypted data transfering for example).
-
-You can create simple service / communication on chain through wallets while staying anonymous and in encrypted form.
-
-Actually, you can have following values through API:
-- Null value representation
-- Boolean
-- String
-- Unsigned numbers (`u8`, `u16`, `u32`, `u64`, `u128`)
-
-And these types:
-- Value (which is only one value, can be used for PaymentID representation)
-- Array (of any different values types)
-- Fields (which can be used to represent custom `struct` for example)
+- Salted BLAKE3 hashes for tree names and lookup keys.
+- XChaCha20-Poly1305 for values, with a fresh random 24-byte nonce for each encryption.
+- A 32-byte storage salt.
+- Encrypted keys where their original values must be recoverable, such as asset identifiers.
 
 ## API
 
-Http Server run using Actix Framework and serve the JSON-RPC API and WebSocket.
+The daemon and wallet use Actix Web to serve JSON-RPC over HTTP and WebSocket at `/json_rpc`. The wallet RPC server must be explicitly enabled. See [API.md](API.md) and the [API types](xelis_common/src/api) for request and response definitions.
 
-### JSON-RPC
+### WebSocket subscriptions
 
-JSON-RPC is available on `/json_rpc` route on RPC server address that you set (or default one).
-For a much more detailed API, see the API documentation [here](API.md).
+Subscribe to an event with a JSON-RPC request:
 
-### WebSocket
-
-WebSocket allow JSON-RPC call and any app to be notified when a specific event happens on the daemon.
-It is running on the same route (`/json_rpc`) route / RPC server address.
-
-Example to subscribe to a registered event in the WebSocket connection:
 ```json
 {
     "jsonrpc": "2.0",
@@ -447,10 +297,8 @@ Example to subscribe to a registered event in the WebSocket connection:
 }
 ```
 
-You can notify to several events, just do a request for each event you want.
-The daemon will send you every events happening as long as you don't unsubscribe or close the WebSocket.
+Use `"method": "unsubscribe"` with the same `notify` value to stop a subscription. A connection can subscribe to multiple events.
 
-Example to unsubscribe to a specific event:
 ```json
 {
     "jsonrpc": "2.0",
@@ -462,84 +310,74 @@ Example to unsubscribe to a specific event:
 }
 ```
 
-#### Daemon
+Daemon events include:
 
-Events availables to subscribe on the daemon API are:
-- `block_ordered`: when a block is ordered by DAG
-- `stable_height_changed`: when the stable height has been updated
-- `peer_connected`: when a new peer has connected to the node
-- `peer_disconnected`: when a peer disconnected from us
-- `peer_peer_list_updated`: when the peerlist of a peer has been updated
-- `peer_state_updated`: when the peer state has been updated
-- `peer_peer_disconnected`: when a common peer disconnect from one of our peer
-- `new_block`: when a new block is accepted by chain
-- `transaction_added_in_mempool`: when a new valid transaction is added in mempool
-- `transaction_executed`: when a transaction has been included in a valid block & executed on chain
-- `transaction_sc_result`: when a valid TX SC Call hash has been executed by chain
-- `new_asset`: when a new asset has been registered
-- `block_ordered` when a block is ordered for the first time or reordered to a new topoheight
-- `block_orphaned` when a block that was previously ordered became orphaned because it was not selected in DAG reorg.
+- `new_topo_height`, `new_block`, `new_block_template`
+- `block_ordered`, `block_orphaned`
+- `stable_height_changed`, `stable_topo_height_changed`
+- `transaction_added_in_mempool`, `transaction_executed`, `transaction_orphaned`
+- `new_asset`, `contract_deploy`
+- `peer_connected`, `peer_disconnected`, `peer_peer_list_updated`, `peer_state_updated`, `peer_peer_disconnected`
 
-#### Wallet
+Contract subscriptions use structured event selectors, for example:
 
-Events availables to subscribe on the wallet API are:
-- `new_topoheight`: when a new topoheight is sent by the daemon
-- `new_asset`: when a new asset has been added to the wallet.
-- `new_transaction`: when a new transaction (coinbase, outgoing, incoming) has been added to wallet history.
-- `balance_changed`: when a balance changes has been detected.
-- `rescan`: when a rescan happened on the wallet.
-- `online`: when the wallet network state is now online.
-- `offline`: whenthe wallet network state is now offline.
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 2,
+    "method": "subscribe",
+    "params": {
+        "notify": {
+            "contract_event": {
+                "contract": "0000000000000000000000000000000000000000000000000000000000000000",
+                "id": null
+            }
+        }
+    }
+}
+```
+
+Replace the example hash with the deployed contract's hash. `id: null` selects all events from that contract. Other structured selectors are `contract_invoke` with a `contract` hash and `contract_transfers` with an `address`.
+
+Wallet events include:
+
+- `new_topo_height`, `new_asset`, `new_transaction`, `new_pending_transaction`
+- `balance_changed`, `rescan`, `history_synced`
+- `online`, `offline`, `sync_error`
+- `track_asset`, `untrack_asset`
 
 ### XSWD
 
-XSWD (XELIS Secure WebSocket DApp) Protocol is a WebSocket started on unique port `44325` and path `/xswd` for easy findings from dApps.
-Its job is to provide an easy to access and secure way to communicate from a desktop/CLI wallet to any dApp (software or in-browser/websites directly).
+XSWD (XELIS Secure WebSocket DApp) connects applications to the wallet at `ws://127.0.0.1:44325/xswd`. Enable it with `--enable-xswd`; it cannot run alongside the wallet's HTTP RPC server.
 
-It's based on the JSON-RPC API and have exact same methods for easy compabitility, the only exception is how verification is done.
-On a traditional RPC-Server, if authentication is enabled, you must provide a username/password.
+Applications register their identity and the wallet RPC methods they intend to use. The user approves the application and controls method permissions. Undeclared wallet methods are rejected. Requests prefixed with `wallet.` use wallet permissions; requests prefixed with `node.` are forwarded to the connected daemon.
 
-XSWD stay open but request a manual action from user to accept the connection of the dApp on the XSWD Server.
-When accepted, the dApp can requests JSON-RPC methods easily and the user can set/configure a permission for each method.
-If no permission is found for a request method, it will be prompted/asked to the user for manual verification.
+An application's first message can be:
 
-XSWD also have the ability to sends JSON-RPC requests to the daemon directly.
-For this, set the prefix `node.` in front of daemon requests, it will not be requested to the user as it's public on-chain data.
-For wallets RPC methods, set the prefix `wallet.` which will requests/use the permission set by the user.
-
-You must provide the list of wallet RPC methods that your app would use during the whole connection lifetime.
-Any other RPC method will be **rejected** directly if not provided at the registration step.
-
-First JSON message from the dApp must be in following format to identify the application:
 ```json
 {
     "id": "0000006b2aec4651b82111816ed599d1b72176c425128c66b2ab945552437dc9",
     "name": "XELIS Example",
-    "description": "Description example of up to 255 characters",
+    "description": "Example wallet integration",
     "url": "https://xelis.io",
     "permissions": [
-        "get_balance",
+        "get_balance"
     ]
 }
 ```
 
-If the connection is accepted by user through XSWD, you will receive the following response:
+An accepted registration returns:
+
 ```json
 {
-    "id": null,
+    "id": "0000006b2aec4651b82111816ed599d1b72176c425128c66b2ab945552437dc9",
     "jsonrpc": "2.0",
-    "result": true
+    "result": {
+        "message": "Application has been registered",
+        "success": true
+    }
 }
 ```
 
-Otherwise, an error like this will be sent and the connection will be closed by the server:
-```json
-{
-    "error": {
-        "code": -32603,
-        "message": "Invalid JSON format for application data"
-    },
-    "id": null,
-    "jsonrpc": "2.0"
-}
-```
+Invalid or rejected registrations return a JSON-RPC error. See the [XSWD implementation](xelis_wallet/src/api/xswd) for registration validation and permission handling.
+
