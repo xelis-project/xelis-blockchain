@@ -198,7 +198,7 @@ impl<'s, 'b, P: ChainStateProvider> ChainState<'s, 'b, P> {
     pub fn get_sender_cache(&mut self, key: &PublicKey) -> Option<(HashMap<Hash, Ciphertext>, Option<MultiSigPayload>)> {
         let account = self.accounts.remove(key)?;
         let balances = account.assets.into_iter()
-            .filter_map(|(k, echange)| echange.version.take_balance().take_ciphertext().ok().map(|ct| (k.clone(), ct)))
+            .filter_map(|(k, echange)| echange.version.take_balance_with(echange.output_balance_used).take_ciphertext().ok().map(|ct| (k.clone(), ct)))
             .collect();
         let multisig = account.multisig.and_then(|(_, m)| m);
         Some((balances, multisig))
