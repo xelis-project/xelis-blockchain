@@ -44,10 +44,7 @@ use crate::{
         Source,
         MAX_VALUE_SIZE,
     },
-    crypto::{
-        hash_multiple,
-        Hash
-    },
+    crypto::Hash,
     serializer::*
 };
 
@@ -448,10 +445,7 @@ pub fn scheduled_execution_get_pending<'a, 'ty, 'r>(
         ScheduledExecutionKind::BlockEnd
     };
 
-    let hash = hash_multiple(&[
-        metadata.metadata.contract_executor.as_bytes(),
-        &kind.to_bytes(),
-    ]);
+    let hash = kind.get_hash(&metadata.metadata.contract_executor);
 
     if state.executions.contains_key(&hash) {
         Ok(SysCallResult::Return(OpaqueScheduledExecution {
