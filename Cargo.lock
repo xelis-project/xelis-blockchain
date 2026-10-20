@@ -2445,6 +2445,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
+name = "matriochka"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "699a65abd2a4d87fb4ee256247ce9fbfe5abf11b1d737d7ca7c3dc4d5bf974fd"
+dependencies = [
+ "runtime-context",
+]
+
+[[package]]
 name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2585,6 +2594,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff76201f031d8863c38aa7f905eca4f53abbfa15f609db4277d44cd8938f33fe"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "octet"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c8bd534f4a362684fc9ac6d2a0105e8f944d330c831b7505210a5793079739a3"
+dependencies = [
+ "bytes",
+ "hex",
+ "matriochka",
+ "octet-derive",
+ "runtime-context",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "octet-derive"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "565406bc6894851bda25cc926884551774373abeb1b74ba72818852938427e42"
+dependencies = [
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -3189,9 +3224,9 @@ dependencies = [
 
 [[package]]
 name = "runtime-context"
-version = "0.1.1"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa46a7a866801bd66270c061c17122d82935989e6b23bd74948a14063812cc66"
+checksum = "0707888d36cb1465bd4036a6098c6621c8be08fc2d27157eea262cd9d5a16a03"
 dependencies = [
  "better_any",
 ]
@@ -3537,7 +3572,7 @@ dependencies = [
 [[package]]
 name = "silex-assembler"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.4.0#259e287d2a32bdcd68ed952775c5e3af8ae673cf"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#928dc3cd96a3c14e60a17cde56e2e6b66a741c41"
 dependencies = [
  "log",
  "silex-bytecode",
@@ -3548,7 +3583,7 @@ dependencies = [
 [[package]]
 name = "silex-ast"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.4.0#259e287d2a32bdcd68ed952775c5e3af8ae673cf"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#928dc3cd96a3c14e60a17cde56e2e6b66a741c41"
 dependencies = [
  "indexmap",
  "silex-types",
@@ -3557,11 +3592,11 @@ dependencies = [
 [[package]]
 name = "silex-builder"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.4.0#259e287d2a32bdcd68ed952775c5e3af8ae673cf"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#928dc3cd96a3c14e60a17cde56e2e6b66a741c41"
 dependencies = [
- "anyhow",
  "hex",
  "log",
+ "matriochka",
  "paste",
  "silex-ast",
  "silex-environment",
@@ -3572,7 +3607,7 @@ dependencies = [
 [[package]]
 name = "silex-bytecode"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.4.0#259e287d2a32bdcd68ed952775c5e3af8ae673cf"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#928dc3cd96a3c14e60a17cde56e2e6b66a741c41"
 dependencies = [
  "hex",
  "indexmap",
@@ -3585,7 +3620,7 @@ dependencies = [
 [[package]]
 name = "silex-compiler"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.4.0#259e287d2a32bdcd68ed952775c5e3af8ae673cf"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#928dc3cd96a3c14e60a17cde56e2e6b66a741c41"
 dependencies = [
  "log",
  "silex-ast",
@@ -3598,13 +3633,13 @@ dependencies = [
 [[package]]
 name = "silex-environment"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.4.0#259e287d2a32bdcd68ed952775c5e3af8ae673cf"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#928dc3cd96a3c14e60a17cde56e2e6b66a741c41"
 dependencies = [
- "anyhow",
  "better_any",
  "futures",
  "hashbrown 0.17.1",
  "indexmap",
+ "matriochka",
  "runtime-context",
  "silex-bytecode",
  "silex-types",
@@ -3614,7 +3649,7 @@ dependencies = [
 [[package]]
 name = "silex-lexer"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.4.0#259e287d2a32bdcd68ed952775c5e3af8ae673cf"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#928dc3cd96a3c14e60a17cde56e2e6b66a741c41"
 dependencies = [
  "log",
  "silex-ast",
@@ -3625,11 +3660,11 @@ dependencies = [
 [[package]]
 name = "silex-parser"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.4.0#259e287d2a32bdcd68ed952775c5e3af8ae673cf"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#928dc3cd96a3c14e60a17cde56e2e6b66a741c41"
 dependencies = [
- "anyhow",
  "indexmap",
  "log",
+ "matriochka",
  "paste",
  "silex-ast",
  "silex-builder",
@@ -3641,17 +3676,30 @@ dependencies = [
 [[package]]
 name = "silex-types"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.4.0#259e287d2a32bdcd68ed952775c5e3af8ae673cf"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#928dc3cd96a3c14e60a17cde56e2e6b66a741c41"
 dependencies = [
- "anyhow",
  "hex",
  "indexmap",
  "itertools 0.15.0",
  "lazy_static",
+ "matriochka",
+ "octet",
  "schemars",
  "serde",
  "serde_json",
+ "silex-types-macros",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "silex-types-macros"
+version = "0.1.0"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#928dc3cd96a3c14e60a17cde56e2e6b66a741c41"
+dependencies = [
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -4866,12 +4914,12 @@ dependencies = [
 [[package]]
 name = "xelis-vm"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?tag=v1.4.0#259e287d2a32bdcd68ed952775c5e3af8ae673cf"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#928dc3cd96a3c14e60a17cde56e2e6b66a741c41"
 dependencies = [
- "anyhow",
  "futures",
  "indexmap",
  "log",
+ "matriochka",
  "silex-bytecode",
  "silex-environment",
  "silex-types",
@@ -4909,8 +4957,10 @@ dependencies = [
  "lazy_static",
  "log",
  "log-panics",
+ "matriochka",
  "merlin",
  "metrics",
+ "octet",
  "pin-project-lite",
  "pooled-arc",
  "primitive-types",
@@ -4963,6 +5013,7 @@ dependencies = [
  "linked-hash-table",
  "log",
  "lru",
+ "matriochka",
  "metrics",
  "metrics-exporter-prometheus",
  "pooled-arc",
