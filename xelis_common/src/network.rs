@@ -113,7 +113,7 @@ impl Serializer for Network {
                 1 => Self::Testnet,
                 2 => Self::Stagenet,
                 3 => Self::Devnet,
-                _ => return Err(SerializationError::new(DecodeError::InvalidValue))
+                tag => return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown network tag {tag}")))
             })
         })
     }

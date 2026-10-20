@@ -70,7 +70,7 @@ impl Serializer for TxVersion {
         where Self: Sized {
         reader.read_with_context(|reader| {
             let id = reader.read_u8()?;
-            Self::try_from(id).map_err(|_| SerializationError::new(DecodeError::InvalidValue))
+            Self::try_from(id).map_err(|_| SerializationError::new(DecodeError::InvalidValue).context(format!("unsupported transaction version {id}")))
         })
     }
 

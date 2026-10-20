@@ -83,7 +83,7 @@ impl Serializer for ValueType {
                 6 => Self::U128,
                 7 => Self::Hash,
                 8 => Self::Blob,
-                _ => return Err(SerializationError::new(DecodeError::InvalidValue))
+                tag => return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown data value type tag {tag}")))
             })
         })
     }
@@ -229,7 +229,7 @@ impl Serializer for DataElement {
                     }
                     Self::Fields(fields)
                 },
-                _ => return Err(SerializationError::new(DecodeError::InvalidValue))
+                tag => return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown data element tag {tag}")))
             })
         })
     }

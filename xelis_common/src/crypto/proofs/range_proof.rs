@@ -39,22 +39,23 @@ impl Serializer for RangeProof {
             // Each element is 32 bytes
             let min_size = 4 * RISTRETTO_COMPRESSED_SIZE + 5 * SCALAR_SIZE;
             if len % 32 != 0 || len < min_size {
-                return Err(SerializationError::new(DecodeError::InvalidSize));
+                return Err(SerializationError::new(DecodeError::InvalidSize).context(format!("range proof length {len} must be a multiple of 32 and at least {min_size} bytes")));
             }
 
             // Those are wrong points
             if (len - min_size) % 32 != 0 {
-                return Err(SerializationError::new(DecodeError::InvalidSize));
+                return Err(SerializationError::new(DecodeError::InvalidSize).context(format!("range proof payload length after the {min_size}-byte header must be a multiple of 32")));
             }
 
             // Maximum size of a RangeProof is 2 * MAX_TRANSFER_COUNT * RISTRETTO_COMPRESSED_SIZE
             let max_size_possible = min_size + (MAX_TRANSFER_COUNT * 2).next_power_of_two() * RISTRETTO_COMPRESSED_SIZE;
             if len > max_size_possible {
-                return Err(SerializationError::new(DecodeError::InvalidSize));
+                return Err(SerializationError::new(DecodeError::InvalidSize).context(format!("range proof length {len} exceeds the maximum of {max_size_possible} bytes")));
             }
 
             let bytes = reader.read_vec(len)?;
-            RangeProof::from_bytes(&bytes).map_err(SerializationError::new)
+            RangeProof::from_bytes(&bytes).map_err(|error| SerializationError::new(error)
+                .context("decoding range proof points and scalars"))
         })
     }
 

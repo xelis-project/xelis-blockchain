@@ -67,7 +67,8 @@ pub trait Serializer {
             || format!("deserializing {} at byte {}", type_name::<Self>(), reader.total_read()),
         )?;
         if reader.has_more() {
-            return Err(OctetDecodeError::TrailingBytes(reader.remaining()).into());
+            return Err(Error::new(OctetDecodeError::TrailingBytes(reader.remaining()))
+                .context(format!("decoding {} left unread bytes", type_name::<Self>())));
         }
 
         Ok(result)

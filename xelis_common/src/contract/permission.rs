@@ -65,7 +65,7 @@ impl Serializer for ContractCallChunk {
                     for _ in 0..len {
                         let chunk = reader.read_u16()?;
                         if !chunks.insert(chunk) {
-                            return Err(SerializationError::new(DecodeError::InvalidValue));
+                            return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("duplicate chunk ID {chunk} in contract call inclusion list")));
                         }
                     }
                     Ok(ContractCallChunk::Specific(chunks))
@@ -76,12 +76,12 @@ impl Serializer for ContractCallChunk {
                     for _ in 0..len {
                         let chunk = reader.read_u16()?;
                         if !chunks.insert(chunk) {
-                            return Err(SerializationError::new(DecodeError::InvalidValue));
+                            return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("duplicate chunk ID {chunk} in contract call exclusion list")));
                         }
                     }
                     Ok(ContractCallChunk::Exclude(chunks))
                 }
-                _ => Err(SerializationError::new(DecodeError::InvalidValue)),
+                tag => Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown contract call chunk permission tag {tag}"))),
             }
         })
     }
@@ -227,7 +227,7 @@ impl Serializer for InterContractPermission {
                     for _ in 0..len {
                         let call = ContractCall::read(reader)?;
                         if !allowed.insert(call) {
-                            return Err(SerializationError::new(DecodeError::InvalidValue));
+                            return Err(SerializationError::new(DecodeError::InvalidValue).context("duplicate contract call in permission inclusion list"));
                         }
                     }
 
@@ -239,13 +239,13 @@ impl Serializer for InterContractPermission {
                     for _ in 0..len {
                         let call = ContractCall::read(reader)?;
                         if !excluded.insert(call) {
-                            return Err(SerializationError::new(DecodeError::InvalidValue));
+                            return Err(SerializationError::new(DecodeError::InvalidValue).context("duplicate contract call in permission exclusion list"));
                         }
                     }
 
                     Ok(InterContractPermission::Exclude(excluded))
                 }
-                _ => Err(SerializationError::new(DecodeError::InvalidValue)),
+                tag => Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown inter-contract permission tag {tag}"))),
             }
         })
     }

@@ -159,7 +159,7 @@ impl Serializer for TypePacked {
                 match work {
                     WorkItem::ReadType => {
                         if depth > MAX_DEPTH {
-                            return Err(SerializationError::new(DecodeError::InvalidSize));
+                            return Err(SerializationError::new(DecodeError::InvalidSize).context(format!("packed type nesting depth {depth} exceeds the maximum of {MAX_DEPTH}")));
                         }
 
                         let tag = reader.read_u8()?;
@@ -229,15 +229,15 @@ impl Serializer for TypePacked {
                                     }
                                 }
                             },
-                            _ => return Err(SerializationError::new(DecodeError::InvalidValue)),
+                            tag => return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown packed type tag {tag}"))),
                         }
                     },
                     WorkItem::BuildArray => {
-                        let inner = tmp.pop().ok_or(SerializationError::new(DecodeError::InvalidValue))?;
+                        let inner = tmp.pop().ok_or_else(|| SerializationError::new(DecodeError::InvalidValue).context("missing array element type while decoding packed type"))?;
                         tmp.push(TypePacked::Array(Box::new(inner)));
                     },
                     WorkItem::BuildTuples { remaining, mut fields } => {
-                        let field = tmp.pop().ok_or(SerializationError::new(DecodeError::InvalidValue))?;
+                        let field = tmp.pop().ok_or_else(|| SerializationError::new(DecodeError::InvalidValue).context("missing tuple field type while decoding packed type"))?;
                         fields.push(field);
 
                         if remaining > 1 {
@@ -248,21 +248,21 @@ impl Serializer for TypePacked {
                         }
                     },
                     WorkItem::BuildMapKey => {
-                        let key = tmp.pop().ok_or(SerializationError::new(DecodeError::InvalidValue))?;
+                        let key = tmp.pop().ok_or_else(|| SerializationError::new(DecodeError::InvalidValue).context("missing map key type while decoding packed type"))?;
                         stack.push((WorkItem::BuildMapValue { key }, depth));
                         stack.push((WorkItem::ReadType, depth + 1));
                     },
                     WorkItem::BuildMapValue { key } => {
-                        let value = tmp.pop().ok_or(SerializationError::new(DecodeError::InvalidValue))?;
+                        let value = tmp.pop().ok_or_else(|| SerializationError::new(DecodeError::InvalidValue).context("missing map value type while decoding packed type"))?;
                         tmp.push(TypePacked::Map(Box::new(key), Box::new(value)));
                     },
                     WorkItem::BuildOptional => {
-                        let inner = tmp.pop().ok_or(SerializationError::new(DecodeError::InvalidValue))?;
+                        let inner = tmp.pop().ok_or_else(|| SerializationError::new(DecodeError::InvalidValue).context("missing optional value type while decoding packed type"))?;
                         tmp.push(TypePacked::Optional(Box::new(inner)));
                     },
                     WorkItem::BuildOneOf { remaining_variants, mut variants, current_variant_remaining, mut current_variant } => {
                         if let Some(remaining) = current_variant_remaining {
-                            let field = tmp.pop().ok_or(SerializationError::new(DecodeError::InvalidValue))?;
+                            let field = tmp.pop().ok_or_else(|| SerializationError::new(DecodeError::InvalidValue).context("missing variant field type while decoding packed type"))?;
                             current_variant.push(field);
 
                             if remaining > 1 {
@@ -327,7 +327,7 @@ impl Serializer for TypePacked {
                 }
             }
 
-            tmp.pop().ok_or(SerializationError::new(DecodeError::InvalidValue))
+            tmp.pop().ok_or_else(|| SerializationError::new(DecodeError::InvalidValue).context("no packed type was produced by the decoder"))
         })
     }
 

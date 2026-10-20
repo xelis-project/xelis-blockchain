@@ -349,7 +349,7 @@ impl Serializer for ContractLog {
                     let event_id = u64::read(reader)?;
                     ContractLog::Event { contract, event_id }
                 },
-                _ => return Err(SerializationError::new(DecodeError::InvalidValue))
+                tag => return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown contract log tag {tag}")))
             })
         })
     }

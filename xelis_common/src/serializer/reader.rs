@@ -34,7 +34,7 @@ pub trait ReaderExt {
         match self.read_u8()? {
             0 => Ok(false),
             1 => Ok(true),
-            _ => Err(SerializationError::new(DecodeError::InvalidValue)),
+            tag => Err(SerializationError::new(DecodeError::InvalidValue).context(format!("invalid boolean byte {tag}; expected 0 or 1"))),
         }
     }
 
@@ -86,7 +86,8 @@ pub trait ReaderExt {
 
     fn read_string_with_size(&mut self, size: usize) -> Result<String, ReaderError> {
         let bytes = self.read_vec_bytes(size)?;
-        String::from_utf8(bytes).map_err(SerializationError::new)
+        String::from_utf8(bytes).map_err(|error| SerializationError::new(error)
+            .context(format!("decoding a UTF-8 string of {size} bytes")))
     }
 
     fn read_string(&mut self) -> Result<String, ReaderError> {

@@ -49,7 +49,7 @@ impl Serializer for HashSet<Hash> {
             let reader = &mut Reader::new(bytes.as_slice());
             if total_size % HASH_SIZE != 0 {
                 error!("Invalid size: {}, expected a multiple of 32 for hashes", total_size);
-                return Err(SerializationError::new(DecodeError::InvalidSize))
+                return Err(SerializationError::new(DecodeError::InvalidSize).context(format!("hash set byte length {total_size} must be a multiple of {HASH_SIZE}")))
             }
 
             let count = total_size / HASH_SIZE;
@@ -61,7 +61,7 @@ impl Serializer for HashSet<Hash> {
 
             if tips.len() != count {
                 error!("Invalid size: received {} elements while sending {}", tips.len(), count);
-                return Err(SerializationError::new(DecodeError::InvalidSize)) 
+                return Err(SerializationError::new(DecodeError::InvalidSize).context("duplicate hash in hash set")) 
             }
 
             Ok(tips)
@@ -91,7 +91,7 @@ impl Serializer for HashSet<Cow<'_, Hash>> {
             let reader = &mut Reader::new(bytes.as_slice());
             if total_size % 32 != 0 {
                 error!("Invalid size: {}, expected a multiple of 32 for hashes", total_size);
-                return Err(SerializationError::new(DecodeError::InvalidSize))
+                return Err(SerializationError::new(DecodeError::InvalidSize).context(format!("borrowed hash set byte length {total_size} must be a multiple of 32")))
             }
 
             let count = total_size / 32;
@@ -103,7 +103,7 @@ impl Serializer for HashSet<Cow<'_, Hash>> {
 
             if tips.len() != count {
                 error!("Invalid size: received {} elements while sending {}", tips.len(), count);
-                return Err(SerializationError::new(DecodeError::InvalidSize)) 
+                return Err(SerializationError::new(DecodeError::InvalidSize).context("duplicate hash in borrowed hash set")) 
             }
 
             Ok(tips)
@@ -211,7 +211,7 @@ impl<T: Serializer + std::hash::Hash + Ord> Serializer for BTreeSet<T> {
             let count = reader.read_u16()?;
             if count > DEFAULT_MAX_ITEMS as u16 {
                 warn!("Received {} in BTreeSet while maximum is set to {}", count, DEFAULT_MAX_ITEMS);
-                return Err(SerializationError::new(DecodeError::InvalidSize))
+                return Err(SerializationError::new(DecodeError::InvalidSize).context(format!("BTreeSet contains {count} items; maximum is {DEFAULT_MAX_ITEMS}")))
             }
 
             let mut set = BTreeSet::new();
@@ -219,7 +219,7 @@ impl<T: Serializer + std::hash::Hash + Ord> Serializer for BTreeSet<T> {
                 let value = T::read(reader)?;
                 if !set.insert(value) {
                     error!("Value is duplicated in BTreeSet");
-                    return Err(SerializationError::new(DecodeError::InvalidSize))
+                    return Err(SerializationError::new(DecodeError::InvalidSize).context("duplicate value in BTreeSet"))
                 }
             }
             Ok(set)
@@ -251,7 +251,7 @@ impl<T: Serializer + std::hash::Hash + Eq> Serializer for IndexSet<T> {
             let count = reader.read_u16()?;
             if count > DEFAULT_MAX_ITEMS as u16 {
                 warn!("Received {} in IndexSet while maximum is set to {}", count, DEFAULT_MAX_ITEMS);
-                return Err(SerializationError::new(DecodeError::InvalidSize))
+                return Err(SerializationError::new(DecodeError::InvalidSize).context(format!("IndexSet contains {count} items; maximum is {DEFAULT_MAX_ITEMS}")))
             }
 
             let mut set = IndexSet::new();
@@ -259,7 +259,7 @@ impl<T: Serializer + std::hash::Hash + Eq> Serializer for IndexSet<T> {
                 let value = T::read(reader)?;
                 if !set.insert(value) {
                     error!("Value is duplicated in IndexSet");
-                    return Err(SerializationError::new(DecodeError::InvalidSize))
+                    return Err(SerializationError::new(DecodeError::InvalidSize).context("duplicate value in IndexSet"))
                 }
             }
             Ok(set)
@@ -353,7 +353,7 @@ impl<T: Serializer> Serializer for Vec<T> {
             let count = reader.read_u16()?;
             if count > DEFAULT_MAX_ITEMS as u16 {
                 warn!("Received {} in Vec while maximum is set to {}", count, DEFAULT_MAX_ITEMS);
-                return Err(SerializationError::new(DecodeError::InvalidSize))
+                return Err(SerializationError::new(DecodeError::InvalidSize).context(format!("Vec contains {count} items; maximum is {DEFAULT_MAX_ITEMS}")))
             }
 
             let mut values = Vec::with_capacity(count as usize);
@@ -471,7 +471,7 @@ impl<const N: usize> Serializer for [u8; N] {
     fn from_bytes(bytes: &[u8]) -> Result<Self, ReaderError>
         where Self: Sized {
         if bytes.len() != N {
-            return Err(SerializationError::new(DecodeError::InvalidSize))
+            return Err(SerializationError::new(DecodeError::InvalidSize).context(format!("byte array has length {}; expected {N}", bytes.len())))
         }
 
         let mut array = [0; N];
@@ -533,7 +533,7 @@ impl Serializer for IpAddr {
                     let h = reader.read_u16()?;
                     Ok(IpAddr::V6(Ipv6Addr::new(a, b, c, d, e, f, g, h)))
                 },
-                _ => Err(SerializationError::new(DecodeError::InvalidValue))
+                tag => Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown IP address version tag {tag}")))
             }
         })
     }
@@ -709,7 +709,8 @@ impl<'a> Serializer for &'a [u8] {
     }
 
     fn read<'ty, 'r, R: Readable>(_: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
-        Err(OctetDecodeError::NotImplemented.into())
+        Err(SerializationError::new(OctetDecodeError::NotImplemented)
+            .context("deserialization into a borrowed byte slice is not implemented"))
     }
 
     fn size(&self) -> usize {
@@ -723,7 +724,8 @@ impl<'a, T: Serializer> Serializer for &'a T {
     }
 
     fn read<'ty, 'r, R: Readable>(_: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
-        Err(OctetDecodeError::NotImplemented.into())
+        Err(SerializationError::new(OctetDecodeError::NotImplemented)
+            .context("deserialization into a borrowed value is not implemented"))
     }
 
     fn size(&self) -> usize {

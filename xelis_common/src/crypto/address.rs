@@ -262,12 +262,12 @@ impl Serializer for AddressType {
                     let addr_type = AddressType::Data(DataElement::read(reader)?);
                     if reader.total_read() - read > EXTRA_DATA_LIMIT_SIZE {
                         debug!("Invalid data in integrated address, maximum size reached");
-                        return Err(SerializationError::new(DecodeError::InvalidSize))
+                        return Err(SerializationError::new(DecodeError::InvalidSize).context(format!("integrated address data occupies {} bytes; maximum is {EXTRA_DATA_LIMIT_SIZE}", reader.total_read() - read)))
                     }
 
                     addr_type
                 },
-                _ => return Err(SerializationError::new(DecodeError::InvalidValue))
+                tag => return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown address type tag {tag}")))
             };
             Ok(_type)
         })

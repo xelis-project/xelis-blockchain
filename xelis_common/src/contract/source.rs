@@ -67,7 +67,7 @@ impl Serializer for Source {
                     let account = PublicKey::read(reader)?;
                     Ok(Source::AccountBalance(account))
                 },
-                _ => Err(SerializationError::new(DecodeError::InvalidValue)),
+                tag => Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown contract funding source tag {tag}"))),
             }
         })
     }

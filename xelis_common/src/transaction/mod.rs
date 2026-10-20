@@ -299,7 +299,7 @@ impl Serializer for TransactionType {
                 1 => {
                     let txs_count = reader.read_u8()?;
                     if txs_count == 0 || txs_count > MAX_TRANSFER_COUNT as u8 {
-                        return Err(SerializationError::new(DecodeError::InvalidSize))
+                        return Err(SerializationError::new(DecodeError::InvalidSize).context(format!("transaction contains {txs_count} transfers; expected 1..={MAX_TRANSFER_COUNT}")))
                     }
 
                     let mut txs = Vec::with_capacity(txs_count as usize);
@@ -312,8 +312,8 @@ impl Serializer for TransactionType {
                 3 => TransactionType::InvokeContract(InvokeContractPayload::read(reader)?),
                 4 => TransactionType::DeployContract(DeployContractPayload::read(reader)?),
                 5 => TransactionType::Blob(BlobPayload::read(reader)?),
-                _ => {
-                    return Err(SerializationError::new(DecodeError::InvalidValue))
+                tag => {
+                    return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown transaction payload tag {tag}")))
                 }
             })
         })
@@ -391,7 +391,7 @@ impl Serializer for Transaction {
 
             let commitments_len = reader.read_u8()?;
             if commitments_len == 0 || commitments_len > MAX_TRANSFER_COUNT as u8 {
-                return Err(SerializationError::new(DecodeError::InvalidSize))
+                return Err(SerializationError::new(DecodeError::InvalidSize).context(format!("transaction contains {commitments_len} source commitments; expected 1..={MAX_TRANSFER_COUNT}")))
             }
 
             let mut source_commitments = Vec::with_capacity(commitments_len as usize);

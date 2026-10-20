@@ -96,7 +96,7 @@ impl Serializer for VarUint {
 
             if len > MAX_VARUINT_SIZE {
                 debug!("VarUint size is too big: {}", len);
-                return Err(SerializationError::new(DecodeError::InvalidSize));
+                return Err(SerializationError::new(DecodeError::InvalidSize).context(format!("VarUint length {len} exceeds the maximum of {MAX_VARUINT_SIZE} bytes")));
             }
 
             if len == 0 {

@@ -51,13 +51,13 @@ impl Serializer for MultiSigPayload {
 
             let participants_len = reader.read_u8()?;
             if participants_len == 0 || participants_len > MAX_MULTISIG_PARTICIPANTS as u8 {
-                return Err(SerializationError::new(DecodeError::InvalidSize))
+                return Err(SerializationError::new(DecodeError::InvalidSize).context(format!("multisig payload contains {participants_len} participants; expected 1..={MAX_MULTISIG_PARTICIPANTS}")))
             }
 
             let mut participants = IndexSet::new();
             for _ in 0..participants_len {
                 if !participants.insert(CompressedPublicKey::read(reader)?) {
-                    return Err(SerializationError::new(DecodeError::InvalidValue))
+                    return Err(SerializationError::new(DecodeError::InvalidValue).context("duplicate participant public key in multisig payload"))
                 }
             }
 

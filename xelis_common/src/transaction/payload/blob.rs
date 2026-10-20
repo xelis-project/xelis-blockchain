@@ -41,7 +41,7 @@ impl Serializer for BlobPayload {
                 let pk = CompressedPublicKey::read(reader)?;
                 if !destinations.insert(pk) {
                     debug!("Duplicate destination public key in blob payload");
-                    return Err(SerializationError::new(DecodeError::InvalidValue));
+                    return Err(SerializationError::new(DecodeError::InvalidValue).context("duplicate destination public key in blob payload"));
                 }
             }
 

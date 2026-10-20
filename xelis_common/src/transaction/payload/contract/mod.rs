@@ -88,7 +88,7 @@ impl Serializer for ContractDeposit {
                     receiver_handle: CompressedHandle::read(reader)?,
                     ct_validity_proof: CiphertextValidityProof::read(reader)?
                 },
-                _ => return Err(SerializationError::new(DecodeError::InvalidValue))
+                tag => return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown contract deposit tag {tag}")))
             })
         })
     }
@@ -214,7 +214,7 @@ fn read_primitive<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>, tag: u8
             fn read_boundary<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Primitive, ReaderError> {
                 let tag = reader.read_u8()?;
                 if !(1..=6).contains(&tag) {
-                    return Err(SerializationError::new(DecodeError::InvalidValue));
+                    return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("invalid range boundary tag {tag}; expected an integer tag in 1..=6")));
                 }
                 read_primitive(reader, tag)
             }
@@ -224,7 +224,7 @@ fn read_primitive<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>, tag: u8
                 .context("decoding integer range boundaries")?;
             Primitive::Range(Box::new(range))
         },
-        _ => return Err(SerializationError::new(DecodeError::InvalidValue))
+        tag => return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown primitive value tag {tag}")))
     })
 }
 
@@ -353,7 +353,7 @@ impl Serializer for ValueCell {
                             result = Some(ValueCell::Object(Vec::new()));
                         } else {
                             if stack.len() >= MAX_DEPTH {
-                                return Err(SerializationError::new(DecodeError::InvalidValue));
+                                return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("value cell object nesting exceeds the maximum depth of {MAX_DEPTH}")));
                             }
                             stack.push(Pending::Object { remaining: len, values: Vec::new() });
                         }
@@ -364,12 +364,12 @@ impl Serializer for ValueCell {
                             result = Some(ValueCell::Map(Box::new(IndexMap::new())));
                         } else {
                             if stack.len() >= MAX_DEPTH {
-                                return Err(SerializationError::new(DecodeError::InvalidValue));
+                                return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("value cell map nesting exceeds the maximum depth of {MAX_DEPTH}")));
                             }
                             stack.push(Pending::Map { remaining: len, map: IndexMap::new(), pending_key: None });
                         }
                     }
-                    _ => return Err(SerializationError::new(DecodeError::InvalidValue))
+                    tag => return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown value cell tag {tag}")))
                 }
             }
         })
@@ -475,7 +475,7 @@ impl Serializer for Module {
             for _ in 0..constants_len {
                 let c = ValueCell::read(reader)?;
                 if !constants.insert(c) {
-                    return Err(SerializationError::new(DecodeError::InvalidValue));
+                    return Err(SerializationError::new(DecodeError::InvalidValue).context("duplicate constant in contract module"));
                 }
             }
 
@@ -519,7 +519,7 @@ impl Serializer for Module {
                         hooks.insert(id, i as usize);
                         Access::Hook { id }
                     }
-                    _ => return Err(SerializationError::new(DecodeError::InvalidValue))
+                    tag => return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown contract chunk access tag {tag}")))
                 };
 
                 chunks.push(ModuleChunk { chunk, access });

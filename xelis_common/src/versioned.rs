@@ -62,7 +62,7 @@ impl<T: Serializer> Serializer for State<T> {
                 1 => Self::Some(T::read(reader)?),
                 2 => Self::None,
                 3 => Self::Deleted,
-                _ => return Err(SerializationError::new(DecodeError::InvalidValue)),
+                tag => return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown versioned state tag {tag}"))),
             })
         })
     }

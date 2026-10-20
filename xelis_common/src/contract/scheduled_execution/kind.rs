@@ -76,7 +76,7 @@ impl Serializer for ScheduledExecutionKind {
                     registration_topoheight: TopoHeight::read(reader)?,
                 }),
                 1 => Ok(ScheduledExecutionKind::BlockEnd),
-                _ => Err(SerializationError::new(DecodeError::InvalidValue))
+                tag => Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown scheduled execution kind tag {tag}")))
             }
         })
     }
@@ -113,7 +113,7 @@ impl Serializer for ScheduledExecutionKindLog {
                     max_gas: u64::read(reader)?,
                     params: Vec::read(reader)?,
                 }),
-                _ => Err(SerializationError::new(DecodeError::InvalidValue))
+                tag => Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown scheduled execution log kind tag {tag}")))
             }
         })
     }

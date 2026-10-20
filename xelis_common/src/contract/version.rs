@@ -55,7 +55,7 @@ impl Serializer for ContractVersion {
             match reader.read_u8()? {
                 0 => Ok(ContractVersion::V0),
                 1 => Ok(ContractVersion::V1),
-                _ => Err(SerializationError::new(DecodeError::InvalidValue)),
+                tag => Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown contract version tag {tag}"))),
             }
         })
     }

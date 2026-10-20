@@ -142,7 +142,7 @@ impl Serializer for OpaqueWrapper {
                 BALANCE_PROOF_OPAQUE_ID => OpaqueWrapper::new(BalanceProof::read(reader)?),
                 RISTRETTO_OPAQUE_ID => OpaqueWrapper::new(OpaqueRistrettoPoint::Compressed(CompressedRistretto::read(reader)?)),
                 SCALAR_OPAQUE_ID => OpaqueWrapper::new(OpaqueScalar(Scalar::read(reader)?)),
-                _ => return Err(SerializationError::new(DecodeError::InvalidValue))
+                tag => return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown opaque value tag {tag}")))
             })
         })
     }

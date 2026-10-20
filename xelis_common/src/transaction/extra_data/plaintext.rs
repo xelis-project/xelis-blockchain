@@ -31,7 +31,7 @@ impl Serializer for PlaintextFlag {
                 1 => Ok(Self::Public),
                 2 => Ok(Self::Proprietary),
                 3 => Ok(Self::Failed),
-                _ => Err(SerializationError::new(DecodeError::InvalidValue))
+                tag => Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown plaintext extra data flag tag {tag}")))
             }
         })
     }

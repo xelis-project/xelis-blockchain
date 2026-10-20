@@ -260,7 +260,7 @@ impl Serializer for Scalar {
         reader.read_with_context(|reader| {
             let bytes = reader.read_bytes_32()?;
             let scalar: Option<Scalar> = Scalar::from_canonical_bytes(bytes).into();
-            scalar.ok_or(SerializationError::new(DecodeError::InvalidValue))
+            scalar.ok_or_else(|| SerializationError::new(DecodeError::InvalidValue).context("scalar bytes are not a canonical scalar encoding"))
         })
     }
 

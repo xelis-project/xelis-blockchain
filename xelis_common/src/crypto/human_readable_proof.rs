@@ -127,7 +127,7 @@ impl Serializer for HumanReadableProof {
 
                     HumanReadableProof::Ownership { proof, asset, topoheight }
                 },
-                _ => return Err(SerializationError::new(DecodeError::InvalidValue))
+                tag => return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown human readable proof tag {tag}")))
             };
 
             Ok(proof)

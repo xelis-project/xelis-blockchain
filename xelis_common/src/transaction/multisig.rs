@@ -96,7 +96,7 @@ impl Serializer for MultiSig {
             let mut signatures = IndexSet::new();
             for _ in 0..len {
                 if !signatures.insert(SignatureId::read(reader)?) {
-                    return Err(SerializationError::new(DecodeError::InvalidValue));
+                    return Err(SerializationError::new(DecodeError::InvalidValue).context("duplicate signature ID in multisig signatures"));
                 }
             }
             Ok(Self { signatures })

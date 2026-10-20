@@ -139,7 +139,7 @@ impl Serializer for AssetOwner {
                     let owner = reader.read()?;
                     Ok(Self::Owner { origin, origin_id, owner })
                 },
-                _ => Err(SerializationError::new(DecodeError::InvalidValue))
+                tag => Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown asset owner tag {tag}")))
             }
         })
     }
@@ -213,7 +213,7 @@ impl Serializer for MaxSupplyMode {
                 0 => Ok(Self::None),
                 1 => Ok(Self::Fixed(reader.read_u64()?)),
                 2 => Ok(Self::Mintable(reader.read_u64()?)),
-                _ => Err(SerializationError::new(DecodeError::InvalidValue))
+                tag => Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown maximum supply mode tag {tag}")))
             }
         })
     }

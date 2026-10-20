@@ -238,7 +238,7 @@ impl Serializer for PrivateKey {
         reader.read_with_context(|reader| {
             let scalar = Scalar::read(reader)?;
             if scalar == Scalar::ZERO {
-                return Err(SerializationError::new(DecodeError::InvalidValue));
+                return Err(SerializationError::new(DecodeError::InvalidValue).context("private key scalar must be nonzero"));
             }
 
             Ok(PrivateKey::from_scalar(scalar))

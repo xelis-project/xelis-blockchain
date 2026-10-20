@@ -102,7 +102,7 @@ impl Serializer for ExtraDataType {
                     let values = reader.read_vec(len as usize)?;
                     Self::Proprietary(values)
                 },
-                _ => return Err(SerializationError::new(DecodeError::InvalidValue))
+                tag => return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown extra data kind tag {tag}")))
             })
         })
     }

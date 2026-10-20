@@ -300,14 +300,14 @@ impl Serializer for BlockHeader {
             let tips_count = reader.read_u8()?;
             if tips_count as usize > TIPS_LIMIT {
                 debug!("Error, too many tips in block header");
-                return Err(SerializationError::new(DecodeError::InvalidValue))
+                return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("block header has {tips_count} tips; maximum is {TIPS_LIMIT}")))
             }
 
             let mut tips = IndexSet::with_capacity(tips_count as usize);
             for _ in 0..tips_count {
                 if !tips.insert(reader.read_hash()?) {
                     debug!("Error, duplicate tip found in block header");
-                    return Err(SerializationError::new(DecodeError::InvalidValue))
+                    return Err(SerializationError::new(DecodeError::InvalidValue).context("duplicate tip hash in block header"))
                 }
             }
 
@@ -316,7 +316,7 @@ impl Serializer for BlockHeader {
             for _ in 0..txs_count {
                 if !txs_hashes.insert(reader.read_hash()?) {
                     debug!("Error, duplicate tx hash found in block header");
-                    return Err(SerializationError::new(DecodeError::InvalidValue))
+                    return Err(SerializationError::new(DecodeError::InvalidValue).context("duplicate transaction hash in block header"))
                 }
             }
 

@@ -60,7 +60,7 @@ impl Serializer for BalanceType {
                 0 => Ok(BalanceType::Input),
                 1 => Ok(BalanceType::Output),
                 2 => Ok(BalanceType::Both),
-                _ => Err(SerializationError::new(DecodeError::InvalidValue))
+                tag => Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown balance type tag {tag}")))
             }
         })
     }

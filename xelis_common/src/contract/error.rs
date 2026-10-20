@@ -98,7 +98,7 @@ impl Serializer for ExitError {
                     let msg = Cow::Owned(String::read(reader)?);
                     ExitError::RuntimeError(msg)
                 }
-                _ => return Err(SerializationError::new(DecodeError::InvalidValue)),
+                tag => return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown contract exit error tag {tag}"))),
             })
         })
     }

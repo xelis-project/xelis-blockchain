@@ -17,7 +17,7 @@ impl Serializer for DynamicLen {
                 n @ 0x00..=0xFC => n as usize,
                 0xFD => reader.read_u16()? as usize,
                 0xFE => reader.read_u32()? as usize,
-                _ => return Err(SerializationError::new(DecodeError::InvalidValue)),
+                _ => return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unsupported dynamic length tag {tag:#04x}; 0xff is reserved"))),
             };
             Ok(Self(len))
         })
