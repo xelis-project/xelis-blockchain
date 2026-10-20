@@ -171,16 +171,16 @@ impl RocksStorage {
     }
 
     fn get_contract_data_id(&self, key: &ValueCell) -> Result<ContractDataId, BlockchainError> {
-        self.load_from_disk(Column::ContractDataTable, &key.to_bytes())
+        self.load_from_disk(Column::ContractDataTable, &key.to_bytes()?)
     }
 
     fn get_optional_contract_data_id(&self, key: &ValueCell) -> Result<Option<ContractDataId>, BlockchainError> {
-        self.load_optional_from_disk(Column::ContractDataTable, &key.to_bytes())
+        self.load_optional_from_disk(Column::ContractDataTable, &key.to_bytes()?)
     }
 
     fn get_or_create_contract_data_id(&mut self, key: &ValueCell) -> Result<ContractDataId, BlockchainError> {
         trace!("get or create contract data id {}", key);
-        let bytes = key.to_bytes();
+        let bytes = key.to_bytes()?;
         match self.get_optional_contract_data_id(key)? {
             Some(id) => Ok(id),
             None => {

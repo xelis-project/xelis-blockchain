@@ -60,7 +60,7 @@ impl VersionedBalanceProvider for SledStorage {
                             let mut data: Versioned<RawBytes> = Self::load_from_disk_internal(self.snapshot.as_ref(), &self.versioned_balances, &key, DiskContext::BalanceAtTopoHeight(prev_topo))?;
                             data.set_previous_topoheight(None);
 
-                            Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_balances, &key, data.to_bytes())?;
+                            Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_balances, &key, data.to_bytes()?)?;
 
                             // If this version contains an output, that means we can delete all others below
                             patched = true;

@@ -2,7 +2,8 @@ use async_trait::async_trait;
 use log::trace;
 use xelis_common::{
     block::TopoHeight,
-    crypto::Hash, serializer::Skip
+    crypto::Hash,
+    serializer::Skip,
 };
 use crate::core::{
     error::BlockchainError,

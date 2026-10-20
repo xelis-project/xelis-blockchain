@@ -4,7 +4,17 @@ use indexmap::IndexSet;
 use log::error;
 use xelis_common::{
     crypto::{Hash, HASH_SIZE},
-    serializer::{Reader, ReaderError, Serializer, Writer}
+    serializer::{
+        DecodeError,
+        Error as SerializationError,
+        Readable,
+        Reader,
+        ReaderError,
+        ReaderExt,
+        Serializer,
+        Writable,
+        Writer,
+    },
 };
 use crate::core::error::BlockchainError;
 
@@ -32,30 +42,37 @@ pub trait BlocksAtHeightProvider {
 }
 
 impl Serializer for OrderedHashes<'_> {
-    fn write(&self, writer: &mut Writer) {
-        for hash in self.0.iter() {
-            hash.write(writer);
-        }
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            for hash in self.0.iter() {
+                hash.write(writer)?;
+            }
+            Ok(())
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let total_size = reader.total_size();
-        if total_size % HASH_SIZE != 0 {
-            error!("Invalid size: {}, expected a multiple of 32 for hashes", total_size);
-            return Err(ReaderError::InvalidSize)
-        }
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let bytes = reader.read_all_bytes()?;
+            let total_size = bytes.len();
+            let reader = &mut Reader::new(bytes.as_slice());
+            if total_size % HASH_SIZE != 0 {
+                error!("Invalid size: {}, expected a multiple of 32 for hashes", total_size);
+                return Err(SerializationError::new(DecodeError::InvalidSize).context(format!("blocks at height byte length {total_size} must be a multiple of {HASH_SIZE}")))
+            }
 
-        let count = total_size / HASH_SIZE;
-        let mut hashes = IndexSet::with_capacity(count);
-        for _ in 0..count {
-            hashes.insert(Hash::read(reader)?);
-        }
+            let count = total_size / HASH_SIZE;
+            let mut hashes = IndexSet::with_capacity(count);
+            for _ in 0..count {
+                hashes.insert(Hash::read(reader)?);
+            }
 
-        if hashes.len() != count {
-            error!("Invalid size: received {} elements while sending {}", hashes.len(), count);
-            return Err(ReaderError::InvalidSize) 
-        }
+            if hashes.len() != count {
+                error!("Invalid size: received {} elements while sending {}", hashes.len(), count);
+                return Err(SerializationError::new(DecodeError::InvalidSize).context("duplicate block hash in blocks at height")) 
+            }
 
-        Ok(OrderedHashes(Cow::Owned(hashes)))
+            Ok(OrderedHashes(Cow::Owned(hashes)))
+        })
     }
 }

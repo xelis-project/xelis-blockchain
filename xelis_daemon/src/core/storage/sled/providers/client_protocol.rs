@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use log::trace;
 use xelis_common::{
     crypto::Hash,
-    serializer::Serializer
+    serializer::Serializer,
 };
 use crate::core::{
     error::{BlockchainError, DiskContext},
@@ -47,7 +47,7 @@ impl ClientProtocolProvider for SledStorage {
 
         let removed = hashes.remove(block);
         if removed {
-            Self::insert_into_disk(self.snapshot.as_mut(), &self.tx_blocks, tx.as_bytes(), hashes.to_bytes())?;
+            Self::insert_into_disk(self.snapshot.as_mut(), &self.tx_blocks, tx.as_bytes(), hashes.to_bytes()?)?;
         }
 
         Ok(removed)
@@ -78,7 +78,7 @@ impl ClientProtocolProvider for SledStorage {
 
         let insert = hashes.insert(Cow::Borrowed(block));
         if insert {
-            Self::insert_into_disk(self.snapshot.as_mut(), &self.tx_blocks, tx.as_bytes(), hashes.to_bytes())?;
+            Self::insert_into_disk(self.snapshot.as_mut(), &self.tx_blocks, tx.as_bytes(), hashes.to_bytes()?)?;
         }
 
         Ok(insert)
@@ -91,7 +91,7 @@ impl ClientProtocolProvider for SledStorage {
 
     async fn set_blocks_for_tx(&mut self, tx: &Hash, blocks: &Tips) -> Result<(), BlockchainError> {
         trace!("set blocks ({}) for tx {} ", blocks.len(), tx);
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.tx_blocks, tx.as_bytes(), blocks.to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.tx_blocks, tx.as_bytes(), blocks.to_bytes()?)?;
         Ok(())
     }
 }

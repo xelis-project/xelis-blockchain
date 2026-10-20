@@ -12,7 +12,7 @@ use xelis_common::{
         Hash,
         PublicKey
     },
-    serializer::Serializer
+    serializer::Serializer,
 };
 use crate::core::{
     error::{BlockchainError, DiskContext},
@@ -242,7 +242,7 @@ impl BalanceProvider for SledStorage {
     async fn set_balance_at_topoheight(&mut self, asset: &Hash, topoheight: TopoHeight, key: &PublicKey, balance: &VersionedBalance) -> Result<(), BlockchainError> {
         trace!("set balance {} at topoheight {} for {}", asset, topoheight, key.as_address(self.is_mainnet()));
         let key = self.get_versioned_balance_key(key, asset, topoheight);
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_balances, &key, balance.to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_balances, &key, balance.to_bytes()?)?;
 
         Ok(())
     }

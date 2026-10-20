@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use xelis_common::{
     contract::ContractLogs,
     crypto::Hash,
-    serializer::Serializer
+    serializer::Serializer,
 };
 use crate::core::{
     error::{BlockchainError, DiskContext},
@@ -24,7 +24,7 @@ impl ContractLogsProvider for SledStorage {
 
     async fn set_contract_logs_for_caller(&mut self, tx_hash: &Hash, contract_output: &ContractLogs) -> Result<(), BlockchainError> {
         trace!("set contract logs for caller {}", tx_hash);
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.contracts_logs, tx_hash.as_bytes(), contract_output.to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.contracts_logs, tx_hash.as_bytes(), contract_output.to_bytes()?)?;
         Ok(())
     }
 

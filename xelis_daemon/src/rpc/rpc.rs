@@ -548,7 +548,7 @@ async fn get_block_template<S: Storage>(context: &Context<'_, '_>, params: GetBl
 
     let chain_cache = storage.chain_cache().await;
     let topoheight = chain_cache.topoheight;
-    Ok(GetBlockTemplateResult { template: block.to_hex(), algorithm, height, topoheight, difficulty })
+    Ok(GetBlockTemplateResult { template: block.to_hex()?, algorithm, height, topoheight, difficulty })
 }
 
 async fn get_miner_work<S: Storage>(context: &Context<'_, '_>, params: GetMinerWorkParams<'_>) -> Result<GetMinerWorkResult, InternalRpcError> {
@@ -583,7 +583,7 @@ async fn get_miner_work<S: Storage>(context: &Context<'_, '_>, params: GetMinerW
 
     let algorithm = get_pow_algorithm_for_version(version);
 
-    Ok(GetMinerWorkResult { miner_work: work.to_hex(), algorithm, difficulty, height, topoheight })
+    Ok(GetMinerWorkResult { miner_work: work.to_hex()?, algorithm, difficulty, height, topoheight })
 }
 
 async fn submit_block<S: Storage>(context: &Context<'_, '_>, params: SubmitBlockParams) -> Result<bool, InternalRpcError> {
@@ -1878,9 +1878,9 @@ async fn extract_key_from_address<S: Storage>(context: &Context<'_, '_>, params:
     }
 
     if params.as_hex {
-        Ok(ExtractKeyFromAddressResult::Hex(params.address.get_public_key().to_hex()))
+        Ok(ExtractKeyFromAddressResult::Hex(params.address.get_public_key().to_hex()?))
     } else {
-        Ok(ExtractKeyFromAddressResult::Bytes(params.address.get_public_key().to_bytes()))
+        Ok(ExtractKeyFromAddressResult::Bytes(params.address.get_public_key().to_bytes()?))
     }
 }
 

@@ -623,7 +623,7 @@ impl<S: Storage> P2pServer<S> {
         };
 
         let handshake = Handshake::new(Cow::Owned(VERSION.to_owned()), *self.blockchain.get_network(), Cow::Borrowed(self.get_tag()), Cow::Borrowed(&NETWORK_ID), self.get_peer_id(), self.bind_address.port(), get_current_time_in_seconds(), topoheight, block.get_height(), pruned_topoheight, Cow::Borrowed(&top_hash), genesis_block, Cow::Borrowed(&cumulative_difficulty), self.flags);
-        Ok(Packet::Handshake(Cow::Owned(handshake)).to_bytes())
+        Ok(Packet::Handshake(Cow::Owned(handshake)).to_bytes()?)
     }
 
     // Create a valid peer using the connection, if an error happen, it will close the stream and return the error
@@ -1307,7 +1307,14 @@ impl<S: Storage> P2pServer<S> {
             } else {
                 trace!("Sending generic ping packet...");
                 let packet = Packet::Ping(Cow::Owned(ping));
-                let bytes = Bytes::from(packet.to_bytes());
+                let bytes = match packet.to_bytes() {
+                    Ok(bytes) => Bytes::from(bytes),
+                    Err(e) => {
+                        error!("Error while serializing ping packet: {}", e);
+                        continue;
+                    }
+                };
+
                 let ping_interval = self.config.ping_interval.as_secs();
 
                 // broadcast directly the ping packet asap to all peers
@@ -2370,7 +2377,7 @@ impl<S: Storage> P2pServer<S> {
                     };
 
                     let is_last = next_page.is_none();
-                    let packet = Packet::NotifyInventoryResponse(NotifyInventoryResponse::new(next_page, Cow::Owned(txs))).to_bytes();
+                    let packet = Packet::NotifyInventoryResponse(NotifyInventoryResponse::new(next_page, Cow::Owned(txs))).to_bytes()?;
                     (is_last, packet)
                 };
 
@@ -2782,7 +2789,13 @@ impl<S: Storage> P2pServer<S> {
         let current_topoheight = ping.get_topoheight();
         let packet = Packet::TransactionPropagation(PacketWrapper::new(Cow::Borrowed(&tx), Cow::Owned(ping)));
         // transform packet to bytes (so we don't need to transform it for each peer)
-        let bytes = Bytes::from(packet.to_bytes());
+        let bytes = match packet.to_bytes() {
+            Ok(bytes) => Bytes::from(bytes),
+            Err(e) => {
+                error!("Error while serializing tx propagation packet: {}", e);
+                return
+            }
+        };
         trace!("Locking peer list for tx broadcast");
         let peers = self.peer_list.get_cloned_peers().await;
         trace!("Lock acquired for tx broadcast");
@@ -2847,8 +2860,20 @@ impl<S: Storage> P2pServer<S> {
 
         // Build the block propagation packet
         let block_packet = Packet::BlockPropagation(PacketWrapper::new(Cow::Borrowed(block), Cow::Borrowed(&ping)));
-        let packet_block_bytes = Bytes::from(block_packet.to_bytes());
-        let packet_ping_bytes = Bytes::from(Packet::Ping(Cow::Owned(ping)).to_bytes());
+        let packet_block_bytes = match block_packet.to_bytes() {
+            Ok(bytes) => Bytes::from(bytes),
+            Err(e) => {
+                error!("Error while serializing block packet: {}", e);
+                return;
+            }
+        };
+        let packet_ping_bytes = match Packet::Ping(Cow::Owned(ping)).to_bytes() {
+            Ok(bytes) => Bytes::from(bytes),
+            Err(e) => {
+                error!("Error while serializing ping packet: {}", e);
+                return;
+            }
+        };
 
         // Lock the block from being handled again as we are broadcasting it
         if is_from_mining {

@@ -3,7 +3,7 @@ use std::{
     collections::{HashMap, hash_map::Entry},
 };
 use log::{debug, trace, warn};
-use indexmap::{IndexSet};
+use indexmap::IndexSet;
 use xelis_common::{
     account::{BalanceType, VersionedBalance, VersionedNonce},
     asset::VersionedAssetData,

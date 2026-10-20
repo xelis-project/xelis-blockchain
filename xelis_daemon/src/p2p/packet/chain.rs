@@ -3,11 +3,17 @@ use log::debug;
 use xelis_common::{
     crypto::Hash,
     serializer::{
-        Serializer,
-        Writer,
+        DecodeError,
+        Error as SerializationError,
+        Readable,
+        Reader,
         ReaderError,
-        Reader
-    }
+        ReaderExt,
+        Serializer,
+        Writable,
+        Writer,
+        WriterExt,
+    },
 };
 use crate::config::{
     CHAIN_SYNC_REQUEST_MAX_BLOCKS,
@@ -58,13 +64,17 @@ impl PartialEq for BlockId {
 impl Eq for BlockId {}
 
 impl Serializer for BlockId {
-    fn write(&self, writer: &mut Writer) {
-        self.hash.write(writer);
-        self.topoheight.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.hash.write(writer)?;
+            self.topoheight.write(writer)
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok(Self::new(reader.read_hash()?, reader.read_u64()?))
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            Ok(Self::new(reader.read_hash()?, reader.read_u64()?))
+        })
     }
 
     fn size(&self) -> usize {
@@ -102,38 +112,42 @@ impl ChainRequest {
 }
 
 impl Serializer for ChainRequest {
-    fn write(&self, writer: &mut Writer) {
-        writer.write_u8(self.blocks.len() as u8);
-        for block_id in &self.blocks {
-            block_id.write(writer);
-        }
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            writer.write_u8(self.blocks.len() as u8)?;
+            for block_id in &self.blocks {
+                block_id.write(writer)?;
+            }
 
-        writer.write_u16(self.accepted_response_size);
+            writer.write_u16(self.accepted_response_size)
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let len = reader.read_u8()?;
-        if len == 0 || len > CHAIN_SYNC_REQUEST_MAX_BLOCKS as u8 {
-            debug!("Invalid chain request length: {}", len);
-            return Err(ReaderError::InvalidValue)
-        }
-
-        let mut blocks = IndexSet::with_capacity(len as usize);
-        for _ in 0..len {
-            if !blocks.insert(BlockId::read(reader)?) {
-                debug!("Duplicated block id in chain request");
-                return Err(ReaderError::InvalidValue)
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let len = reader.read_u8()?;
+            if len == 0 || len > CHAIN_SYNC_REQUEST_MAX_BLOCKS as u8 {
+                debug!("Invalid chain request length: {}", len);
+                return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("chain request contains {len} block IDs; expected 1..={CHAIN_SYNC_REQUEST_MAX_BLOCKS}")))
             }
-        }
 
-        let accepted_response_size = reader.read_u16()?;
-        // Verify that the requested response size is in the protocol bounds
-        if accepted_response_size < CHAIN_SYNC_RESPONSE_MIN_BLOCKS as u16 || accepted_response_size > CHAIN_SYNC_RESPONSE_MAX_BLOCKS as u16 {
-            debug!("Invalid accepted response size: {}", accepted_response_size);
-            return Err(ReaderError::InvalidValue)
-        }
+            let mut blocks = IndexSet::with_capacity(len as usize);
+            for _ in 0..len {
+                if !blocks.insert(BlockId::read(reader)?) {
+                    debug!("Duplicated block id in chain request");
+                    return Err(SerializationError::new(DecodeError::InvalidValue).context("duplicate block ID in chain request"))
+                }
+            }
 
-        Ok(Self { blocks, accepted_response_size })
+            let accepted_response_size = reader.read_u16()?;
+            // Verify that the requested response size is in the protocol bounds
+            if accepted_response_size < CHAIN_SYNC_RESPONSE_MIN_BLOCKS as u16 || accepted_response_size > CHAIN_SYNC_RESPONSE_MAX_BLOCKS as u16 {
+                debug!("Invalid accepted response size: {}", accepted_response_size);
+                return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("accepted chain response size {accepted_response_size} is outside {CHAIN_SYNC_RESPONSE_MIN_BLOCKS}..={CHAIN_SYNC_RESPONSE_MAX_BLOCKS}")))
+            }
+
+            Ok(Self { blocks, accepted_response_size })
+        })
     }
 
     fn size(&self) -> usize {
@@ -165,15 +179,19 @@ impl CommonPoint {
 }
 
 impl Serializer for CommonPoint {
-    fn write(&self, writer: &mut Writer) {
-        self.hash.write(writer);
-        self.topoheight.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.hash.write(writer)?;
+            self.topoheight.write(writer)
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let hash = Hash::read(reader)?;
-        let topoheight = u64::read(reader)?;
-        Ok(Self { hash, topoheight })
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let hash = Hash::read(reader)?;
+            let topoheight = u64::read(reader)?;
+            Ok(Self { hash, topoheight })
+        })
     }
 
     fn size(&self) -> usize {
@@ -225,63 +243,68 @@ impl ChainResponse {
 }
 
 impl Serializer for ChainResponse {
-    fn write(&self, writer: &mut Writer) {
-        self.common_point.write(writer);
-        // No need to write the blocks if we don't have a common point
-        if self.common_point.is_none() {
-            return
-        }
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.common_point.write(writer)?;
+            // No need to write the blocks if we don't have a common point
+            if self.common_point.is_none() {
+                return Ok(())
+            }
 
-        // Write the lowest height
-        if let Some(lowest_height) = self.lowest_height {
-            lowest_height.write(writer);
-        }
+            // Write the lowest height
+            if let Some(lowest_height) = self.lowest_height {
+                lowest_height.write(writer)?;
+            }
 
-        writer.write_u16(self.blocks.len() as u16);
-        for hash in &self.blocks {
-            hash.write(writer);
-        }
+            writer.write_u16(self.blocks.len() as u16)?;
+            for hash in &self.blocks {
+                hash.write(writer)?;
+            }
 
-        writer.write_u8(self.top_blocks.len() as u8);
-        for hash in &self.top_blocks {
-            hash.write(writer);
-        }
+            writer.write_u8(self.top_blocks.len() as u8)?;
+            for hash in &self.top_blocks {
+                hash.write(writer)?;
+            }
+            Ok(())
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let common_point = Option::read(reader)?;
-        // No need to read the blocks if we don't have a common point
-        if common_point.is_none() {
-            return Ok(Self::new(None, None, IndexSet::new(), IndexSet::new()))
-        }
-
-        let lowest_height = reader.read_u64()?;
-        let len = reader.read_u16()?;
-        if len > CHAIN_SYNC_RESPONSE_MAX_BLOCKS as u16 {
-            debug!("Invalid chain response length: {}", len);
-            return Err(ReaderError::InvalidValue)
-        }
-
-        let mut blocks: IndexSet<Hash> = IndexSet::with_capacity(len as usize); 
-        for _ in 0..len {
-            let hash = reader.read_hash()?;
-            if !blocks.insert(hash) {
-                debug!("Invalid chain response duplicate block");
-                return Err(ReaderError::InvalidValue)
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let common_point = Option::read(reader)?;
+            // No need to read the blocks if we don't have a common point
+            if common_point.is_none() {
+                return Ok(Self::new(None, None, IndexSet::new(), IndexSet::new()))
             }
-        }
 
-        let len = reader.read_u8()?;
-        let mut top_blocks: IndexSet<Hash> = IndexSet::with_capacity(len as usize); 
-        for _ in 0..len {
-            let hash = reader.read_hash()?;
-            if blocks.contains(&hash) || !top_blocks.insert(hash) {
-                debug!("Invalid chain response duplicate top block");
-                return Err(ReaderError::InvalidValue)
+            let lowest_height = reader.read_u64()?;
+            let len = reader.read_u16()?;
+            if len > CHAIN_SYNC_RESPONSE_MAX_BLOCKS as u16 {
+                debug!("Invalid chain response length: {}", len);
+                return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("chain response contains {len} block hashes; maximum is {CHAIN_SYNC_RESPONSE_MAX_BLOCKS}")))
             }
-        }
 
-        Ok(Self::new(common_point, Some(lowest_height), blocks, top_blocks))
+            let mut blocks: IndexSet<Hash> = IndexSet::with_capacity(len as usize); 
+            for _ in 0..len {
+                let hash = reader.read_hash()?;
+                if !blocks.insert(hash) {
+                    debug!("Invalid chain response duplicate block");
+                    return Err(SerializationError::new(DecodeError::InvalidValue).context("duplicate block hash in chain response"))
+                }
+            }
+
+            let len = reader.read_u8()?;
+            let mut top_blocks: IndexSet<Hash> = IndexSet::with_capacity(len as usize); 
+            for _ in 0..len {
+                let hash = reader.read_hash()?;
+                if blocks.contains(&hash) || !top_blocks.insert(hash) {
+                    debug!("Invalid chain response duplicate top block");
+                    return Err(SerializationError::new(DecodeError::InvalidValue).context("top block hash is duplicated or already present in the chain response blocks"))
+                }
+            }
+
+            Ok(Self::new(common_point, Some(lowest_height), blocks, top_blocks))
+        })
     }
 
     fn size(&self) -> usize {

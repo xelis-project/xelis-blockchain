@@ -431,11 +431,11 @@ impl RocksStorage {
 
         match snapshot {
             Some(snapshot) => {
-                snapshot.put(column, key.as_ref().to_vec(), value.to_bytes());
+                snapshot.put(column, key.as_ref().to_vec(), value.to_bytes()?);
             },
             None => {
                 let cf = cf_handle!(db, column);
-                db.put_cf(&cf, key.as_ref(), value.to_bytes())
+                db.put_cf(&cf, key.as_ref(), value.to_bytes()?)
                     .map_err(|e| anyhow::anyhow!("Error while inserting into disk column {:?}: {}", column, e))?;
             }
         };

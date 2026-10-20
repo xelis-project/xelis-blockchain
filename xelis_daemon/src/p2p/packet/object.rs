@@ -10,10 +10,16 @@ use xelis_common::{
     },
     immutable::Immutable,
     serializer::{
+        DecodeError,
+        Error as SerializationError,
+        Readable,
         Reader,
         ReaderError,
+        ReaderExt,
         Serializer,
-        Writer
+        Writable,
+        Writer,
+        WriterExt,
     },
     transaction::Transaction
 };
@@ -39,30 +45,34 @@ impl ObjectRequest {
 }
 
 impl Serializer for ObjectRequest {
-    fn write(&self, writer: &mut Writer) {
-        match &self {
-            Self::Block(hash) => {
-                writer.write_u8(0);
-                writer.write_hash(hash);
-            },
-            Self::BlockHeader(hash) => {
-                writer.write_u8(1);
-                writer.write_hash(hash);
-            },
-            Self::Transaction(hash) => {
-                writer.write_u8(2);
-                writer.write_hash(hash);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            match &self {
+                Self::Block(hash) => {
+                    writer.write_u8(0)?;
+                    writer.write_hash(hash)
+                },
+                Self::BlockHeader(hash) => {
+                    writer.write_u8(1)?;
+                    writer.write_hash(hash)
+                },
+                Self::Transaction(hash) => {
+                    writer.write_u8(2)?;
+                    writer.write_hash(hash)
+                }
             }
-        }
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let id = reader.read_u8()?;
-        Ok(match id {
-            0 => ObjectRequest::Block(Immutable::read(reader)?),
-            1 => ObjectRequest::BlockHeader(Immutable::read(reader)?),
-            2 => ObjectRequest::Transaction(Immutable::read(reader)?),
-            _ => return Err(ReaderError::InvalidValue)
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let id = reader.read_u8()?;
+            Ok(match id {
+                0 => ObjectRequest::Block(Immutable::read(reader)?),
+                1 => ObjectRequest::BlockHeader(Immutable::read(reader)?),
+                2 => ObjectRequest::Transaction(Immutable::read(reader)?),
+                tag => return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown object request tag {tag}")))
+            })
         })
     }
 
@@ -172,35 +182,39 @@ impl ObjectResponse<'_> {
 }
 
 impl<'a> Serializer for ObjectResponse<'a> {
-    fn write(&self, writer: &mut Writer) {
-        match &self {
-            Self::Block(block) => {
-                writer.write_u8(0);
-                block.write(writer);
-            },
-            Self::BlockHeader(header) => {
-                writer.write_u8(1);
-                header.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            match &self {
+                Self::Block(block) => {
+                    writer.write_u8(0)?;
+                    block.write(writer)
+                },
+                Self::BlockHeader(header) => {
+                    writer.write_u8(1)?;
+                    header.write(writer)
+                }
+                Self::Transaction(transaction) => {
+                    writer.write_u8(2)?;
+                    transaction.write(writer)
+                },
+                Self::NotFound(obj) => {
+                    writer.write_u8(3)?;
+                    obj.write(writer)
+                }
             }
-            Self::Transaction(transaction) => {
-                writer.write_u8(2);
-                transaction.write(writer);
-            },
-            Self::NotFound(obj) => {
-                writer.write_u8(3);
-                obj.write(writer);
-            }
-        }
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let id = reader.read_u8()?;
-        Ok(match id {
-            0 => Self::Block(Cow::Owned(Block::read(reader)?)),
-            1 => Self::BlockHeader(Cow::Owned(BlockHeader::read(reader)?)),
-            2 => Self::Transaction(Cow::Owned(Transaction::read(reader)?)),
-            3 => Self::NotFound(ObjectRequest::read(reader)?),
-            _ => return Err(ReaderError::InvalidValue)
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let id = reader.read_u8()?;
+            Ok(match id {
+                0 => Self::Block(Cow::Owned(Block::read(reader)?)),
+                1 => Self::BlockHeader(Cow::Owned(BlockHeader::read(reader)?)),
+                2 => Self::Transaction(Cow::Owned(Transaction::read(reader)?)),
+                3 => Self::NotFound(ObjectRequest::read(reader)?),
+                tag => return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown object response tag {tag}")))
+            })
         })
     }
 

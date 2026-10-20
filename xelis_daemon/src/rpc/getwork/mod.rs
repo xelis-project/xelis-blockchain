@@ -21,6 +21,7 @@ use log::{debug, error, trace, warn};
 use lru::LruCache;
 use serde::Serialize;
 use xelis_common::{
+    serializer::Serializer,
     tokio::{sync::{Mutex, RwLock}, task::JoinHandle, time::sleep},
     api::daemon::{
         GetBlockTemplateResult,
@@ -42,7 +43,6 @@ use xelis_common::{
         server::websocket::{WebSocketHandler, WebSocketSessionShared},
         InternalRpcError
     },
-    serializer::Serializer,
     time::{get_current_time_in_millis, TimestampMillis},
     tokio::spawn_task
 };
@@ -260,7 +260,7 @@ impl<S: Storage> GetWorkServer<S> {
         let topoheight = self.blockchain.get_topo_height().await;
 
         debug!("Sending job to new miner");
-        session.send_json(Response::NewJob(GetMinerWorkResult { algorithm, miner_work: job.to_hex(), height, topoheight, difficulty })).await
+        session.send_json(Response::NewJob(GetMinerWorkResult { algorithm, miner_work: job.to_hex()?, height, topoheight, difficulty })).await
             .context("error while sending block template")?;
         debug!("Job sent to miner");
 
@@ -325,7 +325,7 @@ impl<S: Storage> GetWorkServer<S> {
             let rpc = self.blockchain.get_rpc().read().await;
             if let Some(rpc) = rpc.as_ref() {
                 let value = GetBlockTemplateResult {
-                    template: header.to_hex(),
+                    template: header.to_hex()?,
                     algorithm,
                     height,
                     topoheight,
@@ -365,7 +365,14 @@ impl<S: Storage> GetWorkServer<S> {
 
                         job.set_miner(Cow::Owned(key));
                         rng().fill(job.get_extra_nonce());
-                        let template = job.to_hex();
+                        let template = match job.to_hex() {
+                            Ok(template) => template,
+                            Err(e) => {
+                                warn!("Error while serializing job for {}: {}", miner, e);
+                                failed_sessions.lock().await.push(addr);
+                                return;
+                            }
+                        };
 
                         if let Err(e) = addr.send_json(Response::NewJob(GetMinerWorkResult { algorithm, miner_work: template, height, topoheight, difficulty })).await {
                             warn!("Error while notifying {} about new job: {}", miner, e);

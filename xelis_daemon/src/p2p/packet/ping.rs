@@ -4,10 +4,16 @@ use xelis_common::{
     crypto::Hash,
     difficulty::CumulativeDifficulty,
     serializer::{
+        DecodeError,
+        Error as SerializationError,
+        Readable,
         Reader,
         ReaderError,
+        ReaderExt,
         Serializer,
-        Writer
+        Writable,
+        Writer,
+        WriterExt,
     },
     time::get_current_time_in_millis
 };
@@ -158,46 +164,51 @@ impl<'a> Ping<'a> {
 }
 
 impl Serializer for Ping<'_> {
-    fn write(&self, writer: &mut Writer) {
-        self.top_hash.write(writer);
-        self.topoheight.write(writer);
-        self.height.write(writer);
-        self.pruned_topoheight.write(writer);
-        self.cumulative_difficulty.write(writer);
-        writer.write_u8(self.peer_list.len() as u8);
-        for peer in &self.peer_list {
-            peer.write(writer);
-        }
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.top_hash.write(writer)?;
+            self.topoheight.write(writer)?;
+            self.height.write(writer)?;
+            self.pruned_topoheight.write(writer)?;
+            self.cumulative_difficulty.write(writer)?;
+            writer.write_u8(self.peer_list.len() as u8)?;
+            for peer in &self.peer_list {
+                peer.write(writer)?;
+            }
+            Ok(())
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let top_hash = Cow::Owned(reader.read_hash()?);
-        let topoheight = reader.read_u64()?;
-        let height = reader.read_u64()?;
-        let pruned_topoheight = Option::read(reader)?;
-        if let Some(pruned_topoheight) = &pruned_topoheight {
-            if *pruned_topoheight == 0 {
-                debug!("Invalid pruned topoheight (0) in ping packet");
-                return Err(ReaderError::InvalidValue)
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let top_hash = Cow::Owned(reader.read_hash()?);
+            let topoheight = reader.read_u64()?;
+            let height = reader.read_u64()?;
+            let pruned_topoheight = Option::read(reader)?;
+            if let Some(pruned_topoheight) = &pruned_topoheight {
+                if *pruned_topoheight == 0 {
+                    debug!("Invalid pruned topoheight (0) in ping packet");
+                    return Err(SerializationError::new(DecodeError::InvalidValue).context("ping pruned topoheight must be nonzero when present"))
+                }
             }
-        }
-        let cumulative_difficulty = CumulativeDifficulty::read(reader)?;
-        let peers_len = reader.read_u8()? as usize;
-        if peers_len > P2P_PING_PEER_LIST_LIMIT {
-            debug!("Too much peers sent in this ping packet: received {} while max is {}", peers_len, P2P_PING_PEER_LIST_LIMIT);
-            return Err(ReaderError::InvalidValue)
-        }
-
-        let mut peer_list = IndexSet::with_capacity(peers_len);
-        for _ in 0..peers_len {
-            let peer = SocketAddr::read(reader)?;
-            if !peer_list.insert(peer) {
-                debug!("Duplicated peer {} in ping packet", peer);
-                return Err(ReaderError::InvalidValue)
+            let cumulative_difficulty = CumulativeDifficulty::read(reader)?;
+            let peers_len = reader.read_u8()? as usize;
+            if peers_len > P2P_PING_PEER_LIST_LIMIT {
+                debug!("Too much peers sent in this ping packet: received {} while max is {}", peers_len, P2P_PING_PEER_LIST_LIMIT);
+                return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("ping contains {peers_len} peers; maximum is {P2P_PING_PEER_LIST_LIMIT}")))
             }
-        }
 
-        Ok(Self { top_hash, topoheight, height, pruned_topoheight, cumulative_difficulty, peer_list })
+            let mut peer_list = IndexSet::with_capacity(peers_len);
+            for _ in 0..peers_len {
+                let peer = SocketAddr::read(reader)?;
+                if !peer_list.insert(peer) {
+                    debug!("Duplicated peer {} in ping packet", peer);
+                    return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("duplicate peer address {peer} in ping")))
+                }
+            }
+
+            Ok(Self { top_hash, topoheight, height, pruned_topoheight, cumulative_difficulty, peer_list })
+        })
     }
 
     fn size(&self) -> usize {

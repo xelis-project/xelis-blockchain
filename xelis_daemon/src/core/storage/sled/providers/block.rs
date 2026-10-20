@@ -105,22 +105,22 @@ impl BlockProvider for SledStorage {
         }
 
         // Store block header and increase blocks count if it's a new block
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.blocks, hash.as_bytes(), block.to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.blocks, hash.as_bytes(), block.to_bytes()?)?;
 
         // Store difficulty
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.difficulty, hash.as_bytes(), difficulty.to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.difficulty, hash.as_bytes(), difficulty.to_bytes()?)?;
 
         // Store cumulative difficulty
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.cumulative_difficulty, hash.as_bytes(), cumulative_difficulty.to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.cumulative_difficulty, hash.as_bytes(), cumulative_difficulty.to_bytes()?)?;
 
         // Store P
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.difficulty_covariance, hash.as_bytes(), p.to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.difficulty_covariance, hash.as_bytes(), p.to_bytes()?)?;
 
         // Store EMA
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.block_size_ema, hash.as_bytes(), size_ema.to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.block_size_ema, hash.as_bytes(), size_ema.to_bytes()?)?;
 
         // Store mergeset
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.mergeset, hash.as_bytes(), mergeset.to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.mergeset, hash.as_bytes(), mergeset.to_bytes()?)?;
 
         self.add_block_hash_at_height(&hash, block.get_height()).await?;
 

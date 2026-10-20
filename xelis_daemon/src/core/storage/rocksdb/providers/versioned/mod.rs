@@ -107,7 +107,7 @@ impl RocksStorage {
                     let (mapped_key, mut prev_version) = mapper(key, pointer)?;
                     let mut patched = false;
 
-                    let bytes = mapped_key.to_bytes();
+                    let bytes = mapped_key.to_bytes()?;
                     let mut versioned_key = vec![0; bytes.len() + 8];
                     versioned_key[8..].copy_from_slice(&bytes);
 

@@ -10,6 +10,7 @@ use crate::{
 use anyhow::Context;
 use metrics::{counter, histogram};
 use xelis_common::{
+    serializer::Serializer,
     tokio::{
         select,
         sync::{broadcast, mpsc, oneshot, Mutex, Semaphore},
@@ -19,7 +20,6 @@ use xelis_common::{
     block::TopoHeight,
     crypto::Hash,
     difficulty::CumulativeDifficulty,
-    serializer::Serializer,
     time::{
         get_current_time_in_millis,
         get_current_time_in_seconds,
@@ -835,7 +835,7 @@ impl Peer {
     // This will transform the packet into bytes and send it to the peer
     pub async fn send_packet(&self, packet: Packet<'_>) -> Result<(), P2pError> {
         trace!("Sending {:?}", packet);
-        self.send_bytes(Bytes::from(packet.to_bytes())).await
+        self.send_bytes(Bytes::from(packet.to_bytes()?)).await
     }
 
     // Send packet bytes to the peer

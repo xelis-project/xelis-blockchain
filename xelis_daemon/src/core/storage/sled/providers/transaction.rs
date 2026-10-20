@@ -50,7 +50,7 @@ impl TransactionProvider for SledStorage {
     // Store a new transaction
     async fn add_transaction(&mut self, hash: &Hash, transaction: &Transaction) -> Result<(), BlockchainError> {
         trace!("add transaction {}", hash);
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.transactions, hash, transaction.to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.transactions, hash, transaction.to_bytes()?)?;
 
         Ok(())
     }

@@ -4,7 +4,7 @@ use xelis_common::{
     account::VersionedNonce,
     block::TopoHeight,
     crypto::PublicKey,
-    serializer::Serializer
+    serializer::Serializer,
 };
 use crate::core::{
     error::{BlockchainError, DiskContext},
@@ -41,7 +41,7 @@ impl NonceProvider for SledStorage {
         trace!("set last nonce {} for {} at topoheight {}", version.get_nonce(), key.as_address(self.is_mainnet()), topoheight);
 
         let disk_key = self.get_versioned_nonce_key(key, topoheight);
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_nonces, &disk_key, version.to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_nonces, &disk_key, version.to_bytes()?)?;
 
         // Also update the pointer
         Self::insert_into_disk(self.snapshot.as_mut(), &self.nonces, key.as_bytes(), &topoheight.to_be_bytes())?;

@@ -4,11 +4,17 @@ use log::debug;
 use xelis_common::{
     crypto::{Hash, HASH_SIZE},
     serializer::{
-        Serializer,
-        ReaderError,
+        DecodeError,
+        Error as SerializationError,
+        Readable,
         Reader,
-        Writer
-    }
+        ReaderError,
+        ReaderExt,
+        Serializer,
+        Writable,
+        Writer,
+        WriterExt,
+    },
 };
 
 pub const NOTIFY_MAX_LEN: usize = 16384; // 16384 * 32 bytes = 512 KiB
@@ -31,13 +37,15 @@ impl NotifyInventoryRequest {
 }
 
 impl Serializer for NotifyInventoryRequest {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let page = reader.read_optional_non_zero_u8()?;
-        Ok(Self::new(page))
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let page = reader.read_optional_non_zero_u8()?;
+            Ok(Self::new(page))
+        })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        writer.write_optional_non_zero_u8(self.page);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| writer.write_optional_non_zero_u8(self.page))
     }
 
     fn size(&self) -> usize {
@@ -73,29 +81,34 @@ impl<'a> NotifyInventoryResponse<'a> {
 }
 
 impl<'a> Serializer for NotifyInventoryResponse<'a> {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let next = reader.read_optional_non_zero_u8()?;
-        let count = reader.read_u16()?;
-        if count > NOTIFY_MAX_LEN as u16 {
-            return Err(ReaderError::InvalidSize);
-        }
- 
-        let mut txs = IndexSet::with_capacity(count as usize);
-        for _ in 0..count {
-            if !txs.insert(Cow::Owned(reader.read_hash()?)) {
-                debug!("Duplicate transaction in NotifyInventoryResponse");
-                return Err(ReaderError::InvalidValue)
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let next = reader.read_optional_non_zero_u8()?;
+            let count = reader.read_u16()?;
+            if count > NOTIFY_MAX_LEN as u16 {
+                return Err(SerializationError::new(DecodeError::InvalidSize).context(format!("inventory response contains {count} transaction hashes; maximum is {NOTIFY_MAX_LEN}")));
             }
-        }
-        Ok(Self::new(next, Cow::Owned(txs)))
+
+            let mut txs = IndexSet::with_capacity(count as usize);
+            for _ in 0..count {
+                if !txs.insert(Cow::Owned(reader.read_hash()?)) {
+                    debug!("Duplicate transaction in NotifyInventoryResponse");
+                    return Err(SerializationError::new(DecodeError::InvalidValue).context("duplicate transaction hash in inventory response"))
+                }
+            }
+            Ok(Self::new(next, Cow::Owned(txs)))
+        })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        writer.write_optional_non_zero_u8(self.next);
-        writer.write_u16(self.txs.len() as u16);
-        for tx in self.txs.iter() {
-            writer.write_hash(tx);
-        }
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            writer.write_optional_non_zero_u8(self.next)?;
+            writer.write_u16(self.txs.len() as u16)?;
+            for tx in self.txs.iter() {
+                writer.write_hash(tx)?;
+            }
+            Ok(())
+        })
     }
 
     fn size(&self) -> usize {

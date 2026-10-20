@@ -1,4 +1,7 @@
-use xelis_common::{block::TopoHeight, serializer::*};
+use xelis_common::{
+    block::TopoHeight,
+    serializer::{Error as SerializationError, *},
+};
 
 pub type ContractId = u64;
 pub type ContractDataId = u64;
@@ -9,18 +12,22 @@ pub struct Contract {
 }
 
 impl Serializer for Contract {
-    fn write(&self, writer: &mut Writer) {
-        self.id.write(writer);
-        self.module_pointer.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.id.write(writer)?;
+            self.module_pointer.write(writer)
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let id = ContractId::read(reader)?;
-        let module_pointer = Option::read(reader)?;
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let id = ContractId::read(reader)?;
+            let module_pointer = Option::read(reader)?;
 
-        Ok(Self {
-            id,
-            module_pointer
+            Ok(Self {
+                id,
+                module_pointer
+            })
         })
     }
 }

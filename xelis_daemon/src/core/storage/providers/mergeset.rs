@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use linked_hash_table::LinkedHashMap;
 use xelis_common::{
     crypto::Hash,
-    serializer::*,
+    serializer::{Error as SerializationError, *},
 };
 use crate::core::error::BlockchainError;
 
@@ -106,41 +106,46 @@ impl MergeSet {
 }
 
 impl Serializer for MergeSet {
-    fn write(&self, writer: &mut Writer) {
-        writer.write_u16(self.mergeset_blues.len() as u16);
-        for (hash, &size) in &self.mergeset_blues {
-            hash.write(writer);
-            writer.write_u16(size as u16);
-        }
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            writer.write_u16(self.mergeset_blues.len() as u16)?;
+            for (hash, &size) in &self.mergeset_blues {
+                hash.write(writer)?;
+                writer.write_u16(size as u16)?;
+            }
 
-        writer.write_u16(self.updated_anticones.len() as u16);
-        for (hash, &size) in &self.updated_anticones {
-            hash.write(writer);
-            writer.write_u16(size as u16);
-        }
+            writer.write_u16(self.updated_anticones.len() as u16)?;
+            for (hash, &size) in &self.updated_anticones {
+                hash.write(writer)?;
+                writer.write_u16(size as u16)?;
+            }
+            Ok(())
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let count = reader.read_u16()? as usize;
-        let mut mergeset_blues = LinkedHashMap::with_capacity(count);
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let count = reader.read_u16()? as usize;
+            let mut mergeset_blues = LinkedHashMap::with_capacity(count);
 
-        for _ in 0..count {
-            let hash = Hash::read(reader)?;
-            let size = reader.read_u16()? as usize;
-            mergeset_blues.insert(hash.clone(), size);
-        }
+            for _ in 0..count {
+                let hash = Hash::read(reader)?;
+                let size = reader.read_u16()? as usize;
+                mergeset_blues.insert(hash.clone(), size);
+            }
 
-        let count = reader.read_u16()? as usize;
-        let mut updated_anticones = HashMap::with_capacity(count);
-        for _ in 0..count {
-            let hash = Hash::read(reader)?;
-            let size = reader.read_u16()? as usize;
-            updated_anticones.insert(hash, size);
-        }
+            let count = reader.read_u16()? as usize;
+            let mut updated_anticones = HashMap::with_capacity(count);
+            for _ in 0..count {
+                let hash = Hash::read(reader)?;
+                let size = reader.read_u16()? as usize;
+                updated_anticones.insert(hash, size);
+            }
 
-        Ok(Self {
-            mergeset_blues,
-            updated_anticones,
+            Ok(Self {
+                mergeset_blues,
+                updated_anticones,
+            })
         })
     }
 }

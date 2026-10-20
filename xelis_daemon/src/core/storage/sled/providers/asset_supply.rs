@@ -3,7 +3,7 @@ use log::trace;
 use xelis_common::{
     block::TopoHeight,
     crypto::Hash,
-    serializer::Serializer
+    serializer::Serializer,
 };
 use crate::core::{
     error::{BlockchainError, DiskContext},
@@ -56,7 +56,7 @@ impl AssetCirculatingSupplyProvider for SledStorage {
 
     async fn set_last_circulating_supply_for_asset(&mut self, asset: &Hash, topoheight: TopoHeight, supply: &VersionedSupply) -> Result<(), BlockchainError> {
         trace!("set last supply for asset {} at topoheight {}", asset, topoheight);
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_assets_supply, &Self::get_versioned_key(asset, topoheight), supply.to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_assets_supply, &Self::get_versioned_key(asset, topoheight), supply.to_bytes()?)?;
         Self::insert_into_disk(self.snapshot.as_mut(), &self.assets_supply, asset, &topoheight.to_be_bytes())?;
 
         Ok(())

@@ -101,7 +101,7 @@ impl SledStorage {
                 match new_topo_pointer {
                     Some(topo) => {
                         trace!("overwriting the topo pointer");
-                        Self::insert_into_disk(snapshot.as_mut(), tree_pointer, key, topo.to_bytes())?;
+                        Self::insert_into_disk(snapshot.as_mut(), tree_pointer, key, topo.to_bytes()?)?;
                     },
                     None => {
                         trace!("no new topo pointer to set, deleting the pointer from tree");
@@ -151,7 +151,7 @@ impl SledStorage {
                             patched = true;
                             data.set_previous_topoheight(None);
 
-                            Self::insert_into_disk(snapshot.as_mut(), tree_versioned, &versioned_key, data.to_bytes())?;
+                            Self::insert_into_disk(snapshot.as_mut(), tree_versioned, &versioned_key, data.to_bytes()?)?;
                         }
                     }
                 }

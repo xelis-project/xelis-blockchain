@@ -3,7 +3,18 @@ use xelis_common::{
     crypto::Hash,
     difficulty::CumulativeDifficulty,
     network::Network,
-    serializer::{Reader, ReaderError, Serializer, Writer},
+    serializer::{
+        DecodeError,
+        Error as SerializationError,
+        Readable,
+        Reader,
+        ReaderError,
+        ReaderExt,
+        Serializer,
+        Writable,
+        Writer,
+        WriterExt,
+    },
     time::TimestampSeconds
 };
 use crate::p2p::{
@@ -179,70 +190,75 @@ impl<'a> Handshake<'a> {
 
 impl Serializer for Handshake<'_> {
     // 1 + MAX(16) + 1 + MAX(16) + 16 + 8 + 8 + 8 + 32 + 1 + 24 * 16 + 1
-    fn write(&self, writer: &mut Writer) {
-        // daemon version
-        writer.write_string(&self.version);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            // daemon version
+            writer.write_string(&self.version)?;
 
-        // network
-        self.network.write(writer);
+            // network
+            self.network.write(writer)?;
 
-        // node tag
-        writer.write_optional_string(&self.node_tag);
+            // node tag
+            writer.write_optional_string(&self.node_tag)?;
 
-        writer.write_bytes(self.network_id.as_ref()); // network ID
-        self.peer_id.write(writer); // transform peer ID to bytes
-        writer.write_u16(self.local_port); // local port
-        self.utc_time.write(writer); // UTC Time
-        self.topoheight.write(writer); // Topo height
-        self.height.write(writer); // Block Height
-        self.pruned_topoheight.write(writer); // Pruned Topo Height
-        writer.write_hash(&self.top_hash); // Block Top Hash (32 bytes)
-        writer.write_hash(&self.genesis_hash); // Genesis Hash
-        self.cumulative_difficulty.write(writer); // Cumulative Difficulty
-        writer.write_u8(self.flags.bits()); // flags
+            writer.write_bytes(self.network_id.as_ref())?; // network ID
+            self.peer_id.write(writer)?; // transform peer ID to bytes
+            writer.write_u16(self.local_port)?; // local port
+            self.utc_time.write(writer)?; // UTC Time
+            self.topoheight.write(writer)?; // Topo height
+            self.height.write(writer)?; // Block Height
+            self.pruned_topoheight.write(writer)?; // Pruned Topo Height
+            writer.write_hash(&self.top_hash)?; // Block Top Hash (32 bytes)
+            writer.write_hash(&self.genesis_hash)?; // Genesis Hash
+            self.cumulative_difficulty.write(writer)?; // Cumulative Difficulty
+            writer.write_u8(self.flags.bits())?; // flags
+            Ok(())
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        // Handshake have a static size + some part of dynamic size (node tag, version, peers list)
-        // we must verify the correct size each time we want to read from the data sent by the client
-        // if we don't verify each time, it can create a panic error and crash the node
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            // Handshake have a static size + some part of dynamic size (node tag, version, peers list)
+            // we must verify the correct size each time we want to read from the data sent by the client
+            // if we don't verify each time, it can create a panic error and crash the node
 
-        // Daemon version
-        let version = reader.read_string()?;
-        if version.len() == 0 || version.len() > Handshake::MAX_LEN {
-            return Err(ReaderError::InvalidSize)
-        }
-
-        // Network
-        let network = Network::read(reader)?;
-
-        // Node Tag
-        let node_tag = reader.read_optional_string()?;
-        if let Some(tag) = &node_tag {
-            if tag.len() > Handshake::MAX_LEN {
-                return Err(ReaderError::InvalidSize)
+            // Daemon version
+            let version = reader.read_string()?;
+            if version.len() == 0 || version.len() > Handshake::MAX_LEN {
+                return Err(SerializationError::new(DecodeError::InvalidSize).context(format!("handshake daemon version has length {}; expected 1..={}", version.len(), Handshake::MAX_LEN)))
             }
-        }
 
-        let network_id: [u8; 16] = reader.read_bytes(16)?;
-        let peer_id = reader.read_u64()?;
-        let local_port = reader.read_u16()?;
-        let utc_time = reader.read_u64()?;
-        let topoheight = reader.read_u64()?;
-        let height = reader.read_u64()?;
-        let pruned_topoheight = Option::read(reader)?;
-        if let Some(pruned_topoheight) = &pruned_topoheight {
-            if *pruned_topoheight == 0 {
-                debug!("Invalid pruned topoheight (0) in handshake packet");
-                return Err(ReaderError::InvalidValue)
+            // Network
+            let network = Network::read(reader)?;
+
+            // Node Tag
+            let node_tag = reader.read_optional_string()?;
+            if let Some(tag) = &node_tag {
+                if tag.len() > Handshake::MAX_LEN {
+                    return Err(SerializationError::new(DecodeError::InvalidSize).context(format!("handshake node tag has length {}; maximum is {}", tag.len(), Handshake::MAX_LEN)))
+                }
             }
-        }
-        let top_hash = reader.read_hash()?;
-        let genesis_hash = reader.read_hash()?;
-        let cumulative_difficulty = CumulativeDifficulty::read(reader)?;
-        let flags = Flags::new(reader.read_u8()?);
 
-        Ok(Handshake::new(Cow::Owned(version), network, Cow::Owned(node_tag), Cow::Owned(network_id), peer_id, local_port, utc_time, topoheight, height, pruned_topoheight, Cow::Owned(top_hash), Cow::Owned(genesis_hash), Cow::Owned(cumulative_difficulty), flags))
+            let network_id = <[u8; 16]>::read(reader)?;
+            let peer_id = reader.read_u64()?;
+            let local_port = reader.read_u16()?;
+            let utc_time = reader.read_u64()?;
+            let topoheight = reader.read_u64()?;
+            let height = reader.read_u64()?;
+            let pruned_topoheight = Option::read(reader)?;
+            if let Some(pruned_topoheight) = &pruned_topoheight {
+                if *pruned_topoheight == 0 {
+                    debug!("Invalid pruned topoheight (0) in handshake packet");
+                    return Err(SerializationError::new(DecodeError::InvalidValue).context("handshake pruned topoheight must be nonzero when present"))
+                }
+            }
+            let top_hash = reader.read_hash()?;
+            let genesis_hash = reader.read_hash()?;
+            let cumulative_difficulty = CumulativeDifficulty::read(reader)?;
+            let flags = Flags::new(reader.read_u8()?);
+
+            Ok(Handshake::new(Cow::Owned(version), network, Cow::Owned(node_tag), Cow::Owned(network_id), peer_id, local_port, utc_time, topoheight, height, pruned_topoheight, Cow::Owned(top_hash), Cow::Owned(genesis_hash), Cow::Owned(cumulative_difficulty), flags))
+        })
     }
 
     fn size(&self) -> usize {

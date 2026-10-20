@@ -13,7 +13,7 @@ use std::{
 use anyhow::Context;
 use bytes::Bytes;
 use itertools::Either;
-use xelis_common::{serializer::Serializer};
+use xelis_common::serializer::Serializer;
 use crate::core::{
     error::BlockchainError,
     storage::{cache::StorageCache, snapshot::changes::Changes}

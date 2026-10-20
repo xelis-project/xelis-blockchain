@@ -1,7 +1,12 @@
 use async_trait::async_trait;
 use futures::{Stream, stream};
 use log::trace;
-use xelis_common::{block::TopoHeight, contract::EventCallbackRegistration, crypto::Hash, serializer::{Serializer, Skip}};
+use xelis_common::{
+    block::TopoHeight,
+    contract::EventCallbackRegistration,
+    crypto::Hash,
+    serializer::{Serializer, Skip},
+};
 use crate::core::{
     error::{BlockchainError, DiskContext},
     storage::{
@@ -26,11 +31,11 @@ impl ContractEventCallbackProvider for SledStorage {
 
         // Store in non-versioned tree for fast lookup (points to topoheight)
         let key = Self::get_event_callback_key(contract, event_id, listener_contract);
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.contracts_event_callbacks, &key, topoheight.to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.contracts_event_callbacks, &key, topoheight.to_bytes()?)?;
 
         // Store in versioned tree for rollback support
         let versioned_key = Self::get_versioned_event_callback_key(topoheight, contract, event_id, listener_contract);
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_contracts_event_callbacks, &versioned_key, version.to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_contracts_event_callbacks, &versioned_key, version.to_bytes()?)?;
 
         Ok(())
     }

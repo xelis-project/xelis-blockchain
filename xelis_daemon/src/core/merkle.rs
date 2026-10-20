@@ -1,6 +1,9 @@
 use std::borrow::Cow;
 
-use xelis_common::{crypto::{hash, Hash, HASH_SIZE}, serializer::Serializer};
+use xelis_common::{
+    crypto::{hash, Hash, HASH_SIZE},
+    serializer::Serializer,
+};
 
 // This builder is used to build a merkle tree from a list of hashes
 // It uses a bottom-up approach to build the tree
@@ -42,7 +45,8 @@ impl<'a> MerkleBuilder<'a> {
 
     // Add an element by hashing and adding it to the list of hashes
     pub fn add_element<S: Serializer>(&mut self, element: &S) {
-        self.hashes.push(Cow::Owned(hash(&element.to_bytes())));
+        let bytes = element.to_bytes().expect("Merkle element serialization failed");
+        self.hashes.push(Cow::Owned(hash(&bytes)));
     }
 
     /// Add a byte array to the list of hashes

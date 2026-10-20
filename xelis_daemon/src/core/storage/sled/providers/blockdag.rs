@@ -4,7 +4,7 @@ use xelis_common::{
     block::{BlockHeader, TopoHeight},
     crypto::Hash,
     immutable::Immutable,
-    serializer::Serializer
+    serializer::Serializer,
 };
 
 use crate::core::{
@@ -49,7 +49,7 @@ impl BlockDagProvider for SledStorage {
     async fn set_metadata_at_topoheight(&mut self, topoheight: TopoHeight, metadata: TopoHeightMetadata) -> Result<(), BlockchainError> {
         trace!("set topoheight metadata at {}", topoheight);
 
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.topoheight_metadata, &topoheight.to_be_bytes(), metadata.to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.topoheight_metadata, &topoheight.to_be_bytes(), metadata.to_bytes()?)?;
 
         Ok(())
     }

@@ -3,7 +3,7 @@ use log::trace;
 use xelis_common::{
     block::TopoHeight,
     crypto::{Hash, HASH_SIZE},
-    serializer::{Serializer, Skip}
+    serializer::{Serializer, Skip},
 };
 use crate::core::{
     error::{BlockchainError, DiskContext},
@@ -78,7 +78,7 @@ impl ContractBalanceProvider for SledStorage {
     async fn set_last_contract_balance_to(&mut self, contract: &Hash, asset: &Hash, topoheight: TopoHeight, balance: VersionedContractBalance) -> Result<(), BlockchainError> {
         trace!("set last contract {} balance {} to topoheight {}", contract, asset, topoheight);
         let key = Self::get_versioned_key(Self::get_contract_balance_key(contract, asset), topoheight);
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_contracts_balances, &key, balance.to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_contracts_balances, &key, balance.to_bytes()?)?;
         Self::insert_into_disk(self.snapshot.as_mut(), &self.contracts_balances, &Self::get_contract_balance_key(contract, asset), &topoheight.to_be_bytes())?;
 
         Ok(())

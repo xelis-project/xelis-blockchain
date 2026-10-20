@@ -10,6 +10,7 @@ use std::{
 use thiserror::Error;
 use anyhow::Error;
 use xelis_common::{
+    serializer::ReaderError,
     tokio::{
         sync::{
             AcquireError,
@@ -20,7 +21,6 @@ use xelis_common::{
     },
     api::daemon::{TimedDirection, Direction},
     crypto::Hash,
-    serializer::ReaderError,
 };
 use crate::{
     core::error::BlockchainError,

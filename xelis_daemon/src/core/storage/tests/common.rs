@@ -17,7 +17,12 @@ use xelis_common::{
     varuint::VarUint,
     versioned::Versioned
 };
-use xelis_vm::{Module, Primitive, ValueCell};
+use xelis_vm::{
+    PrimitiveInteger,
+    Module,
+    Primitive,
+    ValueCell
+};
 use crate::core::storage::Storage;
 
 pub struct TestData {
@@ -2184,9 +2189,9 @@ pub async fn test_contract_data_lifecycle<S: Storage>(mut storage: S) -> Result<
     let contract = Hash::new([240u8; 32]);
     register_contract(&mut storage, &contract, 0).await?;
 
-    let key = ValueCell::Primitive(Primitive::U64(42));
-    let val_v1 = ValueCell::Primitive(Primitive::U64(100));
-    let val_v2 = ValueCell::Primitive(Primitive::U64(200));
+    let key = ValueCell::Primitive(Primitive::Integer(PrimitiveInteger::U64(42)));
+    let val_v1 = ValueCell::Primitive(Primitive::Integer(PrimitiveInteger::U64(100)));
+    let val_v2 = ValueCell::Primitive(Primitive::Integer(PrimitiveInteger::U64(200)));
 
     // topo 1: key does not exist yet
     let missing = storage.get_contract_data_at_maximum_topoheight_for(&contract, &key, 1).await?;
@@ -2252,9 +2257,9 @@ pub async fn test_contract_data_rewind<S: Storage>(mut storage: S) -> Result<()>
     let contract = Hash::new([241u8; 32]);
     register_contract(&mut storage, &contract, 0).await?;
 
-    let key   = ValueCell::Primitive(Primitive::U64(99));
-    let val_a = ValueCell::Primitive(Primitive::U64(10));
-    let val_b = ValueCell::Primitive(Primitive::U64(20));
+    let key   = ValueCell::Primitive(Primitive::Integer(PrimitiveInteger::U64(99)));
+    let val_a = ValueCell::Primitive(Primitive::Integer(PrimitiveInteger::U64(10)));
+    let val_b = ValueCell::Primitive(Primitive::Integer(PrimitiveInteger::U64(20)));
 
     // topo 3: create val_a
     storage.set_last_contract_data_to(

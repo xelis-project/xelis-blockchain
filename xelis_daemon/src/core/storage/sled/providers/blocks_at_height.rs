@@ -5,7 +5,7 @@ use indexmap::IndexSet;
 use log::trace;
 use xelis_common::{
     crypto::Hash,
-    serializer::Serializer
+    serializer::Serializer,
 };
 use crate::core::{
     error::BlockchainError,
@@ -28,7 +28,7 @@ impl BlocksAtHeightProvider for SledStorage {
 
     async fn set_blocks_at_height(&mut self, tips: &IndexSet<Hash>, height: u64) -> Result<(), BlockchainError> {
         trace!("set {} blocks at height {}", tips.len(), height);
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.blocks_at_height, &height.to_be_bytes(), OrderedHashes(Cow::Borrowed(tips)).to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.blocks_at_height, &height.to_be_bytes(), OrderedHashes(Cow::Borrowed(tips)).to_bytes()?)?;
         Ok(())
     }
 

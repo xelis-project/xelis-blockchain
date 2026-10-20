@@ -1,4 +1,4 @@
-use anyhow::Context;
+use matriochka::{Error, OptionExt};
 use async_trait::async_trait;
 use log::trace;
 use xelis_common::{
@@ -15,7 +15,7 @@ use crate::core::storage::{
     BalanceProvider,
     ContractBalanceProvider,
     ContractDataProvider,
-    ContractProvider as _,
+    ContractProvider as MainContractProvider,
     NetworkProvider,
     SledStorage,
     AssetCirculatingSupplyProvider,
@@ -25,9 +25,9 @@ use crate::core::storage::{
 
 #[async_trait]
 impl ContractStorage for SledStorage {
-    async fn load_data(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<Option<(TopoHeight, Option<ValueCell>)>, anyhow::Error> {
+    async fn load_data(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<Option<(TopoHeight, Option<ValueCell>)>, Error> {
         trace!("load contract {} key {} data at topoheight {}", contract, key, topoheight);
-        let res = self.get_contract_data_at_maximum_topoheight_for(contract, &key, topoheight).await?;
+        let res = self.get_contract_data_at_maximum_topoheight_for(contract, &key, topoheight).await.map_err(Error::new)?;
 
         match res {
             Some((topoheight, data)) => match data.take() {
@@ -38,79 +38,74 @@ impl ContractStorage for SledStorage {
         }
     }
 
-    async fn load_data_latest_topoheight(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<Option<TopoHeight>, anyhow::Error> {
+    async fn load_data_latest_topoheight(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<Option<TopoHeight>, Error> {
         trace!("load data latest topoheight for contract {} key {} at topoheight {}", contract, key, topoheight);
-        let res = self.get_contract_data_topoheight_at_maximum_topoheight_for(contract, &key, topoheight).await?;
-        Ok(res)
+        self.get_contract_data_topoheight_at_maximum_topoheight_for(contract, &key, topoheight).await.map_err(Error::new)
     }
 
-    async fn has_contract(&self, contract: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error> {
+    async fn has_contract(&self, contract: &Hash, topoheight: TopoHeight) -> Result<bool, Error> {
         trace!("has contract {} at topoheight {}", contract, topoheight);
-        let res = self.has_contract_at_maximum_topoheight(contract, topoheight).await?;
-        Ok(res)
+        self.has_contract_at_maximum_topoheight(contract, topoheight).await.map_err(Error::new)
     }
 }
 
 #[async_trait]
 impl<'ty> ContractProvider<'ty> for SledStorage {
-    async fn get_contract_balance_for_asset(&self, contract: &Hash, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, u64)>, anyhow::Error> {
+    async fn get_contract_balance_for_asset(&self, contract: &Hash, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, u64)>, Error> {
         trace!("get contract balance for contract {} asset {}", contract, asset);
-        let res = self.get_contract_balance_at_maximum_topoheight(contract, asset, topoheight).await?;
+        let res = self.get_contract_balance_at_maximum_topoheight(contract, asset, topoheight).await.map_err(Error::new)?;
         Ok(res.map(|(topoheight, balance)| (topoheight, balance.take())))
     }
 
-    async fn asset_exists(&self, asset: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error> {
+    async fn asset_exists(&self, asset: &Hash, topoheight: TopoHeight) -> Result<bool, Error> {
         trace!("check if asset {} exists at topoheight {}", asset, topoheight);
-        let contains = self.is_asset_registered_at_maximum_topoheight(asset, topoheight).await?;
-        Ok(contains)
+        self.is_asset_registered_at_maximum_topoheight(asset, topoheight).await.map_err(Error::new)
     }
 
-    async fn account_exists(&self, key: &PublicKey, topoheight: TopoHeight) -> Result<bool, anyhow::Error> {
+    async fn account_exists(&self, key: &PublicKey, topoheight: TopoHeight) -> Result<bool, Error> {
         trace!("check if account {} exists at topoheight {}", key.as_address(self.is_mainnet()), topoheight);
 
-        let contains = self.is_account_registered_for_topoheight(key, topoheight).await?;
-        Ok(contains)
+        self.is_account_registered_for_topoheight(key, topoheight).await.map_err(Error::new)
     }
 
     // Verify if we have already a registered execution for such contract at a specific topoheight
-    async fn has_scheduled_execution_at_topoheight(&self, contract: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error> {
+    async fn has_scheduled_execution_at_topoheight(&self, contract: &Hash, topoheight: TopoHeight) -> Result<bool, Error> {
         trace!("has scheduled execution for contract {} at topoheight {}", contract, topoheight);
-        let contains = self.has_contract_scheduled_execution_at_topoheight(contract, topoheight).await?;
-        Ok(contains)
+        self.has_contract_scheduled_execution_at_topoheight(contract, topoheight).await.map_err(Error::new)
     }
 
     // Load the asset data from the storage
-    async fn load_asset_data(&self, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, AssetData)>, anyhow::Error> {
+    async fn load_asset_data(&self, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, AssetData)>, Error> {
         trace!("load asset data for asset {} at topoheight {}", asset, topoheight);
-        let res = self.get_asset_at_maximum_topoheight(asset, topoheight).await?;
+        let res = self.get_asset_at_maximum_topoheight(asset, topoheight).await.map_err(Error::new)?;
         Ok(res.map(|(topo, v)| (topo, v.take())))
     }
 
-    async fn load_asset_circulating_supply(&self, asset: &Hash, topoheight: TopoHeight) -> Result<(TopoHeight, u64), anyhow::Error> {
+    async fn load_asset_circulating_supply(&self, asset: &Hash, topoheight: TopoHeight) -> Result<(TopoHeight, u64), Error> {
         trace!("load asset supply for asset {} at topoheight {}", asset, topoheight);
-        self.get_circulating_supply_for_asset_at_maximum_topoheight(asset, topoheight).await?
+        self.get_circulating_supply_for_asset_at_maximum_topoheight(asset, topoheight).await.map_err(Error::new)?
             .map(|(topo, v)| (topo, v.take()))
             .context("Asset circulating supply not found")
     }
 
-    async fn get_account_balance_for_asset(&self, key: &PublicKey, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, CiphertextCache)>, anyhow::Error> {
+    async fn get_account_balance_for_asset(&self, key: &PublicKey, asset: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, CiphertextCache)>, Error> {
         trace!("get account {} balance for asset {} at topoheight {}", key.as_address(self.is_mainnet()), asset, topoheight);
-        let res = self.get_balance_at_maximum_topoheight(key, asset, topoheight).await?;
+        let res = self.get_balance_at_maximum_topoheight(key, asset, topoheight).await.map_err(Error::new)?;
         Ok(res.map(|(topoheight, balance)| (topoheight, balance.take_balance())))
     }
 
     // Load a contract module
-    async fn load_contract_module(&self, contract: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, Option<ContractModule>)>, anyhow::Error> {
+    async fn load_contract_module(&self, contract: &Hash, topoheight: TopoHeight) -> Result<Option<(TopoHeight, Option<ContractModule>)>, Error> {
         trace!("load contract module for contract {} at topoheight {}", contract, topoheight);
-        let res = self.get_contract_at_maximum_topoheight_for(contract, topoheight).await?;
+        let res = self.get_contract_at_maximum_topoheight_for(contract, topoheight).await.map_err(Error::new)?;
         Ok(res.map(|(topoheight, module)| (topoheight, module.take().map(|v| v.into_owned()))))
     }
 
     // Check if a contract has already a callback registered for an event at topoheight
-    async fn has_contract_callback_for_event(&self, contract: &Hash, event_id: u64, listener: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error> {
+    async fn has_contract_callback_for_event(&self, contract: &Hash, event_id: u64, listener: &Hash, topoheight: TopoHeight) -> Result<bool, Error> {
         trace!("check if contract {} has callback for event {} to listener {} at topoheight {}", contract, event_id, listener, topoheight);
 
-        let res = self.get_event_callback_for_contract_at_maximum_topoheight(contract, event_id, listener, topoheight).await?;
+        let res = self.get_event_callback_for_contract_at_maximum_topoheight(contract, event_id, listener, topoheight).await.map_err(Error::new)?;
         Ok(res.is_some_and(|(_, v)| v.get().is_some()))
     }
 }

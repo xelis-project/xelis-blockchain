@@ -4,7 +4,7 @@ use xelis_common::{
     asset::{AssetData, VersionedAssetData},
     block::TopoHeight,
     crypto::{elgamal::RISTRETTO_COMPRESSED_SIZE, Hash, PublicKey},
-    serializer::{Serializer, Skip}
+    serializer::{Serializer, Skip},
 };
 use crate::core::{
     error::{BlockchainError, DiskContext},
@@ -130,7 +130,7 @@ impl AssetProvider for SledStorage {
         Self::insert_into_disk(self.snapshot.as_mut(), &self.assets, asset.as_bytes(), &topoheight.to_be_bytes())?;
 
         let key = Self::get_asset_key(asset, topoheight);
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_assets, &key, data.to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_assets, &key, data.to_bytes()?)?;
 
         if let Some(cache) = self.cache_mut().objects.as_mut().map(|o| o.assets_cache.get_mut()) {
             cache.put(asset.clone(), topoheight);

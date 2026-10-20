@@ -1,7 +1,5 @@
 use crate::{
-    config::{
-        PEER_TIMEOUT_DISCONNECT
-    },
+    config::PEER_TIMEOUT_DISCONNECT,
     p2p::compression::Compression
 };
 use super::{
@@ -29,6 +27,7 @@ use human_bytes::human_bytes;
 use humantime::format_duration;
 use metrics::counter;
 use xelis_common::{
+    serializer::{Reader, Serializer},
     tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::{
@@ -39,7 +38,6 @@ use xelis_common::{
         time::timeout
     },
     time::{TimestampSeconds, get_current_time_in_seconds},
-    serializer::{Reader, Serializer},
 };
 use log::{debug, error, trace, warn};
 
@@ -138,7 +136,7 @@ impl Connection {
             let pk_bytes = keypair.get_public_key().as_bytes();
             let packet = Packet::KeyExchange(Cow::Borrowed(pk_bytes));
 
-            let mut buffer = packet.to_bytes();
+            let mut buffer = packet.to_bytes()?;
             self.send_bytes(&mut buffer).await?;
         }
 
@@ -233,7 +231,7 @@ impl Connection {
     // Rotate the current key with a new key and generate the packet
     async fn generate_rotate_key_packet(&self, new_key: EncryptionKey) -> P2pResult<Vec<u8>> {
         // Build the packet
-        let mut packet = Packet::KeyExchange(Cow::Borrowed(&new_key)).to_bytes();
+        let mut packet = Packet::KeyExchange(Cow::Borrowed(&new_key)).to_bytes()?;
 
         if self.encryption.is_write_ready().await {
             self.compression.compress(&mut packet).await?;
@@ -352,7 +350,7 @@ impl Connection {
 
     // Deserialize a packet from bytes and verify its integrity
     pub async fn read_packet_from_bytes(&self, bytes: &[u8]) -> P2pResult<Packet<'static>> {
-        let mut reader = Reader::new(&bytes);
+        let mut reader = Reader::new(bytes);
         let packet = Packet::read(&mut reader)?;
         if reader.total_read() != bytes.len() {
             warn!("read {:?} only {}/{} on bytes available from {}", packet, reader.total_read(), bytes.len(), self);

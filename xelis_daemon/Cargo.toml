@@ -43,6 +43,7 @@ metrics = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "io-util", "io-std", "time", "macros", "sync", "net"] }
 hex = { workspace = true }
 anyhow = { workspace = true }
+matriochka = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
 rand = { workspace = true }

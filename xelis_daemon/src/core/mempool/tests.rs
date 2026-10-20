@@ -4,6 +4,7 @@ use xelis_common::{
     account::{CiphertextCache, VersionedBalance, VersionedNonce},
     config::{COIN_VALUE, FEE_PER_KB, XELIS_ASSET},
     crypto::{Address, Hash, Hashable},
+    serializer::Serializer,
     transaction::{
         MultiSigPayload,
         Reference,
@@ -21,7 +22,7 @@ use crate::core::{
     storage::{MemoryStorage, BalanceProvider, MultiSigProvider, NonceProvider, AccountProvider},
 };
 use super::*;
-use xelis_common::{serializer::Serializer, time::get_current_time_in_seconds};
+use xelis_common::time::get_current_time_in_seconds;
 
 #[tokio::test]
 async fn test_commit_rejects_mismatched_sender_without_mutating_backend() {
@@ -461,9 +462,9 @@ fn create_multisig_setup_tx(
     } else {
         let mut unsigned = builder.build_unsigned(&mut state, &account.keypair).unwrap();
         for (id, signer) in signers {
-            unsigned.sign_multisig(&signer.keypair, *id);
+            unsigned.sign_multisig(&signer.keypair, *id).unwrap();
         }
-        let tx = unsigned.finalize(&account.keypair);
+        let tx = unsigned.finalize(&account.keypair).unwrap();
         account.balances = state.balances;
         account.nonce = state.nonce;
         tx

@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use xelis_common::{block::TopoHeight, serializer::Serializer};
+use xelis_common::{
+    block::TopoHeight,
+    serializer::Serializer,
+};
 use crate::core::{
     error::BlockchainError,
     storage::{

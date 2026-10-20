@@ -1046,7 +1046,7 @@ mod tests {
         network::Network,
         versioned::VersionedState,
     };
-    use xelis_vm::Primitive;
+    use xelis_vm::{Primitive, PrimitiveInteger};
 
     use crate::core::storage::MemoryStorage;
 
@@ -1060,7 +1060,7 @@ mod tests {
                 RETURN
             "#,
         );
-        assembler.add_constant(Primitive::U64(exit_code).into());
+        assembler.add_constant(Primitive::Integer(PrimitiveInteger::U64(exit_code)).into());
 
         ContractModule {
             version: ContractVersion::V1,

@@ -19,9 +19,20 @@ use x25519_dalek::PublicKey;
 use bytes::Bytes;
 use log::{info, debug, trace, error};
 use xelis_common::{
+    serializer::{
+        DecodeError,
+        Error as SerializationError,
+        Readable,
+        Reader,
+        ReaderError,
+        ReaderExt,
+        Serializer,
+        Writable,
+        Writer,
+        WriterExt,
+    },
     tokio::sync::{mpsc::Sender, RwLock},
     block::TopoHeight,
-    serializer::{Reader, ReaderError, Serializer, Writer},
     time::{get_current_time_in_seconds, TimestampSeconds}
 };
 use crate::{
@@ -155,7 +166,7 @@ impl PeerList {
         if notify && peer.shareable() {
             // now remove this peer from all peers that tracked it
             let addr = peer.get_outgoing_address();
-            let packet = Bytes::from(Packet::PeerDisconnected(PacketPeerDisconnected::new(*addr)).to_bytes());
+            let packet = Bytes::from(Packet::PeerDisconnected(PacketPeerDisconnected::new(*addr)).to_bytes()?);
 
             // Reference is Copy
             let packet = &packet;
@@ -787,62 +798,71 @@ impl Display for PeerListEntry {
 }
 
 impl Serializer for PeerListEntryState {
-    fn write(&self, writer: &mut Writer) {
-        match self {
-            Self::Whitelist => writer.write_u8(0),
-            Self::Graylist => writer.write_u8(1),
-            Self::Blacklist => writer.write_u8(2)
-        }
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            match self {
+                Self::Whitelist => writer.write_u8(0),
+                Self::Graylist => writer.write_u8(1),
+                Self::Blacklist => writer.write_u8(2)
+            }
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok(match reader.read_u8()? {
-            0 => Self::Whitelist,
-            1 => Self::Graylist,
-            2 => Self::Blacklist,
-            _ => return Err(ReaderError::InvalidValue)
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            Ok(match reader.read_u8()? {
+                0 => Self::Whitelist,
+                1 => Self::Graylist,
+                2 => Self::Blacklist,
+                tag => return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown peer list state tag {tag}")))
+            })
         })
     }
 }
 
 impl Serializer for PeerListEntry {
-    fn write(&self, writer: &mut Writer) {
-        writer.write_optional_non_zero_u64(self.first_seen);
-        writer.write_optional_non_zero_u64(self.last_seen);
-        writer.write_optional_non_zero_u64(self.last_connection_try);
-        self.fail_count.write(writer);
-        writer.write_optional_non_zero_u16(self.local_port);
-        self.out_success.write(writer);
-        self.temp_ban_until.write(writer);
-        self.state.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            writer.write_optional_non_zero_u64(self.first_seen)?;
+            writer.write_optional_non_zero_u64(self.last_seen)?;
+            writer.write_optional_non_zero_u64(self.last_connection_try)?;
+            self.fail_count.write(writer)?;
+            writer.write_optional_non_zero_u16(self.local_port)?;
+            self.out_success.write(writer)?;
+            self.temp_ban_until.write(writer)?;
+            self.state.write(writer)?;
 
-        writer.write_bool(self.public_key.is_some());
-        if let Some(public_key) = &self.public_key {
-            public_key.as_bytes().write(writer);
-        }
+            writer.write_bool(self.public_key.is_some())?;
+            if let Some(public_key) = &self.public_key {
+                public_key.as_bytes().write(writer)?;
+            }
+            Ok(())
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let first_seen = reader.read_optional_non_zero_u64()?;
-        let last_seen = reader.read_optional_non_zero_u64()?;
-        let last_connection_try = reader.read_optional_non_zero_u64()?;
-        let fail_count = reader.read_u8()?;
-        let local_port = reader.read_optional_non_zero_u16()?;
-        let out_success = reader.read_bool()?;
-        let temp_ban_until = Option::read(reader)?;
-        let state = PeerListEntryState::read(reader)?;
-        let public_key = Option::<[u8; 32]>::read(reader)?.map(PublicKey::from);
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let first_seen = reader.read_optional_non_zero_u64()?;
+            let last_seen = reader.read_optional_non_zero_u64()?;
+            let last_connection_try = reader.read_optional_non_zero_u64()?;
+            let fail_count = reader.read_u8()?;
+            let local_port = reader.read_optional_non_zero_u16()?;
+            let out_success = reader.read_bool()?;
+            let temp_ban_until = Option::read(reader)?;
+            let state = PeerListEntryState::read(reader)?;
+            let public_key = Option::<[u8; 32]>::read(reader)?.map(PublicKey::from);
 
-        Ok(Self {
-            first_seen,
-            last_seen,
-            last_connection_try,
-            fail_count,
-            local_port,
-            out_success,
-            temp_ban_until,
-            state,
-            public_key
+            Ok(Self {
+                first_seen,
+                last_seen,
+                last_connection_try,
+                fail_count,
+                local_port,
+                out_success,
+                temp_ban_until,
+                state,
+                public_key
+            })
         })
     }
 }

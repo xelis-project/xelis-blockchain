@@ -17,7 +17,7 @@ impl ContractDataProvider for SledStorage {
     async fn set_last_contract_data_to(&mut self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight, data: &VersionedContractData) -> Result<(), BlockchainError> {
         trace!("set last contract data to topoheight {}", topoheight);
         let versioned_key = self.get_versioned_contract_data_key(contract, key, topoheight);
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_contracts_data, &versioned_key, data.to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_contracts_data, &versioned_key, data.to_bytes()?)?;
 
         let key = self.get_contract_data_key(contract, key);
         Self::insert_into_disk(self.snapshot.as_mut(), &self.contracts_data, &key, &topoheight.to_be_bytes())?;
@@ -104,7 +104,7 @@ impl SledStorage {
     pub fn get_contract_data_key(&self, contract: &Hash, key: &ValueCell) -> Key {
         let mut buffer = Key::new();
         buffer.extend_with(contract.as_bytes());
-        buffer.extend_with(&key.to_bytes());
+        buffer.extend_with(&key.to_bytes().expect("contract key serialization failed"));
 
         buffer
     }

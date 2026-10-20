@@ -1,4 +1,7 @@
-use xelis_common::{network::Network, serializer::Serializer};
+use xelis_common::{
+    network::Network,
+    serializer::Serializer,
+};
 use log::trace;
 use crate::core::{error::BlockchainError, storage::{sled::NETWORK, NetworkProvider, SledStorage}};
 
@@ -14,7 +17,7 @@ impl NetworkProvider for SledStorage {
 
     fn set_network(&mut self, network: &Network) -> Result<(), BlockchainError> {
         trace!("set network to {}", network);
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, NETWORK, network.to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.extra, NETWORK, network.to_bytes()?)?;
         Ok(())
     }
 

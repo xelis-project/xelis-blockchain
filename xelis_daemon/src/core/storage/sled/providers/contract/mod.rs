@@ -27,7 +27,7 @@ impl ContractProvider for SledStorage {
     async fn set_last_contract_to<'a>(&mut self, hash: &Hash, topoheight: TopoHeight, contract: &VersionedContractModule<'a>) -> Result<(), BlockchainError> {
         trace!("Setting contract {} at topoheight {}", hash, topoheight);
         let key = self.get_versioned_contract_key(hash, topoheight);
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_contracts, &key, contract.to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_contracts, &key, contract.to_bytes()?)?;
 
         if !Self::insert_into_disk(self.snapshot.as_mut(), &self.contracts, hash.as_bytes(), &topoheight.to_be_bytes())? {
             self.store_contracts_count(self.count_contracts().await? + 1)?;

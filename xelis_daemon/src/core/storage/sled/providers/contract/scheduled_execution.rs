@@ -1,7 +1,12 @@
 use async_trait::async_trait;
 use futures::{stream, Stream, StreamExt};
 use log::trace;
-use xelis_common::{block::TopoHeight, contract::ScheduledExecution, crypto::Hash, serializer::Serializer};
+use xelis_common::{
+    block::TopoHeight,
+    contract::ScheduledExecution,
+    crypto::Hash,
+    serializer::Serializer,
+};
 use crate::core::{
     error::{BlockchainError, DiskContext},
     storage::{ContractScheduledExecutionProvider, SledStorage}
@@ -16,7 +21,7 @@ impl ContractScheduledExecutionProvider for SledStorage {
         trace!("set contract {} scheduled execution at topoheight {}", contract, topoheight);
 
         let execution_key = Self::get_contract_scheduled_execution_key(contract, execution_topoheight);
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.contracts_scheduled_executions, &execution_key, execution.to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.contracts_scheduled_executions, &execution_key, execution.to_bytes()?)?;
 
         // The execution key is stored in the registrations tree so we can easily clean up and iterate over it
         Self::insert_into_disk(self.snapshot.as_mut(), &self.contracts_scheduled_executions_registrations, &Self::get_contract_scheduled_execution_registration_key(topoheight, contract, execution_topoheight), &[])?;

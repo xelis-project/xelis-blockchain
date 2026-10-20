@@ -596,7 +596,7 @@ impl SledStorage {
     // This mean, cache is never used if a snapshot is available
     pub(super) async fn get_cacheable_arc_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(&self, tree: &Tree, cache: Option<&Mutex<LruCache<K, Arc<V>>>>, key: &K, context: DiskContext) -> Result<Immutable<V>, BlockchainError> {
         trace!("get cacheable arc data {:?}", context);
-        let key_bytes = key.to_bytes();
+        let key_bytes = key.to_bytes()?;
         let value = if let Some(cache) = cache.as_ref()
             .filter(|_| self.snapshot.as_ref()
                 .map(|s| !s.contains_key(tree.into(), &key_bytes))
@@ -626,7 +626,7 @@ impl SledStorage {
 
     pub(super) async fn get_optional_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer + Clone>(&self, tree: &Tree, cache: Option<&Mutex<LruCache<K, V>>>, key: &K) -> Result<Option<V>, BlockchainError> {
         trace!("get optional cacheable data");
-        let key_bytes = key.to_bytes();
+        let key_bytes = key.to_bytes()?;
         let value = if let Some(cache) = cache.as_ref()
             .filter(|_| self.snapshot.as_ref()
                 .map_or(true, |s| !s.contains_key(tree.into(), &key_bytes))
@@ -666,7 +666,7 @@ impl SledStorage {
     pub(super) async fn delete_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, cache: Option<&mut Mutex<LruCache<K, V>>>, key: &K) -> Result<V, BlockchainError> {
         trace!("delete cacheable data");
 
-        let k = key.to_bytes();
+        let k = key.to_bytes()?;
         if let Some(cache) = cache {
             if let Some(v) = cache.get_mut().pop(key) {
                 trace!("data has been deleted from cache");
@@ -688,7 +688,7 @@ impl SledStorage {
     // Delete a cacheable data from disk and cache behind a Arc
     pub(super) async fn delete_arc_cacheable_data<K: Eq + StdHash + Serializer + Clone, V: Serializer>(snapshot: Option<&mut Snapshot>, tree: &Tree, cache: Option<&mut Mutex<LruCache<K, Arc<V>>>>, key: &K) -> Result<Immutable<V>, BlockchainError> {
         trace!("delete arc cacheable data");
-        let value = match Self::remove_from_disk::<V, _>(snapshot, tree, &key.to_bytes())? {
+        let value = match Self::remove_from_disk::<V, _>(snapshot, tree, &key.to_bytes()?)? {
             Some(data) => data,
             None => return Err(BlockchainError::NotFoundOnDisk(DiskContext::DeleteData))
         };
@@ -707,7 +707,7 @@ impl SledStorage {
     pub(super) async fn contains_data_cached<K: Eq + StdHash + Serializer + Clone, V>(&self, tree: &Tree, cache: Option<&Mutex<LruCache<K, V>>>, key: &K) -> Result<bool, BlockchainError> {
         trace!("contains data cached");
 
-        let key_bytes = key.to_bytes();
+        let key_bytes = key.to_bytes()?;
         if let Some(snapshot) = self.snapshot.as_ref() {
             if let Some(v) = snapshot.contains(tree.into(), &key_bytes) {
                 trace!("snapshot contains requested data");

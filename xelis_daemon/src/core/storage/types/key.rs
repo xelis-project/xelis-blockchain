@@ -1,6 +1,9 @@
 use std::ops::{Deref, DerefMut};
 
-use xelis_common::{block::TopoHeight, serializer::*};
+use xelis_common::{
+    block::TopoHeight,
+    serializer::{Error as SerializationError, *},
+};
 
 /// A versioned key is a key that is prefixed with a topoheight. It is used to store versioned data on disk.
 pub struct VersionedKey(Key);
@@ -40,12 +43,12 @@ impl DerefMut for VersionedKey {
 }
 
 impl Serializer for VersionedKey {
-    fn write(&self, writer: &mut Writer) {
-        self.0.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| self.0.write(writer))
     }
 
-    fn read(_: &mut Reader) -> Result<Self, ReaderError> {
-        Err(ReaderError::InvalidValue)
+    fn read<'ty, 'r, R: Readable>(_: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        Err(SerializationError::new(DecodeError::InvalidValue).context("decoding VersionedKey is not supported"))
     }
 
     fn size(&self) -> usize {
@@ -86,12 +89,12 @@ impl Into<Vec<u8>> for Key {
 }
 
 impl Serializer for Key {
-    fn write(&self, writer: &mut Writer) {
-        writer.write_bytes(&self.0);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| writer.write_bytes(&self.0))
     }
 
-    fn read(_: &mut Reader) -> Result<Self, ReaderError> {
-        Err(ReaderError::InvalidValue)
+    fn read<'ty, 'r, R: Readable>(_: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        Err(SerializationError::new(DecodeError::InvalidValue).context("decoding Key is not supported"))
     }
 
     fn size(&self) -> usize {

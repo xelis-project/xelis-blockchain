@@ -5,7 +5,7 @@ use xelis_common::{
     contract::ScheduledExecution,
     crypto::Hash,
     difficulty::{CumulativeDifficulty, Difficulty},
-    serializer::*,
+    serializer::{Error as SerializationError, *},
     varuint::VarUint
 };
 
@@ -49,48 +49,52 @@ impl PartialEq for BlockMetadata {
 impl Eq for BlockMetadata {}
 
 impl Serializer for BlockMetadata {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let hash = reader.read_hash()?;
-        let topoheight_metadata = TopoHeightMetadata::read(reader)?;
-        let mergeset = MergeSet::read(reader)?;
-        let difficulty = Difficulty::read(reader)?;
-        let cumulative_difficulty = CumulativeDifficulty::read(reader)?;
-        let p = VarUint::read(reader)?;
-        let size_ema = u32::read(reader)?;
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let hash = reader.read_hash()?;
+            let topoheight_metadata = TopoHeightMetadata::read(reader)?;
+            let mergeset = MergeSet::read(reader)?;
+            let difficulty = Difficulty::read(reader)?;
+            let cumulative_difficulty = CumulativeDifficulty::read(reader)?;
+            let p = VarUint::read(reader)?;
+            let size_ema = u32::read(reader)?;
 
-        // We don't write it through IndexSet impl directly
-        // as we must support any u16 len same as a BlockHeader
-        // TODO best would be a const type providing a configurable MAX_ITEMS
+            // We don't write it through IndexSet impl directly
+            // as we must support any u16 len same as a BlockHeader
+            // TODO best would be a const type providing a configurable MAX_ITEMS
 
-        let len = reader.read_u16()?;
-        let mut executed_transactions = IndexSet::new();
-        for _ in 0..len {
-            if !executed_transactions.insert(Hash::read(reader)?) {
-                return Err(ReaderError::InvalidValue)
+            let len = reader.read_u16()?;
+            let mut executed_transactions = IndexSet::new();
+            for _ in 0..len {
+                if !executed_transactions.insert(Hash::read(reader)?) {
+                    return Err(SerializationError::new(DecodeError::InvalidValue).context("duplicate executed transaction hash in bootstrap block metadata"))
+                }
             }
-        }
 
-        Ok(Self {
-            hash,
-            topoheight_metadata,
-            mergeset,
-            difficulty,
-            cumulative_difficulty,
-            p,
-            size_ema,
-            executed_transactions
+            Ok(Self {
+                hash,
+                topoheight_metadata,
+                mergeset,
+                difficulty,
+                cumulative_difficulty,
+                p,
+                size_ema,
+                executed_transactions
+            })
         })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        writer.write_hash(&self.hash);
-        self.topoheight_metadata.write(writer);
-        self.mergeset.write(writer);
-        self.difficulty.write(writer);
-        self.cumulative_difficulty.write(writer);
-        self.p.write(writer);
-        self.size_ema.write(writer);
-        self.executed_transactions.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            writer.write_hash(&self.hash)?;
+            self.topoheight_metadata.write(writer)?;
+            self.mergeset.write(writer)?;
+            self.difficulty.write(writer)?;
+            self.cumulative_difficulty.write(writer)?;
+            self.p.write(writer)?;
+            self.size_ema.write(writer)?;
+            self.executed_transactions.write(writer)
+        })
     }
 
     fn size(&self) -> usize {
@@ -114,22 +118,26 @@ pub struct ScheduledExecutionMetadata {
 }
 
 impl Serializer for ScheduledExecutionMetadata {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let execution = ScheduledExecution::read(reader)?;
-        let execution_topoheight = TopoHeight::read(reader)?;
-        let registration_topoheight = TopoHeight::read(reader)?;
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let execution = ScheduledExecution::read(reader)?;
+            let execution_topoheight = TopoHeight::read(reader)?;
+            let registration_topoheight = TopoHeight::read(reader)?;
 
-        Ok(Self {
-            execution,
-            execution_topoheight,
-            registration_topoheight
+            Ok(Self {
+                execution,
+                execution_topoheight,
+                registration_topoheight
+            })
         })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        self.execution.write(writer);
-        self.execution_topoheight.write(writer);
-        self.registration_topoheight.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.execution.write(writer)?;
+            self.execution_topoheight.write(writer)?;
+            self.registration_topoheight.write(writer)
+        })
     }
 
     fn size(&self) -> usize {

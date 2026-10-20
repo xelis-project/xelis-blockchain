@@ -1374,7 +1374,7 @@ async fn dump_tx<S: Storage>(manager: &CommandManager, mut arguments: ArgumentMa
     let storage = blockchain.get_storage().read().await;
     let hash = arguments.get_value("hash")?.to_hash()?;
     let tx = storage.get_transaction(&hash).await.context("Error while retrieving transaction")?;
-    let hex = tx.to_hex();
+    let hex = tx.to_hex()?;
     manager.message(format!("TX: {}", hex));
 
     Ok(())
@@ -1386,7 +1386,7 @@ async fn dump_block<S: Storage>(manager: &CommandManager, mut arguments: Argumen
     let storage = blockchain.get_storage().read().await;
     let hash = arguments.get_value("hash")?.to_hash()?;
     let block = storage.get_block_by_hash(&hash).await.context("Error while retrieving block")?;
-    let hex = block.to_hex();
+    let hex = block.to_hex()?;
     manager.message(format!("Block: {}", hex));
 
     Ok(())
@@ -1458,7 +1458,7 @@ async fn inspect_contract<S: Storage>(manager: &CommandManager, mut arguments: A
     };
 
     manager.message(format!("Contract {} deployed at topoheight {}", contract, topo));
-    manager.message(format!("- Contract: {}", module.to_hex()));
+    manager.message(format!("- Contract: {}", module.to_hex()?));
     manager.message(format!("- Bytecode size: {}", human_bytes(module.module.size() as f64)));
     manager.message(format!("- Version: {}", module.version));
     manager.message(format!("- Constructor: {}", module.module.hook_chunk_ids().contains_key(&HOOK_CONSTRUCTOR_ID)));

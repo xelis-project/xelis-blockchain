@@ -1,7 +1,7 @@
+use xelis_common::serializer::{Error as SerializationError, *};
 mod step;
 mod types;
 
-use xelis_common::serializer::*;
 
 pub use step::*;
 pub use types::*;
@@ -34,15 +34,19 @@ impl<'a> BootstrapChainRequest<'a> {
 }
 
 impl Serializer for BootstrapChainRequest<'_> {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let id = reader.read_u64()?;
-        let step = StepRequest::read(reader)?;
-        Ok(Self::new(id, step))
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let id = reader.read_u64()?;
+            let step = StepRequest::read(reader)?;
+            Ok(Self::new(id, step))
+        })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        self.id.write(writer);
-        self.step.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.id.write(writer)?;
+            self.step.write(writer)
+        })
     }
 
     fn size(&self) -> usize {
@@ -80,15 +84,19 @@ impl BootstrapChainResponse {
 }
 
 impl Serializer for BootstrapChainResponse {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let id = reader.read_u64()?;
-        let response = StepResponse::read(reader)?;
-        Ok(Self::new(id, response))
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let id = reader.read_u64()?;
+            let response = StepResponse::read(reader)?;
+            Ok(Self::new(id, response))
+        })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        self.id.write(writer);
-        self.response.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.id.write(writer)?;
+            self.response.write(writer)
+        })
     }
 
     fn size(&self) -> usize {

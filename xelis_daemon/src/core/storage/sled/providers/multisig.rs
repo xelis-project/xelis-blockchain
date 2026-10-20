@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use xelis_common::{
     block::TopoHeight,
     crypto::PublicKey,
-    serializer::Serializer
+    serializer::Serializer,
 };
 use crate::core::{
     error::{BlockchainError, DiskContext},
@@ -60,7 +60,7 @@ impl MultiSigProvider for SledStorage {
     async fn set_last_multisig_to<'a>(&mut self, account: &PublicKey, topoheight: TopoHeight, multisig: VersionedMultiSig<'a>) -> Result<(), BlockchainError> {
         trace!("set last multisig to topoheight {}", topoheight);
         let key: [u8; 40] = self.get_versioned_multisig_key(account, topoheight);
-        Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_multisigs, &key, multisig.to_bytes())?;
+        Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_multisigs, &key, multisig.to_bytes()?)?;
         Self::insert_into_disk(self.snapshot.as_mut(), &self.multisig, account.as_bytes(), &topoheight.to_be_bytes())?;
 
         Ok(())

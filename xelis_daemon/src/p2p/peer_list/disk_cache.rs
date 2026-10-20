@@ -52,18 +52,18 @@ impl DiskCache {
 
     // Check if a peerlist entry is present in DB
     pub fn has_peerlist_entry(&self, peer: &IpAddr) -> Result<bool, DiskError> {
-        Ok(self.peerlist.contains_key(peer.to_bytes())?)
+        Ok(self.peerlist.contains_key(peer.to_bytes()?)?)
     }
 
     // Set a peer state using its IP address
     pub fn set_peerlist_entry(&self, peer: &IpAddr, entry: PeerListEntry) -> Result<(), DiskError> {
-        self.peerlist.insert(peer.to_bytes(), entry.to_bytes())?;
+        self.peerlist.insert(peer.to_bytes()?, entry.to_bytes()?)?;
         Ok(())
     }
 
     // Get a PeerListEntry using its IP address
     pub fn get_peerlist_entry(&self, peer: &IpAddr) -> Result<PeerListEntry, DiskError> {
-        let v = self.peerlist.get(peer.to_bytes())?
+        let v = self.peerlist.get(peer.to_bytes()?)?
             .map(|v| PeerListEntry::from_bytes(&v))
             .ok_or(DiskError::NotFound)??;
 
@@ -84,7 +84,7 @@ impl DiskCache {
 
     // Remove a peer from the peerlist
     pub fn remove_peerlist_entry(&self, peer: &IpAddr) -> Result<(), DiskError> {
-        self.peerlist.remove(peer.to_bytes())?;
+        self.peerlist.remove(peer.to_bytes()?)?;
         Ok(())
     }
 

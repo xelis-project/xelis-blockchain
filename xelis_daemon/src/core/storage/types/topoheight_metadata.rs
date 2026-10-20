@@ -1,4 +1,4 @@
-use xelis_common::serializer::*;
+use xelis_common::serializer::{Error as SerializationError, *};
 
 #[derive(Debug, Clone, Copy)]
 pub struct TopoHeightMetadata {
@@ -14,28 +14,32 @@ pub struct TopoHeightMetadata {
 }
 
 impl Serializer for TopoHeightMetadata {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let rewards = reader.read_u64()?;
-        let emitted_supply = reader.read_u64()?;
-        let total_fees = reader.read_u64()?;
-        let total_fees_burned = reader.read_u64()?;
-        let is_side_block = reader.read_bool()?;
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let rewards = reader.read_u64()?;
+            let emitted_supply = reader.read_u64()?;
+            let total_fees = reader.read_u64()?;
+            let total_fees_burned = reader.read_u64()?;
+            let is_side_block = reader.read_bool()?;
 
-        Ok(Self {
-            block_reward: rewards,
-            emitted_supply,
-            total_fees,
-            total_fees_burned,
-            is_side_block,
+            Ok(Self {
+                block_reward: rewards,
+                emitted_supply,
+                total_fees,
+                total_fees_burned,
+                is_side_block,
+            })
         })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        self.block_reward.write(writer);
-        self.emitted_supply.write(writer);
-        self.total_fees.write(writer);
-        self.total_fees_burned.write(writer);
-        self.is_side_block.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.block_reward.write(writer)?;
+            self.emitted_supply.write(writer)?;
+            self.total_fees.write(writer)?;
+            self.total_fees_burned.write(writer)?;
+            self.is_side_block.write(writer)
+        })
     }
 
     fn size(&self) -> usize {
