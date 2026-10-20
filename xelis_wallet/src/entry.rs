@@ -15,10 +15,16 @@ use xelis_common::{
         PublicKey
     },
     serializer::{
+        DecodeError,
+        Error as SerializationError,
+        Readable,
         Reader,
         ReaderError,
+        ReaderExt,
         Serializer,
-        Writer
+        Writable,
+        Writer,
+        WriterExt,
     },
     time::TimestampMillis,
     transaction::extra_data::{PlaintextExtraData, PlaintextFlag},
@@ -103,27 +109,31 @@ impl TransferIn {
 }
 
 impl Serializer for TransferOut {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let destination = PublicKey::read(reader)?;
-        let asset = reader.read_hash()?;
-        let amount = reader.read_u64()?;
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let destination = PublicKey::read(reader)?;
+            let asset = reader.read_hash()?;
+            let amount = reader.read_u64()?;
 
-        let extra_data = Option::read(reader)?;
+            let extra_data = Option::read(reader)?;
 
-        Ok(Self {
-            destination,
-            asset,
-            amount,
-            extra_data
+            Ok(Self {
+                destination,
+                asset,
+                amount,
+                extra_data
+            })
         })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        self.destination.write(writer);
-        self.asset.write(writer);
-        self.amount.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.destination.write(writer)?;
+            self.asset.write(writer)?;
+            self.amount.write(writer)?;
 
-        self.extra_data.write(writer);
+            self.extra_data.write(writer)
+        })
     }
 
     fn size(&self) -> usize {
@@ -132,23 +142,27 @@ impl Serializer for TransferOut {
 }
 
 impl Serializer for TransferIn {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let asset = reader.read_hash()?;
-        let amount = reader.read_u64()?;
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let asset = reader.read_hash()?;
+            let amount = reader.read_u64()?;
 
-        let extra_data = Option::read(reader)?;
+            let extra_data = Option::read(reader)?;
 
-        Ok(Self {
-            asset,
-            amount,
-            extra_data
+            Ok(Self {
+                asset,
+                amount,
+                extra_data
+            })
         })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        self.asset.write(writer);
-        self.amount.write(writer);
-        self.extra_data.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.asset.write(writer)?;
+            self.amount.write(writer)?;
+            self.extra_data.write(writer)
+        })
     }
 
     fn size(&self) -> usize {
@@ -168,30 +182,35 @@ pub struct DeployInvoke {
 }
 
 impl Serializer for DeployInvoke {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let max_gas = reader.read_u64()?;
-        let deposits_size = reader.read_u8()? as usize;
-        let mut deposits = IndexMap::new();
-        for _ in 0..deposits_size {
-            let asset = reader.read_hash()?;
-            let amount = reader.read_u64()?;
-            deposits.insert(asset, amount);
-        }
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let max_gas = reader.read_u64()?;
+            let deposits_size = reader.read_u8()? as usize;
+            let mut deposits = IndexMap::new();
+            for _ in 0..deposits_size {
+                let asset = reader.read_hash()?;
+                let amount = reader.read_u64()?;
+                deposits.insert(asset, amount);
+            }
 
 
-        Ok(Self {
-            max_gas,
-            deposits,
+            Ok(Self {
+                max_gas,
+                deposits,
+            })
         })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        self.max_gas.write(writer);
-        writer.write_u8(self.deposits.len() as _);
-        for (asset, amount) in self.deposits.iter() {
-            asset.write(writer);
-            amount.write(writer);
-        }
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.max_gas.write(writer)?;
+            writer.write_u8(self.deposits.len() as _)?;
+            for (asset, amount) in self.deposits.iter() {
+                asset.write(writer)?;
+                amount.write(writer)?;
+            }
+            Ok(())
+        })
     }
 }
 
@@ -332,241 +351,247 @@ impl EntryData {
 }
 
 impl Serializer for EntryData {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let id = reader.read_u8()?;
-        Ok(match id  {
-            0 => Self::Coinbase { reward: reader.read_u64()? },
-            1 => Self::Burn {
-                asset: reader.read_hash()?,
-                amount: reader.read_u64()?,
-                fee: reader.read_u64()?,
-                nonce: reader.read_u64()?
-            },
-            2 => {
-                let key = PublicKey::read(reader)?;
-                let size = reader.read_u8()? as usize;
-                let mut transfers = Vec::new();
-                for _ in 0..size {
-                    let transfer = TransferIn::read(reader)?;
-                    transfers.push(transfer);
-                }
-                Self::Incoming { from: key, transfers }
-            }
-            3 => {
-                let size = reader.read_u8()? as usize;
-                let mut transfers = Vec::new();
-                for _ in 0..size {
-                    let transfer = TransferOut::read(reader)?;
-                    transfers.push(transfer);
-                }
-                let fee = reader.read_u64()?;
-                let nonce = reader.read_u64()?;
-
-                Self::Outgoing { transfers, fee, nonce }
-            }
-            4 => {
-                let size = reader.read_u8()? as usize;
-                let mut participants = IndexSet::new();
-                for _ in 0..size {
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let id = reader.read_u8()?;
+            Ok(match id  {
+                0 => Self::Coinbase { reward: reader.read_u64()? },
+                1 => Self::Burn {
+                    asset: reader.read_hash()?,
+                    amount: reader.read_u64()?,
+                    fee: reader.read_u64()?,
+                    nonce: reader.read_u64()?
+                },
+                2 => {
                     let key = PublicKey::read(reader)?;
-                    participants.insert(key);
+                    let size = reader.read_u8()? as usize;
+                    let mut transfers = Vec::new();
+                    for _ in 0..size {
+                        let transfer = TransferIn::read(reader)?;
+                        transfers.push(transfer);
+                    }
+                    Self::Incoming { from: key, transfers }
                 }
-                let threshold = reader.read_u8()?;
-                let fee = reader.read_u64()?;
-                let nonce = reader.read_u64()?;
-                Self::MultiSig { participants, threshold, fee, nonce }
-            },
-            5 => {
-                let contract = reader.read_hash()?;
-                let chunk_id = reader.read_u16()?;
-                let deposits_size = reader.read_u8()? as usize;
-                let mut deposits = IndexMap::new();
-                for _ in 0..deposits_size {
-                    let asset = reader.read_hash()?;
-                    let amount = reader.read_u64()?;
-                    deposits.insert(asset, amount);
-                }
+                3 => {
+                    let size = reader.read_u8()? as usize;
+                    let mut transfers = Vec::new();
+                    for _ in 0..size {
+                        let transfer = TransferOut::read(reader)?;
+                        transfers.push(transfer);
+                    }
+                    let fee = reader.read_u64()?;
+                    let nonce = reader.read_u64()?;
 
-                let received_contracts_size = reader.read_u16()? as usize;
-                let mut received = IndexMap::new();
-                for _ in 0..received_contracts_size {
+                    Self::Outgoing { transfers, fee, nonce }
+                }
+                4 => {
+                    let size = reader.read_u8()? as usize;
+                    let mut participants = IndexSet::new();
+                    for _ in 0..size {
+                        let key = PublicKey::read(reader)?;
+                        participants.insert(key);
+                    }
+                    let threshold = reader.read_u8()?;
+                    let fee = reader.read_u64()?;
+                    let nonce = reader.read_u64()?;
+                    Self::MultiSig { participants, threshold, fee, nonce }
+                },
+                5 => {
                     let contract = reader.read_hash()?;
-                    let assets_size = reader.read_u16()? as usize;
-                    let mut assets = IndexMap::new();
-                    for _ in 0..assets_size {
+                    let chunk_id = reader.read_u16()?;
+                    let deposits_size = reader.read_u8()? as usize;
+                    let mut deposits = IndexMap::new();
+                    for _ in 0..deposits_size {
                         let asset = reader.read_hash()?;
                         let amount = reader.read_u64()?;
-                        assets.insert(asset, amount);
+                        deposits.insert(asset, amount);
                     }
-                    received.insert(contract, assets);
-                }
 
-                let fee = reader.read_u64()?;
-                let max_gas = reader.read_u64()?;
-                let nonce = reader.read_u64()?;
-                Self::InvokeContract { contract, deposits, received, entry_id: chunk_id, fee, max_gas, nonce }
-            },
-            6 => {
-                let fee = reader.read_u64()?;
-                let nonce = reader.read_u64()?;
-                let invoke = Option::read(reader)?;
-                Self::DeployContract { fee, nonce, invoke }
-            }
-            7 => {
-                let contracts_size = reader.read_u16()? as usize;
-                let mut transfers = IndexMap::new();
-                for _ in 0..contracts_size {
-                    let contract = reader.read_hash()?;
-                    let assets_size = reader.read_u16()? as usize;
-                    let mut assets = IndexMap::new();
-                    for _ in 0..assets_size {
-                        let asset = reader.read_hash()?;
-                        let amount = reader.read_u64()?;
-                        assets.insert(asset, amount);
+                    let received_contracts_size = reader.read_u16()? as usize;
+                    let mut received = IndexMap::new();
+                    for _ in 0..received_contracts_size {
+                        let contract = reader.read_hash()?;
+                        let assets_size = reader.read_u16()? as usize;
+                        let mut assets = IndexMap::new();
+                        for _ in 0..assets_size {
+                            let asset = reader.read_hash()?;
+                            let amount = reader.read_u64()?;
+                            assets.insert(asset, amount);
+                        }
+                        received.insert(contract, assets);
                     }
-                    transfers.insert(contract, assets);
+
+                    let fee = reader.read_u64()?;
+                    let max_gas = reader.read_u64()?;
+                    let nonce = reader.read_u64()?;
+                    Self::InvokeContract { contract, deposits, received, entry_id: chunk_id, fee, max_gas, nonce }
+                },
+                6 => {
+                    let fee = reader.read_u64()?;
+                    let nonce = reader.read_u64()?;
+                    let invoke = Option::read(reader)?;
+                    Self::DeployContract { fee, nonce, invoke }
                 }
-                Self::IncomingContract { transfers }
-            }
-            8 => {
-                let from = PublicKey::read(reader)?;
-                let size = reader.read_u8()? as usize;
-                let mut destinations = IndexSet::new();
-                for _ in 0..size {
-                    let key = PublicKey::read(reader)?;
-                    destinations.insert(key);
+                7 => {
+                    let contracts_size = reader.read_u16()? as usize;
+                    let mut transfers = IndexMap::new();
+                    for _ in 0..contracts_size {
+                        let contract = reader.read_hash()?;
+                        let assets_size = reader.read_u16()? as usize;
+                        let mut assets = IndexMap::new();
+                        for _ in 0..assets_size {
+                            let asset = reader.read_hash()?;
+                            let amount = reader.read_u64()?;
+                            assets.insert(asset, amount);
+                        }
+                        transfers.insert(contract, assets);
+                    }
+                    Self::IncomingContract { transfers }
                 }
-                let data = PlaintextExtraData::read(reader)?;
-                Self::IncomingBlob {
-                    from,
-                    destinations,
-                    data
+                8 => {
+                    let from = PublicKey::read(reader)?;
+                    let size = reader.read_u8()? as usize;
+                    let mut destinations = IndexSet::new();
+                    for _ in 0..size {
+                        let key = PublicKey::read(reader)?;
+                        destinations.insert(key);
+                    }
+                    let data = PlaintextExtraData::read(reader)?;
+                    Self::IncomingBlob {
+                        from,
+                        destinations,
+                        data
+                    }
                 }
-            }
-            9 => {
-                let size = reader.read_u8()? as usize;
-                let mut destinations = IndexSet::new();
-                for _ in 0..size {
-                    destinations.insert(PublicKey::read(reader)?);
+                9 => {
+                    let size = reader.read_u8()? as usize;
+                    let mut destinations = IndexSet::new();
+                    for _ in 0..size {
+                        destinations.insert(PublicKey::read(reader)?);
+                    }
+                    let fee = reader.read_u64()?;
+                    let nonce = reader.read_u64()?;
+                    let data = PlaintextExtraData::read(reader)?;
+                    Self::OutgoingBlob {
+                        destinations,
+                        fee,
+                        nonce,
+                        data
+                    }
                 }
-                let fee = reader.read_u64()?;
-                let nonce = reader.read_u64()?;
-                let data = PlaintextExtraData::read(reader)?;
-                Self::OutgoingBlob {
-                    destinations,
-                    fee,
-                    nonce,
-                    data
-                }
-            }
-            _ => return Err(ReaderError::InvalidValue),
+                tag => return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown wallet entry data tag {tag}"))),
+            })
         })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        match &self {
-            Self::Coinbase { reward } => {
-                writer.write_u8(0);
-                reward.write(writer);
-            },
-            Self::Burn { asset, amount, fee, nonce } => {
-                writer.write_u8(1);
-                asset.write(writer);
-                amount.write(writer);
-                fee.write(writer);
-                nonce.write(writer);
-            },
-            Self::Incoming { from, transfers } => {
-                writer.write_u8(2);
-                from.write(writer);
-                // Transfers are maximum 255, so we can use u8
-                writer.write_u8(transfers.len() as u8);
-                for transfer in transfers {
-                    transfer.write(writer);
-                }
-            },
-            Self::Outgoing { transfers, fee, nonce } => {
-                writer.write_u8(3);
-                // Max 255 transfers per TX, so we can use u8
-                writer.write_u8(transfers.len() as u8);
-                for transfer in transfers {
-                    transfer.write(writer);
-                }
-                fee.write(writer);
-                nonce.write(writer);
-            },
-            Self::MultiSig { participants: keys, threshold, fee, nonce } => {
-                writer.write_u8(4);
-                writer.write_u8(keys.len() as u8);
-                for key in keys {
-                    key.write(writer);
-                }
-                writer.write_u8(*threshold);
-                fee.write(writer);
-                nonce.write(writer);
-            },
-            Self::InvokeContract { contract, deposits, received, entry_id: chunk_id, fee, max_gas, nonce } => {
-                writer.write_u8(5);
-                contract.write(writer);
-                chunk_id.write(writer);
-                writer.write_u8(deposits.len() as u8);
-                for (asset, amount) in deposits {
-                    asset.write(writer);
-                    amount.write(writer);
-                }
-
-                writer.write_u16(received.len() as u16);
-                for (contract, assets) in received {
-                    contract.write(writer);
-                    writer.write_u16(assets.len() as u16);
-                    for (asset, amount) in assets {
-                        asset.write(writer);
-                        amount.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            match &self {
+                Self::Coinbase { reward } => {
+                    writer.write_u8(0)?;
+                    reward.write(writer)
+                },
+                Self::Burn { asset, amount, fee, nonce } => {
+                    writer.write_u8(1)?;
+                    asset.write(writer)?;
+                    amount.write(writer)?;
+                    fee.write(writer)?;
+                    nonce.write(writer)
+                },
+                Self::Incoming { from, transfers } => {
+                    writer.write_u8(2)?;
+                    from.write(writer)?;
+                    // Transfers are maximum 255, so we can use u8
+                    writer.write_u8(transfers.len() as u8)?;
+                    for transfer in transfers {
+                        transfer.write(writer)?;
                     }
-                }
-
-                fee.write(writer);
-                max_gas.write(writer);
-                nonce.write(writer);
-            },
-            Self::DeployContract { fee, nonce, invoke } => {
-                writer.write_u8(6);
-                fee.write(writer);
-                nonce.write(writer);
-                invoke.write(writer);
-            },
-            Self::IncomingContract { transfers } => {
-                writer.write_u8(7);
-                writer.write_u16(transfers.len() as u16);
-                for (contract, assets) in transfers {
-                    contract.write(writer);
-                    writer.write_u16(assets.len() as u16);
-                    for (asset, amount) in assets {
-                        asset.write(writer);
-                        amount.write(writer);
+                    Ok(())
+                },
+                Self::Outgoing { transfers, fee, nonce } => {
+                    writer.write_u8(3)?;
+                    // Max 255 transfers per TX, so we can use u8
+                    writer.write_u8(transfers.len() as u8)?;
+                    for transfer in transfers {
+                        transfer.write(writer)?;
                     }
-                }
-            },
-            Self::IncomingBlob { from, destinations, data } => {
-                writer.write_u8(8);
-                from.write(writer);
-                writer.write_u8(destinations.len() as u8);
-                for destination in destinations {
-                    destination.write(writer);
-                }
-                data.write(writer);
-            },
-            Self::OutgoingBlob { destinations, fee, nonce, data } => {
-                writer.write_u8(9);
-                writer.write_u8(destinations.len() as u8);
-                for destination in destinations {
-                    destination.write(writer);
-                }
-                writer.write_u64(*fee);
-                writer.write_u64(*nonce);
-                data.write(writer);
-            },
-        }
+                    fee.write(writer)?;
+                    nonce.write(writer)
+                },
+                Self::MultiSig { participants: keys, threshold, fee, nonce } => {
+                    writer.write_u8(4)?;
+                    writer.write_u8(keys.len() as u8)?;
+                    for key in keys {
+                        key.write(writer)?;
+                    }
+                    writer.write_u8(*threshold)?;
+                    fee.write(writer)?;
+                    nonce.write(writer)
+                },
+                Self::InvokeContract { contract, deposits, received, entry_id: chunk_id, fee, max_gas, nonce } => {
+                    writer.write_u8(5)?;
+                    contract.write(writer)?;
+                    chunk_id.write(writer)?;
+                    writer.write_u8(deposits.len() as u8)?;
+                    for (asset, amount) in deposits {
+                        asset.write(writer)?;
+                        amount.write(writer)?;
+                    }
+
+                    writer.write_u16(received.len() as u16)?;
+                    for (contract, assets) in received {
+                        contract.write(writer)?;
+                        writer.write_u16(assets.len() as u16)?;
+                        for (asset, amount) in assets {
+                            asset.write(writer)?;
+                            amount.write(writer)?;
+                        }
+                    }
+
+                    fee.write(writer)?;
+                    max_gas.write(writer)?;
+                    nonce.write(writer)
+                },
+                Self::DeployContract { fee, nonce, invoke } => {
+                    writer.write_u8(6)?;
+                    fee.write(writer)?;
+                    nonce.write(writer)?;
+                    invoke.write(writer)
+                },
+                Self::IncomingContract { transfers } => {
+                    writer.write_u8(7)?;
+                    writer.write_u16(transfers.len() as u16)?;
+                    for (contract, assets) in transfers {
+                        contract.write(writer)?;
+                        writer.write_u16(assets.len() as u16)?;
+                        for (asset, amount) in assets {
+                            asset.write(writer)?;
+                            amount.write(writer)?;
+                        }
+                    }
+                    Ok(())
+                },
+                Self::IncomingBlob { from, destinations, data } => {
+                    writer.write_u8(8)?;
+                    from.write(writer)?;
+                    writer.write_u8(destinations.len() as u8)?;
+                    for destination in destinations {
+                        destination.write(writer)?;
+                    }
+                    data.write(writer)
+                },
+                Self::OutgoingBlob { destinations, fee, nonce, data } => {
+                    writer.write_u8(9)?;
+                    writer.write_u8(destinations.len() as u8)?;
+                    for destination in destinations {
+                        destination.write(writer)?;
+                    }
+                    writer.write_u64(*fee)?;
+                    writer.write_u64(*nonce)?;
+                    data.write(writer)
+                },
+            }
+        })
     }
 
     fn size(&self) -> usize {
@@ -857,25 +882,29 @@ impl TransactionEntry {
 }
 
 impl Serializer for TransactionEntry {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let hash = reader.read_hash()?;
-        let topoheight = reader.read_u64()?;
-        let timestamp = reader.read_u64()?;
-        let entry = EntryData::read(reader)?;
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let hash = reader.read_hash()?;
+            let topoheight = reader.read_u64()?;
+            let timestamp = reader.read_u64()?;
+            let entry = EntryData::read(reader)?;
 
-        Ok(Self::new(
-            hash,
-            topoheight,
-            timestamp,
-            entry
-        ))
+            Ok(Self::new(
+                hash,
+                topoheight,
+                timestamp,
+                entry
+            ))
+        })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        self.hash.write(writer);
-        self.topoheight.write(writer);
-        self.timestamp.write(writer);
-        self.entry.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.hash.write(writer)?;
+            self.topoheight.write(writer)?;
+            self.timestamp.write(writer)?;
+            self.entry.write(writer)
+        })
     }
 
     fn size(&self) -> usize {

@@ -31,16 +31,10 @@ use xelis_common::{
         HASH_SIZE
     },
     network::Network,
+    serializer::{Reader, Serializer, Skip},
     time::TimestampMillis,
-    serializer::{
-        Reader,
-        Serializer,
-        Skip,
-    },
     tokio::sync::Mutex,
-    transaction::{
-        TxVersion
-    }
+    transaction::TxVersion
 };
 use anyhow::{
     Context,
@@ -418,7 +412,7 @@ impl EncryptedStorage {
     pub fn set_custom_data(&mut self, tree: impl Into<String>, key: &DataValue, value: &DataElement) -> Result<()> {
         trace!("set custom data");
         let tree = self.get_custom_tree(tree)?;
-        self.save_to_disk_with_encrypted_key(&tree, &key.to_bytes(), &value.to_bytes())?;
+        self.save_to_disk_with_encrypted_key(&tree, &key.to_bytes()?, &value.to_bytes()?)?;
         Ok(())
     }
 
@@ -426,7 +420,7 @@ impl EncryptedStorage {
     pub fn delete_custom_data(&mut self, tree: impl Into<String>, key: &DataValue) -> Result<()> {
         trace!("delete custom data");
         let tree = self.get_custom_tree(tree)?;
-        self.delete_from_disk_with_encrypted_key(&tree, &key.to_bytes())?;
+        self.delete_from_disk_with_encrypted_key(&tree, &key.to_bytes()?)?;
         Ok(())
     }
 
@@ -434,14 +428,14 @@ impl EncryptedStorage {
     pub fn get_custom_data(&self, tree: impl Into<String>, key: &DataValue) -> Result<DataElement> {
         trace!("get custom data");
         let tree = self.get_custom_tree(tree)?;
-        self.load_from_disk_with_encrypted_key(&tree, &key.to_bytes())
+        self.load_from_disk_with_encrypted_key(&tree, &key.to_bytes()?)
     }
 
     // Verify if the key is present in the DB
     pub fn has_custom_data(&self, tree: impl Into<String>, key: &DataValue) -> Result<bool> {
         trace!("has custom data");
         let tree = self.get_custom_tree(tree)?;
-        self.contains_with_encrypted_key(&tree, &key.to_bytes())
+        self.contains_with_encrypted_key(&tree, &key.to_bytes()?)
     }
 
     // Search all entries with requested query_key/query_value
@@ -657,7 +651,7 @@ impl EncryptedStorage {
     // Set a multisig state
     pub async fn set_multisig_state(&mut self, state: MultiSig) -> Result<()> {
         trace!("set multisig state");
-        self.save_to_disk(&self.extra, MULTISIG, &state.to_bytes())?;
+        self.save_to_disk(&self.extra, MULTISIG, &state.to_bytes()?)?;
         self.multisig_state = Some(state);
 
         Ok(())
@@ -686,7 +680,7 @@ impl EncryptedStorage {
     // Set the TX Version
     pub async fn set_tx_version(&mut self, version: TxVersion) -> Result<()> {
         trace!("set tx version");
-        self.save_to_disk(&self.extra, TX_VERSION, &version.to_bytes())?;
+        self.save_to_disk(&self.extra, TX_VERSION, &version.to_bytes()?)?;
         self.tx_version = version;
         Ok(())
     }
@@ -748,7 +742,7 @@ impl EncryptedStorage {
     pub async fn add_asset(&mut self, asset: &Hash, data: AssetData) -> Result<()> {
         trace!("add asset");
 
-        self.save_to_disk_with_encrypted_key(&self.assets, asset.as_bytes(), &data.to_bytes())?;
+        self.save_to_disk_with_encrypted_key(&self.assets, asset.as_bytes(), &data.to_bytes()?)?;
         let is_tracked = self.is_asset_tracked_internal(asset)?;
 
         let mut cache = self.assets_cache.lock().await;
@@ -846,7 +840,7 @@ impl EncryptedStorage {
         let data: AssetData = self.load_from_disk_with_encrypted_key(&self.assets, asset.as_bytes())?;
         let mut data = data;
         data.set_name(name);
-        self.save_to_disk_with_encrypted_key(&self.assets, asset.as_bytes(), &data.to_bytes())?;
+        self.save_to_disk_with_encrypted_key(&self.assets, asset.as_bytes(), &data.to_bytes()?)?;
         Ok(())
     }
 
@@ -1028,7 +1022,7 @@ impl EncryptedStorage {
         }
 
         trace!("Saving balance for asset {} with amount {}, at topoheight {}", asset, balance.amount, balance.topoheight);
-        self.save_to_disk(&self.balances, asset.as_bytes(), &balance.to_bytes())?;
+        self.save_to_disk(&self.balances, asset.as_bytes(), &balance.to_bytes()?)?;
 
         let mut cache = self.balances_cache.lock().await;
         cache.put(asset.clone(), balance);
@@ -1642,7 +1636,7 @@ impl EncryptedStorage {
         // We write in plaintext the id and the hashed key
         // Attacker may be able to see the ordering of the TXs but not the real TXs.
         self.transactions_indexes.insert(&id.to_be_bytes(), &key)?;
-        self.save_to_disk_with_key(&self.transactions, &key, &transaction.to_bytes())
+        self.save_to_disk_with_key(&self.transactions, &key, &transaction.to_bytes()?)
     }
 
     // Update the transaction with its TX hash as key
@@ -1650,7 +1644,7 @@ impl EncryptedStorage {
     pub fn update_transaction(&mut self, hash: &Hash, transaction: &TransactionEntry) -> Result<()> {
         trace!("update transaction {}", hash);
         let key = self.cipher.hash_key(hash.as_bytes());
-        self.save_to_disk_with_key(&self.transactions, &key, &transaction.to_bytes())
+        self.save_to_disk_with_key(&self.transactions, &key, &transaction.to_bytes()?)
     }
 
     // Reorg all the TXs written after a certain ID
@@ -1797,7 +1791,7 @@ impl EncryptedStorage {
     // Store the private key
     pub fn set_private_key(&mut self, private_key: &PrivateKey) -> Result<()> {
         trace!("set private key");
-        self.save_to_disk(&self.extra, PRIVATE_KEY, &private_key.to_bytes())
+        self.save_to_disk(&self.extra, PRIVATE_KEY, &private_key.to_bytes()?)
     }
 
     // Retrieve the keypair of this wallet
@@ -1869,7 +1863,7 @@ impl EncryptedStorage {
     // Save the network to disk
     fn set_network(&mut self, network: &Network) -> Result<()> {
         trace!("set network to {}", network);
-        self.save_to_disk(&self.extra, NETWORK, &network.to_bytes())
+        self.save_to_disk(&self.extra, NETWORK, &network.to_bytes()?)
     }
 
     // Check if the network is already registered
@@ -2005,7 +1999,7 @@ impl Storage {
     // set the password config used to derive the password-based key
     pub fn set_password_config(&mut self, config: &PasswordConfig) -> Result<()> {
         trace!("set password config");
-        let encoded = config.to_bytes();
+        let encoded = config.to_bytes()?;
         self.db.insert(PASSWORD_CONFIG_KEY, encoded.as_slice())?;
         Ok(())
     }

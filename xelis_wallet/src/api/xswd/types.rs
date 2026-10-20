@@ -10,7 +10,7 @@ use std::{
 };
 use xelis_common::{
     rpc::{RpcRequest, tid},
-    serializer::*,
+    serializer::{Error as SerializationError, *},
     tokio::sync::Mutex
 };
 
@@ -160,28 +160,32 @@ impl ApplicationData {
 }
 
 impl Serializer for ApplicationData {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let id = reader.read_string()?;
-        let name = reader.read_string()?;
-        let description = reader.read_string()?;
-        let url = Option::read(reader)?;
-        let permissions = IndexSet::read(reader)?;
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let id = reader.read_string()?;
+            let name = reader.read_string()?;
+            let description = reader.read_string()?;
+            let url = Option::read(reader)?;
+            let permissions = IndexSet::read(reader)?;
 
-        Ok(Self {
-            id,
-            name,
-            description,
-            url,
-            permissions
+            Ok(Self {
+                id,
+                name,
+                description,
+                url,
+                permissions
+            })
         })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        self.id.write(writer);
-        self.name.write(writer);
-        self.description.write(writer);
-        self.url.write(writer);
-        self.permissions.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.id.write(writer)?;
+            self.name.write(writer)?;
+            self.description.write(writer)?;
+            self.url.write(writer)?;
+            self.permissions.write(writer)
+        })
     }
 }
 
@@ -205,26 +209,30 @@ pub enum EncryptionMode {
 }
 
 impl Serializer for EncryptionMode {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let mode = reader.read_u8()?;
-        match mode {
-            0 => Ok(Self::AES { key: reader.read_bytes(32)? }),
-            1 => Ok(Self::Chacha20Poly1305 { key: reader.read_bytes(32)? }),
-            _ => Err(ReaderError::InvalidValue)
-        }
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let mode = reader.read_u8()?;
+            match mode {
+                0 => Ok(Self::AES { key: reader.read_bytes_32()? }),
+                1 => Ok(Self::Chacha20Poly1305 { key: reader.read_bytes_32()? }),
+                tag => Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown XSWD encryption mode tag {tag}")))
+            }
+        })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        match self {
-            Self::AES { key } => {
-                writer.write_u8(0);
-                key.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            match self {
+                Self::AES { key } => {
+                    writer.write_u8(0)?;
+                    key.write(writer)
+                }
+                Self::Chacha20Poly1305 { key } => {
+                    writer.write_u8(1)?;
+                    key.write(writer)
+                }
             }
-            Self::Chacha20Poly1305 { key } => {
-                writer.write_u8(1);
-                key.write(writer);
-            }
-        }
+        })
     }
 
     fn size(&self) -> usize {
@@ -244,26 +252,30 @@ pub struct ApplicationDataRelayer {
 }
 
 impl Serializer for ApplicationDataRelayer {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let app_data = ApplicationData::read(reader)?;
-        let n = reader.read_u16()?;
-        let relayer = reader.read_string_with_size(n as _)?;
-        let encryption_mode = Option::read(reader)?;
-        Ok(Self {
-            app_data,
-            relayer,
-            encryption_mode
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let app_data = ApplicationData::read(reader)?;
+            let n = reader.read_u16()?;
+            let relayer = reader.read_string_with_size(n as _)?;
+            let encryption_mode = Option::read(reader)?;
+            Ok(Self {
+                app_data,
+                relayer,
+                encryption_mode
+            })
         })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        self.app_data.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.app_data.write(writer)?;
 
-        let bytes = self.relayer.as_bytes();
-        writer.write_u16(bytes.len() as u16);
-        bytes.write(writer);
+            let bytes = self.relayer.as_bytes();
+            writer.write_u16(bytes.len() as u16)?;
+            bytes.write(writer)?;
 
-        self.encryption_mode.write(writer);
+            self.encryption_mode.write(writer)
+        })
     }
 }
 

@@ -4,7 +4,7 @@ use thiserror::Error;
 use log::debug;
 use xelis_common::{
     crypto::PrivateKey,
-    serializer::Serializer
+    serializer::{Error as SerializationError, Serializer},
 };
 use languages::*;
 
@@ -29,6 +29,8 @@ pub const LANGUAGES: [Language<'static>; 11] = [
 
 #[derive(Debug, Error)]
 pub enum MnemonicsError {
+    #[error(transparent)]
+    Serialization(#[from] SerializationError),
     #[error("Invalid words count")]
     InvalidWordsCount,
     #[error("Invalid checksum")]
@@ -212,7 +214,7 @@ pub fn key_to_words_with_language<'a>(key: &PrivateKey, language: &'a Language) 
         return Err(MnemonicsError::InvalidLanguage);
     }
 
-    let bytes = key.to_bytes();
+    let bytes = key.to_bytes()?;
     if bytes.len() != KEY_SIZE {
         return Err(MnemonicsError::InvalidKeySize);
     }

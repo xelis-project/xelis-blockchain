@@ -273,7 +273,7 @@ impl DaemonAPI {
     pub async fn submit_transaction(&self, transaction: &Transaction) -> Result<()> {
         trace!("submit_transaction");
         let _: bool = self.client.call_with("submit_transaction", &SubmitTransactionParams {
-            data: transaction.to_hex()
+            data: transaction.to_hex()?
         }).await?;
         Ok(())
     }

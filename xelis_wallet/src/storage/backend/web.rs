@@ -1,12 +1,17 @@
+use xelis_common::serializer::{
+    Error as SerializationError,
+    Readable,
+    Reader,
+    ReaderError,
+    ReaderExt,
+    Serializer,
+    Writable,
+    Writer,
+    WriterExt,
+};
 use anyhow::Result;
 use log::warn;
 use thiserror::Error;
-use xelis_common::serializer::{
-    Reader,
-    ReaderError,
-    Serializer,
-    Writer
-};
 use std::{
     borrow::Borrow,
     collections::{BTreeMap, HashMap},
@@ -90,12 +95,14 @@ impl From<IVec> for Vec<u8> {
 }
 
 impl Serializer for IVec {
-    fn write(&self, writer: &mut Writer) {
-        self.0.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| self.0.write(writer))
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok(Self(Arc::new(Vec::read(reader)?)))
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            Ok(Self(Arc::new(Vec::read(reader)?)))
+        })
     }
 }
 
@@ -246,7 +253,7 @@ impl Db {
         let mut buffer = Vec::new();
         let mut writer = Writer::new(&mut buffer);
         self.export(&mut writer)?;
-        let total = writer.total_write();
+        let total = writer.as_ref().len();
 
         #[cfg(all(
             target_arch = "wasm32",
@@ -279,7 +286,7 @@ impl Db {
     }
 
     /// Export the database to a writer.
-    fn export(&self, writer: &mut Writer) -> Result<()> {
+    fn export<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<()> {
         let trees = self.trees.lock()
             .map_err(|_| DbError::Poisoned)?;
 
@@ -288,9 +295,9 @@ impl Db {
 
         // Write the trees
         let len = trees.len() as u16;
-        writer.write_u16(len);
+        writer.write_u16(len)?;
         for (k, v) in trees.iter() {
-            k.write(writer);
+            k.write(writer)?;
             v.export(writer)?;
         }
 
@@ -298,7 +305,7 @@ impl Db {
     }
 
     /// Populate the database from a reader.
-    fn populate(&self, reader: &mut Reader) -> Result<()> {
+    fn populate<'ty, 'r, R: Readable>(&self, reader: &mut Reader<'ty, 'r, R>) -> Result<()> {
         let mut trees = self.trees.lock()
             .map_err(|_| DbError::Poisoned)?;
 
@@ -448,22 +455,22 @@ impl InnerTree {
     }
 
     /// Internal function to export the tree to a writer.
-    fn export(&self, writer: &mut Writer) -> Result<()> {
+    fn export<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<()> {
         let entries = self.entries.lock()
             .map_err(|_| DbError::Poisoned)?;
 
         let len = entries.len() as u16;
-        writer.write_u16(len);
+        writer.write_u16(len)?;
         for (k, v) in entries.iter() {
-            k.write(writer);
-            v.write(writer);
+            k.write(writer)?;
+            v.write(writer)?;
         }
 
         Ok(())
     }
 
     /// Internal function to populate the tree from a reader.
-    fn populate(&self, reader: &mut Reader) -> Result<()> {
+    fn populate<'ty, 'r, R: Readable>(&self, reader: &mut Reader<'ty, 'r, R>) -> Result<()> {
         let mut entries = self.entries.lock()
             .map_err(|_| DbError::Poisoned)?;
 

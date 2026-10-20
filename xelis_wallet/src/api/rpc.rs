@@ -396,7 +396,7 @@ async fn dump_transaction(context: &Context<'_, '_>, params: GetTransactionParam
     let storage = wallet.get_storage().read().await;
     let transaction = storage.get_transaction(&params.hash)?;
 
-    Ok(transaction.to_hex())
+    Ok(transaction.to_hex()?)
 }
 
 // Build a transaction and broadcast it if requested
@@ -433,17 +433,17 @@ async fn build_transaction(context: &Context<'_, '_>, params: BuildTransactionPa
 
         for signer in params.signers {
             let keypair = KeyPair::from_private_key(signer.private_key);
-            unsigned.sign_multisig(&keypair, signer.id);
+            unsigned.sign_multisig(&keypair, signer.id)?;
         }
 
-        unsigned.finalize(wallet.get_keypair())
+        unsigned.finalize(wallet.get_keypair())?
     };
 
     // if requested, broadcast the TX ourself
     if params.broadcast {
         if let Err(e) = wallet.submit_transaction(&tx).await {
             warn!("Clearing Tx cache & unconfirmed balances because of broadcasting error: {}", e);
-            debug!("TX HEX: {}", tx.to_hex());
+            debug!("TX HEX: {}", tx.to_hex()?);
             storage.clear_tx_cache().await;
             storage.delete_unconfirmed_balances().await;
             return Err(e.into());
@@ -458,7 +458,7 @@ async fn build_transaction(context: &Context<'_, '_>, params: BuildTransactionPa
     // returns the created TX and its hash
     Ok(TransactionResponse {
         tx_as_hex: if params.tx_as_hex {
-            Some(hex::encode(tx.to_bytes()))
+            Some(hex::encode(tx.to_bytes()?))
         } else {
             None
         },
@@ -507,17 +507,17 @@ async fn build_transaction_offline(context: &Context<'_, '_>, params: BuildTrans
 
         for signer in params.signers {
             let keypair = KeyPair::from_private_key(signer.private_key);
-            unsigned.sign_multisig(&keypair, signer.id);
+            unsigned.sign_multisig(&keypair, signer.id)?;
         }
 
-        unsigned.finalize(wallet.get_keypair())
+        unsigned.finalize(wallet.get_keypair())?
     };
 
     let tx_hash = tx.hash();
     let size = tx.size();
     Ok(TransactionResponse {
         tx_as_hex: if params.tx_as_hex {
-            Some(hex::encode(tx.to_bytes()))
+            Some(hex::encode(tx.to_bytes()?))
         } else {
             None
         },
@@ -563,11 +563,11 @@ async fn build_unsigned_transaction(context: &Context<'_, '_>, params: BuildUnsi
     // returns the created TX and its hash
     Ok(UnsignedTransactionResponse {
         tx_as_hex: if params.tx_as_hex {
-            Some(hex::encode(unsigned.to_bytes()))
+            Some(hex::encode(unsigned.to_bytes()?))
         } else {
             None
         },
-        hash: unsigned.get_hash_for_multisig(),
+        hash: unsigned.get_hash_for_multisig()?,
         inner: unsigned,
         threshold
     })
@@ -598,7 +598,7 @@ async fn finalize_unsigned_transaction(context: &Context<'_, '_>, params: Finali
         unsigned.set_multisig(multisig);
     }
 
-    let tx = unsigned.0.finalize(keypair);
+    let tx = unsigned.0.finalize(keypair)?;
 
     let mut storage = wallet.get_storage().write().await;
     let mut state = TransactionBuilderState::from_tx(&storage, &tx, wallet.get_network().is_mainnet()).await?;
@@ -606,7 +606,7 @@ async fn finalize_unsigned_transaction(context: &Context<'_, '_>, params: Finali
     if params.broadcast {
         if let Err(e) = wallet.submit_transaction(&tx).await {
             warn!("Clearing Tx cache & unconfirmed balances because of broadcasting error: {}", e);
-            debug!("TX HEX: {}", tx.to_hex());
+            debug!("TX HEX: {}", tx.to_hex()?);
             storage.clear_tx_cache().await;
             storage.delete_unconfirmed_balances().await;
             return Err(e.into());
@@ -620,7 +620,7 @@ async fn finalize_unsigned_transaction(context: &Context<'_, '_>, params: Finali
     let size = tx.size();
     Ok(TransactionResponse {
         tx_as_hex: if params.tx_as_hex {
-            Some(hex::encode(tx.to_bytes()))
+            Some(hex::encode(tx.to_bytes()?))
         } else {
             None
         },
@@ -739,7 +739,7 @@ async fn set_offline_mode(context: &Context<'_, '_>) -> Result<bool, InternalRpc
 // Sign any data converted in bytes format
 async fn sign_data(context: &Context<'_, '_>, params: DataElement) -> Result<Signature, InternalRpcError> {
     let wallet = wallet_from_context(context)?;
-    let signature = wallet.sign_data(&params.to_bytes());
+    let signature = wallet.sign_data(&params.to_bytes()?);
     Ok(signature)
 }
 
@@ -749,7 +749,7 @@ async fn verify_signed_data(_: &Context<'_, '_>, params: VerifySignedDataParams)
     let key = key.decompress()
         .context("Error decompressing public key")?;
 
-    let is_valid = params.signature.verify(&params.data.to_bytes(), &key);
+    let is_valid = params.signature.verify(&params.data.to_bytes()?, &key);
 
     Ok(is_valid)
 }

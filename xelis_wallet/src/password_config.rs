@@ -1,6 +1,6 @@
+use xelis_common::serializer::{Error as SerializationError, *};
 use argon2::{Algorithm, Argon2, Params, Version};
 use serde::{Deserialize, Serialize};
-use xelis_common::serializer::*;
 
 use crate::{config::PASSWORD_HASH_SIZE, error::WalletError};
 
@@ -29,26 +29,30 @@ pub enum PasswordConfig {
 }
 
 impl Serializer for PasswordConfig {
-    fn write(&self, writer: &mut Writer) {
-        match self {
-            Self::Argon2id { memory_cost_kib, parallelism, iterations } => {
-                writer.write_u8(0);
-                writer.write_u32(*memory_cost_kib);
-                writer.write_u32(*parallelism);
-                writer.write_u32(*iterations);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            match self {
+                Self::Argon2id { memory_cost_kib, parallelism, iterations } => {
+                    writer.write_u8(0)?;
+                    writer.write_u32(*memory_cost_kib)?;
+                    writer.write_u32(*parallelism)?;
+                    writer.write_u32(*iterations)
+                }
             }
-        }
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        match reader.read_u8()? {
-            0 => Ok(Self::Argon2id {
-                memory_cost_kib: reader.read_u32()?,
-                parallelism: reader.read_u32()?,
-                iterations: reader.read_u32()?,
-            }),
-            _ => Err(ReaderError::InvalidValue),
-        }
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            match reader.read_u8()? {
+                0 => Ok(Self::Argon2id {
+                    memory_cost_kib: reader.read_u32()?,
+                    parallelism: reader.read_u32()?,
+                    iterations: reader.read_u32()?,
+                }),
+                tag => Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown password configuration tag {tag}"))),
+            }
+        })
     }
 }
 

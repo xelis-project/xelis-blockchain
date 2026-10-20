@@ -1246,7 +1246,7 @@ async fn create_transaction_with_multisig(manager: &CommandManager, prompt: &Pro
             .context("Error while building unsigned transaction")?;
     
         let mut multisig = MultiSig::new();
-        manager.message(format!("Transaction hash to sign: {}", unsigned.get_hash_for_multisig()));
+        manager.message(format!("Transaction hash to sign: {}", unsigned.get_hash_for_multisig()?));
     
         if payload.threshold == 1 {
             let signature = prompt.read_input("Enter signature hexadecimal: ", false).await
@@ -1292,7 +1292,7 @@ async fn create_transaction_with_multisig(manager: &CommandManager, prompt: &Pro
     
         unsigned.set_multisig(multisig);
     
-        let tx = unsigned.finalize(wallet.get_keypair());
+        let tx = unsigned.finalize(wallet.get_keypair())?;
     
         state.apply_changes(&mut storage, wallet, &tx).await
             .context("Error while applying changes")?;
@@ -2396,7 +2396,7 @@ async fn multisig_sign(manager: &CommandManager, mut args: ArgumentManager) -> R
     };
 
     let signature = wallet.sign_data(tx_hash.as_bytes());
-    prompt.read_input(format!("Signature: {}\r\nPress ENTER to continue", signature.to_hex()), false).await
+    prompt.read_input(format!("Signature: {}\r\nPress ENTER to continue", signature.to_hex()?), false).await
         .context("Error while displaying seed")?;
 
     Ok(())
@@ -2440,7 +2440,7 @@ async fn broadcast_tx(wallet: &Wallet, manager: &CommandManager, tx: Transaction
         }
     } else {
         manager.warn("You are currently offline, transaction cannot be send automatically. Please send it manually to the network.");
-        manager.message(format!("Transaction in hex format: {}", tx.to_hex()));
+        manager.message(format!("Transaction in hex format: {}", tx.to_hex().expect("transaction serialization failed")));
     }
 }
 

@@ -4,6 +4,7 @@ use chacha20poly1305::Error as CryptoError;
 use xelis_common::{
     crypto::{Hash, elgamal::DecompressionError, proofs::ProofGenerationError},
     error::ErrorWithKind,
+    serializer::Error as SerializationError,
     tokio::sync::AcquireError,
     transaction::{builder::{GenerationError, GenerationStateError},
     extra_data::CipherFormatError},
@@ -19,6 +20,8 @@ use super::network_handler::NetworkError;
 #[derive(Error, Debug, EnumDiscriminants, IntoStaticStr)]
 #[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum WalletError {
+    #[error(transparent)]
+    Serialization(#[from] SerializationError),
     #[error("Cipher error")]
     Cipher,
     #[error("Asset {0} is not tracked by wallet")]

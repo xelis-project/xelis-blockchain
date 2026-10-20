@@ -5,13 +5,16 @@ use xelis_common::{
     account::CiphertextCache,
     block::TopoHeight,
     crypto::Hash,
+    api::wallet::TransactionPending as RPCTransactionPending,
     serializer::{
+        Error as SerializationError,
+        Readable,
         Reader,
         ReaderError,
         Serializer,
-        Writer
+        Writable,
+        Writer,
     },
-    api::wallet::TransactionPending as RPCTransactionPending,
     time::TimestampMillis,
     transaction::{MultiSigPayload, Reference}
 };
@@ -37,20 +40,24 @@ impl Balance {
 }
 
 impl Serializer for Balance {
-    fn write(&self, writer: &mut Writer) {
-        self.amount.write(writer);
-        self.ciphertext.write(writer);
-        self.topoheight.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.amount.write(writer)?;
+            self.ciphertext.write(writer)?;
+            self.topoheight.write(writer)
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let amount = u64::read(reader)?;
-        let ciphertext = CiphertextCache::read(reader)?;
-        let topoheight = TopoHeight::read(reader)?;
-        Ok(Self {
-            amount,
-            ciphertext,
-            topoheight,
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let amount = u64::read(reader)?;
+            let ciphertext = CiphertextCache::read(reader)?;
+            let topoheight = TopoHeight::read(reader)?;
+            Ok(Self {
+                amount,
+                ciphertext,
+                topoheight,
+            })
         })
     }
 }
@@ -77,17 +84,21 @@ pub struct MultiSig {
 }
 
 impl Serializer for MultiSig {
-    fn write(&self, writer: &mut Writer) {
-        self.payload.write(writer);
-        self.topoheight.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.payload.write(writer)?;
+            self.topoheight.write(writer)
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let payload = MultiSigPayload::read(reader)?;
-        let topoheight = TopoHeight::read(reader)?;
-        Ok(Self {
-            payload,
-            topoheight
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let payload = MultiSigPayload::read(reader)?;
+            let topoheight = TopoHeight::read(reader)?;
+            Ok(Self {
+                payload,
+                topoheight
+            })
         })
     }
 }
