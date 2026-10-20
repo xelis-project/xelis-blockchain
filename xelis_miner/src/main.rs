@@ -385,7 +385,15 @@ async fn communication_task(daemon_address: String, job_sender: broadcast::Sende
                 },
                 Some(work) = block_receiver.recv() => { // send all valid blocks found to the daemon
                     info!("submitting new block found...");
-                    let submit = serde_json::json!(SubmitMinerWorkParams { miner_work: work.to_hex() }).to_string();
+                    let work = match work.to_hex() {
+                        Ok(work) => work,
+                        Err(e) => {
+                            error!("Error while serializing block found: {}", e);
+                            continue;
+                        }
+                    };
+
+                    let submit = serde_json::json!(SubmitMinerWorkParams { miner_work: work }).to_string();
                     if let Err(e) = write.send(Message::Text(submit.into())).await {
                         error!("Error while sending the block found to the daemon: {}", e);
                         break;
