@@ -4,9 +4,10 @@ mod read_only;
 use std::collections::hash_map::Entry;
 
 use async_trait::async_trait;
+use matriochka::Error;
 use log::debug;
 use xelis_vm::{
-    traits::{JSONHelper, Serializable},
+    Opaque,
     VMContext,
     EnvironmentError,
     FnInstance,
@@ -28,14 +29,15 @@ use crate::{
         ModuleMetadata,
     },
     crypto::Hash,
+    serializer::Serializer,
     versioned::VersionedState
 };
-use super::Serializer;
 
 pub use btree::*;
 pub use read_only::*;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Opaque)]
+#[opaque(hash, eq)]
 pub struct OpaqueStorage;
 
 // Maximum size of a value in the storage
@@ -49,18 +51,14 @@ pub const MAX_KEY_SIZE: usize = 256;
 #[async_trait]
 pub trait ContractStorage {
     // load a value from the storage
-    async fn load_data(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<Option<(TopoHeight, Option<ValueCell>)>, anyhow::Error>;
+    async fn load_data(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<Option<(TopoHeight, Option<ValueCell>)>, Error>;
 
     // load the latest topoheight from the storage
-    async fn load_data_latest_topoheight(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<Option<TopoHeight>, anyhow::Error>;
+    async fn load_data_latest_topoheight(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<Option<TopoHeight>, Error>;
 
     // check if a contract hash exists in the storage
-    async fn has_contract(&self, contract: &Hash, topoheight: TopoHeight) -> Result<bool, anyhow::Error>;
+    async fn has_contract(&self, contract: &Hash, topoheight: TopoHeight) -> Result<bool, Error>;
 }
-
-impl JSONHelper for OpaqueStorage {}
-
-impl Serializable for OpaqueStorage {}
 
 #[inline]
 pub fn data_size_in_bytes(value: &ValueCell) -> usize {
@@ -116,7 +114,7 @@ fn check_storage_key(key: &ValueCell) -> Result<(), EnvironmentError> {
 }
 
 pub fn storage(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
-    Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(OpaqueStorage)).into()))
+    Ok(SysCallResult::Return(ValueCell::Opaque(OpaqueWrapper::new(OpaqueStorage)).into()))
 }
 
 pub async fn storage_load<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {

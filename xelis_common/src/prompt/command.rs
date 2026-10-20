@@ -10,6 +10,7 @@ use std::{
 };
 
 use crate::{
+    serializer::Error as SerializationError,
     config::VERSION,
     async_handler,
     context::Context,
@@ -23,6 +24,8 @@ use log::{info, warn, error};
 
 #[derive(Error, Debug)]
 pub enum CommandError {
+    #[error(transparent)]
+    Serialization(#[from] SerializationError),
     #[error("{0}")]
     Static(&'static str),
     #[error("Expected a command name")]

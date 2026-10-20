@@ -1,8 +1,6 @@
-use std::hash::Hasher;
 
 use xelis_vm::{
-    impl_opaque,
-    traits::{DynEq, DynHash, Serializable},
+    traits::DynSerializable,
     VMContext,
     EnvironmentError,
     FnInstance,
@@ -24,44 +22,20 @@ use crate::{
         elgamal::{PedersenCommitment, PublicKey},
         proofs::CommitmentEqProof
     },
-    serializer::*
+    serializer::{Error as SerializationError, *},
 };
 
-impl_opaque!("CommitmentEqualityProof", CommitmentEqProof, json);
-impl_opaque!("CommitmentEqualityProof", CommitmentEqProof);
-
-impl DynEq for CommitmentEqProof {
-    fn is_equal(&self, _: &dyn DynEq) -> bool {
-        false
-    }
-
-    fn as_eq(&self) -> &dyn DynEq {
-        self
-    }
-}
-
-impl DynHash for CommitmentEqProof {
-    fn dyn_hash(&self, _: &mut dyn Hasher) {}
-
-    fn is_hashable(&self) -> bool {
-        false
-    }
-}
-
-impl Serializable for CommitmentEqProof {
+impl DynSerializable for CommitmentEqProof {
     fn get_size(&self) -> usize {
         self.size()
     }
 
-    fn is_serializable(&self) -> bool {
-        true
-    }
-
-    fn serialize(&self, buffer: &mut Vec<u8>) -> usize {
-        let mut writer = Writer::new(buffer);
-        writer.write_u8(COMMITMENT_EQUALITY_PROOF_OPAQUE_ID);
-        self.write(&mut writer);
-        writer.total_write()
+    fn serialize(&self, buffer: &mut Vec<u8>) -> Result<usize, SerializationError> {
+        let start = buffer.len();
+        let mut writer = Writer::new(&mut *buffer);
+        writer.write_u8(COMMITMENT_EQUALITY_PROOF_OPAQUE_ID)?;
+        self.write(&mut writer)?;
+        Ok(buffer.len() - start)
     }
 }
 
@@ -77,7 +51,7 @@ pub fn commitment_eq_proof_verify(zelf: FnInstance, mut params: FnParams, _: &Mo
         .as_mut()
         .as_opaque_type_mut::<CiphertextCache>()?
         .decompressed()
-        .map_err(|e| EnvironmentError::Any(e.into()))?
+        .map_err(|e| EnvironmentError::Any(SerializationError::new(e)))?
         .clone();
     let commitment = PedersenCommitment::from_point(
         params[2]

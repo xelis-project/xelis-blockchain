@@ -269,7 +269,7 @@ async fn test_burn_tx_verify() {
         let estimated_size = builder.estimate_size();
         let tx = builder.build(&mut state, &alice.keypair).unwrap();
         assert!(estimated_size == tx.size());
-        assert!(tx.to_bytes().len() == estimated_size);
+        assert!(tx.to_bytes().unwrap().len() == estimated_size);
 
         Arc::new(tx)
     };
@@ -329,7 +329,7 @@ async fn test_tx_invoke_contract() {
         let estimated_size = builder.estimate_size();
         let tx = builder.build(&mut state, &alice.keypair).unwrap();
         assert!(estimated_size == tx.size(), "expected {} bytes got {} bytes", tx.size(), estimated_size);
-        assert!(tx.to_bytes().len() == estimated_size);
+        assert!(tx.to_bytes().unwrap().len() == estimated_size);
 
         Arc::new(tx)
     };
@@ -394,7 +394,7 @@ async fn test_tx_deploy_contract() {
         // constructor
         module.add_hook_chunk(0, Chunk::new());
 
-        assert!(module.size() == module.to_bytes().len());
+        assert!(module.size() == module.to_bytes().unwrap().len());
 
         let data = TransactionTypeBuilder::DeployContract(DeployContractBuilder {
             contract: ContractModule {
@@ -412,7 +412,7 @@ async fn test_tx_deploy_contract() {
         let builder = TransactionBuilder::new(TxVersion::V2, alice.keypair.get_public_key().compress(), None, data, FeeBuilder::default());
         let estimated_size = builder.estimate_size();
         let tx = builder.build(&mut state, &alice.keypair).unwrap();
-        assert!(tx.to_bytes().len() == tx.size(), "expected {} bytes but estimated {} bytes", tx.to_bytes().len(), tx.size());
+        assert!(tx.to_bytes().unwrap().len() == tx.size(), "expected {} bytes but estimated {} bytes", tx.to_bytes().unwrap().len(), tx.size());
         assert!(estimated_size == tx.size(), "expected {} bytes got {} bytes", tx.size(), estimated_size);
 
         Arc::new(tx)
@@ -558,7 +558,7 @@ async fn test_max_transfers() {
         let estimated_size = builder.estimate_size();
         let tx = builder.build(&mut state, &alice.keypair).unwrap();
         assert!(estimated_size == tx.size());
-        assert!(tx.to_bytes().len() == estimated_size);
+        assert!(tx.to_bytes().unwrap().len() == estimated_size);
 
         Arc::new(tx)
     };
@@ -620,7 +620,7 @@ async fn test_multisig_setup() {
         let estimated_size = builder.estimate_size();
         let tx = builder.build(&mut state, &alice.keypair).unwrap();
         assert!(estimated_size == tx.size());
-        assert!(tx.to_bytes().len() == estimated_size);
+        assert!(tx.to_bytes().unwrap().len() == estimated_size);
 
         Arc::new(tx)
     };
@@ -1195,7 +1195,7 @@ async fn test_blob_tx_public_build_verify() {
         let estimated_size = builder.estimate_size();
         let tx = builder.build(&mut state, &alice.keypair).unwrap();
         assert_eq!(estimated_size, tx.size(), "estimated size mismatch");
-        assert_eq!(tx.to_bytes().len(), tx.size());
+        assert_eq!(tx.to_bytes().unwrap().len(), tx.size());
 
         Arc::new(tx)
     };
@@ -1255,7 +1255,7 @@ async fn test_blob_tx_private_build_verify_and_decrypt() {
         let estimated_size = builder.estimate_size();
         let tx = builder.build(&mut state, &alice.keypair).unwrap();
         assert_eq!(estimated_size, tx.size(), "estimated size mismatch");
-        assert_eq!(tx.to_bytes().len(), tx.size());
+        assert_eq!(tx.to_bytes().unwrap().len(), tx.size());
 
         Arc::new(tx)
     };
@@ -1321,7 +1321,7 @@ async fn test_blob_tx_public_multiple_destinations_build_verify() {
         let estimated_size = builder.estimate_size();
         let tx = builder.build(&mut state, &alice.keypair).unwrap();
         assert_eq!(estimated_size, tx.size(), "estimated size mismatch");
-        assert_eq!(tx.to_bytes().len(), tx.size());
+        assert_eq!(tx.to_bytes().unwrap().len(), tx.size());
 
         Arc::new(tx)
     };

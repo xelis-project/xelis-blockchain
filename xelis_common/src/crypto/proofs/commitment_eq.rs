@@ -1,3 +1,4 @@
+use xelis_vm::Opaque;
 use curve25519_dalek::{
     ristretto::CompressedRistretto,
     traits::{IsIdentity, MultiscalarMul, VartimeMultiscalarMul},
@@ -22,7 +23,15 @@ use crate::{
         rng,
         ProtocolTranscript
     },
-    serializer::{Reader, ReaderError, Serializer, Writer},
+    serializer::{
+        Error as SerializationError,
+        Readable,
+        Reader,
+        ReaderError,
+        Serializer,
+        Writable,
+        Writer,
+    },
     transaction::TxVersion
 };
 use super::{
@@ -35,7 +44,8 @@ use super::{
 
 /// Proof that a commitment and ciphertext are equal.
 #[allow(non_snake_case)]
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, JsonSchema)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, JsonSchema, Opaque)]
+#[opaque(name = "CommitmentEqualityProof", json, serializable)]
 pub struct CommitmentEqProof {
     #[schemars(with = "Vec<u8>")]
     Y_0: CompressedRistretto,
@@ -284,24 +294,28 @@ impl CommitmentEqProof {
 
 #[allow(non_snake_case)]
 impl Serializer for CommitmentEqProof {
-    fn write(&self, writer: &mut Writer) {
-        self.Y_0.write(writer);
-        self.Y_1.write(writer);
-        self.Y_2.write(writer);
-        self.z_s.write(writer);
-        self.z_x.write(writer);
-        self.z_r.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.Y_0.write(writer)?;
+            self.Y_1.write(writer)?;
+            self.Y_2.write(writer)?;
+            self.z_s.write(writer)?;
+            self.z_x.write(writer)?;
+            self.z_r.write(writer)
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let Y_0 = CompressedRistretto::read(reader)?;
-        let Y_1 = CompressedRistretto::read(reader)?;
-        let Y_2 = CompressedRistretto::read(reader)?;
-        let z_s = Scalar::read(reader)?;
-        let z_x = Scalar::read(reader)?;
-        let z_r = Scalar::read(reader)?;
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let Y_0 = CompressedRistretto::read(reader)?;
+            let Y_1 = CompressedRistretto::read(reader)?;
+            let Y_2 = CompressedRistretto::read(reader)?;
+            let z_s = Scalar::read(reader)?;
+            let z_x = Scalar::read(reader)?;
+            let z_r = Scalar::read(reader)?;
 
-        Ok(Self { Y_0, Y_1, Y_2, z_s, z_x, z_r })
+            Ok(Self { Y_0, Y_1, Y_2, z_s, z_x, z_r })
+        })
     }
 
     fn size(&self) -> usize {

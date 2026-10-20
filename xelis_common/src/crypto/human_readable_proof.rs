@@ -5,11 +5,17 @@ use serde::de::Error as SerdeError;
 use crate::{
     config::PREFIX_PROOF,
     serializer::{
+        DecodeError,
+        Error as SerializationError,
+        Readable,
         Reader,
         ReaderError,
+        ReaderExt,
         Serializer,
-        Writer
-    }
+        Writable,
+        Writer,
+        WriterExt,
+    },
 };
 use super::{
     bech32::{
@@ -64,7 +70,7 @@ impl HumanReadableProof {
 
     // Transform a shareable proof to a human readable string
     pub fn as_string(&self) -> Result<String, Bech32Error> {
-        let bits = convert_bits(&self.to_bytes(), 8, 5, true)?;
+        let bits = convert_bits(&self.to_bytes()?, 8, 5, true)?;
         let result = encode(PREFIX_PROOF.to_owned(), &bits)?;
 
         Ok(result)
@@ -85,43 +91,47 @@ impl HumanReadableProof {
 }
 
 impl Serializer for HumanReadableProof {
-    fn write(&self, writer: &mut Writer) {
-        match self {
-            HumanReadableProof::Balance { proof, asset, topoheight } => {
-                writer.write_u8(0);
-                proof.write(writer);
-                asset.write(writer);
-                topoheight.write(writer);
-            },
-            HumanReadableProof::Ownership { proof, asset, topoheight } => {
-                writer.write_u8(1);
-                proof.write(writer);
-                asset.write(writer);
-                topoheight.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            match self {
+                HumanReadableProof::Balance { proof, asset, topoheight } => {
+                    writer.write_u8(0)?;
+                    proof.write(writer)?;
+                    asset.write(writer)?;
+                    topoheight.write(writer)
+                },
+                HumanReadableProof::Ownership { proof, asset, topoheight } => {
+                    writer.write_u8(1)?;
+                    proof.write(writer)?;
+                    asset.write(writer)?;
+                    topoheight.write(writer)
+                }
             }
-        }
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let proof = match reader.read_u8()? {
-            0 => {
-                let proof = BalanceProof::read(reader)?;
-                let asset = Hash::read(reader)?;
-                let topoheight = u64::read(reader)?;
-        
-                HumanReadableProof::Balance { proof, asset, topoheight }
-            },
-            1 => {
-                let proof = OwnershipProof::read(reader)?;
-                let asset = Hash::read(reader)?;
-                let topoheight = u64::read(reader)?;
-        
-                HumanReadableProof::Ownership { proof, asset, topoheight }
-            },
-            _ => return Err(ReaderError::InvalidValue)
-        };
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let proof = match reader.read_u8()? {
+                0 => {
+                    let proof = BalanceProof::read(reader)?;
+                    let asset = Hash::read(reader)?;
+                    let topoheight = u64::read(reader)?;
 
-        Ok(proof)
+                    HumanReadableProof::Balance { proof, asset, topoheight }
+                },
+                1 => {
+                    let proof = OwnershipProof::read(reader)?;
+                    let asset = Hash::read(reader)?;
+                    let topoheight = u64::read(reader)?;
+
+                    HumanReadableProof::Ownership { proof, asset, topoheight }
+                },
+                _ => return Err(SerializationError::new(DecodeError::InvalidValue))
+            };
+
+            Ok(proof)
+        })
     }
 
     fn size(&self) -> usize {

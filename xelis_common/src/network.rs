@@ -1,8 +1,19 @@
+use crate::serializer::{
+    DecodeError,
+    Error as SerializationError,
+    Readable,
+    Reader,
+    ReaderError,
+    ReaderExt,
+    Serializer,
+    Writable,
+    Writer,
+    WriterExt,
+};
 use std::{fmt::{Display, Formatter, self}, str::FromStr};
 use schemars::JsonSchema;
 use serde::{Serialize, Deserialize};
 
-use crate::serializer::{Serializer, Reader, ReaderError, Writer};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, JsonSchema)]
 pub enum Network {
@@ -95,24 +106,28 @@ impl FromStr for Network {
 }
 
 impl Serializer for Network {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok(match reader.read_u8()? {
-            0 => Self::Mainnet,
-            1 => Self::Testnet,
-            2 => Self::Stagenet,
-            3 => Self::Devnet,
-            _ => return Err(ReaderError::InvalidValue)
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            Ok(match reader.read_u8()? {
+                0 => Self::Mainnet,
+                1 => Self::Testnet,
+                2 => Self::Stagenet,
+                3 => Self::Devnet,
+                _ => return Err(SerializationError::new(DecodeError::InvalidValue))
+            })
         })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        let id = match &self {
-            Self::Mainnet => 0,
-            Self::Testnet => 1,
-            Self::Stagenet => 2,
-            Self::Devnet => 3 
-        };
-        writer.write_u8(id);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            let id = match &self {
+                Self::Mainnet => 0,
+                Self::Testnet => 1,
+                Self::Stagenet => 2,
+                Self::Devnet => 3 
+            };
+            writer.write_u8(id)
+        })
     }
 
     fn size(&self) -> usize {

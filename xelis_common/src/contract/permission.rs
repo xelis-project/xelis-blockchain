@@ -3,7 +3,10 @@ use indexmap::{Equivalent, IndexSet};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{crypto::Hash, serializer::*};
+use crate::{
+    crypto::Hash,
+    serializer::{Error as SerializationError, *},
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -27,54 +30,60 @@ impl ContractCallChunk {
 }
 
 impl Serializer for ContractCallChunk {
-    fn write(&self, writer: &mut Writer) {
-        match self {
-            ContractCallChunk::All => writer.write_u8(0),
-            ContractCallChunk::Specific(chunks) => {
-                writer.write_u8(1);
-                writer.write_u8(chunks.len() as u8);
-                for chunk in chunks {
-                    writer.write_u16(*chunk);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            match self {
+                ContractCallChunk::All => writer.write_u8(0),
+                ContractCallChunk::Specific(chunks) => {
+                    writer.write_u8(1)?;
+                    writer.write_u8(chunks.len() as u8)?;
+                    for chunk in chunks {
+                        writer.write_u16(*chunk)?;
+                    }
+                    Ok(())
+                }
+                ContractCallChunk::Exclude(chunks) => {
+                    writer.write_u8(2)?;
+                    writer.write_u8(chunks.len() as u8)?;
+                    for chunk in chunks {
+                        writer.write_u16(*chunk)?;
+                    }
+                    Ok(())
                 }
             }
-            ContractCallChunk::Exclude(chunks) => {
-                writer.write_u8(2);
-                writer.write_u8(chunks.len() as u8);
-                for chunk in chunks {
-                    writer.write_u16(*chunk);
-                }
-            }
-        }
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let tag = reader.read_u8()?;
-        match tag {
-            0 => Ok(ContractCallChunk::All),
-            1 => {
-                let len = reader.read_u8()? as usize;
-                let mut chunks = IndexSet::with_capacity(len);
-                for _ in 0..len {
-                    let chunk = reader.read_u16()?;
-                    if !chunks.insert(chunk) {
-                        return Err(ReaderError::InvalidValue);
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let tag = reader.read_u8()?;
+            match tag {
+                0 => Ok(ContractCallChunk::All),
+                1 => {
+                    let len = reader.read_u8()? as usize;
+                    let mut chunks = IndexSet::with_capacity(len);
+                    for _ in 0..len {
+                        let chunk = reader.read_u16()?;
+                        if !chunks.insert(chunk) {
+                            return Err(SerializationError::new(DecodeError::InvalidValue));
+                        }
                     }
+                    Ok(ContractCallChunk::Specific(chunks))
                 }
-                Ok(ContractCallChunk::Specific(chunks))
-            }
-            2 => {
-                let len = reader.read_u8()? as usize;
-                let mut chunks = IndexSet::with_capacity(len);
-                for _ in 0..len {
-                    let chunk = reader.read_u16()?;
-                    if !chunks.insert(chunk) {
-                        return Err(ReaderError::InvalidValue);
+                2 => {
+                    let len = reader.read_u8()? as usize;
+                    let mut chunks = IndexSet::with_capacity(len);
+                    for _ in 0..len {
+                        let chunk = reader.read_u16()?;
+                        if !chunks.insert(chunk) {
+                            return Err(SerializationError::new(DecodeError::InvalidValue));
+                        }
                     }
+                    Ok(ContractCallChunk::Exclude(chunks))
                 }
-                Ok(ContractCallChunk::Exclude(chunks))
+                _ => Err(SerializationError::new(DecodeError::InvalidValue)),
             }
-            _ => Err(ReaderError::InvalidValue),
-        }
+        })
     }
 
     fn size(&self) -> usize {
@@ -93,15 +102,19 @@ pub struct ContractCall {
 }
 
 impl Serializer for ContractCall {
-    fn write(&self, writer: &mut Writer) {
-        self.contract.write(writer);
-        self.chunk.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.contract.write(writer)?;
+            self.chunk.write(writer)
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let contract = Hash::read(reader)?;
-        let chunk = ContractCallChunk::read(reader)?;
-        Ok(ContractCall { contract, chunk })
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let contract = Hash::read(reader)?;
+            let chunk = ContractCallChunk::read(reader)?;
+            Ok(ContractCall { contract, chunk })
+        })
     }
 
     fn size(&self) -> usize {
@@ -175,60 +188,66 @@ impl InterContractPermission {
 }
 
 impl Serializer for InterContractPermission {
-    fn write(&self, writer: &mut Writer) {
-        match self {
-            InterContractPermission::None => writer.write_u8(0),
-            InterContractPermission::All => writer.write_u8(1),
-            InterContractPermission::Specific(allowed) => {
-                writer.write_u8(2);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            match self {
+                InterContractPermission::None => writer.write_u8(0),
+                InterContractPermission::All => writer.write_u8(1),
+                InterContractPermission::Specific(allowed) => {
+                    writer.write_u8(2)?;
 
-                writer.write_u8(allowed.len() as u8);
-                for hash in allowed {
-                    hash.write(writer);
+                    writer.write_u8(allowed.len() as u8)?;
+                    for hash in allowed {
+                        hash.write(writer)?;
+                    }
+                    Ok(())
+                }
+                InterContractPermission::Exclude(excluded) => {
+                    writer.write_u8(3)?;
+
+                    writer.write_u8(excluded.len() as u8)?;
+                    for hash in excluded {
+                        hash.write(writer)?;
+                    }
+                    Ok(())
                 }
             }
-            InterContractPermission::Exclude(excluded) => {
-                writer.write_u8(3);
-
-                writer.write_u8(excluded.len() as u8);
-                for hash in excluded {
-                    hash.write(writer);
-                }
-            }
-        }
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let tag = reader.read_u8()?;
-        match tag {
-            0 => Ok(InterContractPermission::None),
-            1 => Ok(InterContractPermission::All),
-            2 => {
-                let len = reader.read_u8()? as usize;
-                let mut allowed = IndexSet::with_capacity(len);
-                for _ in 0..len {
-                    let call = ContractCall::read(reader)?;
-                    if !allowed.insert(call) {
-                        return Err(ReaderError::InvalidValue);
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let tag = reader.read_u8()?;
+            match tag {
+                0 => Ok(InterContractPermission::None),
+                1 => Ok(InterContractPermission::All),
+                2 => {
+                    let len = reader.read_u8()? as usize;
+                    let mut allowed = IndexSet::with_capacity(len);
+                    for _ in 0..len {
+                        let call = ContractCall::read(reader)?;
+                        if !allowed.insert(call) {
+                            return Err(SerializationError::new(DecodeError::InvalidValue));
+                        }
                     }
-                }
 
-                Ok(InterContractPermission::Specific(allowed))
-            }
-            3 => {
-                let len = reader.read_u8()? as usize;
-                let mut excluded = IndexSet::with_capacity(len);
-                for _ in 0..len {
-                    let call = ContractCall::read(reader)?;
-                    if !excluded.insert(call) {
-                        return Err(ReaderError::InvalidValue);
+                    Ok(InterContractPermission::Specific(allowed))
+                }
+                3 => {
+                    let len = reader.read_u8()? as usize;
+                    let mut excluded = IndexSet::with_capacity(len);
+                    for _ in 0..len {
+                        let call = ContractCall::read(reader)?;
+                        if !excluded.insert(call) {
+                            return Err(SerializationError::new(DecodeError::InvalidValue));
+                        }
                     }
-                }
 
-                Ok(InterContractPermission::Exclude(excluded))
+                    Ok(InterContractPermission::Exclude(excluded))
+                }
+                _ => Err(SerializationError::new(DecodeError::InvalidValue)),
             }
-            _ => Err(ReaderError::InvalidValue),
-        }
+        })
     }
 
     fn size(&self) -> usize {

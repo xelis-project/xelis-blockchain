@@ -1,4 +1,4 @@
-use super::*;
+use crate::serializer::{Error as SerializationError, *};
 
 // Dynamic length encoding
 // It can encode lengths up to u32::MAX
@@ -10,28 +10,32 @@ use super::*;
 pub struct DynamicLen(pub usize);
 
 impl Serializer for DynamicLen {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let tag = reader.read_u8()?;
-        let len = match tag {
-            n @ 0x00..=0xFC => n as usize,
-            0xFD => reader.read_u16()? as usize,
-            0xFE => reader.read_u32()? as usize,
-            _ => return Err(ReaderError::InvalidValue),
-        };
-        Ok(Self(len))
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let tag = reader.read_u8()?;
+            let len = match tag {
+                n @ 0x00..=0xFC => n as usize,
+                0xFD => reader.read_u16()? as usize,
+                0xFE => reader.read_u32()? as usize,
+                _ => return Err(SerializationError::new(DecodeError::InvalidValue)),
+            };
+            Ok(Self(len))
+        })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        let len = self.0;
-        if len <= 0xFC {
-            writer.write_u8(len as u8);
-        } else if len <= 0xFFFF {
-            writer.write_u8(0xFD);
-            writer.write_u16(len as u16);
-        } else {
-            writer.write_u8(0xFE);
-            writer.write_u32(len as u32);
-        }
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            let len = self.0;
+            if len <= 0xFC {
+                writer.write_u8(len as u8)
+            } else if len <= 0xFFFF {
+                writer.write_u8(0xFD)?;
+                writer.write_u16(len as u16)
+            } else {
+                writer.write_u8(0xFE)?;
+                writer.write_u32(len as u32)
+            }
+        })
     }
 
     fn size(&self) -> usize {
@@ -60,7 +64,7 @@ mod tests {
 
             let mut bytes = Vec::new();
             let mut writer = Writer::new(&mut bytes);
-            dynamic_len.write(&mut writer);
+            dynamic_len.write(&mut writer).unwrap();
 
             let mut reader = Reader::new(&bytes);
             let decoded = DynamicLen::read(&mut reader).unwrap();

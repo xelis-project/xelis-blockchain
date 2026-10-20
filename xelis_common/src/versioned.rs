@@ -3,7 +3,18 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use crate::{
     block::TopoHeight,
-    serializer::{Reader, ReaderError, Serializer, Writer}
+    serializer::{
+        DecodeError,
+        Error as SerializationError,
+        Readable,
+        Reader,
+        ReaderError,
+        ReaderExt,
+        Serializer,
+        Writable,
+        Writer,
+        WriterExt,
+    },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,31 +41,29 @@ pub enum State<T: Serializer> {
 }
 
 impl<T: Serializer> Serializer for State<T> {
-    fn write(&self, writer: &mut Writer) {
-        match self {
-            Self::Clean => {
-                writer.write_u8(0);
-            },
-            Self::Some(data) => {
-                writer.write_u8(1);
-                data.write(writer);
-            },
-            Self::None => {
-                writer.write_u8(2);
-            },
-            Self::Deleted => {
-                writer.write_u8(3);
-            },
-        }
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            match self {
+                Self::Clean => writer.write_u8(0),
+                Self::Some(data) => {
+                    writer.write_u8(1)?;
+                    data.write(writer)
+                },
+                Self::None => writer.write_u8(2),
+                Self::Deleted => writer.write_u8(3),
+            }
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok(match reader.read_u8()? {
-            0 => Self::Clean,
-            1 => Self::Some(T::read(reader)?),
-            2 => Self::None,
-            3 => Self::Deleted,
-            _ => return Err(ReaderError::InvalidValue),
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            Ok(match reader.read_u8()? {
+                0 => Self::Clean,
+                1 => Self::Some(T::read(reader)?),
+                2 => Self::None,
+                3 => Self::Deleted,
+                _ => return Err(SerializationError::new(DecodeError::InvalidValue)),
+            })
         })
     }
 
@@ -155,18 +164,22 @@ impl<T> Versioned<T> {
 }
 
 impl<T: Serializer> Serializer for Versioned<T> {
-    fn write(&self, writer: &mut Writer) {
-        self.previous_topoheight.write(writer);
-        self.data.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.previous_topoheight.write(writer)?;
+            self.data.write(writer)
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let previous_topoheight = Option::read(reader)?;
-        let data = T::read(reader)?;
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let previous_topoheight = Option::read(reader)?;
+            let data = T::read(reader)?;
 
-        Ok(Self {
-            previous_topoheight,
-            data,
+            Ok(Self {
+                previous_topoheight,
+                data,
+            })
         })
     }
 

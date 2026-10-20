@@ -1,3 +1,15 @@
+use crate::serializer::{
+    DecodeError,
+    Error as SerializationError,
+    Readable,
+    Reader,
+    ReaderError,
+    ReaderExt,
+    Serializer,
+    Writable,
+    Writer,
+    WriterExt,
+};
 use std::{
     fmt::{self, Display, Formatter},
     ops::*
@@ -6,7 +18,6 @@ use log::debug;
 use primitive_types::U256;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use crate::serializer::{Reader, ReaderError, Serializer, Writer};
 
 // This is like a variable length integer but up to U256
 // It is mostly used to save difficulty and cumulative difficulty on disk
@@ -61,39 +72,42 @@ impl VarUint {
 }
 
 impl Serializer for VarUint {
-    fn write(&self, writer: &mut Writer) {
-        let buffer = self.0.to_big_endian();
-        let mut len = buffer.len();
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            let buffer = self.0.to_big_endian();
+            let mut len = buffer.len();
 
-        // Search how much bytes we need to write
-        while len > 0 && buffer[len - 1] == 0 {
-            len -= 1;
-        }
+            // Search how much bytes we need to write
+            while len > 0 && buffer[len - 1] == 0 {
+                len -= 1;
+            }
 
-        writer.write_u8(len as u8);
-        if len > 0 {
-            writer.write_bytes(&buffer[..len]);
-        }
+            writer.write_u8(len as u8)?;
+            if len > 0 {
+                writer.write_bytes(&buffer[..len])?;
+            }
+            Ok(())
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let len = reader.read_u8()? as usize;
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let len = reader.read_u8()? as usize;
 
-        if len > MAX_VARUINT_SIZE {
-            debug!("VarUint size is too big: {}", len);
-            return Err(ReaderError::InvalidSize);
-        }
+            if len > MAX_VARUINT_SIZE {
+                debug!("VarUint size is too big: {}", len);
+                return Err(SerializationError::new(DecodeError::InvalidSize));
+            }
 
-        if len == 0 {
-            return Ok(Self::zero());
-        }
+            if len == 0 {
+                return Ok(Self::zero());
+            }
 
-        let bytes = reader.read_bytes_ref(len)?;
+            let mut buffer = [0u8; 32];
+            reader.read_exact(&mut buffer[..len])?;
 
-        let mut buffer = [0u8; 32];
-        buffer[0..len].copy_from_slice(bytes);
-
-        Ok(Self(U256::from_big_endian(&buffer)))
+            Ok(Self(U256::from_big_endian(&buffer)))
+        })
     }
 
     // no fast size impl as it's same as writing it
@@ -304,7 +318,7 @@ mod tests {
 
     fn test_serde(bytes: [u8; 32], expected_size: usize) {
         let compact: VarUint = U256::from_big_endian(&bytes).into();
-        let bytes = compact.to_bytes();
+        let bytes = compact.to_bytes().unwrap();
         assert_eq!(bytes.len() - 1, expected_size); // - 1 for byte len
         let compact2 = VarUint::read(&mut Reader::new(&bytes)).unwrap();
         assert_eq!(compact.as_ref(), compact2.as_ref());
@@ -322,7 +336,7 @@ mod tests {
     #[test]
     fn test_serde_deserde() {
         let difficulty = VarUint::from(71135336520u64);
-        let bytes = difficulty.to_bytes();
+        let bytes = difficulty.to_bytes().unwrap();
         let difficulty2 = VarUint::read(&mut Reader::new(&bytes)).unwrap();
         assert_eq!(difficulty, difficulty2);
         assert_eq!(difficulty.to_string(), "71135336520");

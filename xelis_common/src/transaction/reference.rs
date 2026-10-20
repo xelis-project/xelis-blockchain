@@ -5,11 +5,15 @@ use crate::{
     crypto::Hash,
     block::TopoHeight,
     serializer::{
+        Error as SerializationError,
+        Readable,
         Reader,
         ReaderError,
+        ReaderExt,
         Serializer,
-        Writer
-    }
+        Writable,
+        Writer,
+    },
 };
 
 #[derive(Serialize, Deserialize, Clone, Debug, JsonSchema)]
@@ -31,17 +35,21 @@ impl PartialEq for Reference {
 }
 
 impl Serializer for Reference {
-    fn write(&self, writer: &mut Writer) {
-        self.hash.write(writer);
-        self.topoheight.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.hash.write(writer)?;
+            self.topoheight.write(writer)
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Reference, ReaderError> {
-        let hash = Hash::read(reader)?;
-        let topoheight = Reader::read(reader)?;
-        Ok(Reference {
-            hash,
-            topoheight
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Reference, ReaderError> {
+        reader.read_with_context(|reader| {
+            let hash = Hash::read(reader)?;
+            let topoheight = reader.read()?;
+            Ok(Reference {
+                hash,
+                topoheight
+            })
         })
     }
 

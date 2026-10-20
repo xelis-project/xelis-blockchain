@@ -1,7 +1,18 @@
 use schemars::JsonSchema;
 
 use crate::{
-    serializer::{Reader, ReaderError, Serializer, Writer},
+    serializer::{
+        DecodeError,
+        Error as SerializationError,
+        Readable,
+        Reader,
+        ReaderError,
+        ReaderExt,
+        Serializer,
+        Writable,
+        Writer,
+        WriterExt,
+    },
     transaction::TxVersion
 };
 use core::fmt;
@@ -76,16 +87,18 @@ impl TryFrom<u8> for BlockVersion {
 }
 
 impl Serializer for BlockVersion {
-    fn write(&self, writer: &mut Writer) {
-        writer.write_u8(*self as u8);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| writer.write_u8(*self as u8))
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError>
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError>
     where
         Self: Sized
     {
-        let id = reader.read_u8()?;
-        Self::try_from(id).map_err(|_| ReaderError::InvalidValue)
+        reader.read_with_context(|reader| {
+            let id = reader.read_u8()?;
+            Self::try_from(id).map_err(|_| SerializationError::new(DecodeError::InvalidValue))
+        })
     }
 
     fn size(&self) -> usize {

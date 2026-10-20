@@ -8,6 +8,8 @@ use log::log;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use xelis_vm::{
+    PrimitiveInteger,
+    Opaque,
     VMContext,
     EnvironmentError,
     FnInstance,
@@ -16,7 +18,6 @@ use xelis_vm::{
     Primitive,
     SysCallResult,
     ValueCell,
-    traits::{JSONHelper, Serializable}
 };
 use crate::{
     config::{
@@ -45,7 +46,7 @@ use crate::{
         MAX_VALUE_SIZE,
     },
     crypto::Hash,
-    serializer::*
+    serializer::{Error as SerializationError, *},
 };
 
 pub use kind::*;
@@ -141,26 +142,30 @@ impl Borrow<Hash> for ScheduledExecution {
 }
 
 impl Serializer for ScheduledExecution {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok(Self {
-            hash: Arc::new(Hash::read(reader)?),
-            contract: Hash::read(reader)?,
-            chunk_id: u16::read(reader)?,
-            params: Vec::read(reader)?,
-            max_gas: u64::read(reader)?,
-            kind: ScheduledExecutionKind::read(reader)?,
-            gas_sources: IndexMap::read(reader)?,
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            Ok(Self {
+                hash: Arc::new(Hash::read(reader)?),
+                contract: Hash::read(reader)?,
+                chunk_id: u16::read(reader)?,
+                params: Vec::read(reader)?,
+                max_gas: u64::read(reader)?,
+                kind: ScheduledExecutionKind::read(reader)?,
+                gas_sources: IndexMap::read(reader)?,
+            })
         })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        self.hash.write(writer);
-        self.contract.write(writer);
-        self.chunk_id.write(writer);
-        self.params.write(writer);
-        self.max_gas.write(writer);
-        self.kind.write(writer);
-        self.gas_sources.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.hash.write(writer)?;
+            self.contract.write(writer)?;
+            self.chunk_id.write(writer)?;
+            self.params.write(writer)?;
+            self.max_gas.write(writer)?;
+            self.kind.write(writer)?;
+            self.gas_sources.write(writer)
+        })
     }
 
     fn size(&self) -> usize {
@@ -174,7 +179,8 @@ impl Serializer for ScheduledExecution {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Opaque)]
+#[opaque(hash, eq)]
 pub struct OpaqueScheduledExecution {
     kind: ScheduledExecutionKind,
     hash: Hash,
@@ -191,10 +197,6 @@ impl Eq for OpaqueScheduledExecution {}
 impl hash::Hash for OpaqueScheduledExecution {
     fn hash<H: hash::Hasher>(&self, _: &mut H) {}
 }
-
-impl Serializable for OpaqueScheduledExecution {}
-
-impl JSONHelper for OpaqueScheduledExecution {}
 
 async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider<'ty>>(
     kind: ScheduledExecutionKind,
@@ -232,7 +234,7 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider<'ty>>(
         .into_vec()?;
 
     let chunk_id = params.remove(0).as_u16()?;
-    if !metadata.module.is_callable_chunk(chunk_id as _) {
+    if !metadata.module.is_callable_chunk(chunk_id as usize) {
         log!(state.log_level, "Scheduled execution for chunk {} is not callable", chunk_id);
         return Ok(SysCallResult::Return(Primitive::Null.into()));
     }
@@ -255,7 +257,6 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider<'ty>>(
     let params: Vec<ValueCell> = p.into_iter()
         .map(|v| v.into_owned().into())
         .collect();
-
 
     let params_size = params.size();
     if params_size > MAX_VALUE_SIZE {
@@ -407,7 +408,7 @@ pub fn scheduled_execution_get_topoheight(instance: FnInstance<'_>, _: FnParams,
         .as_opaque_type()?;
 
     match scheduled_execution.kind {
-        ScheduledExecutionKind::TopoHeight { execution_topoheight, .. } => Ok(SysCallResult::Return(Primitive::U64(execution_topoheight).into())),
+        ScheduledExecutionKind::TopoHeight { execution_topoheight, .. } => Ok(SysCallResult::Return(Primitive::Integer(PrimitiveInteger::U64(execution_topoheight)).into())),
         ScheduledExecutionKind::BlockEnd => Ok(SysCallResult::Return(Primitive::Null.into())),
     }
 }
@@ -427,7 +428,7 @@ pub fn scheduled_execution_get_max_gas<'a, 'ty, 'r>(
 
     let execution = state.executions.get(&scheduled_execution.hash)?;
 
-    Ok(SysCallResult::Return(Primitive::U64(execution.max_gas).into()))
+    Ok(SysCallResult::Return(Primitive::Integer(PrimitiveInteger::U64(execution.max_gas)).into()))
 }
 
 pub fn scheduled_execution_get_pending<'a, 'ty, 'r>(

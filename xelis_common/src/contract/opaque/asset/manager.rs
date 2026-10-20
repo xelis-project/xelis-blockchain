@@ -1,6 +1,7 @@
 use blake3::hash;
 use log::log;
 use xelis_vm::{
+    ValueCell,
     VMContext,
     EnvironmentError,
     FnInstance,
@@ -177,7 +178,7 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'
     let asset = OpaqueAsset {
         hash: asset_hash
     };
-    Ok(SysCallResult::Return(Primitive::Opaque(asset.into()).into()))
+    Ok(SysCallResult::Return(ValueCell::Opaque(asset.into()).into()))
 }
 
 pub async fn asset_get_by_id<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
@@ -196,7 +197,7 @@ pub async fn asset_get_by_id<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstanc
     let asset = OpaqueAsset {
         hash: asset_hash
     };
-    Ok(SysCallResult::Return(Primitive::Opaque(asset.into()).into()))
+    Ok(SysCallResult::Return(ValueCell::Opaque(asset.into()).into()))
 }
 
 pub async fn asset_get_by_hash<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
@@ -213,7 +214,7 @@ pub async fn asset_get_by_hash<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInsta
     let asset = OpaqueAsset {
         hash
     };
-    Ok(SysCallResult::Return(Primitive::Opaque(asset.into()).into()))
+    Ok(SysCallResult::Return(ValueCell::Opaque(asset.into()).into()))
 }
 
 #[cfg(test)]

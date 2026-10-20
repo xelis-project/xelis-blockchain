@@ -1,18 +1,20 @@
+use matriochka::ResultExt;
 mod deploy;
 mod invoke;
 mod deposits;
 
-use anyhow::Context;
 use indexmap::{IndexMap, IndexSet};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use xelis_vm::{
+    PrimitiveInteger,
     Access,
     Chunk,
     ModuleChunk,
     Module,
     OpaqueWrapper,
     Primitive,
+    PrimitiveRange,
     TypePacked,
     ValueCell,
     ValuePointer,
@@ -24,7 +26,7 @@ use crate::{
         elgamal::{CompressedCommitment, CompressedHandle},
         proofs::CiphertextValidityProof,
     },
-    serializer::*
+    serializer::{Error as SerializationError, *},
 };
 
 pub use deploy::*;
@@ -53,37 +55,41 @@ pub enum ContractDeposit {
 }
 
 impl Serializer for ContractDeposit {
-    fn write(&self, writer: &mut Writer) {
-        match self {
-            ContractDeposit::Public(amount) => {
-                writer.write_u8(0);
-                amount.write(writer);
-            },
-            ContractDeposit::Private {
-                commitment,
-                sender_handle,
-                receiver_handle,
-                ct_validity_proof
-            } => {
-                writer.write_u8(1);
-                commitment.write(writer);
-                sender_handle.write(writer);
-                receiver_handle.write(writer);
-                ct_validity_proof.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            match self {
+                ContractDeposit::Public(amount) => {
+                    writer.write_u8(0)?;
+                    amount.write(writer)
+                },
+                ContractDeposit::Private {
+                    commitment,
+                    sender_handle,
+                    receiver_handle,
+                    ct_validity_proof
+                } => {
+                    writer.write_u8(1)?;
+                    commitment.write(writer)?;
+                    sender_handle.write(writer)?;
+                    receiver_handle.write(writer)?;
+                    ct_validity_proof.write(writer)
+                }
             }
-        }
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<ContractDeposit, ReaderError> {
-        Ok(match reader.read_u8()? {
-            0 => ContractDeposit::Public(reader.read_u64()?),
-            1 => ContractDeposit::Private {
-                commitment: CompressedCommitment::read(reader)?,
-                sender_handle: CompressedHandle::read(reader)?,
-                receiver_handle: CompressedHandle::read(reader)?,
-                ct_validity_proof: CiphertextValidityProof::read(reader)?
-            },
-            _ => return Err(ReaderError::InvalidValue)
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<ContractDeposit, ReaderError> {
+        reader.read_with_context(|reader| {
+            Ok(match reader.read_u8()? {
+                0 => ContractDeposit::Public(reader.read_u64()?),
+                1 => ContractDeposit::Private {
+                    commitment: CompressedCommitment::read(reader)?,
+                    sender_handle: CompressedHandle::read(reader)?,
+                    receiver_handle: CompressedHandle::read(reader)?,
+                    ct_validity_proof: CiphertextValidityProof::read(reader)?
+                },
+                _ => return Err(SerializationError::new(DecodeError::InvalidValue))
+            })
         })
     }
 
@@ -103,12 +109,14 @@ impl Serializer for ContractDeposit {
 }
 
 impl Serializer for U256 {
-    fn write(&self, writer: &mut Writer) {
-        writer.write_bytes(&self.to_be_bytes());
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| writer.write_bytes(&self.to_be_bytes()))
     }
 
-    fn read(reader: &mut Reader) -> Result<U256, ReaderError> {
-        Ok(U256::from_be_bytes(reader.read_bytes(32)?))
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<U256, ReaderError> {
+        reader.read_with_context(|reader| {
+            Ok(U256::from_be_bytes(reader.read_bytes_32()?))
+        })
     }
 
     fn size(&self) -> usize {
@@ -117,243 +125,254 @@ impl Serializer for U256 {
 }
 
 impl Serializer for Primitive {
-    fn write(&self, writer: &mut Writer) {
-        match self {
-            Primitive::Null => writer.write_u8(0),
-            Primitive::U8(value) => {
-                writer.write_u8(1);
-                writer.write_u8(*value);
-            },
-            Primitive::U16(value) => {
-                writer.write_u8(2);
-                writer.write_u16(*value);
-            },
-            Primitive::U32(value) => {
-                writer.write_u8(3);
-                value.write(writer);
-            },
-            Primitive::U64(value) => {
-                writer.write_u8(4);
-                value.write(writer);
-            },
-            Primitive::U128(value) => {
-                writer.write_u8(5);
-                value.write(writer);
-            },
-            Primitive::U256(value) => {
-                writer.write_u8(6);
-                value.write(writer);
-            },
-            Primitive::Boolean(value) => {
-                writer.write_u8(7);
-                writer.write_bool(*value);
-            },
-            Primitive::String(value) => {
-                writer.write_u8(8);
-                let bytes = value.as_bytes();
-                DynamicLen(bytes.len()).write(writer);
-                writer.write_bytes(bytes);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            match self {
+                Primitive::Null => writer.write_u8(0),
+                Primitive::Integer(PrimitiveInteger::U8(value)) => {
+                    writer.write_u8(1)?;
+                    writer.write_u8(*value)
+                },
+                Primitive::Integer(PrimitiveInteger::U16(value)) => {
+                    writer.write_u8(2)?;
+                    writer.write_u16(*value)
+                },
+                Primitive::Integer(PrimitiveInteger::U32(value)) => {
+                    writer.write_u8(3)?;
+                    value.write(writer)
+                },
+                Primitive::Integer(PrimitiveInteger::U64(value)) => {
+                    writer.write_u8(4)?;
+                    value.write(writer)
+                },
+                Primitive::Integer(PrimitiveInteger::U128(value)) => {
+                    writer.write_u8(5)?;
+                    value.write(writer)
+                },
+                Primitive::Integer(PrimitiveInteger::U256(value)) => {
+                    writer.write_u8(6)?;
+                    value.write(writer)
+                },
+                Primitive::Boolean(value) => {
+                    writer.write_u8(7)?;
+                    writer.write_bool(*value)
+                },
+                Primitive::String(value) => {
+                    writer.write_u8(8)?;
+                    let bytes = value.as_bytes();
+                    DynamicLen(bytes.len()).write(writer)?;
+                    writer.write_bytes(bytes)
+                }
+                Primitive::Range(range) => {
+                    writer.write_u8(9)?;
+                    Primitive::Integer(range.start()).write(writer)?;
+                    Primitive::Integer(range.end()).write(writer)
+                },
             }
-            Primitive::Range(range) => {
-                writer.write_u8(9);
-                range.0.write(writer);
-                range.1.write(writer);
-            },
-            Primitive::Opaque(opaque) => {
-                writer.write_u8(10);
-                opaque.write(writer);
-            }
-        }
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Primitive, ReaderError> {
-        fn read_range_boundary(reader: &mut Reader) -> Result<Primitive, ReaderError> {
-            Ok(match reader.read_u8()? {
-                1 => Primitive::U8(reader.read_u8()?),
-                2 => Primitive::U16(reader.read_u16()?),
-                3 => Primitive::U32(reader.read_u32()?),
-                4 => Primitive::U64(reader.read_u64()?),
-                5 => Primitive::U128(reader.read_u128()?),
-                6 => Primitive::U256(U256::read(reader)?),
-                _ => return Err(ReaderError::InvalidValue)
-            })
-        }
-
-        Ok(match reader.read_u8()? {
-            0 => Primitive::Null,
-            1 => Primitive::U8(reader.read_u8()?),
-            2 => Primitive::U16(reader.read_u16()?),
-            3 => Primitive::U32(reader.read_u32()?),
-            4 => Primitive::U64(reader.read_u64()?),
-            5 => Primitive::U128(reader.read_u128()?),
-            6 => Primitive::U256(U256::read(reader)?),
-            7 => Primitive::Boolean(reader.read_bool()?),
-            8 => {
-                let len = DynamicLen::read(reader)?.0;
-                Primitive::String(reader.read_string_with_size(len)?)
-            },
-            9 => {
-                let left = read_range_boundary(reader)?;
-                let right = read_range_boundary(reader)?;
-
-                let left_type = left.get_type().context("left range type")?;
-                let right_type = right.get_type().context("right range type")?;
-                if left_type != right_type {
-                    return Err(ReaderError::InvalidValue);
-                }
-
-                Primitive::Range(Box::new((left, right)))
-            },
-            10 => Primitive::Opaque(OpaqueWrapper::read(reader)?),
-            _ => return Err(ReaderError::InvalidValue)
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Primitive, ReaderError> {
+        reader.read_with_context(|reader| {
+            let tag = reader.read_u8()?;
+            read_primitive(reader, tag)
         })
     }
 
     fn size(&self) -> usize {
         1 + match self {
             Primitive::Null => 0,
-            Primitive::U8(_) => 1,
-            Primitive::U16(_) => 2,
-            Primitive::U32(_) => 4,
-            Primitive::U64(_) => 8,
-            Primitive::U128(_) => 16,
-            Primitive::U256(value) => value.size(),
+            Primitive::Integer(PrimitiveInteger::U8(_)) => 1,
+            Primitive::Integer(PrimitiveInteger::U16(_)) => 2,
+            Primitive::Integer(PrimitiveInteger::U32(_)) => 4,
+            Primitive::Integer(PrimitiveInteger::U64(_)) => 8,
+            Primitive::Integer(PrimitiveInteger::U128(_)) => 16,
+            Primitive::Integer(PrimitiveInteger::U256(value)) => value.size(),
             Primitive::Boolean(_) => 1,
             Primitive::String(value) => DynamicLen(value.as_bytes().len()).size() + value.as_bytes().len(),
-            Primitive::Range(range) => range.0.size() + range.1.size(),
-            Primitive::Opaque(opaque) => opaque.size()
+            Primitive::Range(range) => Primitive::Integer(range.start()).size() + Primitive::Integer(range.end()).size()
         }
     }
+}
+
+// Opaque values retain the legacy primitive tag in the binary format.
+fn read_primitive<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>, tag: u8) -> Result<Primitive, ReaderError> {
+    Ok(match tag {
+        0 => Primitive::Null,
+        1 => Primitive::Integer(PrimitiveInteger::U8(reader.read_u8()?)),
+        2 => Primitive::Integer(PrimitiveInteger::U16(reader.read_u16()?)),
+        3 => Primitive::Integer(PrimitiveInteger::U32(reader.read_u32()?)),
+        4 => Primitive::Integer(PrimitiveInteger::U64(reader.read_u64()?)),
+        5 => Primitive::Integer(PrimitiveInteger::U128(reader.read_u128()?)),
+        6 => Primitive::Integer(PrimitiveInteger::U256(U256::read(reader)?)),
+        7 => Primitive::Boolean(reader.read_bool()?),
+        8 => {
+            let len = DynamicLen::read(reader)?.0;
+            Primitive::String(reader.read_string_with_size(len)?)
+        },
+        9 => {
+            fn read_boundary<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Primitive, ReaderError> {
+                let tag = reader.read_u8()?;
+                if !(1..=6).contains(&tag) {
+                    return Err(SerializationError::new(DecodeError::InvalidValue));
+                }
+                read_primitive(reader, tag)
+            }
+            let left = read_boundary(reader)?;
+            let right = read_boundary(reader)?;
+            let range = PrimitiveRange::try_from((left, right))
+                .context("decoding integer range boundaries")?;
+            Primitive::Range(Box::new(range))
+        },
+        _ => return Err(SerializationError::new(DecodeError::InvalidValue))
+    })
 }
 
 impl Serializer for ValueCell {
     // Serialize a value cell
     // ValueCell with more than one value are serialized in reverse order
     // This help us to save a reverse operation when deserializing
-    fn write(&self, writer: &mut Writer) {
-        let mut stack = vec![self];
-        while let Some(cell) = stack.pop() {
-            match cell {
-                ValueCell::Primitive(value) => {
-                    writer.write_u8(0);
-                    value.write(writer);
-                },
-                ValueCell::Bytes(bytes) => {
-                    writer.write_u8(1);
-                    DynamicLen(bytes.len()).write(writer);
-                    writer.write_bytes(bytes);
-                }
-                ValueCell::Object(values) => {
-                    writer.write_u8(2);
-                    DynamicLen(values.len()).write(writer);
-                    for value in values.iter().rev() {
-                        stack.push(value.as_ref());
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            let mut stack = vec![self];
+            while let Some(cell) = stack.pop() {
+                match cell {
+                    ValueCell::Primitive(value) => {
+                        writer.write_u8(0)?;
+                        value.write(writer)?;
+                    },
+                    ValueCell::Opaque(opaque) => {
+                        writer.write_u8(0)?;
+                        writer.write_u8(10)?;
+                        opaque.write(writer)?;
+                    },
+                    ValueCell::Bytes(bytes) => {
+                        writer.write_u8(1)?;
+                        DynamicLen(bytes.len()).write(writer)?;
+                        writer.write_bytes(bytes)?;
                     }
-                },
-                ValueCell::Map(map) => {
-                    writer.write_u8(3);
-                    DynamicLen(map.len()).write(writer);
-                    for (key, value) in map.iter().rev() {
-                        stack.push(value.as_ref());
-                        stack.push(key);
+                    ValueCell::Object(values) => {
+                        writer.write_u8(2)?;
+                        DynamicLen(values.len()).write(writer)?;
+                        for value in values.iter().rev() {
+                            stack.push(value.as_ref());
+                        }
+                    },
+                    ValueCell::Map(map) => {
+                        writer.write_u8(3)?;
+                        DynamicLen(map.len()).write(writer)?;
+                        for (key, value) in map.iter().rev() {
+                            stack.push(value.as_ref());
+                            stack.push(key);
+                        }
                     }
                 }
             }
-        }
+            Ok(())
+        })
     }
 
     // No deserialization can occurs here as we're missing context
-    fn read(reader: &mut Reader) -> Result<ValueCell, ReaderError> {
-        // Iterative approach to prevent stack overflow attacks
-        // Maximum nesting depth allowed
-        const MAX_DEPTH: usize = 16;
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<ValueCell, ReaderError> {
+        reader.read_with_context(|reader| {
+            // Iterative approach to prevent stack overflow attacks
+            // Maximum nesting depth allowed
+            const MAX_DEPTH: usize = 16;
 
-        enum Pending {
-            Object { remaining: usize, values: Vec<ValuePointer> },
-            Map { remaining: usize, map: IndexMap<ValueCell, ValuePointer>, pending_key: Option<ValueCell> },
-        }
+            enum Pending {
+                Object { remaining: usize, values: Vec<ValuePointer> },
+                Map { remaining: usize, map: IndexMap<ValueCell, ValuePointer>, pending_key: Option<ValueCell> },
+            }
 
-        let mut stack: Vec<Pending> = Vec::new();
-        let mut result: Option<ValueCell> = None;
+            let mut stack: Vec<Pending> = Vec::new();
+            let mut result: Option<ValueCell> = None;
 
-        loop {
-            // If we have a result, process it
-            if let Some(value) = result.take() {
-                let Some(last) = stack.last_mut() else {
-                    return Ok(value);
-                };
-
-                // Add the value to the parent container
-                match last {
-                    Pending::Object { remaining, values } => {
-                        values.push(value.into());
-                        *remaining -= 1;
-                    }
-                    Pending::Map { remaining, map, pending_key } => {
-                        if let Some(key) = pending_key.take() {
-                            map.insert(key, value.into());
-                            *remaining -= 1;
-                        } else {
-                            *pending_key = Some(value);
-                        }
-                    }
-                }
-
-                // Check if completed containers can be popped
-                while let Some(top) = stack.last() {
-                    let is_complete = match top {
-                        Pending::Object { remaining, .. } => *remaining == 0,
-                        Pending::Map { remaining, pending_key, .. } => *remaining == 0 && pending_key.is_none(),
+            loop {
+                // If we have a result, process it
+                if let Some(value) = result.take() {
+                    let Some(last) = stack.last_mut() else {
+                        return Ok(value);
                     };
 
-                    if is_complete {
-                        let completed = stack.pop().unwrap();
-                        result = Some(match completed {
-                            Pending::Object { values, .. } => ValueCell::Object(values),
-                            Pending::Map { map, .. } => ValueCell::Map(Box::new(map)),
+                    // Add the value to the parent container
+                    match last {
+                        Pending::Object { remaining, values } => {
+                            values.push(value.into());
+                            *remaining -= 1;
+                        }
+                        Pending::Map { remaining, map, pending_key } => {
+                            if let Some(key) = pending_key.take() {
+                                map.insert(key, value.into());
+                                *remaining -= 1;
+                            } else {
+                                *pending_key = Some(value);
+                            }
+                        }
+                    }
+
+                    // Check if completed containers can be popped
+                    while let Some(top) = stack.last() {
+                        let is_complete = match top {
+                            Pending::Object { remaining, .. } => *remaining == 0,
+                            Pending::Map { remaining, pending_key, .. } => *remaining == 0 && pending_key.is_none(),
+                        };
+
+                        if is_complete {
+                            let completed = stack.pop().unwrap();
+                            result = Some(match completed {
+                                Pending::Object { values, .. } => ValueCell::Object(values),
+                                Pending::Map { map, .. } => ValueCell::Map(Box::new(map)),
+                            });
+                        } else {
+                            break;
+                        }
+                    }
+
+                    if result.is_some() {
+                        continue;
+                    }
+                }
+
+                // Read the next value
+                match reader.read_u8()? {
+                    0 => {
+                        let tag = reader.read_u8()?;
+                        result = Some(if tag == 10 {
+                            ValueCell::Opaque(OpaqueWrapper::read(reader)?)
+                        } else {
+                            ValueCell::Primitive(read_primitive(reader, tag)?)
                         });
-                    } else {
-                        break;
+                    },
+                    1 => {
+                        let len = DynamicLen::read(reader)?.0;
+                        result = Some(ValueCell::Bytes(reader.read_vec(len)?));
                     }
-                }
-
-                if result.is_some() {
-                    continue;
+                    2 => {
+                        let len = DynamicLen::read(reader)?.0;
+                        if len == 0 {
+                            result = Some(ValueCell::Object(Vec::new()));
+                        } else {
+                            if stack.len() >= MAX_DEPTH {
+                                return Err(SerializationError::new(DecodeError::InvalidValue));
+                            }
+                            stack.push(Pending::Object { remaining: len, values: Vec::new() });
+                        }
+                    }
+                    3 => {
+                        let len = DynamicLen::read(reader)?.0;
+                        if len == 0 {
+                            result = Some(ValueCell::Map(Box::new(IndexMap::new())));
+                        } else {
+                            if stack.len() >= MAX_DEPTH {
+                                return Err(SerializationError::new(DecodeError::InvalidValue));
+                            }
+                            stack.push(Pending::Map { remaining: len, map: IndexMap::new(), pending_key: None });
+                        }
+                    }
+                    _ => return Err(SerializationError::new(DecodeError::InvalidValue))
                 }
             }
-
-            // Read the next value
-            match reader.read_u8()? {
-                0 => result = Some(ValueCell::Primitive(Primitive::read(reader)?)),
-                1 => {
-                    let len = DynamicLen::read(reader)?.0;
-                    result = Some(ValueCell::Bytes(reader.read_bytes(len)?));
-                }
-                2 => {
-                    let len = DynamicLen::read(reader)?.0;
-                    if len == 0 {
-                        result = Some(ValueCell::Object(Vec::new()));
-                    } else {
-                        if stack.len() >= MAX_DEPTH {
-                            return Err(ReaderError::InvalidValue);
-                        }
-                        stack.push(Pending::Object { remaining: len, values: Vec::new() });
-                    }
-                }
-                3 => {
-                    let len = DynamicLen::read(reader)?.0;
-                    if len == 0 {
-                        result = Some(ValueCell::Map(Box::new(IndexMap::new())));
-                    } else {
-                        if stack.len() >= MAX_DEPTH {
-                            return Err(ReaderError::InvalidValue);
-                        }
-                        stack.push(Pending::Map { remaining: len, map: IndexMap::new(), pending_key: None });
-                    }
-                }
-                _ => return Err(ReaderError::InvalidValue)
-            }
-        }
+        })
     }
 
     fn size(&self) -> usize {
@@ -365,6 +384,7 @@ impl Serializer for ValueCell {
             total += 1;
             match cell {
                 ValueCell::Primitive(value) => total += value.size(),
+                ValueCell::Opaque(opaque) => total += 1 + opaque.size(),
                 ValueCell::Bytes(bytes) => {
                     // u32 len
                     total += DynamicLen(bytes.len()).size();
@@ -393,116 +413,120 @@ impl Serializer for ValueCell {
 }
 
 impl Serializer for Module {
-    fn write(&self, writer: &mut Writer) {
-        let constants = self.constants();
-        DynamicLen(constants.len()).write(writer);
-        for constant in constants {
-            constant.write(writer);
-        }
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            let constants = self.constants();
+            DynamicLen(constants.len()).write(writer)?;
+            for constant in constants {
+                constant.write(writer)?;
+            }
 
-        let version = writer.context()
-            .get_optional::<ContractVersion>()
-            .cloned()
-            .unwrap_or(ContractVersion::V0);
+            let version = writer.context().and_then(|context| context.get::<ContractVersion>())
+                .cloned()
+                .unwrap_or(ContractVersion::V0);
 
-        fn write_parameters(writer: &mut Writer, parameters: &Option<Vec<TypePacked>>, version: ContractVersion) {
-            if version >= ContractVersion::V1 {
-                if let Some(params) = parameters {
-                    writer.write_bool(true);                                
-                    writer.write_u8(params.len() as u8);
-                    for param in params {
-                        param.write(writer);
+            fn write_parameters<'ty, 'r, W: Writable>(writer: &mut Writer<'ty, 'r, W>, parameters: &Option<Vec<TypePacked>>, version: ContractVersion) -> Result<(), SerializationError> {
+                if version >= ContractVersion::V1 {
+                    if let Some(params) = parameters {
+                        writer.write_bool(true)?;                                
+                        writer.write_u8(params.len() as u8)?;
+                        for param in params {
+                            param.write(writer)?;
+                        }
+                    } else {
+                        writer.write_bool(false)?;
                     }
-                } else {
-                    writer.write_bool(false);
                 }
+                Ok(())
             }
-        }
 
-         // Function helper to write parameters based on contract version
-        let chunks = self.chunks();
-        writer.write_u16(chunks.len() as u16);
-        for entry in chunks {
-            let instructions = entry.chunk.get_instructions();
-            DynamicLen(instructions.len()).write(writer);
-            writer.write_bytes(instructions);
-            match &entry.access {
-                Access::All { parameters } => {
-                    writer.write_u8(0);
-                    write_parameters(writer, parameters, version);
-                },
-                Access::Internal => writer.write_u8(1),
-                Access::Entry { parameters } => {
-                    writer.write_u8(2);
-                    write_parameters(writer, parameters, version);
-                },
-                Access::Hook { id } => {
-                    writer.write_u8(3);
-                    writer.write_u8(*id);
+             // Function helper to write parameters based on contract version
+            let chunks = self.chunks();
+            writer.write_u16(chunks.len() as u16)?;
+            for entry in chunks {
+                let instructions = entry.chunk.get_instructions();
+                DynamicLen(instructions.len()).write(writer)?;
+                writer.write_bytes(instructions)?;
+                match &entry.access {
+                    Access::All { parameters } => {
+                        writer.write_u8(0)?;
+                        write_parameters(writer, parameters, version)?;
+                    },
+                    Access::Internal => writer.write_u8(1)?,
+                    Access::Entry { parameters } => {
+                        writer.write_u8(2)?;
+                        write_parameters(writer, parameters, version)?;
+                    },
+                    Access::Hook { id } => {
+                        writer.write_u8(3)?;
+                        writer.write_u8(*id)?;
+                    }
                 }
             }
-        }
+            Ok(())
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Module, ReaderError> {
-        let constants_len = DynamicLen::read(reader)?.0;
-        let mut constants = IndexSet::new();
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Module, ReaderError> {
+        reader.read_with_context(|reader| {
+            let constants_len = DynamicLen::read(reader)?.0;
+            let mut constants = IndexSet::new();
 
-        for _ in 0..constants_len {
-            let c = ValueCell::read(reader)?;
-            if !constants.insert(c) {
-                return Err(ReaderError::InvalidValue);
+            for _ in 0..constants_len {
+                let c = ValueCell::read(reader)?;
+                if !constants.insert(c) {
+                    return Err(SerializationError::new(DecodeError::InvalidValue));
+                }
             }
-        }
 
-        let chunks_len = reader.read_u16()?;
-        let mut chunks = Vec::new();
-        let mut hooks = IndexMap::new();
+            let chunks_len = reader.read_u16()?;
+            let mut chunks = Vec::new();
+            let mut hooks = IndexMap::new();
 
-        let version = reader.context()
-            .get_optional::<ContractVersion>()
-            .cloned()
-            .unwrap_or(ContractVersion::V0);
+            let version = reader.context().and_then(|context| context.get::<ContractVersion>())
+                .cloned()
+                .unwrap_or(ContractVersion::V0);
 
-        // Function helper to read parameters based on contract version
-        fn read_parameters(reader: &mut Reader, version: ContractVersion) -> Result<Option<Vec<TypePacked>>, ReaderError> {
-            if version >= ContractVersion::V1 {
-                let params_len = Option::<u8>::read(reader)?;
-                if let Some(len) = params_len {
-                    let mut params = Vec::new();
-                    for _ in 0..len {
-                        params.push(TypePacked::read(reader)?);
+            // Function helper to read parameters based on contract version
+            fn read_parameters<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>, version: ContractVersion) -> Result<Option<Vec<TypePacked>>, ReaderError> {
+                if version >= ContractVersion::V1 {
+                    let params_len = Option::<u8>::read(reader)?;
+                    if let Some(len) = params_len {
+                        let mut params = Vec::new();
+                        for _ in 0..len {
+                            params.push(TypePacked::read(reader)?);
+                        }
+
+                        return Ok(Some(params))
                     }
-
-                    return Ok(Some(params))
                 }
+
+                Ok(None)
             }
 
-            Ok(None)
-        }
+            for i in 0..chunks_len {
+                let instructions_len = DynamicLen::read(reader)?.0;
+                let instructions = reader.read_vec(instructions_len)?;
+                let chunk = Chunk::from_instructions(instructions);
 
-        for i in 0..chunks_len {
-            let instructions_len = DynamicLen::read(reader)?.0;
-            let instructions = reader.read_bytes(instructions_len)?;
-            let chunk = Chunk::from_instructions(instructions);
+                let access = match reader.read_u8()? {
+                    0 => Access::All { parameters: read_parameters(reader, version)? },
+                    1 => Access::Internal,
+                    2 => Access::Entry { parameters: read_parameters(reader, version)? },
+                    3 => {
+                        let id = reader.read_u8()?;
 
-            let access = match reader.read_u8()? {
-                0 => Access::All { parameters: read_parameters(reader, version)? },
-                1 => Access::Internal,
-                2 => Access::Entry { parameters: read_parameters(reader, version)? },
-                3 => {
-                    let id = reader.read_u8()?;
+                        hooks.insert(id, i as usize);
+                        Access::Hook { id }
+                    }
+                    _ => return Err(SerializationError::new(DecodeError::InvalidValue))
+                };
 
-                    hooks.insert(id, i as _);
-                    Access::Hook { id }
-                }
-                _ => return Err(ReaderError::InvalidValue)
-            };
+                chunks.push(ModuleChunk { chunk, access });
+            }
 
-            chunks.push(ModuleChunk { chunk, access });
-        }
-
-        Ok(Module::with(constants, chunks, hooks))
+            Ok(Module::with(constants, chunks, hooks))
+        })
     }
 
     fn size(&self) -> usize {
@@ -561,12 +585,12 @@ mod tests {
             module: Arc::new(module),
         };
 
-        assert_eq!(contract.size(), contract.to_bytes().len());
+        assert_eq!(contract.size(), contract.to_bytes().unwrap().len());
     }
 
     #[track_caller]
     fn test_serde_cell(cell: ValueCell) {
-        let bytes = cell.to_bytes();
+        let bytes = cell.to_bytes().unwrap();
         let v = ValueCell::from_bytes(&bytes).unwrap();
 
         assert_eq!(v, cell);
@@ -576,15 +600,15 @@ mod tests {
     fn test_serde_primitive() {
         test_serde_cell(ValueCell::Primitive(Primitive::Null));
         test_serde_cell(ValueCell::Primitive(Primitive::Boolean(false)));
-        test_serde_cell(ValueCell::Primitive(Primitive::U8(42)));
-        test_serde_cell(ValueCell::Primitive(Primitive::U32(42)));
-        test_serde_cell(ValueCell::Primitive(Primitive::U64(42)));
-        test_serde_cell(ValueCell::Primitive(Primitive::U128(42)));
-        test_serde_cell(ValueCell::Primitive(Primitive::U256(42u64.into())));
-        test_serde_cell(ValueCell::Primitive(Primitive::Range(Box::new((Primitive::U128(42), Primitive::U128(420))))));
+        test_serde_cell(ValueCell::Primitive(Primitive::Integer(PrimitiveInteger::U8(42))));
+        test_serde_cell(ValueCell::Primitive(Primitive::Integer(PrimitiveInteger::U32(42))));
+        test_serde_cell(ValueCell::Primitive(Primitive::Integer(PrimitiveInteger::U64(42))));
+        test_serde_cell(ValueCell::Primitive(Primitive::Integer(PrimitiveInteger::U128(42))));
+        test_serde_cell(ValueCell::Primitive(Primitive::Integer(PrimitiveInteger::U256(42u64.into()))));
+        test_serde_cell(ValueCell::Primitive(Primitive::Range(Box::new(PrimitiveRange::U128(42..420)))));
         test_serde_cell(ValueCell::Primitive(Primitive::String("hello world!!!".to_owned())));
 
-        test_serde_cell(ValueCell::Primitive(Primitive::Opaque(OpaqueWrapper::new(Hash::zero()))));
+        test_serde_cell(ValueCell::Opaque(OpaqueWrapper::new(Hash::zero())));
     }
 
     #[test]
@@ -606,14 +630,14 @@ mod tests {
         test_serde_cell(ValueCell::Bytes(vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]));
         test_serde_cell(ValueCell::Bytes(vec![0; u16::MAX as usize + 10]));
         test_serde_cell(ValueCell::Object(vec![
-            Primitive::U64(42).into(),
-            Primitive::U64(23).into(),
-            Primitive::U64(42).into(),
-            Primitive::U64(57).into(),
-            Primitive::U64(10).into()
+            Primitive::Integer(PrimitiveInteger::U64(42)).into(),
+            Primitive::Integer(PrimitiveInteger::U64(23)).into(),
+            Primitive::Integer(PrimitiveInteger::U64(42)).into(),
+            Primitive::Integer(PrimitiveInteger::U64(57)).into(),
+            Primitive::Integer(PrimitiveInteger::U64(10)).into()
         ]));
         test_serde_cell(ValueCell::Map(Box::new([
-            (Primitive::U64(42).into(), Primitive::String("Hello World!".to_owned()).into())
+            (Primitive::Integer(PrimitiveInteger::U64(42)).into(), Primitive::String("Hello World!".to_owned()).into())
         ].into_iter().collect())));
     }
 
@@ -634,12 +658,12 @@ mod tests {
         // Object containing objects
         test_serde_cell(ValueCell::Object(vec![
             ValueCell::Object(vec![
-                Primitive::U64(1).into(),
-                Primitive::U64(2).into(),
+                Primitive::Integer(PrimitiveInteger::U64(1)).into(),
+                Primitive::Integer(PrimitiveInteger::U64(2)).into(),
             ]).into(),
             ValueCell::Object(vec![
-                Primitive::U64(3).into(),
-                Primitive::U64(4).into(),
+                Primitive::Integer(PrimitiveInteger::U64(3)).into(),
+                Primitive::Integer(PrimitiveInteger::U64(4)).into(),
             ]).into(),
         ]));
 
@@ -657,8 +681,8 @@ mod tests {
     fn test_serde_nested_maps() {
         // Map containing maps
         let inner_map: IndexMap<ValueCell, ValuePointer> = [
-            (Primitive::U64(1).into(), ValueCell::Primitive(Primitive::String("one".to_owned())).into()),
-            (Primitive::U64(2).into(), ValueCell::Primitive(Primitive::String("two".to_owned())).into()),
+            (Primitive::Integer(PrimitiveInteger::U64(1)).into(), ValueCell::Primitive(Primitive::String("one".to_owned())).into()),
+            (Primitive::Integer(PrimitiveInteger::U64(2)).into(), ValueCell::Primitive(Primitive::String("two".to_owned())).into()),
         ].into_iter().collect();
 
         let outer_map: IndexMap<ValueCell, ValuePointer> = [
@@ -672,7 +696,7 @@ mod tests {
     fn test_serde_mixed_nested() {
         // Object containing map containing object
         let inner_obj = ValueCell::Object(vec![
-            Primitive::U64(42).into(),
+            Primitive::Integer(PrimitiveInteger::U64(42)).into(),
             Primitive::Boolean(true).into(),
         ]);
 
@@ -682,7 +706,7 @@ mod tests {
 
         test_serde_cell(ValueCell::Object(vec![
             ValueCell::Map(Box::new(map)).into(),
-            Primitive::U64(100).into(),
+            Primitive::Integer(PrimitiveInteger::U64(100)).into(),
         ]));
     }
 
@@ -690,8 +714,8 @@ mod tests {
     fn test_serde_map_with_complex_keys() {
         // Map with object as key
         let key_obj = ValueCell::Object(vec![
-            Primitive::U64(1).into(),
-            Primitive::U64(2).into(),
+            Primitive::Integer(PrimitiveInteger::U64(1)).into(),
+            Primitive::Integer(PrimitiveInteger::U64(2)).into(),
         ]);
 
         let map: IndexMap<ValueCell, ValuePointer> = [
@@ -705,7 +729,7 @@ mod tests {
     fn test_serde_large_flat_object() {
         // Object with many elements
         let values: Vec<ValuePointer> = (0..1000)
-            .map(|i| Primitive::U64(i).into())
+            .map(|i| Primitive::Integer(PrimitiveInteger::U64(i)).into())
             .collect();
         test_serde_cell(ValueCell::Object(values));
     }
@@ -714,7 +738,7 @@ mod tests {
     fn test_serde_large_flat_map() {
         // Map with many entries
         let map: IndexMap<ValueCell, ValuePointer> = (0..500)
-            .map(|i| (Primitive::U64(i).into(), ValueCell::Primitive(Primitive::String(format!("value_{}", i))).into()))
+            .map(|i| (Primitive::Integer(PrimitiveInteger::U64(i)).into(), ValueCell::Primitive(Primitive::String(format!("value_{}", i))).into()))
             .collect();
         test_serde_cell(ValueCell::Map(Box::new(map)));
     }
@@ -722,7 +746,7 @@ mod tests {
     #[test]
     fn test_serde_deep_nesting() {
         // Create a deeply nested structure (within 16 depth limit)
-        let mut cell = ValueCell::Primitive(Primitive::U64(42));
+        let mut cell = ValueCell::Primitive(Primitive::Integer(PrimitiveInteger::U64(42)));
         for _ in 0..16 {
             cell = ValueCell::Object(vec![cell.into()]);
         }
@@ -732,11 +756,11 @@ mod tests {
     #[test]
     fn test_serde_deep_nesting_exceeds_limit() {
         // Create a structure that exceeds the 16 depth limit
-        let mut cell = ValueCell::Primitive(Primitive::U64(42));
+        let mut cell = ValueCell::Primitive(Primitive::Integer(PrimitiveInteger::U64(42)));
         for _ in 0..17 {
             cell = ValueCell::Object(vec![cell.into()]);
         }
-        let bytes = cell.to_bytes();
+        let bytes = cell.to_bytes().unwrap();
         assert!(ValueCell::from_bytes(&bytes).is_err());
     }
 
@@ -746,7 +770,7 @@ mod tests {
         let mut cell = ValueCell::Primitive(Primitive::String("innermost".to_owned()));
         for i in 0..16 {
             let map: IndexMap<ValueCell, ValuePointer> = [
-                (Primitive::U64(i).into(), cell.into()),
+                (Primitive::Integer(PrimitiveInteger::U64(i)).into(), cell.into()),
             ].into_iter().collect();
             cell = ValueCell::Map(Box::new(map));
         }
@@ -759,21 +783,21 @@ mod tests {
         let mut cell = ValueCell::Primitive(Primitive::String("innermost".to_owned()));
         for i in 0..17 {
             let map: IndexMap<ValueCell, ValuePointer> = [
-                (Primitive::U64(i).into(), cell.into()),
+                (Primitive::Integer(PrimitiveInteger::U64(i)).into(), cell.into()),
             ].into_iter().collect();
             cell = ValueCell::Map(Box::new(map));
         }
-        let bytes = cell.to_bytes();
+        let bytes = cell.to_bytes().unwrap();
         assert!(ValueCell::from_bytes(&bytes).is_err());
     }
 
     #[test]
     fn test_serde_alternating_object_map() {
         // Alternating between objects and maps in nesting
-        let inner = ValueCell::Primitive(Primitive::U64(999));
+        let inner = ValueCell::Primitive(Primitive::Integer(PrimitiveInteger::U64(999)));
         
         let map: IndexMap<ValueCell, ValuePointer> = [
-            (Primitive::U64(0).into(), inner.into()),
+            (Primitive::Integer(PrimitiveInteger::U64(0)).into(), inner.into()),
         ].into_iter().collect();
         
         let obj = ValueCell::Object(vec![ValueCell::Map(Box::new(map)).into()]);
@@ -793,15 +817,15 @@ mod tests {
             Primitive::Null.into(),
             Primitive::Boolean(true).into(),
             Primitive::Boolean(false).into(),
-            Primitive::U8(255).into(),
-            Primitive::U16(65535).into(),
-            Primitive::U32(u32::MAX).into(),
-            Primitive::U64(u64::MAX).into(),
-            Primitive::U128(u128::MAX).into(),
-            Primitive::U256(U256::MAX).into(),
+            Primitive::Integer(PrimitiveInteger::U8(255)).into(),
+            Primitive::Integer(PrimitiveInteger::U16(65535)).into(),
+            Primitive::Integer(PrimitiveInteger::U32(u32::MAX)).into(),
+            Primitive::Integer(PrimitiveInteger::U64(u64::MAX)).into(),
+            Primitive::Integer(PrimitiveInteger::U128(u128::MAX)).into(),
+            Primitive::Integer(PrimitiveInteger::U256(U256::MAX)).into(),
             Primitive::String("test string".to_owned()).into(),
-            Primitive::Range(Box::new((Primitive::U64(0), Primitive::U64(100)))).into(),
-            Primitive::Opaque(OpaqueWrapper::new(Hash::zero())).into(),
+            Primitive::Range(Box::new(PrimitiveRange::U64(0..100))).into(),
+            ValueCell::Opaque(OpaqueWrapper::new(Hash::zero())).into(),
         ]));
     }
 
@@ -809,10 +833,10 @@ mod tests {
     fn test_serde_map_multiple_entries() {
         // Map with multiple entries of different types
         let map: IndexMap<ValueCell, ValuePointer> = [
-            (Primitive::U64(1).into(), ValueCell::Primitive(Primitive::String("one".to_owned())).into()),
-            (Primitive::U64(2).into(), ValueCell::Primitive(Primitive::Boolean(true)).into()),
-            (Primitive::U64(3).into(), ValueCell::Bytes(vec![1, 2, 3]).into()),
-            (Primitive::String("key".to_owned()).into(), ValueCell::Primitive(Primitive::U128(12345)).into()),
+            (Primitive::Integer(PrimitiveInteger::U64(1)).into(), ValueCell::Primitive(Primitive::String("one".to_owned())).into()),
+            (Primitive::Integer(PrimitiveInteger::U64(2)).into(), ValueCell::Primitive(Primitive::Boolean(true)).into()),
+            (Primitive::Integer(PrimitiveInteger::U64(3)).into(), ValueCell::Bytes(vec![1, 2, 3]).into()),
+            (Primitive::String("key".to_owned()).into(), ValueCell::Primitive(Primitive::Integer(PrimitiveInteger::U128(12345))).into()),
         ].into_iter().collect();
         test_serde_cell(ValueCell::Map(Box::new(map)));
     }

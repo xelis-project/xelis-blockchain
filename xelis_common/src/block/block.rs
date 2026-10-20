@@ -9,8 +9,16 @@ use crate::{
         Hashable,
         Hash,
     },
+    serializer::{
+        Error as SerializationError,
+        Readable,
+        Reader,
+        ReaderError,
+        Serializer,
+        Writable,
+        Writer,
+    },
     transaction::Transaction,
-    serializer::{Serializer, Writer, Reader, ReaderError},
 };
 use super::BlockHeader;
 
@@ -57,22 +65,27 @@ impl Block {
 }
 
 impl Serializer for Block {
-    fn write(&self, writer: &mut Writer) {
-        self.header.write(writer);
-        for tx in &self.transactions {
-            tx.write(writer);
-        }
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.header.write(writer)?;
+            for tx in &self.transactions {
+                tx.write(writer)?;
+            }
+            Ok(())
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Block, ReaderError> {
-        let header = BlockHeader::read(reader)?;
-        let mut txs = Vec::with_capacity(header.get_txs_count());
-        for _ in 0..header.get_txs_count() {
-            let tx = Transaction::read(reader)?;
-            txs.push(Arc::new(tx));     
-        }
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Block, ReaderError> {
+        reader.read_with_context(|reader| {
+            let header = BlockHeader::read(reader)?;
+            let mut txs = Vec::with_capacity(header.get_txs_count());
+            for _ in 0..header.get_txs_count() {
+                let tx = Transaction::read(reader)?;
+                txs.push(Arc::new(tx));     
+            }
 
-        Ok(Block::new(header, txs))
+            Ok(Block::new(header, txs))
+        })
     }
 
     fn size(&self) -> usize {

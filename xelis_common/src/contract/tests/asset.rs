@@ -1,4 +1,4 @@
-use xelis_vm::Primitive;
+use xelis_vm::{ValueCell, Primitive};
 
 use crate::{
     config::{COST_PER_ASSET, XELIS_ASSET},
@@ -108,7 +108,7 @@ async fn asset_get_by_hash_returns_null_for_unknown_hash() {
         &mut state,
         &contract,
         InvokeContract::Entry(0),
-        vec![Primitive::Opaque(unknown.into()).into()],
+        vec![ValueCell::Opaque(unknown.into()).into()],
     )
     .await
     .expect("invoke");
@@ -372,7 +372,7 @@ async fn asset_native_xelis_is_read_only_and_has_no_owner() {
         &mut state,
         &contract,
         InvokeContract::Entry(0),
-        vec![Primitive::Opaque(XELIS_ASSET.into()).into()],
+        vec![ValueCell::Opaque(XELIS_ASSET.into()).into()],
     )
     .await
     .expect("invoke");
@@ -416,7 +416,7 @@ async fn asset_transfer_ownership_allows_new_owner_to_mint() {
         &mut state,
         &owner,
         InvokeContract::Entry(0),
-        vec![Primitive::Opaque(new_owner.clone().into()).into()],
+        vec![ValueCell::Opaque(new_owner.clone().into()).into()],
     )
     .await
     .expect("transfer");
@@ -428,7 +428,7 @@ async fn asset_transfer_ownership_allows_new_owner_to_mint() {
         &mut state,
         &new_owner,
         InvokeContract::Entry(0),
-        vec![Primitive::Opaque(asset.clone().into()).into()],
+        vec![ValueCell::Opaque(asset.clone().into()).into()],
     )
     .await
     .expect("mint");
@@ -474,8 +474,8 @@ async fn asset_non_owner_cannot_transfer_ownership() {
         &other,
         InvokeContract::Entry(0),
         vec![
-            Primitive::Opaque(asset.clone().into()).into(),
-            Primitive::Opaque(other.clone().into()).into(),
+            ValueCell::Opaque(asset.clone().into()).into(),
+            ValueCell::Opaque(other.clone().into()).into(),
         ],
     )
     .await
@@ -539,7 +539,7 @@ async fn asset_ownership_can_transfer_again_and_original_id_still_resolves() {
         &mut state,
         &owner,
         InvokeContract::Entry(0),
-        vec![Primitive::Opaque(middle.clone().into()).into()],
+        vec![ValueCell::Opaque(middle.clone().into()).into()],
     )
     .await
     .expect("first transfer");
@@ -551,8 +551,8 @@ async fn asset_ownership_can_transfer_again_and_original_id_still_resolves() {
         &middle,
         InvokeContract::Entry(0),
         vec![
-            Primitive::Opaque(asset.clone().into()).into(),
-            Primitive::Opaque(final_owner.clone().into()).into(),
+            ValueCell::Opaque(asset.clone().into()).into(),
+            ValueCell::Opaque(final_owner.clone().into()).into(),
         ],
     )
     .await
@@ -563,7 +563,7 @@ async fn asset_ownership_can_transfer_again_and_original_id_still_resolves() {
         &mut state,
         &final_owner,
         InvokeContract::Entry(0),
-        vec![Primitive::Opaque(asset.clone().into()).into()],
+        vec![ValueCell::Opaque(asset.clone().into()).into()],
     )
     .await
     .expect("final check");
@@ -573,7 +573,7 @@ async fn asset_ownership_can_transfer_again_and_original_id_still_resolves() {
         &mut state,
         &owner,
         InvokeContract::Entry(1),
-        vec![Primitive::Opaque(asset.clone().into()).into()],
+        vec![ValueCell::Opaque(asset.clone().into()).into()],
     )
     .await
     .expect("original check");
@@ -602,7 +602,7 @@ async fn asset_transfer_ownership_rejects_missing_contract() {
         &mut state,
         &contract,
         InvokeContract::Entry(0),
-        vec![Primitive::Opaque(missing.into()).into()],
+        vec![ValueCell::Opaque(missing.into()).into()],
     )
     .await
     .expect("invoke");
@@ -653,7 +653,7 @@ async fn asset_transfer_and_burn_conserve_supply_and_rollback_atomically() {
         &owner,
         InvokeContract::Entry(1),
         vec![
-            Primitive::Opaque(destination.clone().into()).into(),
+            ValueCell::Opaque(destination.clone().into()).into(),
             Primitive::Boolean(true).into(),
         ],
     ).await
@@ -671,7 +671,7 @@ async fn asset_transfer_and_burn_conserve_supply_and_rollback_atomically() {
         &owner,
         InvokeContract::Entry(1),
         vec![
-            Primitive::Opaque(destination.clone().into()).into(),
+            ValueCell::Opaque(destination.clone().into()).into(),
             Primitive::Boolean(false).into(),
         ],
     ).await

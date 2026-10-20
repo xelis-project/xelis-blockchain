@@ -1,9 +1,9 @@
-use std::hash::Hasher;
 
-use anyhow::Context as _;
+use matriochka::ResultExt;
 use xelis_vm::{
-    impl_opaque,
-    traits::{DynEq, DynHash, Serializable},
+    ValueCell,
+    PrimitiveInteger,
+    traits::DynSerializable,
     VMContext,
     FnInstance,
     FnParams,
@@ -24,47 +24,22 @@ use crate::{
         elgamal::PublicKey,
         proofs::{BalanceProof, CommitmentEqProof}
     },
-    serializer::*
+    serializer::{Error as SerializationError, *},
 };
 
-impl_opaque!("BalanceProof", BalanceProof, json);
-impl_opaque!("BalanceProof", BalanceProof);
-
-impl DynEq for BalanceProof {
-    fn is_equal(&self, _: &dyn DynEq) -> bool {
-        false
-    }
-
-    fn as_eq(&self) -> &dyn DynEq {
-        self
-    }
-}
-
-impl DynHash for BalanceProof {
-    fn dyn_hash(&self, _: &mut dyn Hasher) {}
-
-    fn is_hashable(&self) -> bool {
-        false
-    }
-}
-
-impl Serializable for BalanceProof {
+impl DynSerializable for BalanceProof {
     fn get_size(&self) -> usize {
         self.size()
     }
 
-    fn is_serializable(&self) -> bool {
-        true
-    }
-
-    fn serialize(&self, buffer: &mut Vec<u8>) -> usize {
-        let mut writer = Writer::new(buffer);
-        writer.write_u8(BALANCE_PROOF_OPAQUE_ID);
-        self.write(&mut writer);
-        writer.total_write()
+    fn serialize(&self, buffer: &mut Vec<u8>) -> Result<usize, SerializationError> {
+        let start = buffer.len();
+        let mut writer = Writer::new(&mut *buffer);
+        writer.write_u8(BALANCE_PROOF_OPAQUE_ID)?;
+        self.write(&mut writer)?;
+        Ok(buffer.len() - start)
     }
 }
-
 
 pub fn balance_proof_new(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let amount = params[0]
@@ -77,14 +52,14 @@ pub fn balance_proof_new(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>
 
     let proof = BalanceProof::from(amount, commitment_eq_proof);
 
-    Ok(SysCallResult::Return(Primitive::Opaque(proof.into()).into()))
+    Ok(SysCallResult::Return(ValueCell::Opaque(proof.into()).into()))
 }
 
 pub fn balance_proof_amount(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let zelf: &BalanceProof = zelf.as_opaque_type()?;
 
-    Ok(SysCallResult::Return(Primitive::U64(zelf.amount()).into()))
+    Ok(SysCallResult::Return(Primitive::Integer(PrimitiveInteger::U64(zelf.amount())).into()))
 }
 
 pub fn balance_proof_commitment_eq_proof(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
@@ -92,7 +67,7 @@ pub fn balance_proof_commitment_eq_proof(zelf: FnInstance, _: FnParams, _: &Modu
     let zelf: &BalanceProof = zelf.as_opaque_type()?;
     let commitment_eq_proof = zelf.commitment_eq_proof();
 
-    Ok(SysCallResult::Return(Primitive::Opaque(commitment_eq_proof.clone().into()).into()))
+    Ok(SysCallResult::Return(ValueCell::Opaque(commitment_eq_proof.clone().into()).into()))
 }
 
 pub fn balance_proof_verify(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {

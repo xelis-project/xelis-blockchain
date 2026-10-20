@@ -31,11 +31,14 @@ use crate::{
         proofs::H
     },
     serializer::{
+        Error as SerializationError,
+        Readable,
         Reader,
         ReaderError,
         Serializer,
-        Writer
-    }
+        Writable,
+        Writer,
+    },
 };
 
 pub use plaintext::{PlaintextExtraData, PlaintextFlag};
@@ -169,12 +172,14 @@ impl PlaintextData {
 }
 
 impl Serializer for AEADCipher {
-    fn write(&self, writer: &mut Writer) {
-        self.0.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| self.0.write(writer))
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok(Self(Vec::read(reader)?))
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            Ok(Self(Vec::read(reader)?))
+        })
     }
 
     fn size(&self) -> usize {
@@ -183,12 +188,14 @@ impl Serializer for AEADCipher {
 }
 
 impl Serializer for Cipher {
-    fn write(&self, writer: &mut Writer) {
-        self.0.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| self.0.write(writer))
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok(Self(Vec::read(reader)?))
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            Ok(Self(Vec::read(reader)?))
+        })
     }
 
     fn size(&self) -> usize {
@@ -242,7 +249,7 @@ mod tests {
 
         let data = 1234567890u64.into();
         let size = ExtraData::estimate_size(&data);
-        let encrypted = ExtraData::new(PlaintextData(data.to_bytes()), alice.get_public_key(), bob.get_public_key()).to_bytes();
+        let encrypted = ExtraData::new(PlaintextData(data.to_bytes().unwrap()), alice.get_public_key(), bob.get_public_key()).to_bytes().unwrap();
         assert_eq!(size, encrypted.size());
     }
 
@@ -253,7 +260,7 @@ mod tests {
 
         let data = PlaintextData(vec![1, 2, 3]);
         let typed = ExtraDataType::Private(ExtraData::new(data, alice.get_public_key(), bob.get_public_key()));
-        let unknown: UnknownExtraDataFormat = typed.into();
+        let unknown: UnknownExtraDataFormat = typed.try_into().unwrap();
 
         assert!(matches!(unknown.try_kind(), Some(ExtraDataKind::Private)));
     }
@@ -261,8 +268,8 @@ mod tests {
     #[test]
     fn test_unknown_extra_data_kind_public() {
         let data = DataElement::Value(42u64.into());
-        let typed = ExtraDataType::Public(PlaintextData(data.to_bytes()));
-        let unknown: UnknownExtraDataFormat = typed.into();
+        let typed = ExtraDataType::Public(PlaintextData(data.to_bytes().unwrap()));
+        let unknown: UnknownExtraDataFormat = typed.try_into().unwrap();
 
         assert!(matches!(unknown.try_kind(), Some(ExtraDataKind::Public)));
     }
@@ -270,7 +277,7 @@ mod tests {
     #[test]
     fn test_unknown_extra_data_kind_proprietary() {
         let typed = ExtraDataType::Proprietary(vec![0xDE, 0xAD, 0xBE, 0xEF]);
-        let unknown: UnknownExtraDataFormat = typed.into();
+        let unknown: UnknownExtraDataFormat = typed.try_into().unwrap();
 
         assert!(matches!(unknown.try_kind(), Some(ExtraDataKind::Proprietary)));
     }

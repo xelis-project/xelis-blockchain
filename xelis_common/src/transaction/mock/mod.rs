@@ -161,9 +161,9 @@ pub fn create_multisig_transfer_tx(
     );
     let mut unsigned = builder.build_unsigned(&mut state, &account.keypair).unwrap();
     for (id, signer) in signers {
-        unsigned.sign_multisig(&signer.keypair, *id);
+        unsigned.sign_multisig(&signer.keypair, *id).unwrap();
     }
-    let tx = unsigned.finalize(&account.keypair);
+    let tx = unsigned.finalize(&account.keypair).unwrap();
     account.balances = state.balances;
     account.nonce = state.nonce;
     tx

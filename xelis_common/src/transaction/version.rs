@@ -1,5 +1,16 @@
+use crate::serializer::{
+    DecodeError,
+    Error as SerializationError,
+    Readable,
+    Reader,
+    ReaderError,
+    ReaderExt,
+    Serializer,
+    Writable,
+    Writer,
+    WriterExt,
+};
 use schemars::JsonSchema;
-use crate::serializer::{Reader, ReaderError, Serializer, Writer};
 use core::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, JsonSchema)]
@@ -14,6 +25,8 @@ pub enum TxVersion {
     // Carrier
     V3 = 3,
 }
+
+runtime_context::tid! { impl<'a> TidAble<'a> for TxVersion }
 
 impl Default for TxVersion {
     fn default() -> Self {
@@ -49,14 +62,16 @@ impl Into<u64> for TxVersion {
 }
 
 impl Serializer for TxVersion {
-    fn write(&self, writer: &mut Writer) {
-        writer.write_u8(*self as u8);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| writer.write_u8(*self as u8))
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError>
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError>
         where Self: Sized {
-        let id = reader.read_u8()?;
-        Self::try_from(id).map_err(|_| ReaderError::InvalidValue)
+        reader.read_with_context(|reader| {
+            let id = reader.read_u8()?;
+            Self::try_from(id).map_err(|_| SerializationError::new(DecodeError::InvalidValue))
+        })
     }
 
     fn size(&self) -> usize {
@@ -92,11 +107,11 @@ mod tests {
     #[test]
     fn test_tx_version() {
         let version = TxVersion::V0;
-        let read_version = TxVersion::from_bytes(&version.to_bytes()).unwrap();
+        let read_version = TxVersion::from_bytes(&version.to_bytes().unwrap()).unwrap();
         assert_eq!(version, read_version);
 
         let version = TxVersion::V1;
-        let read_version = TxVersion::from_bytes(&version.to_bytes()).unwrap();
+        let read_version = TxVersion::from_bytes(&version.to_bytes().unwrap()).unwrap();
         assert_eq!(version, read_version);
     }
 

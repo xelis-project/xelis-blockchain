@@ -1,6 +1,16 @@
+use crate::serializer::{
+    Error as SerializationError,
+    Readable,
+    Reader,
+    ReaderError,
+    ReaderExt,
+    Serializer,
+    Writable,
+    Writer,
+    WriterExt,
+};
 use std::ops::{Deref, DerefMut};
 
-use super::{Reader, Serializer};
 
 pub struct RawBytes(Vec<u8>);
 
@@ -15,17 +25,18 @@ impl RawBytes {
 }
 
 impl Serializer for RawBytes {
-    fn write(&self, writer: &mut super::Writer) {
-        writer.write_bytes(&self.0);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| writer.write_bytes(&self.0))
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, super::ReaderError> {
-        let bytes = reader.read_bytes_left();
-        Ok(Self(bytes.to_vec()))
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            Ok(Self(reader.read_all_bytes()?))
+        })
     }
 
-    fn to_bytes(&self) -> Vec<u8> {
-        self.0.clone()
+    fn to_bytes(&self) -> Result<Vec<u8>, SerializationError> {
+        Ok(self.0.clone())
     }
 
     fn size(&self) -> usize {

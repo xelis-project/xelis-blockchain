@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use async_trait::async_trait;
+use matriochka::Error;
 use xelis_vm::{ValueCell, tid};
 
 use crate::{
@@ -12,7 +13,7 @@ use crate::{
         ContractProvider,
         ContractStorage,
     },
-    crypto::Hash,
+    crypto::{Hash, PublicKey},
 };
 
 #[derive(Debug, Default, Clone)]
@@ -29,7 +30,7 @@ impl ContractStorage for MockStorageProvider {
         contract: &Hash,
         key: &ValueCell,
         _: TopoHeight,
-    ) -> Result<Option<(TopoHeight, Option<ValueCell>)>, anyhow::Error> {
+    ) -> Result<Option<(TopoHeight, Option<ValueCell>)>, Error> {
         Ok(self.contracts.get(contract).and_then(|c| c.get(key).cloned()))
     }
 
@@ -38,7 +39,7 @@ impl ContractStorage for MockStorageProvider {
         contract: &Hash,
         key: &ValueCell,
         _: TopoHeight,
-    ) -> Result<Option<TopoHeight>, anyhow::Error> {
+    ) -> Result<Option<TopoHeight>, Error> {
         Ok(self
             .contracts
             .get(contract)
@@ -46,7 +47,7 @@ impl ContractStorage for MockStorageProvider {
             .map(|(topo, _)| *topo))
     }
 
-    async fn has_contract(&self, contract: &Hash, _: TopoHeight) -> Result<bool, anyhow::Error> {
+    async fn has_contract(&self, contract: &Hash, _: TopoHeight) -> Result<bool, Error> {
         Ok(self.contracts.contains_key(contract))
     }
 }
@@ -58,16 +59,16 @@ impl<'ty> ContractProvider<'ty> for MockStorageProvider {
         _: &Hash,
         _: &Hash,
         _: TopoHeight,
-    ) -> Result<Option<(TopoHeight, u64)>, anyhow::Error> {
+    ) -> Result<Option<(TopoHeight, u64)>, Error> {
         Ok(None)
     }
 
     async fn get_account_balance_for_asset(
         &self,
-        _: &crate::crypto::PublicKey,
+        _: &PublicKey,
         _: &Hash,
         _: TopoHeight,
-    ) -> Result<Option<(TopoHeight, CiphertextCache)>, anyhow::Error> {
+    ) -> Result<Option<(TopoHeight, CiphertextCache)>, Error> {
         Ok(None)
     }
 
@@ -75,11 +76,11 @@ impl<'ty> ContractProvider<'ty> for MockStorageProvider {
         &self,
         _: &Hash,
         _: TopoHeight,
-    ) -> Result<bool, anyhow::Error> {
+    ) -> Result<bool, Error> {
         Ok(false)
     }
 
-    async fn asset_exists(&self, _: &Hash, _: TopoHeight) -> Result<bool, anyhow::Error> {
+    async fn asset_exists(&self, _: &Hash, _: TopoHeight) -> Result<bool, Error> {
         Ok(false)
     }
 
@@ -87,7 +88,7 @@ impl<'ty> ContractProvider<'ty> for MockStorageProvider {
         &self,
         _: &Hash,
         _: TopoHeight,
-    ) -> Result<Option<(TopoHeight, AssetData)>, anyhow::Error> {
+    ) -> Result<Option<(TopoHeight, AssetData)>, Error> {
         Ok(None)
     }
 
@@ -95,15 +96,15 @@ impl<'ty> ContractProvider<'ty> for MockStorageProvider {
         &self,
         _: &Hash,
         _: TopoHeight,
-    ) -> Result<(TopoHeight, u64), anyhow::Error> {
+    ) -> Result<(TopoHeight, u64), Error> {
         Ok((0, 0))
     }
 
     async fn account_exists(
         &self,
-        _: &crate::crypto::PublicKey,
+        _: &PublicKey,
         _: TopoHeight,
-    ) -> Result<bool, anyhow::Error> {
+    ) -> Result<bool, Error> {
         Ok(false)
     }
 
@@ -111,7 +112,7 @@ impl<'ty> ContractProvider<'ty> for MockStorageProvider {
         &self,
         _: &Hash,
         _: TopoHeight,
-    ) -> Result<Option<(TopoHeight, Option<ContractModule>)>, anyhow::Error> {
+    ) -> Result<Option<(TopoHeight, Option<ContractModule>)>, Error> {
         Ok(None)
     }
 
@@ -121,7 +122,7 @@ impl<'ty> ContractProvider<'ty> for MockStorageProvider {
         _: u64,
         _: &Hash,
         _: TopoHeight,
-    ) -> Result<bool, anyhow::Error> {
+    ) -> Result<bool, Error> {
         Ok(false)
     }
 }

@@ -5,9 +5,10 @@ use std::{
     pin::Pin,
     future::Future,
 };
-use anyhow::Context as _;
+use matriochka::ResultExt;
 use xelis_vm::{
-    traits::{JSONHelper, Serializable},
+    PrimitiveInteger,
+    Opaque,
     VMContext,
     EnvironmentError,
     FnInstance,
@@ -32,7 +33,7 @@ use crate::{
         get_cache_for_contract
     },
     crypto::Hash,
-    serializer::*,
+    serializer::{Error as SerializationError, *},
     versioned::VersionedState,
 };
 
@@ -41,15 +42,22 @@ use super::{MAX_KEY_SIZE, MAX_VALUE_SIZE, FEE_PER_BYTE_STORED_CONTRACT};
 pub(super) const PREFIX: &[u8] = b"\x00btree:";
 const ERR_MISSING_NODE: &str = "missing node";
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Opaque)]
+#[opaque(hash, eq)]
 pub struct OpaqueBTreeStore {
     namespace: Vec<u8>,
 }
 
-impl Serializable for OpaqueBTreeStore {}
-impl JSONHelper for OpaqueBTreeStore {}
-
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Opaque)]
+#[opaque(
+    hash,
+    eq,
+    children = self.cached_value.iter(),
+    deep_clone = Self {
+        cached_value: self.cached_value.as_ref().map(ValueCell::deep_clone),
+        ..self.clone()
+    }
+)]
 pub struct OpaqueBTreeCursor {
     contract: Hash,
     namespace: Vec<u8>,
@@ -64,8 +72,6 @@ pub struct OpaqueBTreeCursor {
 }
 
 // Runtime-only, cannot be persisted
-impl Serializable for OpaqueBTreeCursor {}
-impl JSONHelper for OpaqueBTreeCursor {}
 
 impl PartialEq for OpaqueBTreeCursor {
     fn eq(&self, other: &Self) -> bool {
@@ -291,11 +297,11 @@ macro_rules! define_numeric_enum {
         }
 
         impl TryFrom<u8> for $name {
-            type Error = anyhow::Error;
+            type Error = EnvironmentError;
             fn try_from(value: u8) -> Result<Self, Self::Error> {
                 match value {
                     $($value => Ok(Self::$variant),)*
-                    _ => Err(anyhow::anyhow!(concat!("invalid ", stringify!($name), " variant {}"), value)),
+                    _ => Err(EnvironmentError::InvalidParameter),
                 }
             }
         }
@@ -328,18 +334,18 @@ impl Node {
     }
 
     #[inline]
-    fn to_value(&self) -> ValueCell {
-        ValueCell::Bytes(self.to_bytes())
+    fn to_value(&self) -> Result<ValueCell, EnvironmentError> {
+        self.to_bytes().map(ValueCell::Bytes).map_err(|error| EnvironmentError::Any(error.into()))
     }
 
-    fn to_bytes(&self) -> Vec<u8> {
+    fn to_bytes(&self) -> Result<Vec<u8>, SerializationError> {
         let record: NodeRecord = self.into();
         let mut bytes = Vec::with_capacity(record.size());
         {
             let mut writer = Writer::new(&mut bytes);
-            record.write(&mut writer);
+            record.write(&mut writer)?;
         }
-        bytes
+        Ok(bytes)
     }
 
     fn from_value(id: u64, value: &ValueCell) -> Result<Self, EnvironmentError> {
@@ -495,7 +501,7 @@ pub fn btree_store_new(_: FnInstance, mut params: FnParams, _: &ModuleMetadata<'
         return Err(EnvironmentError::Static("namespace is too large"));
     }
 
-    Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(OpaqueBTreeStore { namespace })).into()))
+    Ok(SysCallResult::Return(ValueCell::Opaque(OpaqueWrapper::new(OpaqueBTreeStore { namespace })).into()))
 }
 
 /// Inserts a value for `key`, allowing duplicates. Duplicates are stored in insertion order.
@@ -574,7 +580,7 @@ pub async fn btree_store_seek<'a, 'ty, 'r, P: ContractProvider<'ty>>(
         ]));
 
         let result = ValueCell::Object(vec![
-            Primitive::Opaque(cursor.into()).into(),
+            ValueCell::Opaque(cursor.into()).into(),
             entry.into(),
         ]);
         Ok(SysCallResult::Return(result.into()))
@@ -588,7 +594,7 @@ pub async fn btree_store_len<'a, 'ty, 'r, P: ContractProvider<'ty>>(
     context: &mut VMContext<'ty, 'r>
 ) -> FnReturnType<ContractMetadata> {
     with_store_ctx(instance, metadata, context, |_store, ctx: &mut TreeContext<'_, 'ty, P>, _contract| Box::pin(async move {
-        Ok(SysCallResult::Return(Primitive::U64(read_size(ctx).await?).into()))
+        Ok(SysCallResult::Return(Primitive::Integer(PrimitiveInteger::U64(read_size(ctx).await?)).into()))
     })).await
 }
 
@@ -1097,7 +1103,7 @@ async fn write_u64_slot<'ty, P: ContractProvider<'ty>>(
     key: ValueCell,
     value: u64,
 ) -> Result<(), EnvironmentError> {
-    write_storage_value(ctx, key, Some(Primitive::U64(value).into())).await.map(|_| ())
+    write_storage_value(ctx, key, Some(Primitive::Integer(PrimitiveInteger::U64(value)).into())).await.map(|_| ())
 }
 
 async fn allocate_node_id<'ty, P: ContractProvider<'ty>>(ctx: &mut TreeContext<'_, 'ty, P>) -> Result<u64, EnvironmentError> {
@@ -1157,7 +1163,7 @@ async fn write_node<'ty, P: ContractProvider<'ty>>(
     ctx: &mut TreeContext<'_, 'ty, P>,
     node: &Node,
 ) -> Result<(), EnvironmentError> {
-    write_storage_value(ctx, node_storage_key(ctx.namespace, node.id), Some(node.to_value())).await.map(|_| ())
+    write_storage_value(ctx, node_storage_key(ctx.namespace, node.id), Some(node.to_value()?)).await.map(|_| ())
 }
 
 async fn write_storage_value<'ty, P: ContractProvider<'ty>>(

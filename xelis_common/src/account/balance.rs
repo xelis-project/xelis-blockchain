@@ -3,18 +3,24 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use crate::{
     block::TopoHeight,
+    serializer::{
+        DecodeError,
+        Error as SerializationError,
+        Readable,
+        Reader,
+        ReaderError,
+        ReaderExt,
+        Serializer,
+        Writable,
+        Writer,
+        WriterExt,
+    },
     versioned::TopoHeightVersioned,
     crypto::elgamal::{
         Ciphertext,
         CompressedCiphertext,
         DecompressionError
     },
-    serializer::{
-        Serializer,
-        ReaderError,
-        Reader,
-        Writer
-    }
 };
 
 use super::CiphertextCache;
@@ -38,21 +44,25 @@ impl BalanceType {
 }
 
 impl Serializer for BalanceType {
-    fn write(&self, writer: &mut Writer) {
-        match self {
-            BalanceType::Input => writer.write_u8(0),
-            BalanceType::Output => writer.write_u8(1),
-            BalanceType::Both => writer.write_u8(2)
-        }
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            match self {
+                BalanceType::Input => writer.write_u8(0),
+                BalanceType::Output => writer.write_u8(1),
+                BalanceType::Both => writer.write_u8(2)
+            }
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        match reader.read_u8()? {
-            0 => Ok(BalanceType::Input),
-            1 => Ok(BalanceType::Output),
-            2 => Ok(BalanceType::Both),
-            _ => Err(ReaderError::InvalidValue)
-        }
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            match reader.read_u8()? {
+                0 => Ok(BalanceType::Input),
+                1 => Ok(BalanceType::Output),
+                2 => Ok(BalanceType::Both),
+                _ => Err(SerializationError::new(DecodeError::InvalidValue))
+            }
+        })
     }
 
     fn size(&self) -> usize {
@@ -212,25 +222,29 @@ impl Balance {
 }
 
 impl Serializer for Balance {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let topoheight = TopoHeight::read(reader)?;
-        let output_balance = Option::read(reader)?;
-        let final_balance = CiphertextCache::read(reader)?;
-        let balance_type = BalanceType::read(reader)?;
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let topoheight = TopoHeight::read(reader)?;
+            let output_balance = Option::read(reader)?;
+            let final_balance = CiphertextCache::read(reader)?;
+            let balance_type = BalanceType::read(reader)?;
 
-        Ok(Self {
-            topoheight,
-            output_balance,
-            final_balance,
-            balance_type
+            Ok(Self {
+                topoheight,
+                output_balance,
+                final_balance,
+                balance_type
+            })
         })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        self.topoheight.write(writer);
-        self.output_balance.write(writer);
-        self.final_balance.write(writer);
-        self.balance_type.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.topoheight.write(writer)?;
+            self.output_balance.write(writer)?;
+            self.final_balance.write(writer)?;
+            self.balance_type.write(writer)
+        })
     }
 
     fn size(&self) -> usize {
@@ -252,19 +266,23 @@ pub struct AccountSummary {
 }
 
 impl Serializer for AccountSummary {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let output_topoheight = Option::read(reader)?;
-        let stable_topoheight = TopoHeight::read(reader)?;
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let output_topoheight = Option::read(reader)?;
+            let stable_topoheight = TopoHeight::read(reader)?;
 
-        Ok(Self {
-            output_topoheight,
-            stable_topoheight
+            Ok(Self {
+                output_topoheight,
+                stable_topoheight
+            })
         })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        self.output_topoheight.write(writer);
-        self.stable_topoheight.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.output_topoheight.write(writer)?;
+            self.stable_topoheight.write(writer)
+        })
     }
 
     fn size(&self) -> usize {
@@ -286,24 +304,28 @@ impl Display for VersionedBalance {
 }
 
 impl Serializer for VersionedBalance {
-    fn write(&self, writer: &mut Writer) {
-        self.previous_topoheight.write(writer);
-        self.balance_type.write(writer);
-        self.final_balance.write(writer);
-        self.output_balance.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.previous_topoheight.write(writer)?;
+            self.balance_type.write(writer)?;
+            self.final_balance.write(writer)?;
+            self.output_balance.write(writer)
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let previous_topoheight = Option::read(reader)?;
-        let balance_type = BalanceType::read(reader)?;
-        let final_balance = CiphertextCache::read(reader)?;
-        let output_balance = Option::read(reader)?;
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let previous_topoheight = Option::read(reader)?;
+            let balance_type = BalanceType::read(reader)?;
+            let final_balance = CiphertextCache::read(reader)?;
+            let output_balance = Option::read(reader)?;
 
-        Ok(Self {
-            output_balance,
-            final_balance,
-            previous_topoheight,
-            balance_type
+            Ok(Self {
+                output_balance,
+                final_balance,
+                previous_topoheight,
+                balance_type
+            })
         })
     }
 
@@ -323,7 +345,7 @@ mod tests {
     fn serde_versioned_balance_zero() {
         let mut zero = VersionedBalance::zero();
         zero.set_balance_type(BalanceType::Input);
-        let zero_bis = VersionedBalance::from_bytes(&zero.to_bytes()).unwrap();
+        let zero_bis = VersionedBalance::from_bytes(&zero.to_bytes().unwrap()).unwrap();
         assert_eq!(zero, zero_bis);
     }
 
@@ -333,7 +355,7 @@ mod tests {
         let mut zero = VersionedBalance::zero();
         zero.set_balance_type(BalanceType::Input);
         zero.set_previous_topoheight(Some(42));
-        let zero_bis = VersionedBalance::from_bytes(&zero.to_bytes()).unwrap();
+        let zero_bis = VersionedBalance::from_bytes(&zero.to_bytes().unwrap()).unwrap();
         assert_eq!(zero, zero_bis);
     }
 
@@ -342,7 +364,7 @@ mod tests {
         let mut zero = VersionedBalance::zero();
         zero.set_balance_type(BalanceType::Output);
 
-        let zero_bis = VersionedBalance::from_bytes(&zero.to_bytes()).unwrap();
+        let zero_bis = VersionedBalance::from_bytes(&zero.to_bytes().unwrap()).unwrap();
         assert_eq!(zero, zero_bis);
     }
 
@@ -352,7 +374,7 @@ mod tests {
         zero.set_balance_type(BalanceType::Both);
         zero.set_output_balance(Some(CiphertextCache::Decompressed(None, Ciphertext::zero())));
 
-        let zero_bis = VersionedBalance::from_bytes(&zero.to_bytes()).unwrap();
+        let zero_bis = VersionedBalance::from_bytes(&zero.to_bytes().unwrap()).unwrap();
         assert_eq!(zero, zero_bis);
     }
 
@@ -363,7 +385,7 @@ mod tests {
         zero.set_output_balance(Some(CiphertextCache::Decompressed(None, Ciphertext::zero())));
         zero.set_previous_topoheight(Some(42));
 
-        let zero_bis = VersionedBalance::from_bytes(&zero.to_bytes()).unwrap();
+        let zero_bis = VersionedBalance::from_bytes(&zero.to_bytes().unwrap()).unwrap();
         assert_eq!(zero, zero_bis);
     }
 }

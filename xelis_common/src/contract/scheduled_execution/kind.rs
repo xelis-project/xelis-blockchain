@@ -1,10 +1,10 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use xelis_vm::{traits::{JSONHelper, Serializable}, ValueCell};
+use xelis_vm::ValueCell;
 use crate::{
     block::TopoHeight,
     crypto::{Hash, hash_multiple},
-    serializer::*
+    serializer::{Error as SerializationError, *},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -43,7 +43,7 @@ impl ScheduledExecutionKind {
                 hash_multiple(&[
                     executor.as_bytes(),
                     &[self.id()],
-                    &execution_topoheight.to_bytes(),
+                    &execution_topoheight.to_be_bytes(),
                 ])
             },
             ScheduledExecutionKind::BlockEnd => hash_multiple(&[executor.as_bytes(), &[self.id()]])
@@ -66,34 +66,32 @@ pub enum ScheduledExecutionKindLog {
     },
 }
 
-impl Serializable for ScheduledExecutionKind {}
-
-impl JSONHelper for ScheduledExecutionKind {}
-
 impl Serializer for ScheduledExecutionKind {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let tag = reader.read_u8()?;
-        match tag {
-            0 => Ok(ScheduledExecutionKind::TopoHeight {
-                execution_topoheight: TopoHeight::read(reader)?,
-                registration_topoheight: TopoHeight::read(reader)?,
-            }),
-            1 => Ok(ScheduledExecutionKind::BlockEnd),
-            _ => Err(ReaderError::InvalidValue)
-        }
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let tag = reader.read_u8()?;
+            match tag {
+                0 => Ok(ScheduledExecutionKind::TopoHeight {
+                    execution_topoheight: TopoHeight::read(reader)?,
+                    registration_topoheight: TopoHeight::read(reader)?,
+                }),
+                1 => Ok(ScheduledExecutionKind::BlockEnd),
+                _ => Err(SerializationError::new(DecodeError::InvalidValue))
+            }
+        })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        match self {
-            ScheduledExecutionKind::TopoHeight { execution_topoheight, registration_topoheight } => {
-                writer.write_u8(0);
-                execution_topoheight.write(writer);
-                registration_topoheight.write(writer);
-            },
-            ScheduledExecutionKind::BlockEnd => {
-                writer.write_u8(1);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            match self {
+                ScheduledExecutionKind::TopoHeight { execution_topoheight, registration_topoheight } => {
+                    writer.write_u8(0)?;
+                    execution_topoheight.write(writer)?;
+                    registration_topoheight.write(writer)
+                },
+                ScheduledExecutionKind::BlockEnd => writer.write_u8(1),
             }
-        }
+        })
     }
 
     fn size(&self) -> usize {
@@ -105,33 +103,37 @@ impl Serializer for ScheduledExecutionKind {
 }
 
 impl Serializer for ScheduledExecutionKindLog {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let tag = reader.read_u8()?;
-        match tag {
-            0 => Ok(ScheduledExecutionKindLog::TopoHeight { execution_topoheight: TopoHeight::read(reader)?, registration_topoheight: TopoHeight::read(reader)? }),
-            1 => Ok(ScheduledExecutionKindLog::BlockEnd {
-                chunk_id: u16::read(reader)?,
-                max_gas: u64::read(reader)?,
-                params: Vec::read(reader)?,
-            }),
-            _ => Err(ReaderError::InvalidValue)
-        }
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let tag = reader.read_u8()?;
+            match tag {
+                0 => Ok(ScheduledExecutionKindLog::TopoHeight { execution_topoheight: TopoHeight::read(reader)?, registration_topoheight: TopoHeight::read(reader)? }),
+                1 => Ok(ScheduledExecutionKindLog::BlockEnd {
+                    chunk_id: u16::read(reader)?,
+                    max_gas: u64::read(reader)?,
+                    params: Vec::read(reader)?,
+                }),
+                _ => Err(SerializationError::new(DecodeError::InvalidValue))
+            }
+        })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        match self {
-            ScheduledExecutionKindLog::TopoHeight { execution_topoheight, registration_topoheight } => {
-                writer.write_u8(0);
-                execution_topoheight.write(writer);
-                registration_topoheight.write(writer);
-            },
-            ScheduledExecutionKindLog::BlockEnd { chunk_id, max_gas, params }=> {
-                writer.write_u8(1);
-                chunk_id.write(writer);
-                max_gas.write(writer);
-                params.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            match self {
+                ScheduledExecutionKindLog::TopoHeight { execution_topoheight, registration_topoheight } => {
+                    writer.write_u8(0)?;
+                    execution_topoheight.write(writer)?;
+                    registration_topoheight.write(writer)
+                },
+                ScheduledExecutionKindLog::BlockEnd { chunk_id, max_gas, params }=> {
+                    writer.write_u8(1)?;
+                    chunk_id.write(writer)?;
+                    max_gas.write(writer)?;
+                    params.write(writer)
+                }
             }
-        }
+        })
     }
 
     fn size(&self) -> usize {

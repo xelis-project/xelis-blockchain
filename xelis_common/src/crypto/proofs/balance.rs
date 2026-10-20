@@ -1,3 +1,4 @@
+use xelis_vm::Opaque;
 use curve25519_dalek::Scalar;
 use merlin::Transcript;
 use serde::{Deserialize, Serialize};
@@ -18,10 +19,13 @@ use crate::{
         ProtocolTranscript
     },
     serializer::{
+        Error as SerializationError,
+        Readable,
         Reader,
         ReaderError,
         Serializer,
-        Writer
+        Writable,
+        Writer,
     },
     transaction::TxVersion
 };
@@ -31,7 +35,8 @@ use crate::{
 /// The balance proof is a zero-knowledge proof that proves that the difference between the balance ciphertext and the commitment of the balance amount is zero.
 /// In other words, the balance proof proves that the balance amount is equal to the amount that was encrypted in the ciphertext.
 /// The advantage of a Balance proof is to provide a one time proof that is outdated once the balance is again updated.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Opaque)]
+#[opaque(json, serializable)]
 pub struct BalanceProof {
     /// The expected balance amount.
     amount: u64,
@@ -118,16 +123,20 @@ impl BalanceProof {
 }
 
 impl Serializer for BalanceProof {
-    fn write(&self, writer: &mut Writer) {
-        self.amount.write(writer);
-        self.commitment_eq_proof.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.amount.write(writer)?;
+            self.commitment_eq_proof.write(writer)
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let amount = u64::read(reader)?;
-        let commitment_eq_proof = CommitmentEqProof::read(reader)?;
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let amount = u64::read(reader)?;
+            let commitment_eq_proof = CommitmentEqProof::read(reader)?;
 
-        Ok(Self::from(amount, commitment_eq_proof))
+            Ok(Self::from(amount, commitment_eq_proof))
+        })
     }
 
     fn size(&self) -> usize {

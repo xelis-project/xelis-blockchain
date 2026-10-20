@@ -1,3 +1,4 @@
+use xelis_vm::Opaque;
 mod balance;
 mod nonce;
 
@@ -5,8 +6,6 @@ use std::{
     borrow::Cow,
     fmt::{self, Display, Formatter}
 };
-pub use balance::{VersionedBalance, BalanceType, AccountSummary, Balance};
-pub use nonce::{VersionedNonce, Nonce};
 use schemars::JsonSchema;
 use serde::{Serialize, Deserialize};
 use crate::{
@@ -17,15 +16,22 @@ use crate::{
         RISTRETTO_COMPRESSED_SIZE
     },
     serializer::{
+        Error as SerializationError,
+        Readable,
         Reader,
         ReaderError,
         Serializer,
-        Writer
-    }
+        Writable,
+        Writer,
+    },
 };
 
+pub use balance::{VersionedBalance, BalanceType, AccountSummary, Balance};
+pub use nonce::{VersionedNonce, Nonce};
+
 // Represents a Ciphertext that can be lazily decompressed and compressed
-#[derive(Clone, Debug, JsonSchema)]
+#[derive(Clone, Debug, JsonSchema, Opaque)]
+#[opaque(name = "Ciphertext", json, display, serializable, hash, eq)]
 pub enum CiphertextCache {
     Compressed(CompressedCiphertext),
     #[schemars(skip)]
@@ -117,13 +123,15 @@ impl CiphertextCache {
 }
 
 impl Serializer for CiphertextCache {
-    fn write(&self, writer: &mut Writer) {
-        self.compress().write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| self.compress().write(writer))
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let compressed = CompressedCiphertext::read(reader)?;
-        Ok(Self::Compressed(compressed))
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let compressed = CompressedCiphertext::read(reader)?;
+            Ok(Self::Compressed(compressed))
+        })
     }
 
     fn size(&self) -> usize {

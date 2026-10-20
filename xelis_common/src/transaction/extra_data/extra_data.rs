@@ -4,7 +4,7 @@ use crate::{
         elgamal::{CompressedHandle, PedersenOpening, PublicKey, RISTRETTO_COMPRESSED_SIZE},
         PrivateKey
     },
-    serializer::*,
+    serializer::{Error as SerializationError, *},
     transaction::Role
 };
 use super::{
@@ -14,7 +14,6 @@ use super::{
     CipherFormatError,
     PlaintextData,
     SharedKey,
-    UnknownExtraDataFormat
 };
 
 // New version of Extra Data due to the issue of commitment randomness reuse
@@ -50,12 +49,10 @@ impl ExtraData {
         }
     }
 
-    // Estimate the final size for the extra data based on the plaintext format
+    // Estimate the size including the outer UnknownExtraDataFormat length.
     pub fn estimate_size(data: &DataElement) -> usize {
-        let cipher: UnknownExtraDataFormat = Cipher(data.to_bytes()).into();
-        // 2 bytes of additional overhead because the extra data store
-        // the cipher size again 
-        2 + cipher.size() + (RISTRETTO_COMPRESSED_SIZE * 2)
+        // 2 bytes for the cipher length and 2 for the outer data length.
+        4 + data.size() + (RISTRETTO_COMPRESSED_SIZE * 2)
     }
 
     // Get the compressed handle based on its role
@@ -80,17 +77,21 @@ impl ExtraData {
 }
 
 impl Serializer for ExtraData {
-    fn write(&self, writer: &mut Writer) {
-        self.sender_handle.write(writer); 
-        self.receiver_handle.write(writer);
-        self.cipher.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.sender_handle.write(writer)?; 
+            self.receiver_handle.write(writer)?;
+            self.cipher.write(writer)
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok(Self {
-            sender_handle: CompressedHandle::read(reader)?,
-            receiver_handle: CompressedHandle::read(reader)?,
-            cipher: Cipher::read(reader)?,
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            Ok(Self {
+                sender_handle: CompressedHandle::read(reader)?,
+                receiver_handle: CompressedHandle::read(reader)?,
+                cipher: Cipher::read(reader)?,
+            })
         })
     }
 

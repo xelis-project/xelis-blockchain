@@ -1,9 +1,9 @@
-use std::hash::Hasher;
 
-use anyhow::Context as _;
+use matriochka::ResultExt;
 use xelis_vm::{
-    impl_opaque,
-    traits::{DynEq, DynHash, Serializable},
+    ValueCell,
+    PrimitiveInteger,
+    traits::DynSerializable,
     VMContext,
     FnInstance,
     FnParams,
@@ -25,47 +25,22 @@ use crate::{
         elgamal::{CompressedCommitment, PublicKey},
         proofs::{CommitmentEqProof, OwnershipProof}
     },
-    serializer::*
+    serializer::{Error as SerializationError, *},
 };
 
-impl_opaque!("OwnershipProof", OwnershipProof, json);
-impl_opaque!("OwnershipProof", OwnershipProof);
-
-impl DynEq for OwnershipProof {
-    fn is_equal(&self, _: &dyn DynEq) -> bool {
-        false
-    }
-
-    fn as_eq(&self) -> &dyn DynEq {
-        self
-    }
-}
-
-impl DynHash for OwnershipProof {
-    fn dyn_hash(&self, _: &mut dyn Hasher) {}
-
-    fn is_hashable(&self) -> bool {
-        false
-    }
-}
-
-impl Serializable for OwnershipProof {
+impl DynSerializable for OwnershipProof {
     fn get_size(&self) -> usize {
         self.size()
     }
 
-    fn is_serializable(&self) -> bool {
-        true
-    }
-
-    fn serialize(&self, buffer: &mut Vec<u8>) -> usize {
-        let mut writer = Writer::new(buffer);
-        writer.write_u8(OWNERSHIP_PROOF_OPAQUE_ID);
-        self.write(&mut writer);
-        writer.total_write()
+    fn serialize(&self, buffer: &mut Vec<u8>) -> Result<usize, SerializationError> {
+        let start = buffer.len();
+        let mut writer = Writer::new(&mut *buffer);
+        writer.write_u8(OWNERSHIP_PROOF_OPAQUE_ID)?;
+        self.write(&mut writer)?;
+        Ok(buffer.len() - start)
     }
 }
-
 
 pub fn ownership_proof_new(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let amount = params[0]
@@ -89,14 +64,14 @@ pub fn ownership_proof_new(_: FnInstance, params: FnParams, _: &ModuleMetadata<'
 
     let proof = OwnershipProof::from(amount, delta_commitment, commitment_eq_proof, range_proof);
 
-    Ok(SysCallResult::Return(Primitive::Opaque(proof.into()).into()))
+    Ok(SysCallResult::Return(ValueCell::Opaque(proof.into()).into()))
 }
 
 pub fn ownership_proof_amount(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let zelf: &OwnershipProof = zelf.as_opaque_type()?;
 
-    Ok(SysCallResult::Return(Primitive::U64(zelf.amount()).into()))
+    Ok(SysCallResult::Return(Primitive::Integer(PrimitiveInteger::U64(zelf.amount())).into()))
 }
 
 pub fn ownership_proof_commitment(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
@@ -104,7 +79,7 @@ pub fn ownership_proof_commitment(zelf: FnInstance, _: FnParams, _: &ModuleMetad
     let zelf: &OwnershipProof = zelf.as_opaque_type()?;
     let commitment = zelf.commitment();
 
-    Ok(SysCallResult::Return(Primitive::Opaque(OpaqueRistrettoPoint::Compressed(commitment.as_point().clone()).into()).into()))
+    Ok(SysCallResult::Return(ValueCell::Opaque(OpaqueRistrettoPoint::Compressed(commitment.as_point().clone()).into()).into()))
 }
 
 pub fn ownership_proof_commitment_eq_proof(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
@@ -112,7 +87,7 @@ pub fn ownership_proof_commitment_eq_proof(zelf: FnInstance, _: FnParams, _: &Mo
     let zelf: &OwnershipProof = zelf.as_opaque_type()?;
     let commitment_eq_proof = zelf.commitment_eq_proof();
 
-    Ok(SysCallResult::Return(Primitive::Opaque(commitment_eq_proof.clone().into()).into()))
+    Ok(SysCallResult::Return(ValueCell::Opaque(commitment_eq_proof.clone().into()).into()))
 }
 
 pub fn ownership_proof_range_proof(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
@@ -120,7 +95,7 @@ pub fn ownership_proof_range_proof(zelf: FnInstance, _: FnParams, _: &ModuleMeta
     let zelf: &OwnershipProof = zelf.as_opaque_type()?;
     let range_proof = zelf.range_proof();
 
-    Ok(SysCallResult::Return(Primitive::Opaque(RangeProofWrapper(range_proof.clone()).into()).into()))
+    Ok(SysCallResult::Return(ValueCell::Opaque(RangeProofWrapper(range_proof.clone()).into()).into()))
 }
 
 pub fn ownership_proof_verify(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {

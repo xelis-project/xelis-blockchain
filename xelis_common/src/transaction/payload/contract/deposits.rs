@@ -4,7 +4,10 @@ use indexmap::IndexMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{crypto::Hash, serializer::*};
+use crate::{
+    crypto::Hash,
+    serializer::{Error as SerializationError, *},
+};
 use super::ContractDeposit;
 
 
@@ -26,24 +29,29 @@ impl DerefMut for Deposits {
 }
 
 impl Serializer for Deposits {
-    fn write(&self, writer: &mut Writer) {
-        writer.write_u8(self.0.len() as u8);
-        for (key, value) in self.0.iter() {
-            key.write(writer);
-            value.write(writer);
-        }
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            writer.write_u8(self.0.len() as u8)?;
+            for (key, value) in self.0.iter() {
+                key.write(writer)?;
+                value.write(writer)?;
+            }
+            Ok(())
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let size = reader.read_u8()?;
-        let mut deposits = IndexMap::with_capacity(size as usize);
-        for _ in 0..size {
-            let k = Hash::read(reader)?;
-            let v = ContractDeposit::read(reader)?;
-            deposits.insert(k, v);
-        }
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let size = reader.read_u8()?;
+            let mut deposits = IndexMap::with_capacity(size as usize);
+            for _ in 0..size {
+                let k = Hash::read(reader)?;
+                let v = ContractDeposit::read(reader)?;
+                deposits.insert(k, v);
+            }
 
-        Ok(Self(deposits))
+            Ok(Self(deposits))
+        })
     }
 
     fn size(&self) -> usize {

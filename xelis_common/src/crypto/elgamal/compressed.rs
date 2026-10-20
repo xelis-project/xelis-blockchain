@@ -5,7 +5,7 @@ use schemars::*;
 use crate::{
     api::DataElement,
     crypto::{Address, AddressType},
-    serializer::*
+    serializer::{Error as SerializationError, *},
 };
 use super::{Ciphertext, DecryptHandle, PedersenCommitment, PublicKey};
 
@@ -162,15 +162,17 @@ impl CompressedPublicKey {
 }
 
 impl Serializer for CompressedRistretto {
-    fn write(&self, writer: &mut Writer) {
-        writer.write_bytes(self.as_bytes());
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| writer.write_bytes(self.as_bytes()))
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let bytes = reader.read_bytes_ref(RISTRETTO_COMPRESSED_SIZE)?;
-        let point = CompressedRistretto::from_slice(bytes)?;
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let bytes = reader.read_bytes_32()?;
+            let point = CompressedRistretto::from_slice(&bytes).map_err(SerializationError::new)?;
 
-        Ok(point)
+            Ok(point)
+        })
     }
 
     fn size(&self) -> usize {
@@ -179,12 +181,14 @@ impl Serializer for CompressedRistretto {
 }
 
 impl Serializer for CompressedCommitment {
-    fn write(&self, writer: &mut Writer) {
-        self.0.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| self.0.write(writer))
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        CompressedRistretto::read(reader).map(CompressedCommitment::new)
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            CompressedRistretto::read(reader).map(CompressedCommitment::new)
+        })
     }
 
     fn size(&self) -> usize {
@@ -193,12 +197,14 @@ impl Serializer for CompressedCommitment {
 }
 
 impl Serializer for CompressedHandle {
-    fn write(&self, writer: &mut Writer) {
-        self.0.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| self.0.write(writer))
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        CompressedRistretto::read(reader).map(CompressedHandle::new)
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            CompressedRistretto::read(reader).map(CompressedHandle::new)
+        })
     }
 
     fn size(&self) -> usize {
@@ -207,12 +213,14 @@ impl Serializer for CompressedHandle {
 }
 
 impl Serializer for CompressedPublicKey {
-    fn write(&self, writer: &mut Writer) {
-        self.0.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| self.0.write(writer))
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        CompressedRistretto::read(reader).map(CompressedPublicKey::new)
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            CompressedRistretto::read(reader).map(CompressedPublicKey::new)
+        })
     }
 
     fn size(&self) -> usize {
@@ -221,17 +229,21 @@ impl Serializer for CompressedPublicKey {
 }
 
 impl Serializer for CompressedCiphertext {
-    fn write(&self, writer: &mut Writer) {
-        writer.write_bytes(self.commitment.as_bytes());
-        writer.write_bytes(self.handle.as_bytes());
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            writer.write_bytes(self.commitment.as_bytes())?;
+            writer.write_bytes(self.handle.as_bytes())
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let commitment = CompressedCommitment::read(reader)?;
-        let handle = CompressedHandle::read(reader)?;
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let commitment = CompressedCommitment::read(reader)?;
+            let handle = CompressedHandle::read(reader)?;
 
-        let compress = CompressedCiphertext::new(commitment, handle);
-        Ok(compress)
+            let compress = CompressedCiphertext::new(commitment, handle);
+            Ok(compress)
+        })
     }
 
     fn size(&self) -> usize {
@@ -240,14 +252,16 @@ impl Serializer for CompressedCiphertext {
 }
 
 impl Serializer for Scalar {
-    fn write(&self, writer: &mut Writer) {
-        writer.write_bytes(self.as_bytes());
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| writer.write_bytes(self.as_bytes()))
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let bytes = reader.read_bytes(SCALAR_SIZE)?;
-        let scalar: Option<Scalar> = Scalar::from_canonical_bytes(bytes).into();
-        scalar.ok_or(ReaderError::InvalidValue)
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let bytes = reader.read_bytes_32()?;
+            let scalar: Option<Scalar> = Scalar::from_canonical_bytes(bytes).into();
+            scalar.ok_or(SerializationError::new(DecodeError::InvalidValue))
+        })
     }
 
     fn size(&self) -> usize {

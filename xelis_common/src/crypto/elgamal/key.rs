@@ -4,7 +4,14 @@ use curve25519_dalek::{
     Scalar
 };
 use schemars::JsonSchema;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{
+    de::Error as DeserializeError,
+    ser::Error as SerializeError,
+    Deserialize,
+    Deserializer,
+    Serialize,
+    Serializer as SerdeSerializer,
+};
 use sha3::Sha3_512;
 use zeroize::Zeroize;
 use crate::{
@@ -19,11 +26,15 @@ use crate::{
         Hash
     },
     serializer::{
+        DecodeError,
+        Error as SerializationError,
+        Readable,
         Reader,
         ReaderError,
         Serializer,
-        Writer
-    }
+        Writable,
+        Writer,
+    },
 };
 use super::{
     ciphertext::Ciphertext,
@@ -219,17 +230,19 @@ impl KeyPair {
 }
 
 impl Serializer for PrivateKey {
-    fn write(&self, writer: &mut Writer) {
-        self.0.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| self.0.write(writer))
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let scalar = Scalar::read(reader)?;
-        if scalar == Scalar::ZERO {
-            return Err(ReaderError::InvalidValue);
-        }
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let scalar = Scalar::read(reader)?;
+            if scalar == Scalar::ZERO {
+                return Err(SerializationError::new(DecodeError::InvalidValue));
+            }
 
-        Ok(PrivateKey::from_scalar(scalar))
+            Ok(PrivateKey::from_scalar(scalar))
+        })
     }
 
     fn size(&self) -> usize {
@@ -238,15 +251,15 @@ impl Serializer for PrivateKey {
 }
 
 impl Serialize for PrivateKey {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&self.to_hex())
+    fn serialize<S: SerdeSerializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_hex().map_err(SerializeError::custom)?)
     }
 }
 
 impl<'a> Deserialize<'a> for PrivateKey {
     fn deserialize<D: Deserializer<'a>>(deserializer: D) -> Result<Self, D::Error> {
         let hex = String::deserialize(deserializer)?;
-        PrivateKey::from_hex(&hex).map_err(serde::de::Error::custom)
+        PrivateKey::from_hex(&hex).map_err(DeserializeError::custom)
     }
 }
 

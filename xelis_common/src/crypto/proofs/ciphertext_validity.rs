@@ -1,3 +1,4 @@
+use xelis_vm::Opaque;
 use curve25519_dalek::{
     ristretto::CompressedRistretto,
     traits::{IsIdentity, VartimeMultiscalarMul},
@@ -23,10 +24,13 @@ use crate::{
         ProtocolTranscript
     },
     serializer::{
+        Error as SerializationError,
+        Readable,
         Reader,
         ReaderError,
         Serializer,
-        Writer
+        Writable,
+        Writer,
     },
     transaction::TxVersion
 };
@@ -41,7 +45,8 @@ use super::{
 /// Cipher text validity proof.
 /// This proof is used to prove that a given ciphertext is valid and was created correctly for the right recipient.
 #[allow(non_snake_case)]
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, JsonSchema)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, JsonSchema, Opaque)]
+#[opaque(json, serializable)]
 pub struct CiphertextValidityProof {
     #[schemars(with = "Vec<u8>")]
     Y_0: CompressedRistretto,
@@ -298,33 +303,36 @@ impl CiphertextValidityProof {
 
 #[allow(non_snake_case)]
 impl Serializer for CiphertextValidityProof {
-    fn write(&self, writer: &mut Writer) {
-        self.Y_0.write(writer);
-        self.Y_1.write(writer);
-        if let Some(Y_2) = self.Y_2 {
-            Y_2.write(writer);
-        }
-        self.z_r.write(writer);
-        self.z_x.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.Y_0.write(writer)?;
+            self.Y_1.write(writer)?;
+            if let Some(Y_2) = self.Y_2 {
+                Y_2.write(writer)?;
+            }
+            self.z_r.write(writer)?;
+            self.z_x.write(writer)
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let bit = reader.context()
-            .get_optional::<TxVersion>()
-            .map_or(true, |version| *version >= TxVersion::V1);
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let bit = reader.context().and_then(|context| context.get::<TxVersion>())
+                .map_or(true, |version| *version >= TxVersion::V1);
 
-        let Y_0 = CompressedRistretto::read(reader)?;
-        let Y_1 = CompressedRistretto::read(reader)?;
-        let Y_2 = if bit {
-            Some(CompressedRistretto::read(reader)?)
-        } else {
-            None
-        };
+            let Y_0 = CompressedRistretto::read(reader)?;
+            let Y_1 = CompressedRistretto::read(reader)?;
+            let Y_2 = if bit {
+                Some(CompressedRistretto::read(reader)?)
+            } else {
+                None
+            };
 
-        let z_r = Scalar::read(reader)?;
-        let z_x = Scalar::read(reader)?;
+            let z_r = Scalar::read(reader)?;
+            let z_x = Scalar::read(reader)?;
 
-        Ok(Self { Y_0, Y_1, Y_2, z_r, z_x })
+            Ok(Self { Y_0, Y_1, Y_2, z_r, z_x })
+        })
     }
 
     fn size(&self) -> usize {

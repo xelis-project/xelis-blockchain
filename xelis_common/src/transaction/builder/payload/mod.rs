@@ -6,7 +6,7 @@ use crate::{
     api::DataElement,
     contract::{ContractModule, InterContractPermission},
     crypto::{Address, Hash},
-    serializer::Hexable
+    serializer::Hexable,
 };
 
 fn default_bool_true() -> bool {
@@ -79,8 +79,11 @@ pub struct BlobPayloadBuilder {
 mod tests {
     use indexmap::indexmap;
     use serde_json::json;
-    use xelis_vm::Primitive;
-    use crate::{config::XELIS_ASSET, serializer::Serializer};
+    use xelis_vm::{Primitive, PrimitiveInteger};
+    use crate::{
+        config::XELIS_ASSET,
+        serializer::Serializer,
+    };
 
     use super::*;
 
@@ -90,7 +93,7 @@ mod tests {
             contract: XELIS_ASSET,
             max_gas: 1000,
             entry_id: 0,
-            parameters: vec![ValueCell::Primitive(Primitive::U64(100))],
+            parameters: vec![ValueCell::Primitive(Primitive::Integer(PrimitiveInteger::U64(100)))],
             deposits: indexmap! {
                 XELIS_ASSET => ContractDepositBuilder {
                     amount: 100,
@@ -112,7 +115,7 @@ mod tests {
         let str_data = serde_json::to_string_pretty(&str_cell).unwrap();
         assert_eq!(str_cell, serde_json::from_str::<ValueCell>(&str_data).unwrap());
 
-        let bytes = str_cell.to_bytes();
+        let bytes = str_cell.to_bytes().unwrap();
         assert_eq!(str_cell, ValueCell::from_bytes(&bytes).unwrap());
     }
 }

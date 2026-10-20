@@ -1,9 +1,10 @@
 mod manager;
 
-use anyhow::Context as AnyhowContext;
+use matriochka::OptionExt;
 use log::{debug, log};
 use xelis_vm::{
-    traits::{JSONHelper, Serializable},
+    PrimitiveInteger,
+    Opaque,
     VMContext,
     EnvironmentError,
     FnInstance,
@@ -33,7 +34,8 @@ pub use manager::*;
 // Represent an Asset type in the opaque context
 // It only holds the asset hash because the AssetData
 // may be updated at any time in the chain state
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Opaque)]
+#[opaque(name = "Asset", hash, eq)]
 pub struct OpaqueAsset {
     pub hash: Hash
 }
@@ -52,10 +54,6 @@ impl PartialEq for OpaqueAsset {
 
 impl Eq for OpaqueAsset {}
 
-impl Serializable for OpaqueAsset {}
-
-impl JSONHelper for OpaqueAsset {}
-
 // Maximum supply set for this asset
 pub fn asset_get_max_supply(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
@@ -66,7 +64,7 @@ pub fn asset_get_max_supply(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_
     let value: ValueCell = changes.data.1
         .get_max_supply()
         .get_max()
-        .map(|v| Primitive::U64(v).into())
+        .map(|v| Primitive::Integer(PrimitiveInteger::U64(v)).into())
         .unwrap_or_default();
 
     Ok(SysCallResult::Return(value.into()))
@@ -81,7 +79,7 @@ pub fn asset_get_contract_hash(zelf: FnInstance, _: FnParams, _: &ModuleMetadata
     let changes = get_asset_changes_for_hash(state, &asset.hash)?;
     let hash = changes.data.1.get_owner()
         .get_contract()
-        .map(|v| Primitive::Opaque(v.clone().into()))
+        .map(|v| ValueCell::Opaque(v.clone().into()))
         .unwrap_or_default();
 
     Ok(SysCallResult::Return(hash.into()))
@@ -96,7 +94,7 @@ pub fn asset_get_contract_id(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'
     let changes = get_asset_changes_for_hash(state, &asset.hash)?;
     let id = changes.data.1.get_owner()
         .get_id()
-        .map(|v| Primitive::U64(v))
+        .map(|v| Primitive::Integer(PrimitiveInteger::U64(v)))
         .unwrap_or_default();
 
     Ok(SysCallResult::Return(id.into()))
@@ -108,7 +106,7 @@ pub async fn asset_get_supply<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnIns
     let asset: &OpaqueAsset = zelf.as_opaque_type()?;
     let (_, state) = from_context::<P>(context)?;
     let changes = get_asset_changes_for_hash_mut(state, &asset.hash)?;
-    Ok(SysCallResult::Return(Primitive::U64(changes.circulating_supply.1).into()))
+    Ok(SysCallResult::Return(Primitive::Integer(PrimitiveInteger::U64(changes.circulating_supply.1)).into()))
 }
 
 // Get the self claimed asset name
@@ -128,14 +126,14 @@ pub fn asset_get_decimals(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>,
     let state: &ChainState = context.get()
         .context("Chain state not found")?;
     let changes = get_asset_changes_for_hash(state, &asset.hash)?;
-    Ok(SysCallResult::Return(Primitive::U8(changes.data.1.get_decimals()).into()))
+    Ok(SysCallResult::Return(Primitive::Integer(PrimitiveInteger::U8(changes.data.1.get_decimals())).into()))
 }
 
 // Get the hash representation of the asset
 pub fn asset_get_hash(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let asset: &OpaqueAsset = zelf.as_opaque_type()?;
-    Ok(SysCallResult::Return(Primitive::Opaque(asset.hash.clone().into()).into()))
+    Ok(SysCallResult::Return(ValueCell::Opaque(asset.hash.clone().into()).into()))
 }
 
 // Get the contract hash owner of this asset
@@ -147,8 +145,8 @@ pub fn asset_get_owner(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, co
 
     let changes = get_asset_changes_for_hash(state, &asset.hash)?;
     let owner_hash = match changes.data.1.get_owner().get_contract() {
-        Some(v) => Primitive::Opaque(v.clone().into()),
-        None => Primitive::Null
+        Some(v) => ValueCell::Opaque(v.clone().into()),
+        None => ValueCell::Primitive(Primitive::Null)
     };
     Ok(SysCallResult::Return(owner_hash.into()))
 }
@@ -162,8 +160,8 @@ pub fn asset_get_creator(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, 
 
     let changes = get_asset_changes_for_hash(state, &asset.hash)?;
     let creator_hash = match changes.data.1.get_owner().get_origin_contract() {
-        Some(v) => Primitive::Opaque(v.clone().into()),
-        None => Primitive::Null
+        Some(v) => ValueCell::Opaque(v.clone().into()),
+        None => ValueCell::Primitive(Primitive::Null)
     };
     Ok(SysCallResult::Return(creator_hash.into()))
 }
@@ -177,8 +175,8 @@ pub fn asset_get_creator_id(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_
 
     let changes = get_asset_changes_for_hash(state, &asset.hash)?;
     let owner_id = match changes.data.1.get_owner().get_id() {
-        Some(v) => Primitive::U64(v),
-        None => Primitive::Null
+        Some(v) => ValueCell::Primitive(Primitive::Integer(PrimitiveInteger::U64(v))),
+        None => ValueCell::Primitive(Primitive::Null)
     };
     Ok(SysCallResult::Return(owner_id.into()))
 }
@@ -316,8 +314,8 @@ pub fn max_supply_mode_get_max_supply(zelf: FnInstance, _: FnParams, _: &ModuleM
     };
 
     Ok(SysCallResult::Return(match max_supply {
-        Some(v) => Primitive::U64(v).into(),
-        None => Primitive::Null.into()
+        Some(v) => Primitive::Integer(PrimitiveInteger::U64(v)).into(),
+        None => ValueCell::Primitive(Primitive::Null).into()
     }))
 }
 

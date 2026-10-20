@@ -3,13 +3,16 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use crate::{
     block::TopoHeight,
-    versioned::TopoHeightVersioned,
     serializer::{
+        Error as SerializationError,
+        Readable,
         Reader,
         ReaderError,
         Serializer,
-        Writer
-    }
+        Writable,
+        Writer,
+    },
+    versioned::TopoHeightVersioned,
 };
 /// Nonce is a u64 that represents the number of transactions sent by an account
 /// It is used to prevent replay attacks and to order transactions from the same account
@@ -50,18 +53,22 @@ impl VersionedNonce {
 }
 
 impl Serializer for VersionedNonce {
-    fn write(&self, writer: &mut Writer) {
-        self.previous_topoheight.write(writer);
-        self.nonce.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.previous_topoheight.write(writer)?;
+            self.nonce.write(writer)
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let previous_topoheight = Option::read(reader)?;
-        let nonce = Nonce::read(reader)?;
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let previous_topoheight = Option::read(reader)?;
+            let nonce = Nonce::read(reader)?;
 
-        Ok(Self {
-            nonce,
-            previous_topoheight
+            Ok(Self {
+                nonce,
+                previous_topoheight
+            })
         })
     }
 

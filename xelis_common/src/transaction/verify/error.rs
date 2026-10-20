@@ -10,6 +10,7 @@ use crate::{
         Hash
     },
     contract::vm::{ContractError, ContractStateError},
+    serializer::Error as SerializationError,
 };
 
 #[derive(Error, Debug)]
@@ -40,6 +41,8 @@ impl<S> From<ContractStateError<S>> for VerificationStateError<S> {
 #[derive(Error, Debug, IntoStaticStr)]
 #[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum VerificationError {
+    #[error(transparent)]
+    Serialization(#[from] SerializationError),
     #[error("Invalid TX {} nonce, got {} expected {}", _0, _1, _2)]
     InvalidNonce(Hash, Nonce, Nonce),
     #[error("Sender is receiver")]

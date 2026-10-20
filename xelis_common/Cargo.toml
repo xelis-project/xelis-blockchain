@@ -49,6 +49,8 @@ metrics = { workspace = true }
 schemars = { workspace = true }
 runtime-context = { workspace = true }
 strum = { workspace = true }
+octet = { workspace = true }
+matriochka = { workspace = true }
 
 chrono = { workspace = true, optional = true }
 clap = { workspace = true, optional = true }

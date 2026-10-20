@@ -1,7 +1,9 @@
-use anyhow::Context as AnyhowContext;
+use matriochka::{Error, OptionExt, ResultExt};
 use log::debug;
 use xelis_vm::{
-    traits::{JSONHelper, Serializable},
+    ValueCell,
+    PrimitiveInteger,
+    Opaque,
     VMContext,
     FnInstance,
     FnParams,
@@ -23,14 +25,11 @@ use crate::{
     },
 };
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Opaque)]
+#[opaque(hash, eq)]
 pub struct OpaqueRandom;
 
-impl Serializable for OpaqueRandom {}
-
-impl JSONHelper for OpaqueRandom {}
-
-fn random_fill_buffer(random: Option<&mut DeterministicRandom>, buffer: &mut [u8]) -> anyhow::Result<()> {
+fn random_fill_buffer(random: Option<&mut DeterministicRandom>, buffer: &mut [u8]) -> Result<(), Error> {
     random
         .context("random not initialized")?
         .fill(buffer)
@@ -48,7 +47,7 @@ pub fn random_fn(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, cont
         cache.random = Some(DeterministicRandom::new(&metadata.metadata.contract_executor, state.block_hash, state.topoheight, &state.caller.get_hash()));
     }
 
-    Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(OpaqueRandom)).into()))
+    Ok(SysCallResult::Return(ValueCell::Opaque(OpaqueWrapper::new(OpaqueRandom)).into()))
 }
 
 pub fn random_u8(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
@@ -60,7 +59,7 @@ pub fn random_u8(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, cont
     random_fill_buffer(cache.random.as_mut(), &mut buffer)?;
     let value = buffer[0];
 
-    Ok(SysCallResult::Return(Primitive::U8(value).into()))
+    Ok(SysCallResult::Return(Primitive::Integer(PrimitiveInteger::U8(value)).into()))
 }
 
 pub fn random_u16(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
@@ -71,7 +70,7 @@ pub fn random_u16(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, con
     random_fill_buffer(cache.random.as_mut(), &mut buffer)?;
     let value = u16::from_le_bytes(buffer);
 
-    Ok(SysCallResult::Return(Primitive::U16(value).into()))
+    Ok(SysCallResult::Return(Primitive::Integer(PrimitiveInteger::U16(value)).into()))
 }
 
 pub fn random_u32(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
@@ -82,7 +81,7 @@ pub fn random_u32(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, con
     random_fill_buffer(cache.random.as_mut(), &mut buffer)?;
     let value = u32::from_le_bytes(buffer);
 
-    Ok(SysCallResult::Return(Primitive::U32(value).into()))
+    Ok(SysCallResult::Return(Primitive::Integer(PrimitiveInteger::U32(value)).into()))
 }
 
 pub fn random_u64(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
@@ -93,7 +92,7 @@ pub fn random_u64(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, con
     random_fill_buffer(cache.random.as_mut(), &mut buffer)?;
     let value = u64::from_le_bytes(buffer);
 
-    Ok(SysCallResult::Return(Primitive::U64(value).into()))
+    Ok(SysCallResult::Return(Primitive::Integer(PrimitiveInteger::U64(value)).into()))
 }
 
 pub fn random_u128(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
@@ -104,7 +103,7 @@ pub fn random_u128(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, co
     random_fill_buffer(cache.random.as_mut(), &mut buffer)?;
     let value = u128::from_le_bytes(buffer);
 
-    Ok(SysCallResult::Return(Primitive::U128(value).into()))
+    Ok(SysCallResult::Return(Primitive::Integer(PrimitiveInteger::U128(value)).into()))
 }
 
 pub fn random_u256(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
@@ -114,7 +113,7 @@ pub fn random_u256(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, co
     let mut buffer = [0; 32];
     random_fill_buffer(cache.random.as_mut(), &mut buffer)?;
     let value = U256::from_le_bytes(buffer);
-    Ok(SysCallResult::Return(Primitive::U256(value).into()))
+    Ok(SysCallResult::Return(Primitive::Integer(PrimitiveInteger::U256(value)).into()))
 }
 
 pub fn random_bool(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {

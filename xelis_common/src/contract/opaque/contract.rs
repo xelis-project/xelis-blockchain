@@ -3,6 +3,7 @@ use std::{collections::{VecDeque, hash_map::Entry}, hash, sync::Arc};
 use indexmap::IndexMap;
 use log::{debug, log};
 use xelis_vm::{
+    Opaque,
     VMContext,
     EnvironmentError,
     FnInstance,
@@ -12,7 +13,6 @@ use xelis_vm::{
     Primitive,
     Reference,
     SysCallResult,
-    traits::{JSONHelper, Serializable}
 };
 use crate::{
     contract::{
@@ -30,7 +30,8 @@ use crate::{
     transaction::ContractDeposit
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Opaque)]
+#[opaque(name = "Contract", hash, eq)]
 pub struct OpaqueContract {
     // Contract hash
     pub hash: Hash,
@@ -51,10 +52,6 @@ impl hash::Hash for OpaqueContract {
         self.hash.hash(state);
     }
 }
-
-impl Serializable for OpaqueContract {}
-
-impl JSONHelper for OpaqueContract {}
 
 pub async fn contract_new<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let (provider, state) = from_context::<P>(context)?;

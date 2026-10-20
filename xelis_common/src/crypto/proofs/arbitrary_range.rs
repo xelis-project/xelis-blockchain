@@ -1,3 +1,4 @@
+use xelis_vm::Opaque;
 use bulletproofs::RangeProof;
 use curve25519_dalek::Scalar;
 use merlin::Transcript;
@@ -15,10 +16,13 @@ use crate::{
         ProtocolTranscript
     },
     serializer::{
+        Error as SerializationError,
+        Readable,
         Reader,
         ReaderError,
         Serializer,
-        Writer
+        Writable,
+        Writer,
     },
     transaction::TxVersion
 };
@@ -33,7 +37,8 @@ use super::{
 };
 
 /// Prove that a ciphertext is valid in 0..=M range.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Opaque)]
+#[opaque(json, serializable)]
 pub struct ArbitraryRangeProof {
     /// The maximum value we want to prove against.
     max_value: u64,
@@ -187,20 +192,24 @@ impl ArbitraryRangeProof {
 }
 
 impl Serializer for ArbitraryRangeProof {
-    fn write(&self, writer: &mut Writer) {
-        self.max_value.write(writer);
-        self.delta_commitment.write(writer);
-        self.commitment_eq_proof.write(writer);
-        self.range_proof.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.max_value.write(writer)?;
+            self.delta_commitment.write(writer)?;
+            self.commitment_eq_proof.write(writer)?;
+            self.range_proof.write(writer)
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let max_value = u64::read(reader)?;
-        let commitment = CompressedCommitment::read(reader)?;
-        let commitment_eq_proof = CommitmentEqProof::read(reader)?;
-        let range_proof = RangeProof::read(reader)?;
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let max_value = u64::read(reader)?;
+            let commitment = CompressedCommitment::read(reader)?;
+            let commitment_eq_proof = CommitmentEqProof::read(reader)?;
+            let range_proof = RangeProof::read(reader)?;
 
-        Ok(Self::from(max_value, commitment, commitment_eq_proof, range_proof))
+            Ok(Self::from(max_value, commitment, commitment_eq_proof, range_proof))
+        })
     }
 
     fn size(&self) -> usize {
@@ -225,7 +234,7 @@ mod tests {
 
         // Ensure the variable-sized aggregated range proof survives the
         // public wire format before exercising both verifier paths.
-        let proof = ArbitraryRangeProof::from_bytes(&proof.to_bytes()).unwrap();
+        let proof = ArbitraryRangeProof::from_bytes(&proof.to_bytes().unwrap()).unwrap();
 
         // Verify the proof
         assert!(

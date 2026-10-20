@@ -2796,7 +2796,6 @@ async fn test_refund_gas_sources_mixed_source_max_gas_mismatch() {
     let keypair = KeyPair::new();
     let account = keypair.get_public_key().compress();
 
-
     {
         let balance_ct = keypair.get_public_key().encrypt(2000u64);
         state.accounts.insert(account.clone(), MockAccount {

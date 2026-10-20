@@ -1,18 +1,27 @@
 use core::fmt;
 use std::{borrow::Cow, str::FromStr};
-use log::debug;
+use matriochka::OptionExt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use crate::{
     crypto::{
-        elgamal::RISTRETTO_COMPRESSED_SIZE,
         hash,
         Hash,
         Hashable,
         PublicKey,
     },
-    serializer::{Reader, ReaderError, Serializer, Writer},
+    serializer::{
+        Error as SerializationError,
+        Readable,
+        Reader,
+        ReaderError,
+        ReaderExt,
+        Serializer,
+        Writable,
+        Writer,
+        WriterExt,
+    },
     time::TimestampMillis,
 };
 use xelis_hash::{
@@ -110,6 +119,8 @@ pub struct Worker<'a> {
 
 #[derive(Debug, Error)]
 pub enum WorkerError {
+    #[error(transparent)]
+    Serialization(#[from] SerializationError),
     #[error("worker is not initialized")]
     Uninitialized,
     #[error("missing miner work")]
@@ -153,7 +164,7 @@ impl<'a> Worker<'a> {
         }
 
         let mut slice = [0u8; BLOCK_WORK_SIZE];
-        slice.copy_from_slice(&work.to_bytes());
+        slice.copy_from_slice(&work.to_bytes()?);
 
         self.work = Some((work, slice));
 
@@ -300,41 +311,36 @@ impl<'a> MinerWork<'a> {
 }
 
 impl<'a> Serializer for MinerWork<'a> {
-    fn write(&self, writer: &mut Writer) {
-        self.header_work_hash.write(writer); // 32
-        self.timestamp.write(writer); // 32 + 8 = 40
-        self.nonce.write(writer); // 40 + 8 = 48
-        writer.write_bytes(&self.extra_nonce); // 48 + 32 = 80
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.header_work_hash.write(writer)?; // 32
+            self.timestamp.write(writer)?; // 32 + 8 = 40
+            self.nonce.write(writer)?; // 40 + 8 = 48
+            writer.write_bytes(&self.extra_nonce)?; // 48 + 32 = 80
 
-        // 80 + 32 = 112
-        if let Some(miner) = &self.miner {
-            miner.write(writer);
-        } else {
-            // We set a 32 bytes empty public key as we don't have any miner
-            writer.write_bytes(&[0u8; RISTRETTO_COMPRESSED_SIZE]);
-        }
+            // 80 + 32 = 112
+            let miner = self.miner.as_ref()
+                .context("missing miner public key")?;
 
-        debug_assert!(writer.total_write() == BLOCK_WORK_SIZE, "invalid block work size, expected {}, got {}", BLOCK_WORK_SIZE, writer.total_write());
+            miner.write(writer)
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<MinerWork<'a>, ReaderError> {
-        if reader.total_size() != BLOCK_WORK_SIZE {
-            debug!("invalid block work size, expected {}, got {}", BLOCK_WORK_SIZE, reader.total_size());
-            return Err(ReaderError::InvalidSize)
-        }
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<MinerWork<'a>, ReaderError> {
+        reader.read_with_context(|reader| {
+            let header_work_hash = reader.read_hash()?;
+            let timestamp = reader.read_u64()?;
+            let nonce = reader.read_u64()?;
+            let extra_nonce = reader.read_bytes_32()?;
+            let miner = Some(Cow::Owned(PublicKey::read(reader)?));
 
-        let header_work_hash = reader.read_hash()?;
-        let timestamp = reader.read_u64()?;
-        let nonce = reader.read_u64()?;
-        let extra_nonce = reader.read_bytes_32()?;
-        let miner = Some(Cow::Owned(PublicKey::read(reader)?));
-
-        Ok(MinerWork {
-            header_work_hash,
-            timestamp,
-            nonce,
-            extra_nonce,
-            miner
+            Ok(MinerWork {
+                header_work_hash,
+                timestamp,
+                nonce,
+                extra_nonce,
+                miner
+            })
         })
     }
 
@@ -368,11 +374,11 @@ mod tests {
             miner: Some(Cow::Owned(miner)),
             extra_nonce
         };
-        let work_hex = work.to_hex();
+        let work_hex = work.to_hex().unwrap();
 
         let mut input = v1::AlignedInput::default();
         let slice = input.as_mut_slice().unwrap();
-        slice[0..BLOCK_WORK_SIZE].copy_from_slice(&work.to_bytes());
+        slice[0..BLOCK_WORK_SIZE].copy_from_slice(&work.to_bytes().unwrap());
         let expected_hash = v1::xelis_hash(slice, &mut v1::ScratchPad::default()).map(|bytes| Hash::new(bytes)).unwrap();
         let block_hash = work.hash();
 
@@ -389,7 +395,7 @@ mod tests {
         // Lets do another hash
         assert_eq!(expected_hash, next_worker_hash);
 
-        assert_eq!(work_hex, worker.take_work().unwrap().to_hex());
+        assert_eq!(work_hex, worker.take_work().unwrap().to_hex().unwrap());
 
     }
 }

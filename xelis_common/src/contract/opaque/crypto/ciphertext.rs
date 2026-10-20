@@ -1,15 +1,15 @@
 use std::hash::Hasher;
 
-use anyhow::Context as AnyhowContext;
+use matriochka::{OptionExt, ResultExt};
 use curve25519_dalek::Scalar;
 use xelis_vm::{
-    impl_opaque,
-    traits::{DynHash, Serializable},
+    ValueCell,
+    traits::{DynHash, DynSerializable},
     VMContext,
     FnInstance,
     FnParams,
     FnReturnType,
-    Primitive,
+    EnvironmentError,
     SysCallResult
 };
 use crate::{
@@ -29,19 +29,16 @@ use crate::{
         Address,
         elgamal::*
     },
-    serializer::{Serializer, Writer}
+    serializer::{Error as SerializationError, Serializer, Writer, WriterExt},
 };
 
-impl Serializable for CiphertextCache {
-    fn serialize(&self, buffer: &mut Vec<u8>) -> usize {
-        let mut writer = Writer::new(buffer);
-        writer.write_u8(CIPHERTEXT_OPAQUE_ID);
-        self.write(&mut writer);
-        writer.total_write()
-    }
-
-    fn is_serializable(&self) -> bool {
-        true
+impl DynSerializable for CiphertextCache {
+    fn serialize(&self, buffer: &mut Vec<u8>) -> Result<usize, SerializationError> {
+        let start = buffer.len();
+        let mut writer = Writer::new(&mut *buffer);
+        writer.write_u8(CIPHERTEXT_OPAQUE_ID)?;
+        self.write(&mut writer)?;
+        Ok(buffer.len() - start)
     }
 
     fn get_size(&self) -> usize {
@@ -51,20 +48,9 @@ impl Serializable for CiphertextCache {
 
 impl DynHash for CiphertextCache {
     fn dyn_hash(&self, state: &mut dyn Hasher) {
-        state.write(&self.to_bytes());
-    }
-
-    fn is_hashable(&self) -> bool {
-        true
+        state.write(&self.compress().as_ref().to_bytes());
     }
 }
-
-impl_opaque!(
-    "Ciphertext",
-    CiphertextCache,
-    display,
-    json
-);
 
 pub fn ciphertext_mul_plaintext(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let mut zelf = zelf?;
@@ -87,7 +73,7 @@ pub fn ciphertext_div_plaintext(zelf: FnInstance, mut params: FnParams, _: &Modu
         .as_u64()?;
 
     if value == 0 {
-        return Err(anyhow::anyhow!("Division by zero").into());
+        return Err(EnvironmentError::DivisionByZero);
     }
 
     let computable = zelf.computable()
@@ -155,7 +141,7 @@ pub fn ciphertext_generate(_: FnInstance, mut params: FnParams, metadata: &Modul
     let opening = PedersenOpening::from_scalar(scalar);
 
     let ciphertext = CiphertextCache::Decompressed(None, key.encrypt_with_opening(amount, &opening));
-    Ok(SysCallResult::Return(Primitive::Opaque(ciphertext.into()).into()))
+    Ok(SysCallResult::Return(ValueCell::Opaque(ciphertext.into()).into()))
 }
 
 pub fn ciphertext_from(_: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
@@ -188,7 +174,7 @@ pub fn ciphertext_from(_: FnInstance, mut params: FnParams, _: &ModuleMetadata<'
         }
     };
 
-    Ok(SysCallResult::Return(Primitive::Opaque(ciphertext.into()).into()))
+    Ok(SysCallResult::Return(ValueCell::Opaque(ciphertext.into()).into()))
 }
 
 pub fn ciphertext_add_ct(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
@@ -265,7 +251,7 @@ pub fn ciphertext_sub_scalar(zelf: FnInstance, mut params: FnParams, _: &ModuleM
 
 pub fn ciphertext_zero(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let ciphertext = CiphertextCache::Decompressed(Some(CompressedCiphertext::zero()), Ciphertext::zero());
-    Ok(SysCallResult::Return(Primitive::Opaque(ciphertext.into()).into()))
+    Ok(SysCallResult::Return(ValueCell::Opaque(ciphertext.into()).into()))
 }
 
 pub fn ciphertext_commitment(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {

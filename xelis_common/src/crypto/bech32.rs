@@ -1,3 +1,4 @@
+use crate::serializer::Error as SerializationError;
 use std::string::FromUtf8Error;
 
 use thiserror::Error;
@@ -14,6 +15,8 @@ pub const MAX_STR_LEN: usize = 2048;
 
 #[derive(Error, Debug)]
 pub enum Bech32Error {
+    #[error(transparent)]
+    Serialization(#[from] SerializationError),
     #[error("Invalid data range: {}, max is {}", _0, _1)]
     InvalidDataRange(u16, u16), // data, from bits
     #[error("Illegal zero padding")]

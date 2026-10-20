@@ -4,12 +4,12 @@ use schemars::JsonSchema;
 use serde::{Serialize, Deserialize};
 
 use crate::{
-    serializer::*,
     crypto::{
         elgamal::CompressedCommitment,
         Hash,
         proofs::CommitmentEqProof
-    }
+    },
+    serializer::{Error as SerializationError, *},
 };
 
 // SourceCommitment is a structure that holds the commitment and the equality proof
@@ -61,21 +61,25 @@ impl SourceCommitment {
 }
 
 impl Serializer for SourceCommitment {
-    fn write(&self, writer: &mut Writer) {
-        self.commitment.write(writer);
-        self.proof.write(writer);
-        self.asset.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.commitment.write(writer)?;
+            self.proof.write(writer)?;
+            self.asset.write(writer)
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<SourceCommitment, ReaderError> {
-        let commitment = CompressedCommitment::read(reader)?;
-        let proof = CommitmentEqProof::read(reader)?;
-        let asset = Hash::read(reader)?;
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<SourceCommitment, ReaderError> {
+        reader.read_with_context(|reader| {
+            let commitment = CompressedCommitment::read(reader)?;
+            let proof = CommitmentEqProof::read(reader)?;
+            let asset = Hash::read(reader)?;
 
-        Ok(SourceCommitment {
-            commitment,
-            proof,
-            asset
+            Ok(SourceCommitment {
+                commitment,
+                proof,
+                asset
+            })
         })
     }
 

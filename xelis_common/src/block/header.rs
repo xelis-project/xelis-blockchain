@@ -16,7 +16,18 @@ use crate::{
         Hashable,
         HASH_SIZE
     },
-    serializer::{Reader, ReaderError, Serializer, Writer},
+    serializer::{
+        DecodeError,
+        Error as SerializationError,
+        Readable,
+        Reader,
+        ReaderError,
+        ReaderExt,
+        Serializer,
+        Writable,
+        Writer,
+        WriterExt,
+    },
     time::TimestampMillis,
     immutable::Immutable
 };
@@ -196,7 +207,7 @@ impl BlockHeader {
     pub fn get_work(&self) -> Vec<u8> {
         let mut bytes: Vec<u8> = Vec::with_capacity(HEADER_WORK_SIZE);
 
-        bytes.extend(self.version.to_bytes()); // 1
+        bytes.push(self.version as u8); // 1
         bytes.extend(&self.height.to_be_bytes()); // 1 + 8 = 9
         bytes.extend(self.get_tips_hash().as_bytes()); // 9 + 32 = 41
         bytes.extend(self.get_txs_hash().as_bytes()); // 41 + 32 = 73
@@ -257,68 +268,72 @@ impl BlockHeader {
 }
 
 impl Serializer for BlockHeader {
-    fn write(&self, writer: &mut Writer) {
-        self.version.write(writer); // 1
-        self.height.write(writer); // 1 + 8 = 9
-        self.timestamp.write(writer); // 9 + 8 = 17
-        self.nonce.write(writer); // 17 + 8 = 25
-        writer.write_bytes(&self.extra_nonce); // 25 + 32 = 57
-        writer.write_u8(self.tips.len() as u8); // 57 + 1 = 58
-        for tip in self.tips.iter() {
-            writer.write_hash(tip); // 32 per hash
-        }
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.version.write(writer)?; // 1
+            self.height.write(writer)?; // 1 + 8 = 9
+            self.timestamp.write(writer)?; // 9 + 8 = 17
+            self.nonce.write(writer)?; // 17 + 8 = 25
+            writer.write_bytes(&self.extra_nonce)?; // 25 + 32 = 57
+            writer.write_u8(self.tips.len() as u8)?; // 57 + 1 = 58
+            for tip in self.tips.iter() {
+                writer.write_hash(tip)?; // 32 per hash
+            }
 
-        writer.write_u16(self.txs_hashes.len() as u16); // 58 + (N*32) + 2 = 60 + (N*32)
-        for tx in &self.txs_hashes {
-            writer.write_hash(tx); // 32
-        }
-        self.miner.write(writer); // 60 + (N*32) + (T*32) + 32 = 92 + (N*32) + (T*32)
-        // Minimum size is 92 bytes
+            writer.write_u16(self.txs_hashes.len() as u16)?; // 58 + (N*32) + 2 = 60 + (N*32)
+            for tx in &self.txs_hashes {
+                writer.write_hash(tx)?; // 32
+            }
+            self.miner.write(writer) // 60 + (N*32) + (T*32) + 32 = 92 + (N*32) + (T*32)
+            // Minimum size is 92 bytes
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<BlockHeader, ReaderError> {
-        let version = BlockVersion::read(reader)?;
-        let height = reader.read_u64()?;
-        let timestamp = reader.read_u64()?;
-        let nonce = reader.read_u64()?;
-        let extra_nonce: [u8; 32] = reader.read_bytes_32()?;
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<BlockHeader, ReaderError> {
+        reader.read_with_context(|reader| {
+            let version = BlockVersion::read(reader)?;
+            let height = reader.read_u64()?;
+            let timestamp = reader.read_u64()?;
+            let nonce = reader.read_u64()?;
+            let extra_nonce: [u8; 32] = reader.read_bytes_32()?;
 
-        let tips_count = reader.read_u8()?;
-        if tips_count as usize > TIPS_LIMIT {
-            debug!("Error, too many tips in block header");
-            return Err(ReaderError::InvalidValue)
-        }
-        
-        let mut tips = IndexSet::with_capacity(tips_count as usize);
-        for _ in 0..tips_count {
-            if !tips.insert(reader.read_hash()?) {
-                debug!("Error, duplicate tip found in block header");
-                return Err(ReaderError::InvalidValue)
+            let tips_count = reader.read_u8()?;
+            if tips_count as usize > TIPS_LIMIT {
+                debug!("Error, too many tips in block header");
+                return Err(SerializationError::new(DecodeError::InvalidValue))
             }
-        }
 
-        let txs_count = reader.read_u16()?;
-        let mut txs_hashes = IndexSet::with_capacity(txs_count as usize);
-        for _ in 0..txs_count {
-            if !txs_hashes.insert(reader.read_hash()?) {
-                debug!("Error, duplicate tx hash found in block header");
-                return Err(ReaderError::InvalidValue)
+            let mut tips = IndexSet::with_capacity(tips_count as usize);
+            for _ in 0..tips_count {
+                if !tips.insert(reader.read_hash()?) {
+                    debug!("Error, duplicate tip found in block header");
+                    return Err(SerializationError::new(DecodeError::InvalidValue))
+                }
             }
-        }
 
-        let miner = CompressedPublicKey::read(reader)?;
-        Ok(
-            BlockHeader {
-                version,
-                extra_nonce,
-                height,
-                timestamp,
-                tips: Immutable::Owned(tips),
-                miner,
-                nonce,
-                txs_hashes
+            let txs_count = reader.read_u16()?;
+            let mut txs_hashes = IndexSet::with_capacity(txs_count as usize);
+            for _ in 0..txs_count {
+                if !txs_hashes.insert(reader.read_hash()?) {
+                    debug!("Error, duplicate tx hash found in block header");
+                    return Err(SerializationError::new(DecodeError::InvalidValue))
+                }
             }
-        )
+
+            let miner = CompressedPublicKey::read(reader)?;
+            Ok(
+                BlockHeader {
+                    version,
+                    extra_nonce,
+                    height,
+                    timestamp,
+                    tips: Immutable::Owned(tips),
+                    miner,
+                    nonce,
+                    txs_hashes
+                }
+            )
+        })
     }
 
     fn size(&self) -> usize {
@@ -359,7 +374,11 @@ impl Display for BlockHeader {
 mod tests {
     use indexmap::IndexSet;
     use serde::de::IntoDeserializer;
-    use crate::{block::{BlockVersion, EXTRA_NONCE_SIZE}, crypto::{Hash, Hashable, KeyPair}, serializer::Serializer};
+    use crate::{
+        block::{BlockVersion, EXTRA_NONCE_SIZE},
+        crypto::{Hash, Hashable, KeyPair},
+        serializer::Serializer,
+    };
     use super::{BlockHeader, deserialize_extra_nonce};
 
     #[test]
@@ -370,7 +389,7 @@ mod tests {
         let miner = KeyPair::new().get_public_key().compress();
         let header = BlockHeader::new(BlockVersion::V0, 0, 0, tips, [0u8; 32], miner, IndexSet::new());
 
-        let serialized = header.to_bytes();
+        let serialized = header.to_bytes().unwrap();
         assert!(serialized.len() == header.size());
 
         let deserialized = BlockHeader::from_bytes(&serialized).unwrap();
@@ -381,7 +400,7 @@ mod tests {
     fn test_block_template_from_hex() {
         let serialized = "00000000000000002d0000018f1cbd697000000000000000000eded85557e887b45989a727b6786e1bd250de65042d9381822fa73d01d2c4ff01d3a0154853dbb01dc28c9102e9d94bea355b8ee0d82c3e078ac80841445e86520000d67ad13934337b85c34985491c437386c95de0d97017131088724cfbedebdc55";
         let header = BlockHeader::from_hex(serialized).unwrap();
-        assert!(header.to_hex() == serialized);
+        assert!(header.to_hex().unwrap() == serialized);
     }
 
     #[test]

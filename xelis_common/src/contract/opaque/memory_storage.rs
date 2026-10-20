@@ -1,5 +1,6 @@
 use xelis_vm::{
-    traits::{JSONHelper, Serializable},
+    ValueCell,
+    Opaque,
     VMContext,
     FnInstance,
     FnParams,
@@ -24,22 +25,19 @@ use crate::{
 };
 
 // Shareable data across invoke call on the same Contract in the same Block
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Opaque)]
+#[opaque(hash, eq)]
 pub struct OpaqueMemoryStorage {
     // is the storage shared across the TXs from same contract?
     shared: bool,
 }
-
-impl Serializable for OpaqueMemoryStorage {}
-
-impl JSONHelper for OpaqueMemoryStorage {}
 
 pub fn memory_storage(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let shared = params[0]
         .as_ref()
         .as_bool()?;
 
-    Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(OpaqueMemoryStorage {
+    Ok(SysCallResult::Return(ValueCell::Opaque(OpaqueWrapper::new(OpaqueMemoryStorage {
         shared,
     })).into()))
 }

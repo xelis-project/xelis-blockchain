@@ -1,5 +1,17 @@
+use octet::DecodeError as OctetDecodeError;
+use crate::serializer::{
+    DecodeError,
+    Error as SerializationError,
+    Readable,
+    Reader,
+    ReaderError,
+    ReaderExt,
+    Serializer,
+    Writable,
+    Writer,
+    WriterExt,
+};
 use crate::crypto::{Hash, HASH_SIZE};
-use super::{Serializer, Writer, Reader, ReaderError};
 use std::{
     borrow::Cow,
     collections::{
@@ -21,32 +33,39 @@ use log::{error, warn};
 
 // Used for Tips storage
 impl Serializer for HashSet<Hash> {
-    fn write(&self, writer: &mut Writer) {
-        for hash in self {
-            writer.write_hash(hash);
-        }
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            for hash in self {
+                writer.write_hash(hash)?;
+            }
+            Ok(())
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let total_size = reader.total_size();
-        if total_size % HASH_SIZE != 0 {
-            error!("Invalid size: {}, expected a multiple of 32 for hashes", total_size);
-            return Err(ReaderError::InvalidSize)
-        }
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let bytes = reader.read_all_bytes()?;
+            let total_size = bytes.len();
+            let reader = &mut Reader::new(bytes.as_slice());
+            if total_size % HASH_SIZE != 0 {
+                error!("Invalid size: {}, expected a multiple of 32 for hashes", total_size);
+                return Err(SerializationError::new(DecodeError::InvalidSize))
+            }
 
-        let count = total_size / HASH_SIZE;
-        let mut tips = HashSet::with_capacity(count);
-        for _ in 0..count {
-            let hash = reader.read_hash()?;
-            tips.insert(hash);
-        }
+            let count = total_size / HASH_SIZE;
+            let mut tips = HashSet::with_capacity(count);
+            for _ in 0..count {
+                let hash = reader.read_hash()?;
+                tips.insert(hash);
+            }
 
-        if tips.len() != count {
-            error!("Invalid size: received {} elements while sending {}", tips.len(), count);
-            return Err(ReaderError::InvalidSize) 
-        }
+            if tips.len() != count {
+                error!("Invalid size: received {} elements while sending {}", tips.len(), count);
+                return Err(SerializationError::new(DecodeError::InvalidSize)) 
+            }
 
-        Ok(tips)
+            Ok(tips)
+        })
     }
 
     fn size(&self) -> usize {
@@ -56,32 +75,39 @@ impl Serializer for HashSet<Hash> {
 
 // Used for Tips storage
 impl Serializer for HashSet<Cow<'_, Hash>> {
-    fn write(&self, writer: &mut Writer) {
-        for hash in self {
-            writer.write_hash(hash);
-        }
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            for hash in self {
+                writer.write_hash(hash)?;
+            }
+            Ok(())
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let total_size = reader.total_size();
-        if total_size % 32 != 0 {
-            error!("Invalid size: {}, expected a multiple of 32 for hashes", total_size);
-            return Err(ReaderError::InvalidSize)
-        }
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let bytes = reader.read_all_bytes()?;
+            let total_size = bytes.len();
+            let reader = &mut Reader::new(bytes.as_slice());
+            if total_size % 32 != 0 {
+                error!("Invalid size: {}, expected a multiple of 32 for hashes", total_size);
+                return Err(SerializationError::new(DecodeError::InvalidSize))
+            }
 
-        let count = total_size / 32;
-        let mut tips = HashSet::with_capacity(count);
-        for _ in 0..count {
-            let hash = reader.read_hash()?;
-            tips.insert(Cow::Owned(hash));
-        }
+            let count = total_size / 32;
+            let mut tips = HashSet::with_capacity(count);
+            for _ in 0..count {
+                let hash = reader.read_hash()?;
+                tips.insert(Cow::Owned(hash));
+            }
 
-        if tips.len() != count {
-            error!("Invalid size: received {} elements while sending {}", tips.len(), count);
-            return Err(ReaderError::InvalidSize) 
-        }
+            if tips.len() != count {
+                error!("Invalid size: received {} elements while sending {}", tips.len(), count);
+                return Err(SerializationError::new(DecodeError::InvalidSize)) 
+            }
 
-        Ok(tips)
+            Ok(tips)
+        })
     }
 
     fn size(&self) -> usize {
@@ -92,12 +118,14 @@ impl Serializer for HashSet<Cow<'_, Hash>> {
 // Implement Serializer for all unsigned numbers
 
 impl Serializer for u128 {
-    fn write(&self, writer: &mut Writer) {
-        writer.write_u128(*self);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| writer.write_u128(*self))
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok(reader.read_u128()?)
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            Ok(reader.read_u128()?)
+        })
     }
 
     fn size(&self) -> usize {
@@ -107,12 +135,14 @@ impl Serializer for u128 {
 }
 
 impl Serializer for u64 {
-    fn write(&self, writer: &mut Writer) {
-        writer.write_u64(*self);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| writer.write_u64(*self))
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok(reader.read_u64()?)
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            Ok(reader.read_u64()?)
+        })
     }
 
     fn size(&self) -> usize {
@@ -122,12 +152,14 @@ impl Serializer for u64 {
 }
 
 impl Serializer for u32 {
-    fn write(&self, writer: &mut Writer) {
-        writer.write_u32(*self);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| writer.write_u32(*self))
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok(reader.read_u32()?)
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            Ok(reader.read_u32()?)
+        })
     }
 
     fn size(&self) -> usize {
@@ -137,12 +169,14 @@ impl Serializer for u32 {
 }
 
 impl Serializer for u16 {
-    fn write(&self, writer: &mut Writer) {
-        writer.write_u16(*self);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| writer.write_u16(*self))
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok(reader.read_u16()?)
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            Ok(reader.read_u16()?)
+        })
     }
 
     fn size(&self) -> usize {
@@ -153,12 +187,14 @@ impl Serializer for u16 {
 
 // Implement Serializer for u8
 impl Serializer for u8 {
-    fn write(&self, writer: &mut Writer) {
-        writer.write_u8(*self);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| writer.write_u8(*self))
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok(reader.read_u8()?)
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            Ok(reader.read_u8()?)
+        })
     }
 
     fn size(&self) -> usize {
@@ -170,29 +206,34 @@ impl Serializer for u8 {
 pub const DEFAULT_MAX_ITEMS: usize = 1024;
 
 impl<T: Serializer + std::hash::Hash + Ord> Serializer for BTreeSet<T> {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let count = reader.read_u16()?;
-        if count > DEFAULT_MAX_ITEMS as u16 {
-            warn!("Received {} in BTreeSet while maximum is set to {}", count, DEFAULT_MAX_ITEMS);
-            return Err(ReaderError::InvalidSize)
-        }
-
-        let mut set = BTreeSet::new();
-        for _ in 0..count {
-            let value = T::read(reader)?;
-            if !set.insert(value) {
-                error!("Value is duplicated in BTreeSet");
-                return Err(ReaderError::InvalidSize)
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let count = reader.read_u16()?;
+            if count > DEFAULT_MAX_ITEMS as u16 {
+                warn!("Received {} in BTreeSet while maximum is set to {}", count, DEFAULT_MAX_ITEMS);
+                return Err(SerializationError::new(DecodeError::InvalidSize))
             }
-        }
-        Ok(set)
+
+            let mut set = BTreeSet::new();
+            for _ in 0..count {
+                let value = T::read(reader)?;
+                if !set.insert(value) {
+                    error!("Value is duplicated in BTreeSet");
+                    return Err(SerializationError::new(DecodeError::InvalidSize))
+                }
+            }
+            Ok(set)
+        })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        writer.write_u16(self.len() as u16);
-        for el in self {
-            el.write(writer);
-        }
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            writer.write_u16(self.len() as u16)?;
+            for el in self {
+                el.write(writer)?;
+            }
+            Ok(())
+        })
     }
 
     fn size(&self) -> usize {
@@ -205,29 +246,34 @@ impl<T: Serializer + std::hash::Hash + Ord> Serializer for BTreeSet<T> {
 }
 
 impl<T: Serializer + std::hash::Hash + Eq> Serializer for IndexSet<T> {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let count = reader.read_u16()?;
-        if count > DEFAULT_MAX_ITEMS as u16 {
-            warn!("Received {} in IndexSet while maximum is set to {}", count, DEFAULT_MAX_ITEMS);
-            return Err(ReaderError::InvalidSize)
-        }
-
-        let mut set = IndexSet::new();
-        for _ in 0..count {
-            let value = T::read(reader)?;
-            if !set.insert(value) {
-                error!("Value is duplicated in IndexSet");
-                return Err(ReaderError::InvalidSize)
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let count = reader.read_u16()?;
+            if count > DEFAULT_MAX_ITEMS as u16 {
+                warn!("Received {} in IndexSet while maximum is set to {}", count, DEFAULT_MAX_ITEMS);
+                return Err(SerializationError::new(DecodeError::InvalidSize))
             }
-        }
-        Ok(set)
+
+            let mut set = IndexSet::new();
+            for _ in 0..count {
+                let value = T::read(reader)?;
+                if !set.insert(value) {
+                    error!("Value is duplicated in IndexSet");
+                    return Err(SerializationError::new(DecodeError::InvalidSize))
+                }
+            }
+            Ok(set)
+        })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        writer.write_u16(self.len() as u16);
-        for el in self {
-            el.write(writer);
-        }
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            writer.write_u16(self.len() as u16)?;
+            for el in self {
+                el.write(writer)?;
+            }
+            Ok(())
+        })
     }
 
     fn size(&self) -> usize {
@@ -240,12 +286,14 @@ impl<T: Serializer + std::hash::Hash + Eq> Serializer for IndexSet<T> {
 }
 
 impl<T: Serializer + Clone> Serializer for Cow<'_, T> {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok(Cow::Owned(T::read(reader)?))
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            Ok(Cow::Owned(T::read(reader)?))
+        })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        self.as_ref().write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| self.as_ref().write(writer))
     }
 
     fn size(&self) -> usize {
@@ -254,12 +302,14 @@ impl<T: Serializer + Clone> Serializer for Cow<'_, T> {
 }
 
 impl Serializer for Cow<'_, str> {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok(Cow::Owned(reader.read_string()?))
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            Ok(Cow::Owned(reader.read_string()?))
+        })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        writer.write_string(self);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| writer.write_string(self))
     }
 
     fn size(&self) -> usize {
@@ -268,19 +318,24 @@ impl Serializer for Cow<'_, str> {
 }
 
 impl<T: Serializer> Serializer for Option<T> {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        if reader.read_bool()? {
-            Ok(Some(T::read(reader)?))
-        } else {
-            Ok(None)
-        }
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            if reader.read_bool()? {
+                Ok(Some(T::read(reader)?))
+            } else {
+                Ok(None)
+            }
+        })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        writer.write_bool(self.is_some());
-        if let Some(value) = self {
-            value.write(writer);
-        }
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            writer.write_bool(self.is_some())?;
+            if let Some(value) = self {
+                value.write(writer)?;
+            }
+            Ok(())
+        })
     }
 
     fn size(&self) -> usize {
@@ -293,26 +348,31 @@ impl<T: Serializer> Serializer for Option<T> {
 }
 
 impl<T: Serializer> Serializer for Vec<T> {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let count = reader.read_u16()?;
-        if count > DEFAULT_MAX_ITEMS as u16 {
-            warn!("Received {} in Vec while maximum is set to {}", count, DEFAULT_MAX_ITEMS);
-            return Err(ReaderError::InvalidSize)
-        }
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let count = reader.read_u16()?;
+            if count > DEFAULT_MAX_ITEMS as u16 {
+                warn!("Received {} in Vec while maximum is set to {}", count, DEFAULT_MAX_ITEMS);
+                return Err(SerializationError::new(DecodeError::InvalidSize))
+            }
 
-        let mut values = Vec::with_capacity(count as usize);
-        for _ in 0..count {
-            values.push(T::read(reader)?);
-        }
+            let mut values = Vec::with_capacity(count as usize);
+            for _ in 0..count {
+                values.push(T::read(reader)?);
+            }
 
-        Ok(values)
+            Ok(values)
+        })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        writer.write_u16(self.len() as u16);
-        for el in self {
-            el.write(writer);
-        }
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            writer.write_u16(self.len() as u16)?;
+            for el in self {
+                el.write(writer)?;
+            }
+            Ok(())
+        })
     }
 
     fn size(&self) -> usize {
@@ -321,12 +381,14 @@ impl<T: Serializer> Serializer for Vec<T> {
 }
 
 impl Serializer for String {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        reader.read_string()
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            reader.read_string()
+        })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        writer.write_string(self);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| writer.write_string(self))
     }
 
     fn size(&self) -> usize {
@@ -336,12 +398,14 @@ impl Serializer for String {
 }
 
 impl Serializer for bool {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        reader.read_bool()
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            reader.read_bool()
+        })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        writer.write_bool(*self);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| writer.write_bool(*self))
     }
 
     fn size(&self) -> usize {
@@ -352,24 +416,29 @@ impl Serializer for bool {
 
 // Supports up to 2^16 elements
 impl<K: Serializer + Eq + StdHash, V: Serializer + Eq + StdHash> Serializer for HashMap<K, V> {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let size = reader.read_u16()?;
-        let mut map = HashMap::with_capacity(size as usize);
-        for _ in 0..size {
-            let k = K::read(reader)?;
-            let v = V::read(reader)?;
-            map.insert(k, v);
-        }
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let size = reader.read_u16()?;
+            let mut map = HashMap::with_capacity(size as usize);
+            for _ in 0..size {
+                let k = K::read(reader)?;
+                let v = V::read(reader)?;
+                map.insert(k, v);
+            }
 
-        Ok(map)
+            Ok(map)
+        })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        writer.write_u16(self.len() as u16);
-        for (key, value) in self.iter() {
-            key.write(writer);
-            value.write(writer);
-        }
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            writer.write_u16(self.len() as u16)?;
+            for (key, value) in self.iter() {
+                key.write(writer)?;
+                value.write(writer)?;
+            }
+            Ok(())
+        })
     }
 
     fn size(&self) -> usize {
@@ -383,25 +452,26 @@ impl<K: Serializer + Eq + StdHash, V: Serializer + Eq + StdHash> Serializer for 
 }
 
 impl<const N: usize> Serializer for [u8; N] {
-    fn write(&self, writer: &mut Writer) {
-        writer.write_bytes(self);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| writer.write_bytes(self))
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let bytes = reader.read_bytes(N)?;
-        Ok(
-            bytes
-        )
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let mut bytes = [0; N];
+            reader.read_exact(&mut bytes)?;
+            Ok(bytes)
+        })
     }
 
-    fn to_bytes(&self) -> Vec<u8> {
-        self.to_vec()
+    fn to_bytes(&self) -> Result<Vec<u8>, SerializationError> {
+        Ok(self.to_vec())
     }
 
     fn from_bytes(bytes: &[u8]) -> Result<Self, ReaderError>
         where Self: Sized {
         if bytes.len() != N {
-            return Err(ReaderError::InvalidSize)
+            return Err(SerializationError::new(DecodeError::InvalidSize))
         }
 
         let mut array = [0; N];
@@ -415,15 +485,19 @@ impl<const N: usize> Serializer for [u8; N] {
 }
 
 impl Serializer for SocketAddr {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let ip = IpAddr::read(reader)?;
-        let port = reader.read_u16()?;
-        Ok(SocketAddr::new(ip, port))
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let ip = IpAddr::read(reader)?;
+            let port = reader.read_u16()?;
+            Ok(SocketAddr::new(ip, port))
+        })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        self.ip().write(writer);
-        self.port().write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.ip().write(writer)?;
+            self.port().write(writer)
+        })
     }
 
     fn size(&self) -> usize {
@@ -438,41 +512,45 @@ impl Serializer for SocketAddr {
 }
 
 impl Serializer for IpAddr {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        match reader.read_u8()? {
-            0 => {
-                let a = reader.read_u8()?;
-                let b = reader.read_u8()?;
-                let c = reader.read_u8()?;
-                let d = reader.read_u8()?;
-                Ok(IpAddr::V4(Ipv4Addr::new(a, b, c, d)))
-            },
-            1 => {
-                let a = reader.read_u16()?;
-                let b = reader.read_u16()?;
-                let c = reader.read_u16()?;
-                let d = reader.read_u16()?;
-                let e = reader.read_u16()?;
-                let f = reader.read_u16()?;
-                let g = reader.read_u16()?;
-                let h = reader.read_u16()?;
-                Ok(IpAddr::V6(Ipv6Addr::new(a, b, c, d, e, f, g, h)))
-            },
-            _ => Err(ReaderError::InvalidValue)
-        }
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            match reader.read_u8()? {
+                0 => {
+                    let a = reader.read_u8()?;
+                    let b = reader.read_u8()?;
+                    let c = reader.read_u8()?;
+                    let d = reader.read_u8()?;
+                    Ok(IpAddr::V4(Ipv4Addr::new(a, b, c, d)))
+                },
+                1 => {
+                    let a = reader.read_u16()?;
+                    let b = reader.read_u16()?;
+                    let c = reader.read_u16()?;
+                    let d = reader.read_u16()?;
+                    let e = reader.read_u16()?;
+                    let f = reader.read_u16()?;
+                    let g = reader.read_u16()?;
+                    let h = reader.read_u16()?;
+                    Ok(IpAddr::V6(Ipv6Addr::new(a, b, c, d, e, f, g, h)))
+                },
+                _ => Err(SerializationError::new(DecodeError::InvalidValue))
+            }
+        })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        match self {
-            IpAddr::V4(addr) => {
-                writer.write_u8(0);
-                writer.write_bytes(&addr.octets());
-            },
-            IpAddr::V6(addr) => {
-                writer.write_u8(1);
-                writer.write_bytes(&addr.octets());
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            match self {
+                IpAddr::V4(addr) => {
+                    writer.write_u8(0)?;
+                    writer.write_bytes(&addr.octets())
+                },
+                IpAddr::V6(addr) => {
+                    writer.write_u8(1)?;
+                    writer.write_bytes(&addr.octets())
+                }
             }
-        };
+        })
     }
 
     fn size(&self) -> usize {
@@ -484,11 +562,12 @@ impl Serializer for IpAddr {
 }
 
 impl Serializer for () {
-    fn read(_reader: &mut Reader) -> Result<Self, ReaderError> {
+    fn read<'ty, 'r, R: Readable>(_reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         Ok(())
     }
 
-    fn write(&self, _writer: &mut Writer) {
+    fn write<'ty, 'r, W: Writable>(&self, _writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        Ok(())
     }
 
     fn size(&self) -> usize {
@@ -496,14 +575,18 @@ impl Serializer for () {
     }
 }
 
-impl<L: Serializer, R: Serializer> Serializer for (L, R) {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok((L::read(reader)?, R::read(reader)?))
+impl<L: Serializer, Right: Serializer> Serializer for (L, Right) {
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            Ok((L::read(reader)?, Right::read(reader)?))
+        })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        self.0.write(writer);
-        self.1.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.0.write(writer)?;
+            self.1.write(writer)
+        })
     }
 
     fn size(&self) -> usize {
@@ -512,14 +595,18 @@ impl<L: Serializer, R: Serializer> Serializer for (L, R) {
 }
 
 impl<A: Serializer, B: Serializer, C: Serializer> Serializer for (A, B, C) {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok((A::read(reader)?, B::read(reader)?, C::read(reader)?))
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            Ok((A::read(reader)?, B::read(reader)?, C::read(reader)?))
+        })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        self.0.write(writer);
-        self.1.write(writer);
-        self.2.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.0.write(writer)?;
+            self.1.write(writer)?;
+            self.2.write(writer)
+        })
     }
 
     fn size(&self) -> usize {
@@ -528,15 +615,19 @@ impl<A: Serializer, B: Serializer, C: Serializer> Serializer for (A, B, C) {
 }
 
 impl<A: Serializer, B: Serializer, C: Serializer, D: Serializer> Serializer for (A, B, C, D) {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok((A::read(reader)?, B::read(reader)?, C::read(reader)?, D::read(reader)?))
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            Ok((A::read(reader)?, B::read(reader)?, C::read(reader)?, D::read(reader)?))
+        })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        self.0.write(writer);
-        self.1.write(writer);
-        self.2.write(writer);
-        self.3.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.0.write(writer)?;
+            self.1.write(writer)?;
+            self.2.write(writer)?;
+            self.3.write(writer)
+        })
     }
 
     fn size(&self) -> usize {
@@ -545,24 +636,29 @@ impl<A: Serializer, B: Serializer, C: Serializer, D: Serializer> Serializer for 
 }
 
 impl<K: Serializer + std::hash::Hash + Eq, V: Serializer> Serializer for IndexMap<K, V> {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let size = reader.read_u16()?;
-        let mut map = IndexMap::with_capacity(size as usize);
-        for _ in 0..size {
-            let k = K::read(reader)?;
-            let v = V::read(reader)?;
-            map.insert(k, v);
-        }
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let size = reader.read_u16()?;
+            let mut map = IndexMap::with_capacity(size as usize);
+            for _ in 0..size {
+                let k = K::read(reader)?;
+                let v = V::read(reader)?;
+                map.insert(k, v);
+            }
 
-        Ok(map)
+            Ok(map)
+        })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        writer.write_u16(self.len() as u16);
-        for (key, value) in self.iter() {
-            key.write(writer);
-            value.write(writer);
-        }
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            writer.write_u16(self.len() as u16)?;
+            for (key, value) in self.iter() {
+                key.write(writer)?;
+                value.write(writer)?;
+            }
+            Ok(())
+        })
     }
 
     fn size(&self) -> usize {
@@ -576,12 +672,14 @@ impl<K: Serializer + std::hash::Hash + Eq, V: Serializer> Serializer for IndexMa
 }
 
 impl<T: Serializer> Serializer for Box<T> {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok(Box::new(T::read(reader)?))
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            Ok(Box::new(T::read(reader)?))
+        })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        self.as_ref().write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| self.as_ref().write(writer))
     }
 
     fn size(&self) -> usize {
@@ -590,12 +688,14 @@ impl<T: Serializer> Serializer for Box<T> {
 }
 
 impl<T: Serializer> Serializer for Arc<T> {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok(Arc::new(T::read(reader)?))
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            Ok(Arc::new(T::read(reader)?))
+        })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        self.as_ref().write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| self.as_ref().write(writer))
     }
 
     fn size(&self) -> usize {
@@ -604,12 +704,12 @@ impl<T: Serializer> Serializer for Arc<T> {
 }
 
 impl<'a> Serializer for &'a [u8] {
-    fn write(&self, writer: &mut Writer) {
-        writer.write_bytes(self);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| writer.write_bytes(self))
     }
 
-    fn read(_: &mut Reader) -> Result<Self, ReaderError> {
-        Err(ReaderError::ErrorTryInto)
+    fn read<'ty, 'r, R: Readable>(_: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        Err(OctetDecodeError::NotImplemented.into())
     }
 
     fn size(&self) -> usize {
@@ -618,12 +718,12 @@ impl<'a> Serializer for &'a [u8] {
 }
 
 impl<'a, T: Serializer> Serializer for &'a T {
-    fn write(&self, writer: &mut Writer) {
-        (*self).write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| (*self).write(writer))
     }
 
-    fn read(_: &mut Reader) -> Result<Self, ReaderError> {
-        Err(ReaderError::ErrorTryInto)
+    fn read<'ty, 'r, R: Readable>(_: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        Err(OctetDecodeError::NotImplemented.into())
     }
 
     fn size(&self) -> usize {

@@ -9,7 +9,7 @@ use crate::{
         elgamal::DecryptHandle,
         PrivateKey
     },
-    serializer::*,
+    serializer::{Error as SerializationError, *},
     transaction::{Role, TxVersion, extra_data::typed::ExtraDataKind}
 };
 use super::{
@@ -128,12 +128,14 @@ impl UnknownExtraDataFormat {
 }
 
 impl Serializer for UnknownExtraDataFormat {
-    fn write(&self, writer: &mut Writer) {
-        self.0.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| self.0.write(writer))
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok(Self(Vec::read(reader)?))
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            Ok(Self(Vec::read(reader)?))
+        })
     }
 
     fn size(&self) -> usize {
@@ -153,14 +155,18 @@ impl From<Cipher> for UnknownExtraDataFormat {
     }
 }
 
-impl From<ExtraData> for UnknownExtraDataFormat {
-    fn from(value: ExtraData) -> Self {
-        Self(value.to_bytes())
+impl TryFrom<ExtraData> for UnknownExtraDataFormat {
+    type Error = SerializationError;
+
+    fn try_from(value: ExtraData) -> Result<Self, Self::Error> {
+        value.to_bytes().map(Self)
     }
 }
 
-impl From<ExtraDataType> for UnknownExtraDataFormat {
-    fn from(value: ExtraDataType) -> Self {
-        Self(value.to_bytes())
+impl TryFrom<ExtraDataType> for UnknownExtraDataFormat {
+    type Error = SerializationError;
+
+    fn try_from(value: ExtraDataType) -> Result<Self, Self::Error> {
+        value.to_bytes().map(Self)
     }
 }

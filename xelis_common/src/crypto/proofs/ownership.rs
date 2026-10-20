@@ -1,3 +1,4 @@
+use xelis_vm::Opaque;
 use bulletproofs::RangeProof;
 use curve25519_dalek::Scalar;
 use merlin::Transcript;
@@ -15,10 +16,13 @@ use crate::{
         ProtocolTranscript
     },
     serializer::{
+        Error as SerializationError,
+        Readable,
         Reader,
         ReaderError,
         Serializer,
-        Writer
+        Writable,
+        Writer,
     },
     transaction::TxVersion
 };
@@ -33,7 +37,8 @@ use super::{
 };
 
 /// Prove that the prover owns a certain amount (N > 0) of a given asset.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Opaque)]
+#[opaque(json, serializable)]
 pub struct OwnershipProof {
     /// The amount of the asset.
     amount: u64,
@@ -158,20 +163,24 @@ impl OwnershipProof {
 }
 
 impl Serializer for OwnershipProof {
-    fn write(&self, writer: &mut Writer) {
-        self.amount.write(writer);
-        self.commitment.write(writer);
-        self.commitment_eq_proof.write(writer);
-        self.range_proof.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.amount.write(writer)?;
+            self.commitment.write(writer)?;
+            self.commitment_eq_proof.write(writer)?;
+            self.range_proof.write(writer)
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let amount = u64::read(reader)?;
-        let commitment = CompressedCommitment::read(reader)?;
-        let commitment_eq_proof = CommitmentEqProof::read(reader)?;
-        let range_proof = RangeProof::read(reader)?;
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let amount = u64::read(reader)?;
+            let commitment = CompressedCommitment::read(reader)?;
+            let commitment_eq_proof = CommitmentEqProof::read(reader)?;
+            let range_proof = RangeProof::read(reader)?;
 
-        Ok(Self::from(amount, commitment, commitment_eq_proof, range_proof))
+            Ok(Self::from(amount, commitment, commitment_eq_proof, range_proof))
+        })
     }
 
     fn size(&self) -> usize {

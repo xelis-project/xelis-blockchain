@@ -303,7 +303,6 @@ async fn private_chunk_cannot_be_called_via_delegate() {
     assert!(!res.is_success(), "delegating to a private chunk should fail even with All permission: {:?}", res);
 }
 
-
 // `delegate` keeps the current environment, so target bytecode must use the same contract version.
 #[tokio::test]
 async fn delegate_rejects_version_mismatch() {

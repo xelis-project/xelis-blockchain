@@ -4,7 +4,11 @@ use std::{borrow::Cow, fmt::{Display, Formatter}};
 use serde_json::{Value, Error as SerdeError, json};
 use thiserror::Error;
 use anyhow::Error as AnyError;
-use crate::{error::ErrorWithKind, rpc::{Id, JSON_RPC_VERSION}};
+use crate::{
+    error::ErrorWithKind,
+    rpc::{Id, JSON_RPC_VERSION},
+    serializer::Error as SerializationError,
+};
 
 #[cfg(feature = "rpc-client")]
 use super::client::JsonRPCError;
@@ -187,5 +191,11 @@ impl From<JsonRPCError> for InternalRpcError {
             kind: (&value).into(),
             error: value.into(),
         }
+    }
+}
+
+impl From<SerializationError> for InternalRpcError {
+    fn from(error: SerializationError) -> Self {
+        Self::Any { kind: "SERIALIZATION_ERROR", error: error.into() }
     }
 }

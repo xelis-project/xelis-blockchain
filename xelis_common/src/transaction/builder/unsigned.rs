@@ -10,10 +10,15 @@ use crate::{
         PublicKey
     },
     serializer::{
+        Error as SerializationError,
+        Readable,
         Reader,
         ReaderError,
+        ReaderExt,
         Serializer,
-        Writer
+        Writable,
+        Writer,
+        WriterExt,
     },
     transaction::{
         multisig::{MultiSig, SignatureId},
@@ -86,48 +91,49 @@ impl UnsignedTransaction {
     }
 
     // Get the bytes that need to be signed for the multi-signature
-    fn write_no_signature(&self, writer: &mut Writer) {
-        self.version.write(writer);
-        self.source.write(writer);
-        self.data.write(writer);
-        self.fee.write(writer);
+    fn write_no_signature<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        self.version.write(writer)?;
+        self.source.write(writer)?;
+        self.data.write(writer)?;
+        self.fee.write(writer)?;
         if self.version >= TxVersion::V2 {
-            self.fee_limit.write(writer);
+            self.fee_limit.write(writer)?;
         }
-        self.nonce.write(writer);
+        self.nonce.write(writer)?;
 
-        writer.write_u8(self.source_commitments.len() as u8);
+        writer.write_u8(self.source_commitments.len() as u8)?;
         for commitment in &self.source_commitments {
-            commitment.write(writer);
+            commitment.write(writer)?;
         }
 
-        self.range_proof.write(writer);
-        self.reference.write(writer);
+        self.range_proof.write(writer)?;
+        self.reference.write(writer)
     }
 
     // Get the hash of the transaction for the multi-signature
     // This hash must be signed by each participant of the multisig
-    pub fn get_hash_for_multisig(&self) -> Hash {
+    pub fn get_hash_for_multisig(&self) -> Result<Hash, SerializationError> {
         let mut buffer = Vec::new();
         let mut writer = Writer::new(&mut buffer);
-        self.write_no_signature(&mut writer);
-        hash(&buffer)
+        self.write_no_signature(&mut writer)?;
+        Ok(hash(&buffer))
     }
 
     // Sign the transaction for the multisig
-    pub fn sign_multisig(&mut self, keypair: &KeyPair, id: u8) {
-        let hash = self.get_hash_for_multisig();
+    pub fn sign_multisig(&mut self, keypair: &KeyPair, id: u8) -> Result<(), SerializationError> {
+        let hash = self.get_hash_for_multisig()?;
         let multisig = self.multisig.get_or_insert_with(MultiSig::new);
         let signature = keypair.sign(hash.as_bytes());
         multisig.add_signature(SignatureId { id, signature });
+        Ok(())
     }
 
     // Finalize the transaction by signing it
-    pub fn finalize(self, keypair: &KeyPair) -> Transaction {
-        let bytes = self.to_bytes();
+    pub fn finalize(self, keypair: &KeyPair) -> Result<Transaction, SerializationError> {
+        let bytes = self.to_bytes()?;
         let signature = keypair.sign(&bytes);
 
-        Transaction::new(
+        Ok(Transaction::new(
             self.version,
             self.source,
             self.data,
@@ -139,57 +145,62 @@ impl UnsignedTransaction {
             self.reference,
             self.multisig,
             signature,
-        )
+        ))
     }
 }
 
 impl Serializer for UnsignedTransaction {
-    fn write(&self, writer: &mut Writer) {
-        self.write_no_signature(writer);
-        if self.version > TxVersion::V0 {
-            self.multisig.write(writer);
-        }
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.write_no_signature(writer)?;
+            if self.version > TxVersion::V0 {
+                self.multisig.write(writer)?;
+            }
+            Ok(())
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let version = TxVersion::read(reader)?;
-        let source = PublicKey::read(reader)?;
-        let data = TransactionType::read(reader)?;
-        let fee = reader.read_u64()?;
-        let fee_limit = if version >= TxVersion::V2 {
-            reader.read_u64()?
-        } else {
-            fee
-        };
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let version = TxVersion::read(reader)?;
+            let source = PublicKey::read(reader)?;
+            let data = TransactionType::read(reader)?;
+            let fee = reader.read_u64()?;
+            let fee_limit = if version >= TxVersion::V2 {
+                reader.read_u64()?
+            } else {
+                fee
+            };
 
-        let nonce = Nonce::read(reader)?;
+            let nonce = Nonce::read(reader)?;
 
-        let source_commitments_len = reader.read_u8()?;
-        let mut source_commitments = Vec::with_capacity(source_commitments_len as usize);
-        for _ in 0..source_commitments_len {
-            source_commitments.push(SourceCommitment::read(reader)?);
-        }
+            let source_commitments_len = reader.read_u8()?;
+            let mut source_commitments = Vec::with_capacity(source_commitments_len as usize);
+            for _ in 0..source_commitments_len {
+                source_commitments.push(SourceCommitment::read(reader)?);
+            }
 
-        let range_proof = RangeProof::read(reader)?;
-        let reference = Reference::read(reader)?;
+            let range_proof = RangeProof::read(reader)?;
+            let reference = Reference::read(reader)?;
 
-        let multisig = if version > TxVersion::V0 {
-            Option::read(reader)?
-        } else {
-            None
-        };
+            let multisig = if version > TxVersion::V0 {
+                Option::read(reader)?
+            } else {
+                None
+            };
 
-        Ok(Self {
-            version,
-            source,
-            data,
-            fee,
-            fee_limit,
-            nonce,
-            source_commitments,
-            reference,
-            range_proof,
-            multisig,
+            Ok(Self {
+                version,
+                source,
+                data,
+                fee,
+                fee_limit,
+                nonce,
+                source_commitments,
+                reference,
+                range_proof,
+                multisig,
+            })
         })
     }
 

@@ -1,11 +1,10 @@
 use core::fmt;
-use std::hash::Hasher;
 
-use anyhow::Context as _;
+use matriochka::ResultExt;
 use merlin::Transcript;
 use xelis_vm::{
-    impl_opaque,
-    traits::{DynEq, DynHash, JSONHelper, Serializable},
+    Opaque,
+    EnvironmentError,
     VMContext,
     FnInstance,
     FnParams,
@@ -21,53 +20,16 @@ use crate::{
         OpaqueRistrettoPoint,
         OpaqueScalar
     },
-    crypto::ProtocolTranscript
+    crypto::ProtocolTranscript,
 };
 
-impl_opaque!("Transcript", OpaqueTranscript);
-
-#[derive(Clone)]
+#[derive(Clone, Opaque)]
+#[opaque(name = "Transcript", size = 32)]
 pub struct OpaqueTranscript(pub Transcript);
 
 impl fmt::Debug for OpaqueTranscript {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "OpaqueTranscript")
-    }
-}
-
-impl DynEq for OpaqueTranscript {
-    fn is_equal(&self, _: &dyn DynEq) -> bool {
-        false
-    }
-
-    fn as_eq(&self) -> &dyn DynEq {
-        self
-    }
-}
-
-impl DynHash for OpaqueTranscript {
-    fn dyn_hash(&self, _: &mut dyn Hasher) {
-        // No hashing needed for OpaqueTranscript
-    }
-
-    fn is_hashable(&self) -> bool {
-        false
-    }
-}
-
-impl JSONHelper for OpaqueTranscript {}
-
-impl Serializable for OpaqueTranscript {
-    fn serialize(&self, _: &mut Vec<u8>) -> usize {
-        0
-    }
-
-    fn is_serializable(&self) -> bool {
-        false
-    }
-
-    fn get_size(&self) -> usize {
-        32
     }
 }
 
@@ -109,11 +71,11 @@ pub fn transcript_challenge_bytes(zelf: FnInstance, params: FnParams, _: &Module
         .as_u32()?;
 
     if bytes_len == 0 {
-        return Err(anyhow::anyhow!("Bytes length must be greater than zero").into());
+        return Err(EnvironmentError::Static("Bytes length must be greater than zero"));
     }
 
     if bytes_len > 256 {
-        return Err(anyhow::anyhow!("Bytes length must not exceed 256 bytes").into());
+        return Err(EnvironmentError::Static("Bytes length must not exceed 256 bytes"));
     }
 
     context.increase_gas_usage(label.len() as u64 * 2)?;

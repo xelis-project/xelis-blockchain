@@ -1,4 +1,18 @@
-use crate::{block::Algorithm, serializer::{Reader, ReaderError, Serializer, Writer}};
+use xelis_vm::Opaque;
+use crate::{
+    block::Algorithm,
+    serializer::{
+        Error as SerializationError,
+        Readable,
+        Reader,
+        ReaderError,
+        ReaderExt,
+        Serializer,
+        Writable,
+        Writer,
+        WriterExt,
+    },
+};
 use std::{
     borrow::Cow,
     convert::TryInto,
@@ -19,6 +33,8 @@ pub const HASH_SIZE: usize = 32; // 32 bytes / 256 bits
 /// A cryptographic hash represented as a 32-byte array.
 #[derive(Eq, PartialEq, PartialOrd, Ord, Clone, Debug, JsonSchema)]
 #[schemars(with = "String")]
+#[derive(Opaque)]
+#[opaque(json, display, serializable, hash, eq)]
 pub struct Hash([u8; HASH_SIZE]);
 
 impl Hash {
@@ -98,13 +114,15 @@ pub fn pow_hash(work: &[u8], algorithm: Algorithm) -> Result<Hash, XelisHashErro
 }
 
 impl Serializer for Hash {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let hash = reader.read_hash()?;
-        Ok(hash)
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let hash = reader.read_hash()?;
+            Ok(hash)
+        })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        writer.write_hash(self);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| writer.write_hash(self))
     }
 
     fn size(&self) -> usize {
@@ -155,7 +173,7 @@ impl<'a> Deserialize<'a> for Hash {
 pub trait Hashable: Serializer {
     #[inline(always)]
     fn hash(&self) -> Hash {
-        let bytes = self.to_bytes();
+        let bytes = self.to_bytes().expect("serialization for hashing failed");
         hash(&bytes)
     }
 }

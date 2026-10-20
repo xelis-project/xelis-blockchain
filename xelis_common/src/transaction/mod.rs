@@ -8,7 +8,7 @@ use crate::{
         Hashable,
         Signature,
     },
-    serializer::*,
+    serializer::{Error as SerializationError, *},
 };
 
 use bulletproofs::RangeProof;
@@ -252,65 +252,70 @@ impl Transaction {
 }
 
 impl Serializer for TransactionType {
-    fn write(&self, writer: &mut Writer) {
-        match self {
-            TransactionType::Burn(payload) => {
-                writer.write_u8(0);
-                payload.write(writer);
-            }
-            TransactionType::Transfers(txs) => {
-                writer.write_u8(1);
-                // max 255 txs per transaction
-                let len: u8 = txs.len() as u8;
-                writer.write_u8(len);
-                for tx in txs {
-                    tx.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            match self {
+                TransactionType::Burn(payload) => {
+                    writer.write_u8(0)?;
+                    payload.write(writer)
                 }
-            },
-            TransactionType::MultiSig(payload) => {
-                writer.write_u8(2);
-                payload.write(writer);
-            },
-            TransactionType::InvokeContract(payload) => {
-                writer.write_u8(3);
-                payload.write(writer);
-            },
-            TransactionType::DeployContract(module) => {
-                writer.write_u8(4);
-                module.write(writer);
-            },
-            TransactionType::Blob(extra_data) => {
-                writer.write_u8(5);
-                extra_data.write(writer);
+                TransactionType::Transfers(txs) => {
+                    writer.write_u8(1)?;
+                    // max 255 txs per transaction
+                    let len: u8 = txs.len() as u8;
+                    writer.write_u8(len)?;
+                    for tx in txs {
+                        tx.write(writer)?;
+                    }
+                    Ok(())
+                },
+                TransactionType::MultiSig(payload) => {
+                    writer.write_u8(2)?;
+                    payload.write(writer)
+                },
+                TransactionType::InvokeContract(payload) => {
+                    writer.write_u8(3)?;
+                    payload.write(writer)
+                },
+                TransactionType::DeployContract(module) => {
+                    writer.write_u8(4)?;
+                    module.write(writer)
+                },
+                TransactionType::Blob(extra_data) => {
+                    writer.write_u8(5)?;
+                    extra_data.write(writer)
+                }
             }
-        };
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<TransactionType, ReaderError> {
-        Ok(match reader.read_u8()? {
-            0 => {
-                let payload = BurnPayload::read(reader)?;
-                TransactionType::Burn(payload)
-            },
-            1 => {
-                let txs_count = reader.read_u8()?;
-                if txs_count == 0 || txs_count > MAX_TRANSFER_COUNT as u8 {
-                    return Err(ReaderError::InvalidSize)
-                }
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<TransactionType, ReaderError> {
+        reader.read_with_context(|reader| {
+            Ok(match reader.read_u8()? {
+                0 => {
+                    let payload = BurnPayload::read(reader)?;
+                    TransactionType::Burn(payload)
+                },
+                1 => {
+                    let txs_count = reader.read_u8()?;
+                    if txs_count == 0 || txs_count > MAX_TRANSFER_COUNT as u8 {
+                        return Err(SerializationError::new(DecodeError::InvalidSize))
+                    }
 
-                let mut txs = Vec::with_capacity(txs_count as usize);
-                for _ in 0..txs_count {
-                    txs.push(TransferPayload::read(reader)?);
+                    let mut txs = Vec::with_capacity(txs_count as usize);
+                    for _ in 0..txs_count {
+                        txs.push(TransferPayload::read(reader)?);
+                    }
+                    TransactionType::Transfers(txs)
+                },
+                2 => TransactionType::MultiSig(MultiSigPayload::read(reader)?),
+                3 => TransactionType::InvokeContract(InvokeContractPayload::read(reader)?),
+                4 => TransactionType::DeployContract(DeployContractPayload::read(reader)?),
+                5 => TransactionType::Blob(BlobPayload::read(reader)?),
+                _ => {
+                    return Err(SerializationError::new(DecodeError::InvalidValue))
                 }
-                TransactionType::Transfers(txs)
-            },
-            2 => TransactionType::MultiSig(MultiSigPayload::read(reader)?),
-            3 => TransactionType::InvokeContract(InvokeContractPayload::read(reader)?),
-            4 => TransactionType::DeployContract(DeployContractPayload::read(reader)?),
-            5 => TransactionType::Blob(BlobPayload::read(reader)?),
-            _ => {
-                return Err(ReaderError::InvalidValue)
-            }
+            })
         })
     }
 
@@ -338,82 +343,86 @@ impl Serializer for TransactionType {
 }
 
 impl Serializer for Transaction {
-    fn write(&self, writer: &mut Writer) {
-        self.version.write(writer);
-        self.source.write(writer);
-        self.data.write(writer);
-        self.fee.write(writer);
-        if self.version >= TxVersion::V2 {
-            self.fee_limit.write(writer);
-        }
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.version.write(writer)?;
+            self.source.write(writer)?;
+            self.data.write(writer)?;
+            self.fee.write(writer)?;
+            if self.version >= TxVersion::V2 {
+                self.fee_limit.write(writer)?;
+            }
 
-        self.nonce.write(writer);
+            self.nonce.write(writer)?;
 
-        writer.write_u8(self.source_commitments.len() as u8);
-        for commitment in &self.source_commitments {
-            commitment.write(writer);
-        }
+            writer.write_u8(self.source_commitments.len() as u8)?;
+            for commitment in &self.source_commitments {
+                commitment.write(writer)?;
+            }
 
-        self.range_proof.write(writer);
-        self.reference.write(writer);
+            self.range_proof.write(writer)?;
+            self.reference.write(writer)?;
 
-        if self.version != TxVersion::V0 {
-            self.multisig.write(writer);
-        }
+            if self.version != TxVersion::V0 {
+                self.multisig.write(writer)?;
+            }
 
-        self.signature.write(writer);
+            self.signature.write(writer)
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Transaction, ReaderError> {
-        let version = TxVersion::read(reader)?;
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Transaction, ReaderError> {
+        reader.read_with_context(|reader| {
+            let version = TxVersion::read(reader)?;
 
-        reader.context_mut()
-            .store(version);
+            reader.context_mut()
+                .insert(version);
 
-        let source = CompressedPublicKey::read(reader)?;
-        let data = TransactionType::read(reader)?;
-        let fee = reader.read_u64()?;
-        let fee_limit = if version >= TxVersion::V2 {
-            reader.read_u64()?
-        } else {
-            fee
-        };
+            let source = CompressedPublicKey::read(reader)?;
+            let data = TransactionType::read(reader)?;
+            let fee = reader.read_u64()?;
+            let fee_limit = if version >= TxVersion::V2 {
+                reader.read_u64()?
+            } else {
+                fee
+            };
 
-        let nonce = Nonce::read(reader)?;
+            let nonce = Nonce::read(reader)?;
 
-        let commitments_len = reader.read_u8()?;
-        if commitments_len == 0 || commitments_len > MAX_TRANSFER_COUNT as u8 {
-            return Err(ReaderError::InvalidSize)
-        }
+            let commitments_len = reader.read_u8()?;
+            if commitments_len == 0 || commitments_len > MAX_TRANSFER_COUNT as u8 {
+                return Err(SerializationError::new(DecodeError::InvalidSize))
+            }
 
-        let mut source_commitments = Vec::with_capacity(commitments_len as usize);
-        for _ in 0..commitments_len {
-            source_commitments.push(SourceCommitment::read(reader)?);
-        }
+            let mut source_commitments = Vec::with_capacity(commitments_len as usize);
+            for _ in 0..commitments_len {
+                source_commitments.push(SourceCommitment::read(reader)?);
+            }
 
-        let range_proof = RangeProof::read(reader)?;
-        let reference = Reference::read(reader)?;
-        let multisig = if version == TxVersion::V0 {
-            None
-        } else {
-            Option::read(reader)?
-        };
+            let range_proof = RangeProof::read(reader)?;
+            let reference = Reference::read(reader)?;
+            let multisig = if version == TxVersion::V0 {
+                None
+            } else {
+                Option::read(reader)?
+            };
 
-        let signature = Signature::read(reader)?;
+            let signature = Signature::read(reader)?;
 
-        Ok(Transaction::new(
-            version,
-            source,
-            data,
-            fee,
-            fee_limit,
-            nonce,
-            source_commitments,
-            range_proof,
-            reference,
-            multisig,
-            signature,
-        ))
+            Ok(Transaction::new(
+                version,
+                source,
+                data,
+                fee,
+                fee_limit,
+                nonce,
+                source_commitments,
+                range_proof,
+                reference,
+                multisig,
+                signature,
+            ))
+        })
     }
 
     fn size(&self) -> usize {

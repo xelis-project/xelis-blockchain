@@ -1,11 +1,10 @@
+use crate::serializer::{Error as SerializationError, *};
 use std::borrow::Cow;
 
 use serde::{Deserialize, Serialize, de, ser::{self, SerializeStruct}};
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use thiserror::Error;
 use xelis_vm::{EnvironmentError, VMError};
-
-use crate::serializer::*;
 
 // ExitError is a mirror to VMError without the embed error types
 // this allows us to serialize it properly for RPC responses
@@ -59,44 +58,48 @@ impl ExitError {
 }
 
 impl Serializer for ExitError {
-    fn write(&self, writer: &mut Writer) {
-        match self {
-            ExitError::InvalidEntryPayloadReturn => writer.write_u8(0),
-            ExitError::UnknownHook => writer.write_u8(1),
-            ExitError::InvalidEntry => writer.write_u8(2),
-            ExitError::MissingEntryExitCode => writer.write_u8(3),
-            ExitError::IllegalState => writer.write_u8(4),
-            ExitError::DivisionByZero => writer.write_u8(5),
-            ExitError::AssertionFailed => writer.write_u8(6),
-            ExitError::OutOfBounds => writer.write_u8(7),
-            ExitError::OutOfMemory => writer.write_u8(8),
-            ExitError::NotEnoughGas => writer.write_u8(9),
-            ExitError::GasOverflow => writer.write_u8(10),
-            ExitError::RuntimeError(msg) => {
-                writer.write_u8(11);
-                msg.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            match self {
+                ExitError::InvalidEntryPayloadReturn => writer.write_u8(0),
+                ExitError::UnknownHook => writer.write_u8(1),
+                ExitError::InvalidEntry => writer.write_u8(2),
+                ExitError::MissingEntryExitCode => writer.write_u8(3),
+                ExitError::IllegalState => writer.write_u8(4),
+                ExitError::DivisionByZero => writer.write_u8(5),
+                ExitError::AssertionFailed => writer.write_u8(6),
+                ExitError::OutOfBounds => writer.write_u8(7),
+                ExitError::OutOfMemory => writer.write_u8(8),
+                ExitError::NotEnoughGas => writer.write_u8(9),
+                ExitError::GasOverflow => writer.write_u8(10),
+                ExitError::RuntimeError(msg) => {
+                    writer.write_u8(11)?;
+                    msg.write(writer)
+                }
             }
-        }
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok(match reader.read_u8()? {
-            0 => ExitError::InvalidEntryPayloadReturn,
-            1 => ExitError::UnknownHook,
-            2 => ExitError::InvalidEntry,
-            3 => ExitError::MissingEntryExitCode,
-            4 => ExitError::IllegalState,
-            5 => ExitError::DivisionByZero,
-            6 => ExitError::AssertionFailed,
-            7 => ExitError::OutOfBounds,
-            8 => ExitError::OutOfMemory,
-            9 => ExitError::NotEnoughGas,
-            10 => ExitError::GasOverflow,
-            11 => {
-                let msg = Cow::Owned(String::read(reader)?);
-                ExitError::RuntimeError(msg)
-            }
-            _ => return Err(ReaderError::InvalidValue),
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            Ok(match reader.read_u8()? {
+                0 => ExitError::InvalidEntryPayloadReturn,
+                1 => ExitError::UnknownHook,
+                2 => ExitError::InvalidEntry,
+                3 => ExitError::MissingEntryExitCode,
+                4 => ExitError::IllegalState,
+                5 => ExitError::DivisionByZero,
+                6 => ExitError::AssertionFailed,
+                7 => ExitError::OutOfBounds,
+                8 => ExitError::OutOfMemory,
+                9 => ExitError::NotEnoughGas,
+                10 => ExitError::GasOverflow,
+                11 => {
+                    let msg = Cow::Owned(String::read(reader)?);
+                    ExitError::RuntimeError(msg)
+                }
+                _ => return Err(SerializationError::new(DecodeError::InvalidValue)),
+            })
         })
     }
 

@@ -24,6 +24,7 @@ use metrics::histogram;
 use xelis_vm::{ModuleValidator, ValueCell};
 use crate::{
     account::Nonce,
+    serializer::Serializer,
     time::Instant,
     config::{BURN_PER_CONTRACT, MAX_GAS_USAGE_PER_TX, XELIS_ASSET, MAX_TRANSACTION_SIZE, MAX_CONTRACT_PARAMETERS_SIZE},
     contract::{
@@ -58,7 +59,6 @@ use crate::{
         ProtocolTranscript,
         SIGNATURE_SIZE
     },
-    serializer::Serializer,
     tokio::spawn_blocking_safe,
     transaction::{
         extra_data::ExtraDataKind,
@@ -562,7 +562,7 @@ impl Transaction {
                 return Err(VerificationError::MultiSigParticipants.into());
             }
 
-            let bytes = self.to_bytes();
+            let bytes = self.to_bytes()?;
             // Multisig are based on the Tx data, without the final signature
             // We need to remove the final signature and the multisig from the bytes
             // Each SigId is composed of a u8 and a signature (64 bytes + 1 byte)
@@ -892,7 +892,7 @@ impl Transaction {
         ).await?;
 
         // 3. Verify Signature
-        let bytes = serialized.unwrap_or_else(|| self.to_bytes());
+        let bytes = match serialized { Some(bytes) => bytes, None => self.to_bytes()? };
         if !self.signature.verify(&bytes[..bytes.len() - SIGNATURE_SIZE], &source_decompressed) {
             debug!("transaction signature is invalid");
             return Err(VerificationError::InvalidSignature.into());
@@ -981,7 +981,7 @@ impl Transaction {
                 transcript.append_u64(b"max_gas", payload.max_gas);
 
                 for param in payload.parameters.iter() {
-                    transcript.append_message(b"contract_param", &param.to_bytes());
+                    transcript.append_message(b"contract_param", &param.to_bytes()?);
                 }
             },
             TransactionType::DeployContract(payload) => {

@@ -1,7 +1,8 @@
-use anyhow::Context as AnyhowContext;
+use matriochka::ResultExt;
 use sha3::{Digest, Sha3_256};
 use xelis_vm::{
-    traits::Serializable,
+    PrimitiveInteger,
+    traits::DynSerializable,
     VMContext,
     EnvironmentError,
     FnInstance,
@@ -16,19 +17,16 @@ use xelis_vm::{
 use crate::{
     contract::{ModuleMetadata, ContractMetadata, HASH_OPAQUE_ID},
     crypto::{hash, Hash, HASH_SIZE},
-    serializer::{Serializer, Writer}
+    serializer::{Error as SerializationError, Serializer, Writer, WriterExt},
 };
 
-impl Serializable for Hash {
-    fn serialize(&self, buffer: &mut Vec<u8>) -> usize {
-        let mut writer = Writer::new(buffer);
-        writer.write_u8(HASH_OPAQUE_ID);
-        self.write(&mut writer);
-        writer.total_write()
-    }
-
-    fn is_serializable(&self) -> bool {
-        true
+impl DynSerializable for Hash {
+    fn serialize(&self, buffer: &mut Vec<u8>) -> Result<usize, SerializationError> {
+        let start = buffer.len();
+        let mut writer = Writer::new(&mut *buffer);
+        writer.write_u8(HASH_OPAQUE_ID)?;
+        self.write(&mut writer)?;
+        Ok(buffer.len() - start)
     }
 
     fn get_size(&self) -> usize {
@@ -48,7 +46,7 @@ pub fn hash_to_array_fn(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _
     let hash: &Hash = zelf.as_opaque_type()?;
     let bytes = hash.as_bytes()
         .into_iter()
-        .map(|b| Primitive::U8(*b).into())
+        .map(|b| Primitive::Integer(PrimitiveInteger::U8(*b)).into())
         .collect();
 
     Ok(SysCallResult::Return(ValueCell::Object(bytes).into()))
@@ -66,7 +64,7 @@ pub fn hash_from_bytes_fn(_: FnInstance, mut params: FnParams, _: &ModuleMetadat
     let hash = Hash::from_bytes(&bytes)
         .context("failed to create hash from bytes")?;
 
-    Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(hash)).into()))
+    Ok(SysCallResult::Return(ValueCell::Opaque(OpaqueWrapper::new(hash)).into()))
 }
 
 pub fn hash_from_array_fn(_: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
@@ -85,7 +83,7 @@ pub fn hash_from_array_fn(_: FnInstance, mut params: FnParams, _: &ModuleMetadat
     let hash = Hash::from_bytes(&bytes)
         .context("failed to create hash from bytes")?;
 
-    Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(hash)).into()))
+    Ok(SysCallResult::Return(ValueCell::Opaque(OpaqueWrapper::new(hash)).into()))
 }
 
 pub fn hash_from_u256_fn(_: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
@@ -96,13 +94,13 @@ pub fn hash_from_u256_fn(_: FnInstance, mut params: FnParams, _: &ModuleMetadata
     let hash = Hash::from_bytes(&value.to_be_bytes())
         .context("failed to create hash from u256 be bytes")?;
 
-    Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(hash)).into()))
+    Ok(SysCallResult::Return(ValueCell::Opaque(OpaqueWrapper::new(hash)).into()))
 }
 
 pub fn hash_to_u256_fn(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     let hash: &Hash = zelf.as_opaque_type()?;
-    Ok(SysCallResult::Return(Primitive::U256(U256::from_be_bytes(*hash.as_bytes())).into()))
+    Ok(SysCallResult::Return(Primitive::Integer(PrimitiveInteger::U256(U256::from_be_bytes(*hash.as_bytes()))).into()))
 }
 
 pub fn hash_to_hex_fn(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
@@ -123,17 +121,17 @@ pub fn hash_from_hex_fn(_: FnInstance, mut params: FnParams, _: &ModuleMetadata<
     let hash = Hash::from_hex(hex)
         .context("failed to create hash from hex")?;
 
-    Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(hash)).into()))
+    Ok(SysCallResult::Return(ValueCell::Opaque(OpaqueWrapper::new(hash)).into()))
 }
 
 pub fn hash_zero_fn(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let hash = Hash::zero();
-    Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(hash)).into()))
+    Ok(SysCallResult::Return(ValueCell::Opaque(OpaqueWrapper::new(hash)).into()))
 }
 
 pub fn hash_max_fn(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
     let hash = Hash::max();
-    Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(hash)).into()))
+    Ok(SysCallResult::Return(ValueCell::Opaque(OpaqueWrapper::new(hash)).into()))
 }
 
 pub fn blake3_fn(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
@@ -146,7 +144,7 @@ pub fn blake3_fn(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, contex
     context.increase_gas_usage(input.len() as u64)?;
 
     let hash = hash(&input);
-    Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(hash)).into()))
+    Ok(SysCallResult::Return(ValueCell::Opaque(OpaqueWrapper::new(hash)).into()))
 }
 
 pub fn sha3_fn(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
@@ -159,5 +157,5 @@ pub fn sha3_fn(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, context:
     context.increase_gas_usage((input.len() as u64) * 4)?;
 
     let hash = Hash::new(Sha3_256::digest(&input).into());
-    Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(hash)).into()))
+    Ok(SysCallResult::Return(ValueCell::Opaque(OpaqueWrapper::new(hash)).into()))
 }

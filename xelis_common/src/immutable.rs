@@ -1,3 +1,4 @@
+use crate::serializer::{Error as SerializationError, *};
 use std::{
     fmt::{self, Display},
     hash::{Hash, Hasher},
@@ -7,7 +8,6 @@ use std::{
 use schemars::JsonSchema;
 use serde::{Serialize, Deserialize};
 
-use crate::serializer::*;
 
 #[derive(Clone, Serialize, Deserialize, Debug, JsonSchema)]
 #[schemars(rename = "Immutable<{T}>")]
@@ -125,12 +125,14 @@ impl<T: fmt::Display> Display for Immutable<T> {
 }
 
 impl<T: Serializer> Serializer for Immutable<T> {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok(Immutable::Owned(T::read(reader)?))
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            Ok(Immutable::Owned(T::read(reader)?))
+        })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        self.as_ref().write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| self.as_ref().write(writer))
     }
 
     fn size(&self) -> usize {

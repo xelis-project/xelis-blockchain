@@ -1,12 +1,12 @@
 use core::hash;
 use std::borrow::Cow;
 
-use anyhow::Context as _;
+use matriochka::ResultExt;
 use curve25519_dalek::{ristretto::CompressedRistretto, traits::{Identity, IsIdentity}, RistrettoPoint, Scalar};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use xelis_vm::{
-    impl_opaque,
-    traits::Serializable,
+    Opaque,
+    traits::DynSerializable,
     VMContext,
     EnvironmentError,
     FnInstance,
@@ -20,13 +20,16 @@ use xelis_vm::{
 use crate::{
     contract::{ModuleMetadata, ContractMetadata, OpaqueScalar, RISTRETTO_OPAQUE_ID},
     crypto::{elgamal::RISTRETTO_COMPRESSED_SIZE, proofs::G},
-    serializer::{Serializer as _, Writer},
+    serializer::{
+        Error as SerializationError,
+        Serializer as BinarySerializer,
+        Writer,
+        WriterExt
+    },
 };
 
-impl_opaque!("RistrettoPoint", OpaqueRistrettoPoint, json);
-impl_opaque!("RistrettoPoint", OpaqueRistrettoPoint);
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Opaque)]
+#[opaque(name = "RistrettoPoint", json, serializable, hash, eq)]
 pub enum OpaqueRistrettoPoint {
     /// Compressed representation of a Ristretto point
     Compressed(CompressedRistretto),
@@ -149,16 +152,13 @@ impl<'de> Deserialize<'de> for OpaqueRistrettoPoint {
     }
 }
 
-impl Serializable for OpaqueRistrettoPoint {
-    fn serialize(&self, buffer: &mut Vec<u8>) -> usize {
-        let mut writer = Writer::new(buffer);
-        writer.write_u8(RISTRETTO_OPAQUE_ID);
-        self.compressed().write(&mut writer);
-        writer.total_write()
-    }
-
-    fn is_serializable(&self) -> bool {
-        true
+impl DynSerializable for OpaqueRistrettoPoint {
+    fn serialize(&self, buffer: &mut Vec<u8>) -> Result<usize, SerializationError> {
+        let start = buffer.len();
+        let mut writer = Writer::new(&mut *buffer);
+        writer.write_u8(RISTRETTO_OPAQUE_ID)?;
+        self.compressed().write(&mut writer)?;
+        Ok(buffer.len() - start)
     }
 
     fn get_size(&self) -> usize {

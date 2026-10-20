@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     crypto::elgamal::{CompressedPublicKey, RISTRETTO_COMPRESSED_SIZE},
-    serializer::*,
+    serializer::{Error as SerializationError, *},
     transaction::extra_data::UnknownExtraDataFormat
 };
 
@@ -32,27 +32,32 @@ impl BlobPayload {
 }
 
 impl Serializer for BlobPayload {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let data = UnknownExtraDataFormat::read(reader)?;
-        let len = reader.read_u8()?;
-        let mut destinations = IndexSet::new();
-        for _ in 0..len {
-            let pk = CompressedPublicKey::read(reader)?;
-            if !destinations.insert(pk) {
-                debug!("Duplicate destination public key in blob payload");
-                return Err(ReaderError::InvalidValue);
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let data = UnknownExtraDataFormat::read(reader)?;
+            let len = reader.read_u8()?;
+            let mut destinations = IndexSet::new();
+            for _ in 0..len {
+                let pk = CompressedPublicKey::read(reader)?;
+                if !destinations.insert(pk) {
+                    debug!("Duplicate destination public key in blob payload");
+                    return Err(SerializationError::new(DecodeError::InvalidValue));
+                }
             }
-        }
 
-        Ok(Self { data, destinations })
+            Ok(Self { data, destinations })
+        })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        self.data.write(writer);
-        writer.write_u8(self.destinations.len() as u8);
-        for pk in &self.destinations {
-            pk.write(writer);
-        }
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.data.write(writer)?;
+            writer.write_u8(self.destinations.len() as u8)?;
+            for pk in &self.destinations {
+                pk.write(writer)?;
+            }
+            Ok(())
+        })
     }
 
     fn size(&self) -> usize {

@@ -48,7 +48,7 @@ use crate::{
         HASH_SIZE,
         SIGNATURE_SIZE
     },
-    serializer::Serializer,
+    serializer::{Error as SerializationError, Serializer},
     utils::calculate_tx_fee
 };
 use thiserror::Error;
@@ -81,9 +81,11 @@ use super::{
 
 pub use payload::*;
 
-#[derive(Error, Debug, Clone, IntoStaticStr)]
+#[derive(Error, Debug, IntoStaticStr)]
 #[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum GenerationError {
+    #[error("Serialization error: {0}")]
+    Serialization(#[source] SerializationError),
     #[error("Missing blob destination key")]
     BlobMissingDestination,
     #[error("Expected exactly one destination for blob, got {0}")]
@@ -126,7 +128,7 @@ pub enum GenerationError {
     FeeMax,
 }
 
-#[derive(Error, Debug, Clone)]
+#[derive(Error, Debug)]
 pub enum GenerationStateError<T> {
     #[error("Error in the state: {0}")]
     State(T),
@@ -698,7 +700,7 @@ impl TransactionBuilder {
         source_keypair: &KeyPair,
     ) -> Result<Transaction, GenerationStateError<B::Error>> {
         let unsigned = self.build_unsigned(state, source_keypair)?;
-        Ok(unsigned.finalize(source_keypair))
+        Ok(unsigned.finalize(source_keypair)?)
     }
 
     pub fn build_unsigned<B: AccountState>(
@@ -959,7 +961,7 @@ impl TransactionBuilder {
     
                         // Encrypt the extra data if it exists
                         let extra_data = if let Some(extra_data) = transfer.inner.extra_data {
-                            let bytes = extra_data.to_bytes();
+                            let bytes = extra_data.to_bytes()?;
 
                             let cipher: UnknownExtraDataFormat = if self.version >= TxVersion::V2 {
                                 if transfer.inner.encrypt_extra_data {
@@ -970,13 +972,13 @@ impl TransactionBuilder {
                                     )
                                 } else {
                                     ExtraDataType::Public(PlaintextData(bytes))
-                                }.into()
+                                }.try_into()?
                             } else {
                                 ExtraData::new(
                                     PlaintextData(bytes),
                                     source_keypair.get_public_key(),
                                     &transfer.destination
-                                ).into()
+                                ).try_into()?
                             };
 
                             let cipher_size = cipher.size();
@@ -1099,7 +1101,7 @@ impl TransactionBuilder {
                 transcript.append_u64(b"max_gas", payload.max_gas);
 
                 for param in payload.parameters.iter() {
-                    transcript.append_message(b"contract_param", &param.to_bytes());
+                    transcript.append_message(b"contract_param", &param.to_bytes()?);
                 }
 
                 TransactionType::InvokeContract(InvokeContractPayload {
@@ -1137,7 +1139,7 @@ impl TransactionBuilder {
                     transcript.append_public_key(b"blob_pubkey", &destination.get_public_key());
                 }
 
-                let bytes = payload.data.to_bytes();
+                let bytes = payload.data.to_bytes()?;
                 let data = if payload.encrypt {
                     let receiver = payload.destinations.first()
                         .and_then(|d| d.get_public_key().decompress().ok())
@@ -1146,7 +1148,7 @@ impl TransactionBuilder {
                     ExtraDataType::Private(ExtraData::new(PlaintextData(bytes), source_keypair.get_public_key(), &receiver))
                 } else {
                     ExtraDataType::Public(PlaintextData(bytes))
-                }.into();
+                }.try_into()?;
 
                 TransactionType::Blob(BlobPayload {
                     data,
@@ -1204,5 +1206,17 @@ mod tests {
         let lg_n = (BULLET_PROOF_SIZE * (transfers + assets)).next_power_of_two().trailing_zeros() as usize;
         size += 2 * RISTRETTO_COMPRESSED_SIZE * lg_n;
         assert!(proof.size() == size);
+    }
+}
+
+impl From<SerializationError> for GenerationError {
+    fn from(error: SerializationError) -> Self {
+        Self::Serialization(error)
+    }
+}
+
+impl<T> From<SerializationError> for GenerationStateError<T> {
+    fn from(error: SerializationError) -> Self {
+        Self::GenerationError(error.into())
     }
 }

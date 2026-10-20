@@ -5,7 +5,7 @@ use xelis_vm::ValueCell;
 use crate::{
     contract::{ExitError, ScheduledExecutionKindLog},
     crypto::{Hash, PublicKey},
-    serializer::*
+    serializer::{Error as SerializationError, *},
 };
 
 /// Represents the kind of output that a contract can produce
@@ -173,20 +173,25 @@ impl From<ContractLogs> for Vec<ContractLog> {
 }
 
 impl Serializer for ContractLogs {
-    fn write(&self, writer: &mut Writer) {
-        writer.write_u16(self.0.len() as u16);
-        for log in &self.0 {
-            log.write(writer);
-        }
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            writer.write_u16(self.0.len() as u16)?;
+            for log in &self.0 {
+                log.write(writer)?;
+            }
+            Ok(())
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let count = reader.read_u16()? as usize;
-        let mut logs = Vec::with_capacity(count);
-        for _ in 0..count {
-            logs.push(ContractLog::read(reader)?);
-        }
-        Ok(Self(logs))
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let count = reader.read_u16()? as usize;
+            let mut logs = Vec::with_capacity(count);
+            for _ in 0..count {
+                logs.push(ContractLog::read(reader)?);
+            }
+            Ok(Self(logs))
+        })
     }
 
     fn size(&self) -> usize {
@@ -195,155 +200,157 @@ impl Serializer for ContractLogs {
 }
 
 impl Serializer for ContractLog {
-    fn write(&self, writer: &mut Writer) {
-        match self {
-            ContractLog::RefundGas { amount } => {
-                writer.write_u8(0);
-                amount.write(writer);
-            },
-            ContractLog::Transfer { contract, amount, asset, destination } => {
-                writer.write_u8(1);
-                contract.write(writer);
-                amount.write(writer);
-                asset.write(writer);
-                destination.write(writer);
-            },
-            ContractLog::TransferContract { contract, amount, asset, destination } => {
-                writer.write_u8(2);
-                contract.write(writer);
-                amount.write(writer);
-                asset.write(writer);
-                destination.write(writer);
-            },
-            ContractLog::Mint { contract, asset, amount } => {
-                writer.write_u8(3);
-                contract.write(writer);
-                asset.write(writer);
-                amount.write(writer);
-            },
-            ContractLog::Burn { contract, asset, amount } => {
-                writer.write_u8(4);
-                contract.write(writer);
-                asset.write(writer);
-                amount.write(writer);
-            },
-            ContractLog::NewAsset { contract, asset } => {
-                writer.write_u8(5);
-                contract.write(writer);
-                asset.write(writer);
-            },
-            ContractLog::ExitCode(code) => {
-                writer.write_u8(6);
-                code.write(writer);
-            },
-            ContractLog::RefundDeposits => {
-                writer.write_u8(7);
-            },
-            ContractLog::GasInjection { contract, amount } => {
-                writer.write_u8(8);
-                contract.write(writer);
-                amount.write(writer);
-            },
-            ContractLog::ScheduledExecution { contract, hash, kind } => {
-                writer.write_u8(9);
-                contract.write(writer);
-                hash.write(writer);
-                kind.write(writer);
-            },
-            ContractLog::ExitPayload(payload) => {
-                writer.write_u8(10);
-                payload.write(writer);
-            },
-            ContractLog::TransferPayload { contract, amount, asset, destination, payload } => {
-                writer.write_u8(11);
-                contract.write(writer);
-                amount.write(writer);
-                asset.write(writer);
-                destination.write(writer);
-                payload.write(writer);
-            },
-            ContractLog::ExitError(err) => {
-                writer.write_u8(12);
-                err.write(writer);
-            },
-            ContractLog::Event { contract, event_id } => {
-                writer.write_u8(13);
-                contract.write(writer);
-                event_id.write(writer);
-            },
-        }
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            match self {
+                ContractLog::RefundGas { amount } => {
+                    writer.write_u8(0)?;
+                    amount.write(writer)
+                },
+                ContractLog::Transfer { contract, amount, asset, destination } => {
+                    writer.write_u8(1)?;
+                    contract.write(writer)?;
+                    amount.write(writer)?;
+                    asset.write(writer)?;
+                    destination.write(writer)
+                },
+                ContractLog::TransferContract { contract, amount, asset, destination } => {
+                    writer.write_u8(2)?;
+                    contract.write(writer)?;
+                    amount.write(writer)?;
+                    asset.write(writer)?;
+                    destination.write(writer)
+                },
+                ContractLog::Mint { contract, asset, amount } => {
+                    writer.write_u8(3)?;
+                    contract.write(writer)?;
+                    asset.write(writer)?;
+                    amount.write(writer)
+                },
+                ContractLog::Burn { contract, asset, amount } => {
+                    writer.write_u8(4)?;
+                    contract.write(writer)?;
+                    asset.write(writer)?;
+                    amount.write(writer)
+                },
+                ContractLog::NewAsset { contract, asset } => {
+                    writer.write_u8(5)?;
+                    contract.write(writer)?;
+                    asset.write(writer)
+                },
+                ContractLog::ExitCode(code) => {
+                    writer.write_u8(6)?;
+                    code.write(writer)
+                },
+                ContractLog::RefundDeposits => writer.write_u8(7),
+                ContractLog::GasInjection { contract, amount } => {
+                    writer.write_u8(8)?;
+                    contract.write(writer)?;
+                    amount.write(writer)
+                },
+                ContractLog::ScheduledExecution { contract, hash, kind } => {
+                    writer.write_u8(9)?;
+                    contract.write(writer)?;
+                    hash.write(writer)?;
+                    kind.write(writer)
+                },
+                ContractLog::ExitPayload(payload) => {
+                    writer.write_u8(10)?;
+                    payload.write(writer)
+                },
+                ContractLog::TransferPayload { contract, amount, asset, destination, payload } => {
+                    writer.write_u8(11)?;
+                    contract.write(writer)?;
+                    amount.write(writer)?;
+                    asset.write(writer)?;
+                    destination.write(writer)?;
+                    payload.write(writer)
+                },
+                ContractLog::ExitError(err) => {
+                    writer.write_u8(12)?;
+                    err.write(writer)
+                },
+                ContractLog::Event { contract, event_id } => {
+                    writer.write_u8(13)?;
+                    contract.write(writer)?;
+                    event_id.write(writer)
+                },
+            }
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok(match reader.read_u8()? {
-            0 => {
-                let amount = u64::read(reader)?;
-                ContractLog::RefundGas { amount }
-            },
-            1 => {
-                let contract = Hash::read(reader)?;
-                let amount = u64::read(reader)?;
-                let asset = Hash::read(reader)?;
-                let destination = PublicKey::read(reader)?;
-                ContractLog::Transfer { contract, amount, asset, destination }
-            },
-            2 => {
-                let contract = Hash::read(reader)?;
-                let amount = u64::read(reader)?;
-                let asset = Hash::read(reader)?;
-                let destination = Hash::read(reader)?;
-                ContractLog::TransferContract { contract, amount, asset, destination }
-            },
-            3 => {
-                let contract = Hash::read(reader)?;
-                let asset = Hash::read(reader)?;
-                let amount = u64::read(reader)?;
-                ContractLog::Mint { contract, asset, amount }
-            },
-            4 => {
-                let contract = Hash::read(reader)?;
-                let asset = Hash::read(reader)?;
-                let amount = u64::read(reader)?;
-                ContractLog::Burn { contract, asset, amount }
-            },
-            5 => {
-                let contract = Hash::read(reader)?;
-                let asset = Hash::read(reader)?;
-                ContractLog::NewAsset { contract, asset }
-            },
-            6 => ContractLog::ExitCode(Option::read(reader)?),
-            7 => ContractLog::RefundDeposits,
-            8 => ContractLog::GasInjection {
-                contract: Hash::read(reader)?,
-                amount: u64::read(reader)?
-            },
-            9 => ContractLog::ScheduledExecution {
-                contract: Hash::read(reader)?,
-                hash: Hash::read(reader)?,
-                kind: ScheduledExecutionKindLog::read(reader)?,
-            },
-            10 => {
-                let payload = ValueCell::read(reader)?;
-                ContractLog::ExitPayload(payload)
-            },
-            11 => {
-                let contract = Hash::read(reader)?;
-                let amount = u64::read(reader)?;
-                let asset = Hash::read(reader)?;
-                let destination = PublicKey::read(reader)?;
-                let payload = ValueCell::read(reader)?;
-                ContractLog::TransferPayload { contract, amount, asset, destination, payload }
-            },
-            12 => {
-                let err = ExitError::read(reader)?;
-                ContractLog::ExitError(err)
-            },
-            13 => {
-                let contract = Hash::read(reader)?;
-                let event_id = u64::read(reader)?;
-                ContractLog::Event { contract, event_id }
-            },
-            _ => return Err(ReaderError::InvalidValue)
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            Ok(match reader.read_u8()? {
+                0 => {
+                    let amount = u64::read(reader)?;
+                    ContractLog::RefundGas { amount }
+                },
+                1 => {
+                    let contract = Hash::read(reader)?;
+                    let amount = u64::read(reader)?;
+                    let asset = Hash::read(reader)?;
+                    let destination = PublicKey::read(reader)?;
+                    ContractLog::Transfer { contract, amount, asset, destination }
+                },
+                2 => {
+                    let contract = Hash::read(reader)?;
+                    let amount = u64::read(reader)?;
+                    let asset = Hash::read(reader)?;
+                    let destination = Hash::read(reader)?;
+                    ContractLog::TransferContract { contract, amount, asset, destination }
+                },
+                3 => {
+                    let contract = Hash::read(reader)?;
+                    let asset = Hash::read(reader)?;
+                    let amount = u64::read(reader)?;
+                    ContractLog::Mint { contract, asset, amount }
+                },
+                4 => {
+                    let contract = Hash::read(reader)?;
+                    let asset = Hash::read(reader)?;
+                    let amount = u64::read(reader)?;
+                    ContractLog::Burn { contract, asset, amount }
+                },
+                5 => {
+                    let contract = Hash::read(reader)?;
+                    let asset = Hash::read(reader)?;
+                    ContractLog::NewAsset { contract, asset }
+                },
+                6 => ContractLog::ExitCode(Option::read(reader)?),
+                7 => ContractLog::RefundDeposits,
+                8 => ContractLog::GasInjection {
+                    contract: Hash::read(reader)?,
+                    amount: u64::read(reader)?
+                },
+                9 => ContractLog::ScheduledExecution {
+                    contract: Hash::read(reader)?,
+                    hash: Hash::read(reader)?,
+                    kind: ScheduledExecutionKindLog::read(reader)?,
+                },
+                10 => {
+                    let payload = ValueCell::read(reader)?;
+                    ContractLog::ExitPayload(payload)
+                },
+                11 => {
+                    let contract = Hash::read(reader)?;
+                    let amount = u64::read(reader)?;
+                    let asset = Hash::read(reader)?;
+                    let destination = PublicKey::read(reader)?;
+                    let payload = ValueCell::read(reader)?;
+                    ContractLog::TransferPayload { contract, amount, asset, destination, payload }
+                },
+                12 => {
+                    let err = ExitError::read(reader)?;
+                    ContractLog::ExitError(err)
+                },
+                13 => {
+                    let contract = Hash::read(reader)?;
+                    let event_id = u64::read(reader)?;
+                    ContractLog::Event { contract, event_id }
+                },
+                _ => return Err(SerializationError::new(DecodeError::InvalidValue))
+            })
         })
     }
 
@@ -374,7 +381,7 @@ mod tests {
     #[test]
     fn contract_logs_support_more_than_default_vec_limit() {
         let logs = ContractLogs((0..1025).map(|_| ContractLog::RefundDeposits).collect());
-        let bytes = logs.to_bytes();
+        let bytes = logs.to_bytes().unwrap();
         let decoded = ContractLogs::from_bytes(&bytes).unwrap();
 
         assert_eq!(decoded.0.len(), 1025);

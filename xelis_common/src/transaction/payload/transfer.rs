@@ -6,7 +6,7 @@ use crate::{
         proofs::CiphertextValidityProof,
         Hash
     },
-    serializer::*,
+    serializer::{Error as SerializationError, *},
     transaction::{extra_data::UnknownExtraDataFormat, Role}
 };
 
@@ -111,34 +111,38 @@ impl TransferPayload {
 }
 
 impl Serializer for TransferPayload {
-    fn write(&self, writer: &mut Writer) {
-        self.asset.write(writer);
-        self.destination.write(writer);
-        self.extra_data.write(writer);
-        self.commitment.write(writer);
-        self.sender_handle.write(writer);
-        self.receiver_handle.write(writer);
-        self.ct_validity_proof.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.asset.write(writer)?;
+            self.destination.write(writer)?;
+            self.extra_data.write(writer)?;
+            self.commitment.write(writer)?;
+            self.sender_handle.write(writer)?;
+            self.receiver_handle.write(writer)?;
+            self.ct_validity_proof.write(writer)
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<TransferPayload, ReaderError> {
-        let asset = Hash::read(reader)?;
-        let destination = CompressedPublicKey::read(reader)?;
-        let extra_data = Option::read(reader)?;
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<TransferPayload, ReaderError> {
+        reader.read_with_context(|reader| {
+            let asset = Hash::read(reader)?;
+            let destination = CompressedPublicKey::read(reader)?;
+            let extra_data = Option::read(reader)?;
 
-        let commitment = CompressedCommitment::read(reader)?;
-        let sender_handle = CompressedHandle::read(reader)?;
-        let receiver_handle = CompressedHandle::read(reader)?;
-        let ct_validity_proof = CiphertextValidityProof::read(reader)?;
+            let commitment = CompressedCommitment::read(reader)?;
+            let sender_handle = CompressedHandle::read(reader)?;
+            let receiver_handle = CompressedHandle::read(reader)?;
+            let ct_validity_proof = CiphertextValidityProof::read(reader)?;
 
-        Ok(TransferPayload {
-            asset,
-            destination,
-            extra_data,
-            commitment,
-            sender_handle,
-            receiver_handle,
-            ct_validity_proof
+            Ok(TransferPayload {
+                asset,
+                destination,
+                extra_data,
+                commitment,
+                sender_handle,
+                receiver_handle,
+                ct_validity_proof
+            })
         })
     }
 

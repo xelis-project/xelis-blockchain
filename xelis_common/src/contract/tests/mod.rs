@@ -5,7 +5,7 @@ use silex_builder::EnvironmentBuilder;
 use silex_compiler::Compiler;
 use silex_lexer::Lexer;
 use silex_parser::Parser;
-use xelis_vm::{Module, Primitive, ValueCell};
+use xelis_vm::{PrimitiveInteger, Module, Primitive, ValueCell};
 
 use crate::{
     asset::{AssetData, AssetOwner, MaxSupplyMode},
@@ -217,8 +217,8 @@ async fn test_contract_with_parameters() {
 
     // Invoke the contract with parameters (10 and 20)
     let params = vec![
-        Primitive::U64(10).into(),
-        Primitive::U64(20).into(),
+        Primitive::Integer(PrimitiveInteger::U64(10)).into(),
+        Primitive::Integer(PrimitiveInteger::U64(20)).into(),
     ];
 
     let result = vm::invoke_contract(

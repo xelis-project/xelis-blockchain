@@ -2,7 +2,7 @@ use indexmap::IndexMap;
 
 use crate::{
     contract::Source,
-    serializer::*,
+    serializer::{Error as SerializationError, *},
 };
 
 // Represents an event callback registration
@@ -29,17 +29,21 @@ impl EventCallbackRegistration {
 }
 
 impl Serializer for EventCallbackRegistration {
-    fn write(&self, writer: &mut Writer) {
-        writer.write_u16(self.chunk_id);
-        writer.write_u64(self.max_gas);
-        self.gas_sources.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            writer.write_u16(self.chunk_id)?;
+            writer.write_u64(self.max_gas)?;
+            self.gas_sources.write(writer)
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let chunk_id = reader.read_u16()?;
-        let max_gas = reader.read_u64()?;
-        let gas_sources = IndexMap::read(reader)?;
-        Ok(EventCallbackRegistration { chunk_id, max_gas, gas_sources })
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let chunk_id = reader.read_u16()?;
+            let max_gas = reader.read_u64()?;
+            let gas_sources = IndexMap::read(reader)?;
+            Ok(EventCallbackRegistration { chunk_id, max_gas, gas_sources })
+        })
     }
 
     fn size(&self) -> usize {

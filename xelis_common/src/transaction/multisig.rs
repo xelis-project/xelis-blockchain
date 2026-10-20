@@ -6,7 +6,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     crypto::Signature,
-    serializer::{Reader, ReaderError, Serializer, Writer}
+    serializer::{
+        DecodeError,
+        Error as SerializationError,
+        Readable,
+        Reader,
+        ReaderError,
+        ReaderExt,
+        Serializer,
+        Writable,
+        Writer,
+        WriterExt,
+    },
 };
 
 // SignatureId is a structure that holds the signature and the id of the signer
@@ -69,22 +80,27 @@ impl PartialEq for SignatureId {
 }
 
 impl Serializer for MultiSig {
-    fn write(&self, writer: &mut Writer) {
-        writer.write_u8(self.signatures.len() as u8);
-        for signature in &self.signatures {
-            signature.write(writer);
-        }
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            writer.write_u8(self.signatures.len() as u8)?;
+            for signature in &self.signatures {
+                signature.write(writer)?;
+            }
+            Ok(())
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let len = reader.read_u8()? as usize;
-        let mut signatures = IndexSet::new();
-        for _ in 0..len {
-            if !signatures.insert(SignatureId::read(reader)?) {
-                return Err(ReaderError::InvalidValue);
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let len = reader.read_u8()? as usize;
+            let mut signatures = IndexSet::new();
+            for _ in 0..len {
+                if !signatures.insert(SignatureId::read(reader)?) {
+                    return Err(SerializationError::new(DecodeError::InvalidValue));
+                }
             }
-        }
-        Ok(Self { signatures })
+            Ok(Self { signatures })
+        })
     }
 
     fn size(&self) -> usize {
@@ -97,15 +113,19 @@ impl Serializer for MultiSig {
 }
 
 impl Serializer for SignatureId {
-    fn write(&self, writer: &mut Writer) {
-        writer.write_u8(self.id);
-        self.signature.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            writer.write_u8(self.id)?;
+            self.signature.write(writer)
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let id = reader.read_u8()?;
-        let signature = Signature::read(reader)?;
-        Ok(Self { id, signature })
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let id = reader.read_u8()?;
+            let signature = Signature::read(reader)?;
+            Ok(Self { id, signature })
+        })
     }
 
     fn size(&self) -> usize {

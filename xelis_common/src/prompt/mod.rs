@@ -7,6 +7,7 @@ mod option;
 mod state;
 
 use crate::{
+    serializer::Serializer,
     tokio::{
         spawn_task,
         task::JoinHandle,
@@ -23,7 +24,6 @@ use crate::{
         time::{interval, timeout}
     },
     crypto::Hash,
-    serializer::Serializer,
 };
 use std::{
     fmt::{self, Display, Formatter},

@@ -1,10 +1,9 @@
-use std::hash::Hasher;
 
 use bulletproofs::RangeProof;
 use serde::{Deserialize, Serialize};
 use xelis_vm::{
-    impl_opaque,
-    traits::{DynEq, DynHash, Serializable},
+    Opaque,
+    traits::DynSerializable,
     VMContext,
     EnvironmentError,
     FnInstance,
@@ -22,47 +21,24 @@ use crate::{
         OpaqueTranscript
     },
     crypto::proofs::{BP_GENS, PC_GENS},
-    serializer::*
+    serializer::{Error as SerializationError, *},
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Opaque)]
+#[opaque(name = "RangeProof", json, serializable)]
 pub struct RangeProofWrapper(pub RangeProof);
 
-impl_opaque!("RangeProof", RangeProofWrapper, json);
-impl_opaque!("RangeProof", RangeProofWrapper);
-
-impl DynEq for RangeProofWrapper {
-    fn is_equal(&self, _: &dyn DynEq) -> bool {
-        false
-    }
-
-    fn as_eq(&self) -> &dyn DynEq {
-        self
-    }
-}
-
-impl DynHash for RangeProofWrapper {
-    fn dyn_hash(&self, _: &mut dyn Hasher) {}
-
-    fn is_hashable(&self) -> bool {
-        false
-    }
-}
-
-impl Serializable for RangeProofWrapper {
+impl DynSerializable for RangeProofWrapper {
     fn get_size(&self) -> usize {
         self.0.size()
     }
 
-    fn is_serializable(&self) -> bool {
-        true
-    }
-
-    fn serialize(&self, buffer: &mut Vec<u8>) -> usize {
-        let mut writer = Writer::new(buffer);
-        writer.write_u8(RANGE_PROOF_OPAQUE_ID);
-        self.0.write(&mut writer);
-        writer.total_write()
+    fn serialize(&self, buffer: &mut Vec<u8>) -> Result<usize, SerializationError> {
+        let start = buffer.len();
+        let mut writer = Writer::new(&mut *buffer);
+        writer.write_u8(RANGE_PROOF_OPAQUE_ID)?;
+        self.0.write(&mut writer)?;
+        Ok(buffer.len() - start)
     }
 }
 
@@ -96,7 +72,7 @@ pub fn range_proof_verify_single(zelf: FnInstance, mut params: FnParams, _: &Mod
     let zelf = zelf?;
     let zelf: &RangeProofWrapper = zelf.as_opaque_type()?;
 
-    let valid = zelf.0.verify_single(&BP_GENS, &PC_GENS, &mut transcript.0, &commitment, proof_size as _)
+    let valid = zelf.0.verify_single(&BP_GENS, &PC_GENS, &mut transcript.0, &commitment, proof_size as usize)
         .is_ok();
 
     Ok(SysCallResult::Return(Primitive::Boolean(valid).into()))
@@ -135,7 +111,7 @@ pub fn range_proof_verify_multiple(zelf: FnInstance, mut params: FnParams, _: &M
     let zelf = zelf?;
     let zelf: &RangeProofWrapper = zelf.as_opaque_type()?;
 
-    let valid = zelf.0.verify_multiple(&BP_GENS, &PC_GENS, &mut transcript.0, &commitments, proof_size as _)
+    let valid = zelf.0.verify_multiple(&BP_GENS, &PC_GENS, &mut transcript.0, &commitments, proof_size as usize)
         .is_ok();
 
     Ok(SysCallResult::Return(Primitive::Boolean(valid).into()))

@@ -10,7 +10,6 @@ use crate::{
 };
 use super::*;
 
-
 // Changes made during the execution that can be persisted
 // if the execution is successful
 #[derive(Debug, Clone, Default)]

@@ -11,22 +11,21 @@ mod contract;
 use bulletproofs::RangeProof;
 use curve25519_dalek::{ristretto::CompressedRistretto, Scalar};
 use log::debug;
-use silex_types::{
-    register_opaque_json,
-    impl_opaque
-};
-use xelis_vm::{Opaque, OpaqueWrapper, ValueError, tid, traits::JSON_REGISTRY};
+use std::fmt::{Formatter, Result as FmtResult};
+use serde_json::Value;
+use matriochka::ResultExt;
+use silex_types::register_opaque_json;
+use xelis_vm::{Opaque, OpaqueWrapper, ValueError, tid, traits::{DynEq, DynHash, DynSerializable, JSONHelper, JSON_REGISTRY}};
 use crate::{
     account::CiphertextCache,
     block::Block,
-    contract::OpaqueScheduledExecution,
     crypto::{
         proofs::*,
         Address,
         Hash,
         Signature
     },
-    serializer::*,
+    serializer::{Error as SerializationError, *},
     transaction::Transaction
 };
 use super::ChainState;
@@ -55,83 +54,44 @@ pub const BALANCE_PROOF_OPAQUE_ID: u8 = 9;
 pub const RISTRETTO_OPAQUE_ID: u8 = 10;
 pub const SCALAR_OPAQUE_ID: u8 = 11;
 
-impl_opaque!(
-    "Hash",
-    Hash,
-    display,
-    json
-);
-impl_opaque!(
-    "Address",
-    Address,
-    ty
-);
-impl_opaque!(
-    "Address",
-    Address,
-    json
-);
-impl_opaque!(
-    "OpaqueTransaction",
-    OpaqueTransaction
-);
-impl_opaque!(
-    "OpaqueBlock",
-    OpaqueBlock
-);
-impl_opaque!(
-    "OpaqueRandom",
-    OpaqueRandom
-);
-impl_opaque!(
-    "OpaqueStorage",
-    OpaqueStorage
-);
-impl_opaque!(
-    "OpaqueReadOnlyStorage",
-    OpaqueReadOnlyStorage
-);
-impl_opaque!(
-    "OpaqueMemoryStorage",
-    OpaqueMemoryStorage
-);
-impl_opaque!(
-    "OpaqueBTreeStore",
-    OpaqueBTreeStore
-);
-impl_opaque!(
-    "OpaqueBTreeCursor",
-    OpaqueBTreeCursor
-);
-impl_opaque!(
-    "Asset",
-    OpaqueAsset
-);
-impl_opaque!(
-    "Contract",
-    OpaqueContract
-);
-impl_opaque!(
-    "OpaqueScheduledExecution",
-    OpaqueScheduledExecution
-);
-
 impl Opaque for Address {
     fn clone_box(&self) -> Box<dyn Opaque> {
         Box::new(self.clone())
     }
 
-    fn display(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn as_serializable(&self) -> Option<&dyn DynSerializable> {
+        Some(self)
+    }
+
+    fn as_hashable(&self) -> Option<&dyn DynHash> {
+        Some(self)
+    }
+
+    fn as_eq(&self) -> Option<&dyn DynEq> {
+        Some(self)
+    }
+
+    fn display(&self, f: &mut Formatter<'_>) -> FmtResult {
         write!(f, "Address({})", self)
     }
 
-    fn validate(&self) -> Result<(), xelis_vm::ValueError> {
+    fn validate(&self) -> Result<(), ValueError> {
         // Only allow normal addresses
         if !self.is_normal() {
             return Err(ValueError::InvalidOpaqueTypeMismatch);
         }
 
         Ok(())
+    }
+}
+
+impl JSONHelper for Address {
+    fn serialize_json(&self) -> Result<Value, SerializationError> {
+        serde_json::to_value(self).context("serializing Address to JSON")
+    }
+
+    fn is_json_supported(&self) -> bool {
+        true
     }
 }
 
@@ -157,25 +117,33 @@ pub fn register_opaque_types() {
 }
 
 impl Serializer for OpaqueWrapper {
-    fn write(&self, writer: &mut Writer) {
-        self.inner().serialize(writer.as_mut_bytes());
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            let mut bytes = Vec::new();
+            self.as_serializable()
+                .ok_or_else(|| SerializationError::new(ValueError::InvalidOpaqueTypeMismatch).context("opaque value does not support binary serialization"))?
+                .serialize(&mut bytes)?;
+            writer.write_bytes(&bytes)
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok(match reader.read_u8()? {
-            HASH_OPAQUE_ID => OpaqueWrapper::new(Hash::read(reader)?),
-            ADDRESS_OPAQUE_ID => OpaqueWrapper::new(Address::read(reader)?),
-            SIGNATURE_OPAQUE_ID => OpaqueWrapper::new(Signature::read(reader)?),
-            CIPHERTEXT_OPAQUE_ID => OpaqueWrapper::new(CiphertextCache::read(reader)?),
-            CIPHERTEXT_VALIDITY_PROOF_OPAQUE_ID => OpaqueWrapper::new(CiphertextValidityProof::read(reader)?),
-            COMMITMENT_EQUALITY_PROOF_OPAQUE_ID => OpaqueWrapper::new(CommitmentEqProof::read(reader)?),
-            RANGE_PROOF_OPAQUE_ID => OpaqueWrapper::new(RangeProofWrapper(RangeProof::read(reader)?)),
-            ARBITRARY_RANGE_PROOF_OPAQUE_ID => OpaqueWrapper::new(ArbitraryRangeProof::read(reader)?),
-            OWNERSHIP_PROOF_OPAQUE_ID => OpaqueWrapper::new(OwnershipProof::read(reader)?),
-            BALANCE_PROOF_OPAQUE_ID => OpaqueWrapper::new(BalanceProof::read(reader)?),
-            RISTRETTO_OPAQUE_ID => OpaqueWrapper::new(OpaqueRistrettoPoint::Compressed(CompressedRistretto::read(reader)?)),
-            SCALAR_OPAQUE_ID => OpaqueWrapper::new(OpaqueScalar(Scalar::read(reader)?)),
-            _ => return Err(ReaderError::InvalidValue)
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            Ok(match reader.read_u8()? {
+                HASH_OPAQUE_ID => OpaqueWrapper::new(Hash::read(reader)?),
+                ADDRESS_OPAQUE_ID => OpaqueWrapper::new(Address::read(reader)?),
+                SIGNATURE_OPAQUE_ID => OpaqueWrapper::new(Signature::read(reader)?),
+                CIPHERTEXT_OPAQUE_ID => OpaqueWrapper::new(CiphertextCache::read(reader)?),
+                CIPHERTEXT_VALIDITY_PROOF_OPAQUE_ID => OpaqueWrapper::new(CiphertextValidityProof::read(reader)?),
+                COMMITMENT_EQUALITY_PROOF_OPAQUE_ID => OpaqueWrapper::new(CommitmentEqProof::read(reader)?),
+                RANGE_PROOF_OPAQUE_ID => OpaqueWrapper::new(RangeProofWrapper(RangeProof::read(reader)?)),
+                ARBITRARY_RANGE_PROOF_OPAQUE_ID => OpaqueWrapper::new(ArbitraryRangeProof::read(reader)?),
+                OWNERSHIP_PROOF_OPAQUE_ID => OpaqueWrapper::new(OwnershipProof::read(reader)?),
+                BALANCE_PROOF_OPAQUE_ID => OpaqueWrapper::new(BalanceProof::read(reader)?),
+                RISTRETTO_OPAQUE_ID => OpaqueWrapper::new(OpaqueRistrettoPoint::Compressed(CompressedRistretto::read(reader)?)),
+                SCALAR_OPAQUE_ID => OpaqueWrapper::new(OpaqueScalar(Scalar::read(reader)?)),
+                _ => return Err(SerializationError::new(DecodeError::InvalidValue))
+            })
         })
     }
 }

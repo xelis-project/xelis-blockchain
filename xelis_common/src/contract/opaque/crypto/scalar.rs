@@ -1,10 +1,10 @@
-use anyhow::Context as _;
+use matriochka::OptionExt;
 use curve25519_dalek::Scalar;
 use serde::{Deserialize, Serialize};
 use sha3::Sha3_512;
 use xelis_vm::{
-    impl_opaque,
-    traits::Serializable,
+    Opaque,
+    traits::DynSerializable,
     VMContext,
     EnvironmentError,
     FnInstance,
@@ -26,25 +26,20 @@ use crate::{
         elgamal::SCALAR_SIZE,
         proofs::G
     },
-    serializer::{Serializer, Writer}
+    serializer::{Error as SerializationError, Serializer, Writer, WriterExt},
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Opaque)]
+#[opaque(name = "Scalar", json, serializable, hash, eq)]
 pub struct OpaqueScalar(pub Scalar);
 
-impl_opaque!("Scalar", OpaqueScalar, json);
-impl_opaque!("Scalar", OpaqueScalar);
-
-impl Serializable for OpaqueScalar {
-    fn serialize(&self, buffer: &mut Vec<u8>) -> usize {
-        let mut writer = Writer::new(buffer);
-        writer.write_u8(SCALAR_OPAQUE_ID);
-        self.0.write(&mut writer);
-        writer.total_write()
-    }
-
-    fn is_serializable(&self) -> bool {
-        true
+impl DynSerializable for OpaqueScalar {
+    fn serialize(&self, buffer: &mut Vec<u8>) -> Result<usize, SerializationError> {
+        let start = buffer.len();
+        let mut writer = Writer::new(&mut *buffer);
+        writer.write_u8(SCALAR_OPAQUE_ID)?;
+        self.0.write(&mut writer)?;
+        Ok(buffer.len() - start)
     }
 
     fn get_size(&self) -> usize {

@@ -2,7 +2,11 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use xelis_vm::ValueCell;
 
-use crate::{contract::InterContractPermission, crypto::Hash, serializer::*};
+use crate::{
+    contract::InterContractPermission,
+    crypto::Hash,
+    serializer::{Error as SerializationError, *},
+};
 use super::Deposits;
 
 // InvokeContractPayload is a public payload allowing to call a smart contract
@@ -31,36 +35,40 @@ pub struct InvokeContractPayload {
 }
 
 impl Serializer for InvokeContractPayload {
-    fn write(&self, writer: &mut Writer) {
-        self.contract.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.contract.write(writer)?;
 
-        self.deposits.write(writer);
-        self.entry_id.write(writer);
-        self.max_gas.write(writer);
+            self.deposits.write(writer)?;
+            self.entry_id.write(writer)?;
+            self.max_gas.write(writer)?;
 
-        writer.write_u8(self.parameters.len() as u8);
-        for parameter in &self.parameters {
-            parameter.write(writer);
-        }
+            writer.write_u8(self.parameters.len() as u8)?;
+            for parameter in &self.parameters {
+                parameter.write(writer)?;
+            }
 
-        self.permission.write(writer);
+            self.permission.write(writer)
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<InvokeContractPayload, ReaderError> {
-        let contract = Hash::read(reader)?;
-        let deposits = Deposits::read(reader)?;
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<InvokeContractPayload, ReaderError> {
+        reader.read_with_context(|reader| {
+            let contract = Hash::read(reader)?;
+            let deposits = Deposits::read(reader)?;
 
-        let chunk_id = reader.read_u16()?;
-        let max_gas = reader.read_u64()?;
+            let chunk_id = reader.read_u16()?;
+            let max_gas = reader.read_u64()?;
 
-        let len = reader.read_u8()? as usize;
-        let mut parameters = Vec::with_capacity(len);
-        for _ in 0..len {
-            parameters.push(ValueCell::read(reader)?);
-        }
-        let permission = InterContractPermission::read(reader)?;
+            let len = reader.read_u8()? as usize;
+            let mut parameters = Vec::with_capacity(len);
+            for _ in 0..len {
+                parameters.push(ValueCell::read(reader)?);
+            }
+            let permission = InterContractPermission::read(reader)?;
 
-        Ok(InvokeContractPayload { contract, deposits, entry_id: chunk_id, max_gas, parameters, permission })
+            Ok(InvokeContractPayload { contract, deposits, entry_id: chunk_id, max_gas, parameters, permission })
+        })
     }
 
     fn size(&self) -> usize {

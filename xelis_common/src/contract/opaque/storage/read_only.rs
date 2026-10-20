@@ -1,7 +1,8 @@
 use std::collections::hash_map::Entry;
 
 use xelis_vm::{
-    traits::{JSONHelper, Serializable},
+    ValueCell,
+    Opaque,
     VMContext,
     FnInstance,
     FnParams,
@@ -25,12 +26,9 @@ use crate::{
 };
 use super::check_storage_key;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Opaque)]
+#[opaque(hash, eq)]
 pub struct OpaqueReadOnlyStorage(Hash);
-
-impl JSONHelper for OpaqueReadOnlyStorage {}
-
-impl Serializable for OpaqueReadOnlyStorage {}
 
 pub async fn read_only_storage<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, mut parameters: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
     let (storage, state) = from_context::<P>(context)?;
@@ -44,7 +42,7 @@ pub async fn read_only_storage<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInsta
         return Ok(SysCallResult::Return(Primitive::Null.into()))
     }
 
-    Ok(SysCallResult::Return(Primitive::Opaque(OpaqueWrapper::new(OpaqueReadOnlyStorage(hash))).into()))
+    Ok(SysCallResult::Return(ValueCell::Opaque(OpaqueWrapper::new(OpaqueReadOnlyStorage(hash))).into()))
 }
 
 pub async fn read_only_storage_load<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {

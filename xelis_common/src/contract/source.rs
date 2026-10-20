@@ -2,7 +2,10 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{crypto::{Hash, PublicKey}, serializer::*};
+use crate::{
+    crypto::{Hash, PublicKey},
+    serializer::{Error as SerializationError, *},
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case", tag = "type", content = "value")]
@@ -21,48 +24,52 @@ pub enum Source {
 }
 
 impl Serializer for Source {
-    fn write(&self, writer: &mut Writer) {
-        match self {
-            Source::Contract(hash) => {
-                writer.write_u8(0);
-                hash.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            match self {
+                Source::Contract(hash) => {
+                    writer.write_u8(0)?;
+                    hash.write(writer)
+                }
+                Source::Account(account) => {
+                    writer.write_u8(1)?;
+                    account.write(writer)
+                }
+                Source::ContractBalance(hash) => {
+                    writer.write_u8(2)?;
+                    hash.write(writer)
+                }
+                Source::AccountBalance(account) => {
+                    writer.write_u8(3)?;
+                    account.write(writer)
+                }
             }
-            Source::Account(account) => {
-                writer.write_u8(1);
-                account.write(writer);
-            }
-            Source::ContractBalance(hash) => {
-                writer.write_u8(2);
-                hash.write(writer);
-            }
-            Source::AccountBalance(account) => {
-                writer.write_u8(3);
-                account.write(writer);
-            }
-        }
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let tag = reader.read_u8()?;
-        match tag {
-            0 => {
-                let hash = Hash::read(reader)?;
-                Ok(Source::Contract(hash))
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let tag = reader.read_u8()?;
+            match tag {
+                0 => {
+                    let hash = Hash::read(reader)?;
+                    Ok(Source::Contract(hash))
+                }
+                1 => {
+                    let account = PublicKey::read(reader)?;
+                    Ok(Source::Account(account))
+                },
+                2 => {
+                    let hash = Hash::read(reader)?;
+                    Ok(Source::ContractBalance(hash))
+                },
+                3 => {
+                    let account = PublicKey::read(reader)?;
+                    Ok(Source::AccountBalance(account))
+                },
+                _ => Err(SerializationError::new(DecodeError::InvalidValue)),
             }
-            1 => {
-                let account = PublicKey::read(reader)?;
-                Ok(Source::Account(account))
-            },
-            2 => {
-                let hash = Hash::read(reader)?;
-                Ok(Source::ContractBalance(hash))
-            },
-            3 => {
-                let account = PublicKey::read(reader)?;
-                Ok(Source::AccountBalance(account))
-            },
-            _ => Err(ReaderError::InvalidValue),
-        }
+        })
     }
 
     fn size(&self) -> usize {

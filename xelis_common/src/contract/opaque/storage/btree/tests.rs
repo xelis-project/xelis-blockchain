@@ -1,10 +1,10 @@
+use xelis_vm::{PrimitiveInteger, Module};
 use std::{borrow::Cow, sync::Arc};
 
 use super::*;
 
 use indexmap::{IndexMap, IndexSet};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
-use xelis_vm::Module;
 
 use crate::{
     contract::{ContractModule, ContractVersion, vm::ContractCaller},
@@ -175,8 +175,8 @@ macro_rules! init_test {
 
 #[test]
 fn btree_header_matches_full_node_layout() {
-    let node = Node::new(1, b"k".to_vec(), ValueCell::from(Primitive::U64(7)), Some(2));
-    let bytes = node.to_bytes();
+    let node = Node::new(1, b"k".to_vec(), ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(7))), Some(2));
+    let bytes = node.to_bytes().unwrap();
     let value = ValueCell::Bytes(bytes);
     let hdr = super::node_header_from_value(1, &value).expect("header decode");
     let full = Node::from_value(1, &value).expect("full decode");
@@ -202,11 +202,10 @@ async fn btree_insert_get_delete_roundtrip() {
     init_test!(contract, provider, chain, state);
     let store = OpaqueBTreeStore { namespace: b"orders".to_vec() };
 
-
     assert!(find_key(&provider, &mut state, &contract, &store, b"k1").await.unwrap().is_none());
 
-    insert_key(&provider, &mut state, &contract, &store, b"k1".to_vec(), ValueCell::from(Primitive::U64(10))).await.unwrap();
-    insert_key(&provider, &mut state, &contract, &store, b"k2".to_vec(), ValueCell::from(Primitive::U64(20))).await.unwrap();
+    insert_key(&provider, &mut state, &contract, &store, b"k1".to_vec(), ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(10)))).await.unwrap();
+    insert_key(&provider, &mut state, &contract, &store, b"k2".to_vec(), ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(20)))).await.unwrap();
 
     let val = find_key(&provider, &mut state, &contract, &store, b"k1").await.unwrap();
     assert_eq!(val.unwrap().as_u64().unwrap(), 10);
@@ -228,7 +227,7 @@ async fn btree_seek_biases_work() {
             &contract,
             &store,
             k.to_be_bytes().to_vec(),
-            ValueCell::from(Primitive::U64(*v)),
+            ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(*v))),
         ).await.unwrap();
     }
 
@@ -254,7 +253,7 @@ async fn btree_cursor_iteration_matches_ordering() {
             &contract,
             &store,
             key.to_be_bytes().to_vec(),
-            ValueCell::from(Primitive::U64(key)),
+            ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(key))),
         ).await.unwrap();
     }
 
@@ -296,7 +295,7 @@ async fn btree_cursor_scans_random_u64s_in_order() {
             &contract,
             &store,
             key.to_be_bytes().to_vec(),
-            ValueCell::from(Primitive::U64(value)),
+            ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(value))),
         ).await.unwrap();
     }
 
@@ -353,7 +352,7 @@ async fn btree_allows_duplicate_keys_and_ordered_traversal() {
             &contract,
             &store,
             key_bytes.clone(),
-            ValueCell::from(Primitive::U64(value)),
+            ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(value))),
         ).await.unwrap();
     }
 
@@ -389,7 +388,7 @@ async fn btree_cursor_scans_duplicate_bucket() {
             &contract,
             &store,
             key_bytes.clone(),
-            ValueCell::from(Primitive::U64(value)),
+            ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(value))),
         ).await.unwrap();
     }
 
@@ -444,7 +443,7 @@ async fn btree_delete_root_with_two_children_promotes_successor() {
             &contract,
             &store,
             key.to_be_bytes().to_vec(),
-            ValueCell::from(Primitive::U64(key * 10)),
+            ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(key * 10))),
         ).await.unwrap();
     }
 
@@ -491,7 +490,7 @@ async fn btree_seek_handles_missing_key_biases() {
             &contract,
             &store,
             key.to_be_bytes().to_vec(),
-            ValueCell::from(Primitive::U64(key * 100)),
+            ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(key * 100))),
         ).await.unwrap();
     }
 
@@ -533,7 +532,7 @@ async fn btree_seek_equal_strict_bias_uses_ancestors() {
             &contract,
             &store,
             k.to_be_bytes().to_vec(),
-            ValueCell::from(Primitive::U64(v)),
+            ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(v))),
         ).await.unwrap();
     }
 
@@ -594,7 +593,7 @@ async fn btree_cursor_key_value_and_exhaustion() {
             &contract,
             &store,
             key.to_be_bytes().to_vec(),
-            ValueCell::from(Primitive::U64(key * 5)),
+            ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(key * 5))),
         ).await.unwrap();
     }
 
@@ -648,7 +647,7 @@ async fn btree_cursor_allows_deleting_during_scan() {
             &contract,
             &store,
             key.to_be_bytes().to_vec(),
-            ValueCell::from(Primitive::U64(key)),
+            ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(key))),
         ).await.unwrap();
     }
 
@@ -711,7 +710,7 @@ async fn btree_cursor_selective_delete_during_scan() {
             &contract,
             &store,
             key.to_be_bytes().to_vec(),
-            ValueCell::from(Primitive::U64(value)),
+            ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(value))),
         ).await.unwrap();
         expected.push((key, value));
     }
@@ -789,7 +788,7 @@ async fn btree_cursor_descends_and_deletes() {
             &contract,
             &store,
             key.to_be_bytes().to_vec(),
-            ValueCell::from(Primitive::U64(key)),
+            ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(key))),
         ).await.unwrap();
     }
 
@@ -859,7 +858,7 @@ async fn btree_cursor_consecutive_deletes() {
             &contract,
             &store,
             key.to_be_bytes().to_vec(),
-            ValueCell::from(Primitive::U64(key)),
+            ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(key))),
         ).await.unwrap();
     }
 
@@ -919,7 +918,7 @@ async fn btree_cursor_exhausts_tree() {
             &contract,
             &store,
             key.to_be_bytes().to_vec(),
-            ValueCell::from(Primitive::U64(key)),
+            ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(key))),
         ).await.unwrap();
     }
 
@@ -1003,7 +1002,7 @@ async fn btree_insert_duplicate_allocates_new_node() {
         &contract,
         &store,
         b"k".to_vec(),
-        ValueCell::from(Primitive::U64(10)),
+        ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(10))),
     ).await.unwrap();
 
     let next1 = read_next_id(&provider, &mut state, &contract, &store.namespace).await.unwrap();
@@ -1015,7 +1014,7 @@ async fn btree_insert_duplicate_allocates_new_node() {
         &contract,
         &store,
         b"k".to_vec(),
-        ValueCell::from(Primitive::U64(20)),
+        ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(20))),
     ).await.unwrap();
 
     // next id advanced because a new node was allocated for the duplicate
@@ -1042,7 +1041,7 @@ async fn btree_delete_variants_cover_storage_cleanup() {
             &contract,
             &store,
             key.to_be_bytes().to_vec(),
-            ValueCell::from(Primitive::U64(key)),
+            ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(key))),
         ).await.unwrap();
     }
 
@@ -1100,7 +1099,7 @@ async fn btree_cursor_cache_refresh_tracks_state() {
             &contract,
             &store,
             key.to_be_bytes().to_vec(),
-            ValueCell::from(Primitive::U64(key)),
+            ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(key))),
         ).await.unwrap();
     }
 
@@ -1150,7 +1149,7 @@ async fn btree_cursor_detects_stale_value_update() {
         &contract,
         &store,
         key.to_vec(),
-        ValueCell::from(Primitive::U64(100)),
+        ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(100))),
     ).await.unwrap();
 
     // 2. Create cursor pointing to it
@@ -1185,7 +1184,7 @@ async fn btree_cursor_detects_stale_value_update() {
     // Let's simulate manual node update in storage.
     
     let mut updated_node = node.clone();
-    updated_node.value = ValueCell::from(Primitive::U64(200));
+    updated_node.value = ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(200)));
     
     let mut ctx = TreeContext::new(&provider, &mut state, &contract, &store.namespace);
     super::write_node(&mut ctx, &updated_node).await.unwrap();
@@ -1210,7 +1209,7 @@ async fn btree_cache_prefetch_reads_values() {
 
     provider.contracts.entry(contract.clone())
         .or_default()
-        .insert(root_key.clone(), (5, Some(Primitive::U64(77).into())));
+        .insert(root_key.clone(), (5, Some(Primitive::Integer(PrimitiveInteger::U64(77)).into())));
 
     let root = read_root_id(&provider, &mut state, &contract, &namespace).await.unwrap();
     assert_eq!(root, 77);
@@ -1241,7 +1240,7 @@ async fn btree_seek_empty_and_bounds() {
             &contract,
             &store,
             key.to_be_bytes().to_vec(),
-            ValueCell::from(Primitive::U64(key)),
+            ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(key))),
         ).await.unwrap();
     }
 
@@ -1276,7 +1275,7 @@ async fn btree_seek_first_last_works() {
             &contract,
             &store,
             key.to_be_bytes().to_vec(),
-            ValueCell::from(Primitive::U64(key)),
+            ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(key))),
         ).await.unwrap();
     }
 
@@ -1301,7 +1300,7 @@ async fn btree_namespace_isolation() {
         &contract,
         &store_a,
         b"x".to_vec(),
-        ValueCell::from(Primitive::U64(1)),
+        ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(1))),
     ).await.unwrap();
 
     let val_a = find_key(&provider, &mut state, &contract, &store_a, b"x").await.unwrap();
@@ -1314,13 +1313,13 @@ async fn btree_node_serialization_roundtrip_matches_original() {
     let node = Node {
         id: 42,
         key: b"abc".to_vec(),
-        value: ValueCell::from(Primitive::U64(99)),
+        value: ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(99))),
         parent: Some(7),
         left: Some(8),
         right: None,
     };
 
-    let roundtrip = Node::from_value(42, &node.to_value()).unwrap();
+    let roundtrip = Node::from_value(42, &node.to_value().unwrap()).unwrap();
     assert_eq!(roundtrip.id, 42);
     assert_eq!(roundtrip.key, b"abc".to_vec());
     assert_eq!(roundtrip.value.as_u64().unwrap(), 99);
@@ -1409,7 +1408,7 @@ async fn btree_storage_usage_single_insert_reports_activity() {
     let store = OpaqueBTreeStore { namespace: b"insert_usage".to_vec() };
 
     let mut ctx = TreeContext::new(&provider, &mut state, &contract, &store.namespace);
-    super::insert_key(&mut ctx, b"k".to_vec(), ValueCell::from(Primitive::U64(1))).await.unwrap();
+    super::insert_key(&mut ctx, b"k".to_vec(), ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(1)))).await.unwrap();
     let usage = ctx.finish();
 
     assert_eq!(usage.read_bytes, 72, "insert should read bytes");
@@ -1427,7 +1426,7 @@ async fn btree_storage_usage_delete_reports_activity() {
         &contract,
         &store,
         b"k".to_vec(),
-        ValueCell::from(Primitive::U64(7)),
+        ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(7))),
     ).await.unwrap();
 
     let mut ctx = TreeContext::new(&provider, &mut state, &contract, &store.namespace);
@@ -1469,7 +1468,7 @@ async fn btree_len_tracks_insert_and_delete() {
             &contract,
             &store,
             i.to_be_bytes().to_vec(),
-            ValueCell::from(Primitive::U64(i)),
+            ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(i))),
         ).await.unwrap();
         assert_eq!(read_size(&provider, &mut state, &contract, &store.namespace).await.unwrap(), i + 1);
     }
@@ -1556,7 +1555,7 @@ async fn btree_treap_invariants_after_random_inserts_and_deletes() {
     for &k in &keys {
         insert_key(
             &provider, &mut state, &contract, &store,
-            k.to_be_bytes().to_vec(), ValueCell::from(Primitive::U64(k)),
+            k.to_be_bytes().to_vec(), ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(k))),
         ).await.unwrap();
     }
     btree_assert_treap_invariants(&provider, &mut state, &contract, &store.namespace).await;
@@ -1579,7 +1578,7 @@ async fn btree_treap_rotate_left_at_root_updates_links() {
     let k1 = 1_000_000_000u64;
     insert_key(
         &provider, &mut state, &contract, &store,
-        k1.to_be_bytes().to_vec(), ValueCell::from(Primitive::U64(1)),
+        k1.to_be_bytes().to_vec(), ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(1))),
     ).await.unwrap();
     let p1 = super::priority_for_pair(&k1.to_be_bytes(), 1);
 
@@ -1590,7 +1589,7 @@ async fn btree_treap_rotate_left_at_root_updates_links() {
     }
     insert_key(
         &provider, &mut state, &contract, &store,
-        k2.to_be_bytes().to_vec(), ValueCell::from(Primitive::U64(2)),
+        k2.to_be_bytes().to_vec(), ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(2))),
     ).await.unwrap();
 
     let root_id = read_root_id(&provider, &mut state, &contract, &store.namespace).await.unwrap();
@@ -1615,7 +1614,7 @@ async fn btree_treap_rotate_right_under_parent_updates_links() {
     let store = OpaqueBTreeStore { namespace: b"rot_right_child".to_vec() };
 
     let k1 = 1_000_000_000u64; // root
-    insert_key(&provider, &mut state, &contract, &store, k1.to_be_bytes().to_vec(), ValueCell::from(Primitive::U64(1))).await.unwrap();
+    insert_key(&provider, &mut state, &contract, &store, k1.to_be_bytes().to_vec(), ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(1)))).await.unwrap();
     let p1 = super::priority_for_pair(&k1.to_be_bytes(), 1);
 
     // Choose k2 < k1 with p2 < p1 so it stays as left child (no rotation to root).
@@ -1623,7 +1622,7 @@ async fn btree_treap_rotate_right_under_parent_updates_links() {
     while super::priority_for_pair(&k2.to_be_bytes(), 2) >= p1 {
         k2 -= 1;
     }
-    insert_key(&provider, &mut state, &contract, &store, k2.to_be_bytes().to_vec(), ValueCell::from(Primitive::U64(2))).await.unwrap();
+    insert_key(&provider, &mut state, &contract, &store, k2.to_be_bytes().to_vec(), ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(2)))).await.unwrap();
     let p2 = super::priority_for_pair(&k2.to_be_bytes(), 2);
 
     // Choose k3 < k2 with p2 < p3 <= p1 to rotate above k2 but not above k1.
@@ -1633,7 +1632,7 @@ async fn btree_treap_rotate_right_under_parent_updates_links() {
         if p3 > p2 && p3 <= p1 { break; }
         k3 -= 1;
     }
-    insert_key(&provider, &mut state, &contract, &store, k3.to_be_bytes().to_vec(), ValueCell::from(Primitive::U64(3))).await.unwrap();
+    insert_key(&provider, &mut state, &contract, &store, k3.to_be_bytes().to_vec(), ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(3)))).await.unwrap();
 
     let root_id = read_root_id(&provider, &mut state, &contract, &store.namespace).await.unwrap();
     let root = read_node(&provider, &mut state, &contract, &store.namespace, root_id).await.unwrap().unwrap();
@@ -1658,11 +1657,11 @@ async fn btree_treap_seek_with_duplicates_bias_matrix() {
     let store = OpaqueBTreeStore { namespace: b"dup_bias".to_vec() };
 
     // Keys: 6, 7 (x3), 8
-    insert_key(&provider, &mut state, &contract, &store, 6u64.to_be_bytes().to_vec(), ValueCell::from(Primitive::U64(6))).await.unwrap();
+    insert_key(&provider, &mut state, &contract, &store, 6u64.to_be_bytes().to_vec(), ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(6)))).await.unwrap();
     for v in [1u64, 2, 3] {
-        insert_key(&provider, &mut state, &contract, &store, 7u64.to_be_bytes().to_vec(), ValueCell::from(Primitive::U64(v))).await.unwrap();
+        insert_key(&provider, &mut state, &contract, &store, 7u64.to_be_bytes().to_vec(), ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(v)))).await.unwrap();
     }
-    insert_key(&provider, &mut state, &contract, &store, 8u64.to_be_bytes().to_vec(), ValueCell::from(Primitive::U64(8))).await.unwrap();
+    insert_key(&provider, &mut state, &contract, &store, 8u64.to_be_bytes().to_vec(), ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(8)))).await.unwrap();
 
     let exact = seek_node(&provider, &mut state, &contract, &store, &7u64.to_be_bytes(), BTreeSeekBias::Exact).await.unwrap().unwrap();
     assert_eq!(exact.value.as_u64().unwrap(), 1, "Exact must return first duplicate");
@@ -1685,9 +1684,9 @@ async fn btree_treap_predecessor_through_duplicate_bucket() {
     init_test!(contract, provider, chain, state);
     let store = OpaqueBTreeStore { namespace: b"dup_pred".to_vec() };
 
-    insert_key(&provider, &mut state, &contract, &store, 8u64.to_be_bytes().to_vec(), ValueCell::from(Primitive::U64(8))).await.unwrap();
+    insert_key(&provider, &mut state, &contract, &store, 8u64.to_be_bytes().to_vec(), ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(8)))).await.unwrap();
     for v in [10u64, 20, 30] {
-        insert_key(&provider, &mut state, &contract, &store, 9u64.to_be_bytes().to_vec(), ValueCell::from(Primitive::U64(v))).await.unwrap();
+        insert_key(&provider, &mut state, &contract, &store, 9u64.to_be_bytes().to_vec(), ValueCell::from(Primitive::Integer(PrimitiveInteger::U64(v)))).await.unwrap();
     }
 
     // Get the first duplicate (value=10)

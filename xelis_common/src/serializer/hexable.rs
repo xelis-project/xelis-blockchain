@@ -51,8 +51,15 @@ impl<'de, T: Serializer + Deserialize<'de>> Deserialize<'de> for Hexable<T> {
 
 #[cfg(test)]
 mod tests {
+    use crate::serializer::{
+        Error as SerializationError,
+        Readable,
+        Reader,
+        ReaderError,
+        Writable,
+        Writer,
+    };
     use super::*;
-    use crate::serializer::{Reader, ReaderError, Writer};
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     struct Test {
@@ -61,18 +68,22 @@ mod tests {
     }
 
     impl Serializer for Test {
-        fn write(&self, writer: &mut Writer) {
-            self.a.write(writer);
-            self.b.write(writer);
+        fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+            writer.write_with_context::<Self>(|writer| {
+                self.a.write(writer)?;
+                self.b.write(writer)
+            })
         }
 
-        fn read(reader: &mut Reader) -> Result<Self, ReaderError>
+        fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError>
         where
             Self: Sized,
         {
-            Ok(Self {
-                a: u32::read(reader)?,
-                b: String::read(reader)?,
+            reader.read_with_context(|reader| {
+                Ok(Self {
+                    a: u32::read(reader)?,
+                    b: String::read(reader)?,
+                })
             })
         }
     }
@@ -100,7 +111,7 @@ mod tests {
     #[test]
     fn test_from_hex() {
         let test = Test { a: 42, b: "hello".to_string() };
-        let hex = test.to_hex();
+        let hex = test.to_hex().unwrap();
         let hexable: Hexable<Test> = serde_json::from_str(&format!("\"{}\"", hex)).unwrap();
         assert_eq!(*hexable, test);
     }

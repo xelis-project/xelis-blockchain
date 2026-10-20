@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     api::DataElement,
-    serializer::*,
+    serializer::{Error as SerializationError, *},
 };
 use super::SharedKey;
 
@@ -24,24 +24,28 @@ pub enum PlaintextFlag {
 }
 
 impl Serializer for PlaintextFlag {
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        match reader.read_u8()? {
-            0 => Ok(Self::Private),
-            1 => Ok(Self::Public),
-            2 => Ok(Self::Proprietary),
-            3 => Ok(Self::Failed),
-            _ => Err(ReaderError::InvalidValue)
-        }
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            match reader.read_u8()? {
+                0 => Ok(Self::Private),
+                1 => Ok(Self::Public),
+                2 => Ok(Self::Proprietary),
+                3 => Ok(Self::Failed),
+                _ => Err(SerializationError::new(DecodeError::InvalidValue))
+            }
+        })
     }
 
-    fn write(&self, writer: &mut Writer) {
-        let id = match self {
-            Self::Private => 0,
-            Self::Public => 1,
-            Self::Proprietary => 2,
-            Self::Failed => 3
-        };
-        writer.write_u8(id);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            let id = match self {
+                Self::Private => 0,
+                Self::Public => 1,
+                Self::Proprietary => 2,
+                Self::Failed => 3
+            };
+            writer.write_u8(id)
+        })
     }
 
     fn size(&self) -> usize {
@@ -84,17 +88,21 @@ impl PlaintextExtraData {
 }
 
 impl Serializer for PlaintextExtraData {
-    fn write(&self, writer: &mut Writer) {
-        self.shared_key.write(writer);
-        self.data.write(writer);
-        self.flag.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.shared_key.write(writer)?;
+            self.data.write(writer)?;
+            self.flag.write(writer)
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok(Self {
-            shared_key: Option::read(reader)?,
-            data: Option::read(reader)?,
-            flag: PlaintextFlag::read(reader)?
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            Ok(Self {
+                shared_key: Option::read(reader)?,
+                data: Option::read(reader)?,
+                flag: PlaintextFlag::read(reader)?
+            })
         })
     }
 

@@ -1,3 +1,4 @@
+use xelis_vm::DynType;
 use std::{
     fmt::{Display, Formatter},
     hash::{Hash, Hasher},
@@ -6,8 +7,19 @@ use std::{
 };
 use crate::{
     api::{DataElement, ValueType, DataValue},
-    serializer::{Serializer, Writer, Reader, ReaderError},
     config::{PREFIX_ADDRESS, TESTNET_PREFIX_ADDRESS},
+    serializer::{
+        DecodeError,
+        Error as SerializationError,
+        Readable,
+        Reader,
+        ReaderError,
+        ReaderExt,
+        Serializer,
+        Writable,
+        Writer,
+        WriterExt,
+    },
     transaction::EXTRA_DATA_LIMIT_SIZE
 };
 use super::{
@@ -35,6 +47,7 @@ pub enum AddressType {
 /// It contains a public key and an address type (normal or data).
 #[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
 #[schemars(with = "String")]
+#[derive(DynType)]
 pub struct Address {
     mainnet: bool,
     addr_type: AddressType,
@@ -120,12 +133,12 @@ impl Address {
 
     // Compress the address to a byte array
     // We don't use Serializer trait to avoid storing mainnet bool
-    fn compress(&self) -> Vec<u8> {
+    fn compress(&self) -> Result<Vec<u8>, SerializationError> {
         let mut buffer = Vec::new();
         let mut writer = Writer::new(&mut buffer);
-        self.key.write(&mut writer);
-        self.addr_type.write(&mut writer);
-        buffer
+        self.key.write(&mut writer)?;
+        self.addr_type.write(&mut writer)?;
+        Ok(buffer)
     }
 
     // Read the address from a byte array
@@ -148,7 +161,7 @@ impl Address {
 
     // Returns the address as a string (human readable format)
     pub fn as_string(&self) -> Result<String, Bech32Error> {
-        let bits = convert_bits(&self.compress(), 8, 5, true)?;
+        let bits = convert_bits(&self.compress()?, 8, 5, true)?;
         let hrp = if self.is_mainnet() {
             PREFIX_ADDRESS
         } else {
@@ -185,22 +198,26 @@ impl Address {
 }
 
 impl Serializer for Address {
-    fn write(&self, writer: &mut Writer) {
-        self.mainnet.write(writer);
-        self.key.write(writer);
-        self.addr_type.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.mainnet.write(writer)?;
+            self.key.write(writer)?;
+            self.addr_type.write(writer)
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Address, ReaderError> {
-        let mainnet = bool::read(reader)?;
-        let key = PublicKey::read(reader)?;
-        let addr_type = AddressType::read(reader)?;
-        let addr = Address::new(mainnet, addr_type, key);
-        Ok(addr)
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Address, ReaderError> {
+        reader.read_with_context(|reader| {
+            let mainnet = bool::read(reader)?;
+            let key = PublicKey::read(reader)?;
+            let addr_type = AddressType::read(reader)?;
+            let addr = Address::new(mainnet, addr_type, key);
+            Ok(addr)
+        })
     }
 
     fn size(&self) -> usize {
-        self.compress().size()
+        1 + self.key.size() + self.addr_type.size()
     }
 }
 
@@ -224,34 +241,36 @@ impl Into<AddressType> for Address {
 }
 
 impl Serializer for AddressType {
-    fn write(&self, writer: &mut Writer) {
-        match self {
-            AddressType::Normal => {
-                writer.write_u8(0);
-            },
-            AddressType::Data(data) => {
-                writer.write_u8(1);
-                data.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            match self {
+                AddressType::Normal => writer.write_u8(0),
+                AddressType::Data(data) => {
+                    writer.write_u8(1)?;
+                    data.write(writer)
+                }
             }
-        };
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<AddressType, ReaderError> {
-        let _type = match reader.read_u8()? {
-            0 => AddressType::Normal,
-            1 => {
-                let read = reader.total_read();
-                let addr_type = AddressType::Data(DataElement::read(reader)?);
-                if reader.total_read() - read > EXTRA_DATA_LIMIT_SIZE {
-                    debug!("Invalid data in integrated address, maximum size reached");
-                    return Err(ReaderError::InvalidSize)
-                }
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<AddressType, ReaderError> {
+        reader.read_with_context(|reader| {
+            let _type = match reader.read_u8()? {
+                0 => AddressType::Normal,
+                1 => {
+                    let read = reader.total_read();
+                    let addr_type = AddressType::Data(DataElement::read(reader)?);
+                    if reader.total_read() - read > EXTRA_DATA_LIMIT_SIZE {
+                        debug!("Invalid data in integrated address, maximum size reached");
+                        return Err(SerializationError::new(DecodeError::InvalidSize))
+                    }
 
-                addr_type
-            },
-            _ => return Err(ReaderError::InvalidValue)
-        };
-        Ok(_type)
+                    addr_type
+                },
+                _ => return Err(SerializationError::new(DecodeError::InvalidValue))
+            };
+            Ok(_type)
+        })
     }
 
     fn size(&self) -> usize {

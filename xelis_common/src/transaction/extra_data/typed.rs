@@ -1,6 +1,17 @@
 use crate::{
     api::DataElement,
-    serializer::{Reader, ReaderError, Serializer, Writer}
+    serializer::{
+        DecodeError,
+        Error as SerializationError,
+        Readable,
+        Reader,
+        ReaderError,
+        ReaderExt,
+        Serializer,
+        Writable,
+        Writer,
+        WriterExt,
+    },
 };
 use super::{ExtraData, PlaintextData};
 
@@ -61,34 +72,38 @@ impl ExtraDataType {
 }
 
 impl Serializer for ExtraDataType {
-    fn write(&self, writer: &mut Writer) {
-        match self {
-            Self::Private(payload) => {
-                writer.write_u8(0);
-                payload.write(writer);
-            },
-            Self::Public(payload) => {
-                writer.write_u8(1);
-                payload.0.write(writer);
-            },
-            Self::Proprietary(payload) => {
-                writer.write_u8(2);
-                payload.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            match self {
+                Self::Private(payload) => {
+                    writer.write_u8(0)?;
+                    payload.write(writer)
+                },
+                Self::Public(payload) => {
+                    writer.write_u8(1)?;
+                    payload.0.write(writer)
+                },
+                Self::Proprietary(payload) => {
+                    writer.write_u8(2)?;
+                    payload.write(writer)
+                }
             }
-        }
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        Ok(match reader.read_u8()? {
-            0 => Self::Private(ExtraData::read(reader)?),
-            1 => Self::Public(PlaintextData(Vec::read(reader)?)),
-            2 => {
-                // We read manually to prevent the max default items limit
-                let len = reader.read_u16()?;
-                let values = reader.read_bytes(len as usize)?;
-                Self::Proprietary(values)
-            },
-            _ => return Err(ReaderError::InvalidValue)
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            Ok(match reader.read_u8()? {
+                0 => Self::Private(ExtraData::read(reader)?),
+                1 => Self::Public(PlaintextData(Vec::read(reader)?)),
+                2 => {
+                    // We read manually to prevent the max default items limit
+                    let len = reader.read_u16()?;
+                    let values = reader.read_vec(len as usize)?;
+                    Self::Proprietary(values)
+                },
+                _ => return Err(SerializationError::new(DecodeError::InvalidValue))
+            })
         })
     }
 }
@@ -102,7 +117,7 @@ mod tests {
     fn test_proprietary() {
         let inner = vec![0; 2048];
         let v = ExtraDataType::Proprietary(inner.clone());
-        let bytes = v.to_bytes();
+        let bytes = v.to_bytes().unwrap();
         let v2 = ExtraDataType::from_bytes(&bytes).unwrap();
         assert!(matches!(v2.kind(), ExtraDataKind::Proprietary));
         let ExtraDataType::Proprietary(v2) = v2 else {

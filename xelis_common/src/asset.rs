@@ -5,7 +5,18 @@ use serde::{Deserialize, Serialize};
 use crate::{
     block::TopoHeight,
     crypto::Hash,
-    serializer::{Reader, ReaderError, Serializer, Writer},
+    serializer::{
+        DecodeError,
+        Error as SerializationError,
+        Readable,
+        Reader,
+        ReaderError,
+        ReaderExt,
+        Serializer,
+        Writable,
+        Writer,
+        WriterExt,
+    },
     versioned::Versioned
 };
 
@@ -94,41 +105,43 @@ impl AssetOwner {
 }
 
 impl Serializer for AssetOwner {
-    fn write(&self, writer: &mut Writer) {
-        match self {
-            Self::None => {
-                writer.write_u8(0);
-            },
-            Self::Creator { contract, id } => {
-                writer.write_u8(1);
-                contract.write(writer);
-                id.write(writer);
-            },
-            Self::Owner { origin, origin_id, owner } => {
-                writer.write_u8(2);
-                origin.write(writer);
-                origin_id.write(writer);
-                owner.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            match self {
+                Self::None => writer.write_u8(0),
+                Self::Creator { contract, id } => {
+                    writer.write_u8(1)?;
+                    contract.write(writer)?;
+                    id.write(writer)
+                },
+                Self::Owner { origin, origin_id, owner } => {
+                    writer.write_u8(2)?;
+                    origin.write(writer)?;
+                    origin_id.write(writer)?;
+                    owner.write(writer)
+                }
             }
-        }
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        match reader.read_u8()? {
-            0 => Ok(Self::None),
-            1 => {
-                let contract = reader.read()?;
-                let id = reader.read()?;
-                Ok(Self::Creator { contract, id })
-            },
-            2 => {
-                let origin = reader.read()?;
-                let origin_id = reader.read()?;
-                let owner = reader.read()?;
-                Ok(Self::Owner { origin, origin_id, owner })
-            },
-            _ => Err(ReaderError::InvalidValue)
-        }
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            match reader.read_u8()? {
+                0 => Ok(Self::None),
+                1 => {
+                    let contract = reader.read()?;
+                    let id = reader.read()?;
+                    Ok(Self::Creator { contract, id })
+                },
+                2 => {
+                    let origin = reader.read()?;
+                    let origin_id = reader.read()?;
+                    let owner = reader.read()?;
+                    Ok(Self::Owner { origin, origin_id, owner })
+                },
+                _ => Err(SerializationError::new(DecodeError::InvalidValue))
+            }
+        })
     }
 
     fn size(&self) -> usize {
@@ -178,29 +191,31 @@ impl MaxSupplyMode {
 }
 
 impl Serializer for MaxSupplyMode {
-    fn write(&self, writer: &mut Writer) {
-        match self {
-            Self::None => {
-                writer.write_u8(0);
-            },
-            Self::Fixed(max) => {
-                writer.write_u8(1);
-                max.write(writer);
-            },
-            Self::Mintable(max) => {
-                writer.write_u8(2);
-                max.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            match self {
+                Self::None => writer.write_u8(0),
+                Self::Fixed(max) => {
+                    writer.write_u8(1)?;
+                    max.write(writer)
+                },
+                Self::Mintable(max) => {
+                    writer.write_u8(2)?;
+                    max.write(writer)
+                }
             }
-        }
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        match reader.read_u8()? {
-            0 => Ok(Self::None),
-            1 => Ok(Self::Fixed(reader.read_u64()?)),
-            2 => Ok(Self::Mintable(reader.read_u64()?)),
-            _ => Err(ReaderError::InvalidValue)
-        }
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            match reader.read_u8()? {
+                0 => Ok(Self::None),
+                1 => Ok(Self::Fixed(reader.read_u64()?)),
+                2 => Ok(Self::Mintable(reader.read_u64()?)),
+                _ => Err(SerializationError::new(DecodeError::InvalidValue))
+            }
+        })
     }
 }
 
@@ -264,22 +279,26 @@ impl AssetData {
 }
 
 impl Serializer for AssetData {
-    fn write(&self, writer: &mut Writer) {
-        self.decimals.write(writer);
-        self.name.write(writer);
-        self.ticker.write(writer);
-        self.max_supply.write(writer);
-        self.owner.write(writer);
+    fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
+        writer.write_with_context::<Self>(|writer| {
+            self.decimals.write(writer)?;
+            self.name.write(writer)?;
+            self.ticker.write(writer)?;
+            self.max_supply.write(writer)?;
+            self.owner.write(writer)
+        })
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, ReaderError> {
-        let decimals = reader.read()?;
-        let name = reader.read()?;
-        let ticker = reader.read()?;
-        let max_supply = reader.read()?;
-        let owner = reader.read()?;
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
+        reader.read_with_context(|reader| {
+            let decimals = reader.read()?;
+            let name = reader.read()?;
+            let ticker = reader.read()?;
+            let max_supply = reader.read()?;
+            let owner = reader.read()?;
 
-        Ok(Self::new(decimals, name, ticker, max_supply, owner))
+            Ok(Self::new(decimals, name, ticker, max_supply, owner))
+        })
     }
 
     fn size(&self) -> usize {

@@ -1,7 +1,7 @@
-use anyhow::Context as AnyhowContext;
+use matriochka::ResultExt;
 use xelis_vm::{
-    impl_opaque,
-    traits::Serializable,
+    ValueCell,
+    traits::DynSerializable,
     VMContext,
     EnvironmentError,
     FnInstance,
@@ -14,33 +14,20 @@ use xelis_vm::{
 use crate::{
     contract::{ModuleMetadata, ContractMetadata, OpaqueRistrettoPoint, SIGNATURE_OPAQUE_ID},
     crypto::{Signature, SIGNATURE_SIZE},
-    serializer::{Serializer, Writer}
+    serializer::{Error as SerializationError, Serializer, Writer, WriterExt},
 };
 
-impl_opaque!(
-    "Signature",
-    Signature
-);
-impl_opaque!(
-    "Signature",
-    Signature,
-    json
-);
-
-impl Serializable for Signature {
+impl DynSerializable for Signature {
     fn get_size(&self) -> usize {
         SIGNATURE_SIZE
     }
 
-    fn is_serializable(&self) -> bool {
-        true
-    }
-
-    fn serialize(&self, buffer: &mut Vec<u8>) -> usize {
-        let mut writer = Writer::new(buffer);
-        writer.write_u8(SIGNATURE_OPAQUE_ID);
-        self.write(&mut writer);
-        writer.total_write()
+    fn serialize(&self, buffer: &mut Vec<u8>) -> Result<usize, SerializationError> {
+        let start = buffer.len();
+        let mut writer = Writer::new(&mut *buffer);
+        writer.write_u8(SIGNATURE_OPAQUE_ID)?;
+        self.write(&mut writer)?;
+        Ok(buffer.len() - start)
     }
 }
 
@@ -55,7 +42,7 @@ pub fn signature_from_bytes_fn(_: FnInstance, params: FnParams, _: &ModuleMetada
 
     let signature = Signature::from_bytes(&bytes)
         .context("signature from bytes")?;
-    Ok(SysCallResult::Return(Primitive::Opaque(signature.into()).into()))
+    Ok(SysCallResult::Return(ValueCell::Opaque(signature.into()).into()))
 }
 
 pub fn signature_verify_fn(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
