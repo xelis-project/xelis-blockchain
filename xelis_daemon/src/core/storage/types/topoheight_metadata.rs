@@ -16,11 +16,11 @@ pub struct TopoHeightMetadata {
 impl Serializer for TopoHeightMetadata {
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            let rewards = reader.read_u64()?;
-            let emitted_supply = reader.read_u64()?;
-            let total_fees = reader.read_u64()?;
-            let total_fees_burned = reader.read_u64()?;
-            let is_side_block = reader.read_bool()?;
+            let rewards = u64::read(reader)?;
+            let emitted_supply = u64::read(reader)?;
+            let total_fees = u64::read(reader)?;
+            let total_fees_burned = u64::read(reader)?;
+            let is_side_block = bool::read(reader)?;
 
             Ok(Self {
                 block_reward: rewards,

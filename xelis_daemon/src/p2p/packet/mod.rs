@@ -18,11 +18,9 @@ use xelis_common::{
         Readable,
         Reader,
         ReaderError,
-        ReaderExt,
         Serializer,
         Writable,
         Writer,
-        WriterExt,
     },
 };
 use super::EncryptionKey;
@@ -155,7 +153,7 @@ impl Packet<'_> {
 
     #[inline]
     fn write_packet<'ty, 'r, T: Serializer, W: Writable>(writer: &mut Writer<'ty, 'r, W>, id: u8, packet: &T) -> Result<(), SerializationError> {
-        writer.write_u8(id)?;
+        id.write(writer)?;
         packet.write(writer)
     }
 }
@@ -163,7 +161,7 @@ impl Packet<'_> {
 impl<'a> Serializer for Packet<'a> {
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Packet<'a>, ReaderError> {
         reader.read_with_context(|reader| {
-            let id = reader.read_u8()?;
+            let id = u8::read(reader)?;
             trace!("Packet ID received: {}", id);
             let packet = match id {
                 KEY_EXCHANGE_ID => Packet::KeyExchange(Cow::Owned(EncryptionKey::read(reader)?)),

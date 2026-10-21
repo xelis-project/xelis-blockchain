@@ -10,7 +10,7 @@ use xelis_common::{
         Readable,
         Reader,
         ReaderError,
-        ReaderExt,
+        RawBytes,
         Serializer,
         Writable,
         Writer,
@@ -53,9 +53,9 @@ impl Serializer for OrderedHashes<'_> {
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            let bytes = reader.read_all_bytes()?;
+            let bytes = RawBytes::read(reader)?;
             let total_size = bytes.len();
-            let reader = &mut Reader::new(bytes.as_slice());
+            let reader = &mut Reader::new(bytes.as_bytes());
             if total_size % HASH_SIZE != 0 {
                 error!("Invalid size: {}, expected a multiple of 32 for hashes", total_size);
                 return Err(SerializationError::new(DecodeError::InvalidSize).context(format!("blocks at height byte length {total_size} must be a multiple of {HASH_SIZE}")))

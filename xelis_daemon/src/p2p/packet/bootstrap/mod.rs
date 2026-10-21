@@ -36,7 +36,7 @@ impl<'a> BootstrapChainRequest<'a> {
 impl Serializer for BootstrapChainRequest<'_> {
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            let id = reader.read_u64()?;
+            let id = u64::read(reader)?;
             let step = StepRequest::read(reader)?;
             Ok(Self::new(id, step))
         })
@@ -86,7 +86,7 @@ impl BootstrapChainResponse {
 impl Serializer for BootstrapChainResponse {
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            let id = reader.read_u64()?;
+            let id = u64::read(reader)?;
             let response = StepResponse::read(reader)?;
             Ok(Self::new(id, response))
         })

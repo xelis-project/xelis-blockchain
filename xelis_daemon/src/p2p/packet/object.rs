@@ -15,11 +15,9 @@ use xelis_common::{
         Readable,
         Reader,
         ReaderError,
-        ReaderExt,
         Serializer,
         Writable,
         Writer,
-        WriterExt,
     },
     transaction::Transaction
 };
@@ -49,16 +47,16 @@ impl Serializer for ObjectRequest {
         writer.write_with_context::<Self>(|writer| {
             match &self {
                 Self::Block(hash) => {
-                    writer.write_u8(0)?;
-                    writer.write_hash(hash)
+                    0u8.write(writer)?;
+                    hash.write(writer)
                 },
                 Self::BlockHeader(hash) => {
-                    writer.write_u8(1)?;
-                    writer.write_hash(hash)
+                    1u8.write(writer)?;
+                    hash.write(writer)
                 },
                 Self::Transaction(hash) => {
-                    writer.write_u8(2)?;
-                    writer.write_hash(hash)
+                    2u8.write(writer)?;
+                    hash.write(writer)
                 }
             }
         })
@@ -66,7 +64,7 @@ impl Serializer for ObjectRequest {
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            let id = reader.read_u8()?;
+            let id = u8::read(reader)?;
             Ok(match id {
                 0 => ObjectRequest::Block(Immutable::read(reader)?),
                 1 => ObjectRequest::BlockHeader(Immutable::read(reader)?),
@@ -186,19 +184,19 @@ impl<'a> Serializer for ObjectResponse<'a> {
         writer.write_with_context::<Self>(|writer| {
             match &self {
                 Self::Block(block) => {
-                    writer.write_u8(0)?;
+                    0u8.write(writer)?;
                     block.write(writer)
                 },
                 Self::BlockHeader(header) => {
-                    writer.write_u8(1)?;
+                    1u8.write(writer)?;
                     header.write(writer)
                 }
                 Self::Transaction(transaction) => {
-                    writer.write_u8(2)?;
+                    2u8.write(writer)?;
                     transaction.write(writer)
                 },
                 Self::NotFound(obj) => {
-                    writer.write_u8(3)?;
+                    3u8.write(writer)?;
                     obj.write(writer)
                 }
             }
@@ -207,7 +205,7 @@ impl<'a> Serializer for ObjectResponse<'a> {
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            let id = reader.read_u8()?;
+            let id = u8::read(reader)?;
             Ok(match id {
                 0 => Self::Block(Cow::Owned(Block::read(reader)?)),
                 1 => Self::BlockHeader(Cow::Owned(BlockHeader::read(reader)?)),

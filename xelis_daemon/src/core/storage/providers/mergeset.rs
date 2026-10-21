@@ -108,16 +108,16 @@ impl MergeSet {
 impl Serializer for MergeSet {
     fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
         writer.write_with_context::<Self>(|writer| {
-            writer.write_u16(self.mergeset_blues.len() as u16)?;
+            (self.mergeset_blues.len() as u16).write(writer)?;
             for (hash, &size) in &self.mergeset_blues {
                 hash.write(writer)?;
-                writer.write_u16(size as u16)?;
+                (size as u16).write(writer)?;
             }
 
-            writer.write_u16(self.updated_anticones.len() as u16)?;
+            (self.updated_anticones.len() as u16).write(writer)?;
             for (hash, &size) in &self.updated_anticones {
                 hash.write(writer)?;
-                writer.write_u16(size as u16)?;
+                (size as u16).write(writer)?;
             }
             Ok(())
         })
@@ -125,20 +125,20 @@ impl Serializer for MergeSet {
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            let count = reader.read_u16()? as usize;
+            let count = u16::read(reader)? as usize;
             let mut mergeset_blues = LinkedHashMap::with_capacity(count);
 
             for _ in 0..count {
                 let hash = Hash::read(reader)?;
-                let size = reader.read_u16()? as usize;
+                let size = u16::read(reader)? as usize;
                 mergeset_blues.insert(hash.clone(), size);
             }
 
-            let count = reader.read_u16()? as usize;
+            let count = u16::read(reader)? as usize;
             let mut updated_anticones = HashMap::with_capacity(count);
             for _ in 0..count {
                 let hash = Hash::read(reader)?;
-                let size = reader.read_u16()? as usize;
+                let size = u16::read(reader)? as usize;
                 updated_anticones.insert(hash, size);
             }
 

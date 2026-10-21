@@ -51,7 +51,7 @@ impl Eq for BlockMetadata {}
 impl Serializer for BlockMetadata {
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            let hash = reader.read_hash()?;
+            let hash = Hash::read(reader)?;
             let topoheight_metadata = TopoHeightMetadata::read(reader)?;
             let mergeset = MergeSet::read(reader)?;
             let difficulty = Difficulty::read(reader)?;
@@ -63,7 +63,7 @@ impl Serializer for BlockMetadata {
             // as we must support any u16 len same as a BlockHeader
             // TODO best would be a const type providing a configurable MAX_ITEMS
 
-            let len = reader.read_u16()?;
+            let len = u16::read(reader)?;
             let mut executed_transactions = IndexSet::new();
             for _ in 0..len {
                 if !executed_transactions.insert(Hash::read(reader)?) {
@@ -86,7 +86,7 @@ impl Serializer for BlockMetadata {
 
     fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
         writer.write_with_context::<Self>(|writer| {
-            writer.write_hash(&self.hash)?;
+            self.hash.write(writer)?;
             self.topoheight_metadata.write(writer)?;
             self.mergeset.write(writer)?;
             self.difficulty.write(writer)?;

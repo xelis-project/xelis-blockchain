@@ -90,7 +90,7 @@ impl Into<Vec<u8>> for Key {
 
 impl Serializer for Key {
     fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
-        writer.write_with_context::<Self>(|writer| writer.write_bytes(&self.0))
+        writer.write_with_context::<Self>(|writer| writer.extend_bytes(&self.0))
     }
 
     fn read<'ty, 'r, R: Readable>(_: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {

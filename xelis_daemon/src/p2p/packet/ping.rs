@@ -9,11 +9,9 @@ use xelis_common::{
         Readable,
         Reader,
         ReaderError,
-        ReaderExt,
         Serializer,
         Writable,
         Writer,
-        WriterExt,
     },
     time::get_current_time_in_millis
 };
@@ -171,7 +169,7 @@ impl Serializer for Ping<'_> {
             self.height.write(writer)?;
             self.pruned_topoheight.write(writer)?;
             self.cumulative_difficulty.write(writer)?;
-            writer.write_u8(self.peer_list.len() as u8)?;
+            (self.peer_list.len() as u8).write(writer)?;
             for peer in &self.peer_list {
                 peer.write(writer)?;
             }
@@ -181,9 +179,9 @@ impl Serializer for Ping<'_> {
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            let top_hash = Cow::Owned(reader.read_hash()?);
-            let topoheight = reader.read_u64()?;
-            let height = reader.read_u64()?;
+            let top_hash = Cow::Owned(Hash::read(reader)?);
+            let topoheight = u64::read(reader)?;
+            let height = u64::read(reader)?;
             let pruned_topoheight = Option::read(reader)?;
             if let Some(pruned_topoheight) = &pruned_topoheight {
                 if *pruned_topoheight == 0 {
@@ -192,7 +190,7 @@ impl Serializer for Ping<'_> {
                 }
             }
             let cumulative_difficulty = CumulativeDifficulty::read(reader)?;
-            let peers_len = reader.read_u8()? as usize;
+            let peers_len = u8::read(reader)? as usize;
             if peers_len > P2P_PING_PEER_LIST_LIMIT {
                 debug!("Too much peers sent in this ping packet: received {} while max is {}", peers_len, P2P_PING_PEER_LIST_LIMIT);
                 return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("ping contains {peers_len} peers; maximum is {P2P_PING_PEER_LIST_LIMIT}")))
