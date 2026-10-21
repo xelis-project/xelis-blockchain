@@ -10,11 +10,9 @@ use crate::{
         Readable,
         Reader,
         ReaderError,
-        ReaderExt,
         Serializer,
         Writable,
         Writer,
-        WriterExt,
     },
 };
 use super::{
@@ -95,13 +93,13 @@ impl Serializer for HumanReadableProof {
         writer.write_with_context::<Self>(|writer| {
             match self {
                 HumanReadableProof::Balance { proof, asset, topoheight } => {
-                    writer.write_u8(0)?;
+                    0u8.write(writer)?;
                     proof.write(writer)?;
                     asset.write(writer)?;
                     topoheight.write(writer)
                 },
                 HumanReadableProof::Ownership { proof, asset, topoheight } => {
-                    writer.write_u8(1)?;
+                    1u8.write(writer)?;
                     proof.write(writer)?;
                     asset.write(writer)?;
                     topoheight.write(writer)
@@ -112,7 +110,7 @@ impl Serializer for HumanReadableProof {
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            let proof = match reader.read_u8()? {
+            let proof = match u8::read(reader)? {
                 0 => {
                     let proof = BalanceProof::read(reader)?;
                     let asset = Hash::read(reader)?;

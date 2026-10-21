@@ -31,16 +31,16 @@ impl EventCallbackRegistration {
 impl Serializer for EventCallbackRegistration {
     fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
         writer.write_with_context::<Self>(|writer| {
-            writer.write_u16(self.chunk_id)?;
-            writer.write_u64(self.max_gas)?;
+            self.chunk_id.write(writer)?;
+            self.max_gas.write(writer)?;
             self.gas_sources.write(writer)
         })
     }
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            let chunk_id = reader.read_u16()?;
-            let max_gas = reader.read_u64()?;
+            let chunk_id = u16::read(reader)?;
+            let max_gas = u64::read(reader)?;
             let gas_sources = IndexMap::read(reader)?;
             Ok(EventCallbackRegistration { chunk_id, max_gas, gas_sources })
         })

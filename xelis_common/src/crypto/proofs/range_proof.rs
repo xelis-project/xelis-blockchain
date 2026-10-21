@@ -11,11 +11,9 @@ use crate::{
         Readable,
         Reader,
         ReaderError,
-        ReaderExt,
         Serializer,
         Writable,
         Writer,
-        WriterExt,
     },
     transaction::MAX_TRANSFER_COUNT
 };
@@ -26,14 +24,14 @@ impl Serializer for RangeProof {
     fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
         writer.write_with_context::<Self>(|writer| {
             let bytes = self.to_bytes();
-            writer.write_u16(bytes.len() as u16)?;
-            writer.write_bytes(&bytes)
+            (bytes.len() as u16).write(writer)?;
+            writer.extend_bytes(&bytes)
         })
     }
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            let len = reader.read_u16()? as usize;
+            let len = u16::read(reader)? as usize;
             // 7 elements in Range Proof: 3 scalars and 4 points
             // 2 scalars in InnerProductProof
             // Each element is 32 bytes

@@ -4,11 +4,9 @@ use crate::serializer::{
     Readable,
     Reader,
     ReaderError,
-    ReaderExt,
     Serializer,
     Writable,
     Writer,
-    WriterExt,
 };
 use std::{
     fmt::{self, Display, Formatter},
@@ -82,9 +80,9 @@ impl Serializer for VarUint {
                 len -= 1;
             }
 
-            writer.write_u8(len as u8)?;
+            (len as u8).write(writer)?;
             if len > 0 {
-                writer.write_bytes(&buffer[..len])?;
+                writer.extend_bytes(&buffer[..len])?;
             }
             Ok(())
         })
@@ -92,7 +90,7 @@ impl Serializer for VarUint {
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            let len = reader.read_u8()? as usize;
+            let len = u8::read(reader)? as usize;
 
             if len > MAX_VARUINT_SIZE {
                 debug!("VarUint size is too big: {}", len);

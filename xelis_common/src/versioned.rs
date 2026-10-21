@@ -9,11 +9,9 @@ use crate::{
         Readable,
         Reader,
         ReaderError,
-        ReaderExt,
         Serializer,
         Writable,
         Writer,
-        WriterExt,
     },
 };
 
@@ -44,20 +42,20 @@ impl<T: Serializer> Serializer for State<T> {
     fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
         writer.write_with_context::<Self>(|writer| {
             match self {
-                Self::Clean => writer.write_u8(0),
+                Self::Clean => 0u8.write(writer),
                 Self::Some(data) => {
-                    writer.write_u8(1)?;
+                    1u8.write(writer)?;
                     data.write(writer)
                 },
-                Self::None => writer.write_u8(2),
-                Self::Deleted => writer.write_u8(3),
+                Self::None => 2u8.write(writer),
+                Self::Deleted => 3u8.write(writer),
             }
         })
     }
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            Ok(match reader.read_u8()? {
+            Ok(match u8::read(reader)? {
                 0 => Self::Clean,
                 1 => Self::Some(T::read(reader)?),
                 2 => Self::None,

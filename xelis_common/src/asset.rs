@@ -11,11 +11,9 @@ use crate::{
         Readable,
         Reader,
         ReaderError,
-        ReaderExt,
         Serializer,
         Writable,
         Writer,
-        WriterExt,
     },
     versioned::Versioned
 };
@@ -108,14 +106,14 @@ impl Serializer for AssetOwner {
     fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
         writer.write_with_context::<Self>(|writer| {
             match self {
-                Self::None => writer.write_u8(0),
+                Self::None => 0u8.write(writer),
                 Self::Creator { contract, id } => {
-                    writer.write_u8(1)?;
+                    1u8.write(writer)?;
                     contract.write(writer)?;
                     id.write(writer)
                 },
                 Self::Owner { origin, origin_id, owner } => {
-                    writer.write_u8(2)?;
+                    2u8.write(writer)?;
                     origin.write(writer)?;
                     origin_id.write(writer)?;
                     owner.write(writer)
@@ -126,17 +124,17 @@ impl Serializer for AssetOwner {
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            match reader.read_u8()? {
+            match u8::read(reader)? {
                 0 => Ok(Self::None),
                 1 => {
-                    let contract = reader.read()?;
-                    let id = reader.read()?;
+                    let contract = Hash::read(reader)?;
+                    let id = u64::read(reader)?;
                     Ok(Self::Creator { contract, id })
                 },
                 2 => {
-                    let origin = reader.read()?;
-                    let origin_id = reader.read()?;
-                    let owner = reader.read()?;
+                    let origin = Hash::read(reader)?;
+                    let origin_id = u64::read(reader)?;
+                    let owner = Hash::read(reader)?;
                     Ok(Self::Owner { origin, origin_id, owner })
                 },
                 tag => Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown asset owner tag {tag}")))
@@ -194,13 +192,13 @@ impl Serializer for MaxSupplyMode {
     fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
         writer.write_with_context::<Self>(|writer| {
             match self {
-                Self::None => writer.write_u8(0),
+                Self::None => 0u8.write(writer),
                 Self::Fixed(max) => {
-                    writer.write_u8(1)?;
+                    1u8.write(writer)?;
                     max.write(writer)
                 },
                 Self::Mintable(max) => {
-                    writer.write_u8(2)?;
+                    2u8.write(writer)?;
                     max.write(writer)
                 }
             }
@@ -209,10 +207,10 @@ impl Serializer for MaxSupplyMode {
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            match reader.read_u8()? {
+            match u8::read(reader)? {
                 0 => Ok(Self::None),
-                1 => Ok(Self::Fixed(reader.read_u64()?)),
-                2 => Ok(Self::Mintable(reader.read_u64()?)),
+                1 => Ok(Self::Fixed(u64::read(reader)?)),
+                2 => Ok(Self::Mintable(u64::read(reader)?)),
                 tag => Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown maximum supply mode tag {tag}")))
             }
         })
@@ -291,11 +289,11 @@ impl Serializer for AssetData {
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            let decimals = reader.read()?;
-            let name = reader.read()?;
-            let ticker = reader.read()?;
-            let max_supply = reader.read()?;
-            let owner = reader.read()?;
+            let decimals = u8::read(reader)?;
+            let name = String::read(reader)?;
+            let ticker = String::read(reader)?;
+            let max_supply = MaxSupplyMode::read(reader)?;
+            let owner = AssetOwner::read(reader)?;
 
             Ok(Self::new(decimals, name, ticker, max_supply, owner))
         })

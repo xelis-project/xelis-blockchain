@@ -4,11 +4,9 @@ use crate::serializer::{
     Readable,
     Reader,
     ReaderError,
-    ReaderExt,
     Serializer,
     Writable,
     Writer,
-    WriterExt,
 };
 use std::{fmt::{Display, Formatter, self}, str::FromStr};
 use schemars::JsonSchema;
@@ -108,7 +106,7 @@ impl FromStr for Network {
 impl Serializer for Network {
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            Ok(match reader.read_u8()? {
+            Ok(match u8::read(reader)? {
                 0 => Self::Mainnet,
                 1 => Self::Testnet,
                 2 => Self::Stagenet,
@@ -120,13 +118,13 @@ impl Serializer for Network {
 
     fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
         writer.write_with_context::<Self>(|writer| {
-            let id = match &self {
+            let id: u8 = match &self {
                 Self::Mainnet => 0,
                 Self::Testnet => 1,
                 Self::Stagenet => 2,
                 Self::Devnet => 3 
             };
-            writer.write_u8(id)
+            id.write(writer)
         })
     }
 

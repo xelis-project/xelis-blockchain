@@ -31,7 +31,7 @@ impl DerefMut for Deposits {
 impl Serializer for Deposits {
     fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
         writer.write_with_context::<Self>(|writer| {
-            writer.write_u8(self.0.len() as u8)?;
+            (self.0.len() as u8).write(writer)?;
             for (key, value) in self.0.iter() {
                 key.write(writer)?;
                 value.write(writer)?;
@@ -42,7 +42,7 @@ impl Serializer for Deposits {
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            let size = reader.read_u8()?;
+            let size = u8::read(reader)?;
             let mut deposits = IndexMap::with_capacity(size as usize);
             for _ in 0..size {
                 let k = Hash::read(reader)?;

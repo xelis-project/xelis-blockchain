@@ -43,7 +43,7 @@ impl Serializer for InvokeContractPayload {
             self.entry_id.write(writer)?;
             self.max_gas.write(writer)?;
 
-            writer.write_u8(self.parameters.len() as u8)?;
+            (self.parameters.len() as u8).write(writer)?;
             for parameter in &self.parameters {
                 parameter.write(writer)?;
             }
@@ -57,10 +57,10 @@ impl Serializer for InvokeContractPayload {
             let contract = Hash::read(reader)?;
             let deposits = Deposits::read(reader)?;
 
-            let chunk_id = reader.read_u16()?;
-            let max_gas = reader.read_u64()?;
+            let chunk_id = u16::read(reader)?;
+            let max_gas = u64::read(reader)?;
 
-            let len = reader.read_u8()? as usize;
+            let len = u8::read(reader)? as usize;
             let mut parameters = Vec::with_capacity(len);
             for _ in 0..len {
                 parameters.push(ValueCell::read(reader)?);

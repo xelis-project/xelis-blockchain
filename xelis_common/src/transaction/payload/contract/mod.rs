@@ -59,7 +59,7 @@ impl Serializer for ContractDeposit {
         writer.write_with_context::<Self>(|writer| {
             match self {
                 ContractDeposit::Public(amount) => {
-                    writer.write_u8(0)?;
+                    0u8.write(writer)?;
                     amount.write(writer)
                 },
                 ContractDeposit::Private {
@@ -68,7 +68,7 @@ impl Serializer for ContractDeposit {
                     receiver_handle,
                     ct_validity_proof
                 } => {
-                    writer.write_u8(1)?;
+                    1u8.write(writer)?;
                     commitment.write(writer)?;
                     sender_handle.write(writer)?;
                     receiver_handle.write(writer)?;
@@ -80,8 +80,8 @@ impl Serializer for ContractDeposit {
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<ContractDeposit, ReaderError> {
         reader.read_with_context(|reader| {
-            Ok(match reader.read_u8()? {
-                0 => ContractDeposit::Public(reader.read_u64()?),
+            Ok(match u8::read(reader)? {
+                0 => ContractDeposit::Public(u64::read(reader)?),
                 1 => ContractDeposit::Private {
                     commitment: CompressedCommitment::read(reader)?,
                     sender_handle: CompressedHandle::read(reader)?,
@@ -110,12 +110,12 @@ impl Serializer for ContractDeposit {
 
 impl Serializer for U256 {
     fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
-        writer.write_with_context::<Self>(|writer| writer.write_bytes(&self.to_be_bytes()))
+        writer.write_with_context::<Self>(|writer| writer.extend_bytes(&self.to_be_bytes()))
     }
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<U256, ReaderError> {
         reader.read_with_context(|reader| {
-            Ok(U256::from_be_bytes(reader.read_bytes_32()?))
+            Ok(U256::from_be_bytes(<[u8; 32]>::read(reader)?))
         })
     }
 
@@ -128,43 +128,43 @@ impl Serializer for Primitive {
     fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
         writer.write_with_context::<Self>(|writer| {
             match self {
-                Primitive::Null => writer.write_u8(0),
+                Primitive::Null => 0u8.write(writer),
                 Primitive::Integer(PrimitiveInteger::U8(value)) => {
-                    writer.write_u8(1)?;
-                    writer.write_u8(*value)
+                    1u8.write(writer)?;
+                    value.write(writer)
                 },
                 Primitive::Integer(PrimitiveInteger::U16(value)) => {
-                    writer.write_u8(2)?;
-                    writer.write_u16(*value)
+                    2u8.write(writer)?;
+                    value.write(writer)
                 },
                 Primitive::Integer(PrimitiveInteger::U32(value)) => {
-                    writer.write_u8(3)?;
+                    3u8.write(writer)?;
                     value.write(writer)
                 },
                 Primitive::Integer(PrimitiveInteger::U64(value)) => {
-                    writer.write_u8(4)?;
+                    4u8.write(writer)?;
                     value.write(writer)
                 },
                 Primitive::Integer(PrimitiveInteger::U128(value)) => {
-                    writer.write_u8(5)?;
+                    5u8.write(writer)?;
                     value.write(writer)
                 },
                 Primitive::Integer(PrimitiveInteger::U256(value)) => {
-                    writer.write_u8(6)?;
+                    6u8.write(writer)?;
                     value.write(writer)
                 },
                 Primitive::Boolean(value) => {
-                    writer.write_u8(7)?;
-                    writer.write_bool(*value)
+                    7u8.write(writer)?;
+                    value.write(writer)
                 },
                 Primitive::String(value) => {
-                    writer.write_u8(8)?;
+                    8u8.write(writer)?;
                     let bytes = value.as_bytes();
                     DynamicLen(bytes.len()).write(writer)?;
-                    writer.write_bytes(bytes)
+                    writer.extend_bytes(bytes)
                 }
                 Primitive::Range(range) => {
-                    writer.write_u8(9)?;
+                    9u8.write(writer)?;
                     Primitive::Integer(range.start()).write(writer)?;
                     Primitive::Integer(range.end()).write(writer)
                 },
@@ -174,7 +174,7 @@ impl Serializer for Primitive {
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Primitive, ReaderError> {
         reader.read_with_context(|reader| {
-            let tag = reader.read_u8()?;
+            let tag = u8::read(reader)?;
             read_primitive(reader, tag)
         })
     }
@@ -199,20 +199,20 @@ impl Serializer for Primitive {
 fn read_primitive<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>, tag: u8) -> Result<Primitive, ReaderError> {
     Ok(match tag {
         0 => Primitive::Null,
-        1 => Primitive::Integer(PrimitiveInteger::U8(reader.read_u8()?)),
-        2 => Primitive::Integer(PrimitiveInteger::U16(reader.read_u16()?)),
-        3 => Primitive::Integer(PrimitiveInteger::U32(reader.read_u32()?)),
-        4 => Primitive::Integer(PrimitiveInteger::U64(reader.read_u64()?)),
-        5 => Primitive::Integer(PrimitiveInteger::U128(reader.read_u128()?)),
+        1 => Primitive::Integer(PrimitiveInteger::U8(u8::read(reader)?)),
+        2 => Primitive::Integer(PrimitiveInteger::U16(u16::read(reader)?)),
+        3 => Primitive::Integer(PrimitiveInteger::U32(u32::read(reader)?)),
+        4 => Primitive::Integer(PrimitiveInteger::U64(u64::read(reader)?)),
+        5 => Primitive::Integer(PrimitiveInteger::U128(u128::read(reader)?)),
         6 => Primitive::Integer(PrimitiveInteger::U256(U256::read(reader)?)),
-        7 => Primitive::Boolean(reader.read_bool()?),
+        7 => Primitive::Boolean(bool::read(reader)?),
         8 => {
             let len = DynamicLen::read(reader)?.0;
-            Primitive::String(reader.read_string_with_size(len)?)
+            Primitive::String(String::from_utf8(reader.read_vec(len)?).map_err(|error| SerializationError::new(error).context("decoding UTF-8 string"))?)
         },
         9 => {
             fn read_boundary<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Primitive, ReaderError> {
-                let tag = reader.read_u8()?;
+                let tag = u8::read(reader)?;
                 if !(1..=6).contains(&tag) {
                     return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("invalid range boundary tag {tag}; expected an integer tag in 1..=6")));
                 }
@@ -238,28 +238,28 @@ impl Serializer for ValueCell {
             while let Some(cell) = stack.pop() {
                 match cell {
                     ValueCell::Primitive(value) => {
-                        writer.write_u8(0)?;
+                        0u8.write(writer)?;
                         value.write(writer)?;
                     },
                     ValueCell::Opaque(opaque) => {
-                        writer.write_u8(0)?;
-                        writer.write_u8(10)?;
+                        0u8.write(writer)?;
+                        10u8.write(writer)?;
                         opaque.write(writer)?;
                     },
                     ValueCell::Bytes(bytes) => {
-                        writer.write_u8(1)?;
+                        1u8.write(writer)?;
                         DynamicLen(bytes.len()).write(writer)?;
-                        writer.write_bytes(bytes)?;
+                        writer.extend_bytes(bytes)?;
                     }
                     ValueCell::Object(values) => {
-                        writer.write_u8(2)?;
+                        2u8.write(writer)?;
                         DynamicLen(values.len()).write(writer)?;
                         for value in values.iter().rev() {
                             stack.push(value.as_ref());
                         }
                     },
                     ValueCell::Map(map) => {
-                        writer.write_u8(3)?;
+                        3u8.write(writer)?;
                         DynamicLen(map.len()).write(writer)?;
                         for (key, value) in map.iter().rev() {
                             stack.push(value.as_ref());
@@ -334,9 +334,9 @@ impl Serializer for ValueCell {
                 }
 
                 // Read the next value
-                match reader.read_u8()? {
+                match u8::read(reader)? {
                     0 => {
-                        let tag = reader.read_u8()?;
+                        let tag = u8::read(reader)?;
                         result = Some(if tag == 10 {
                             ValueCell::Opaque(OpaqueWrapper::read(reader)?)
                         } else {
@@ -428,13 +428,13 @@ impl Serializer for Module {
             fn write_parameters<'ty, 'r, W: Writable>(writer: &mut Writer<'ty, 'r, W>, parameters: &Option<Vec<TypePacked>>, version: ContractVersion) -> Result<(), SerializationError> {
                 if version >= ContractVersion::V1 {
                     if let Some(params) = parameters {
-                        writer.write_bool(true)?;                                
-                        writer.write_u8(params.len() as u8)?;
+                        true.write(writer)?;                                
+                        (params.len() as u8).write(writer)?;
                         for param in params {
                             param.write(writer)?;
                         }
                     } else {
-                        writer.write_bool(false)?;
+                        false.write(writer)?;
                     }
                 }
                 Ok(())
@@ -442,24 +442,24 @@ impl Serializer for Module {
 
              // Function helper to write parameters based on contract version
             let chunks = self.chunks();
-            writer.write_u16(chunks.len() as u16)?;
+            (chunks.len() as u16).write(writer)?;
             for entry in chunks {
                 let instructions = entry.chunk.get_instructions();
                 DynamicLen(instructions.len()).write(writer)?;
-                writer.write_bytes(instructions)?;
+                writer.extend_bytes(instructions)?;
                 match &entry.access {
                     Access::All { parameters } => {
-                        writer.write_u8(0)?;
+                        0u8.write(writer)?;
                         write_parameters(writer, parameters, version)?;
                     },
-                    Access::Internal => writer.write_u8(1)?,
+                    Access::Internal => 1u8.write(writer)?,
                     Access::Entry { parameters } => {
-                        writer.write_u8(2)?;
+                        2u8.write(writer)?;
                         write_parameters(writer, parameters, version)?;
                     },
                     Access::Hook { id } => {
-                        writer.write_u8(3)?;
-                        writer.write_u8(*id)?;
+                        3u8.write(writer)?;
+                        id.write(writer)?;
                     }
                 }
             }
@@ -479,7 +479,7 @@ impl Serializer for Module {
                 }
             }
 
-            let chunks_len = reader.read_u16()?;
+            let chunks_len = u16::read(reader)?;
             let mut chunks = Vec::new();
             let mut hooks = IndexMap::new();
 
@@ -509,12 +509,12 @@ impl Serializer for Module {
                 let instructions = reader.read_vec(instructions_len)?;
                 let chunk = Chunk::from_instructions(instructions);
 
-                let access = match reader.read_u8()? {
+                let access = match u8::read(reader)? {
                     0 => Access::All { parameters: read_parameters(reader, version)? },
                     1 => Access::Internal,
                     2 => Access::Entry { parameters: read_parameters(reader, version)? },
                     3 => {
-                        let id = reader.read_u8()?;
+                        let id = u8::read(reader)?;
 
                         hooks.insert(id, i as usize);
                         Access::Hook { id }

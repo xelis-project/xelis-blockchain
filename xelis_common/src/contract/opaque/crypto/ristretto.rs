@@ -23,8 +23,7 @@ use crate::{
     serializer::{
         Error as SerializationError,
         Serializer as BinarySerializer,
-        Writer,
-        WriterExt
+        Writer
     },
 };
 
@@ -156,7 +155,7 @@ impl DynSerializable for OpaqueRistrettoPoint {
     fn serialize(&self, buffer: &mut Vec<u8>) -> Result<usize, SerializationError> {
         let start = buffer.len();
         let mut writer = Writer::new(&mut *buffer);
-        writer.write_u8(RISTRETTO_OPAQUE_ID)?;
+        RISTRETTO_OPAQUE_ID.write(&mut writer)?;
         self.compressed().write(&mut writer)?;
         Ok(buffer.len() - start)
     }

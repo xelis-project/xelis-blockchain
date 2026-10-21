@@ -11,11 +11,9 @@ use crate::{
         Readable,
         Reader,
         ReaderError,
-        ReaderExt,
         Serializer,
         Writable,
         Writer,
-        WriterExt,
     },
 };
 
@@ -73,7 +71,7 @@ impl ValueType {
 impl Serializer for ValueType {
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            Ok(match reader.read_u8()? {
+            Ok(match u8::read(reader)? {
                 0 => Self::Bool,
                 1 => Self::String,
                 2 => Self::U8,
@@ -90,17 +88,17 @@ impl Serializer for ValueType {
 
     fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
         writer.write_with_context::<Self>(|writer| {
-            writer.write_u8(match self {
-                Self::Bool => 0,
-                Self::String => 1,
-                Self::U8 => 2,
-                Self::U16 => 3,
-                Self::U32 => 4,
-                Self::U64 => 5,
-                Self::U128 => 6,
-                Self::Hash => 7,
-                Self::Blob => 8
-            })
+            match self {
+                Self::Bool => 0u8.write(writer),
+                Self::String => 1u8.write(writer),
+                Self::U8 => 2u8.write(writer),
+                Self::U16 => 3u8.write(writer),
+                Self::U32 => 4u8.write(writer),
+                Self::U64 => 5u8.write(writer),
+                Self::U128 => 6u8.write(writer),
+                Self::Hash => 7u8.write(writer),
+                Self::Blob => 8u8.write(writer)
+            }
         })
     }
 
@@ -209,10 +207,10 @@ impl Serializer for DataElement {
     // which can create OOM on low devices
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            Ok(match reader.read_u8()? {
+            Ok(match u8::read(reader)? {
                 0 => Self::Value(DataValue::read(reader)?),
                 1 => {
-                    let size = reader.read_u8()?;
+                    let size = u8::read(reader)?;
                     let mut values = Vec::new();
                     for _ in 0..size {
                         values.push(DataElement::read(reader)?)
@@ -220,7 +218,7 @@ impl Serializer for DataElement {
                     Self::Array(values)
                 },
                 2 => {
-                    let size = reader.read_u8()?;
+                    let size = u8::read(reader)?;
                     let mut fields = IndexMap::new();
                     for _ in 0..size {
                         let key = DataValue::read(reader)?;
@@ -238,20 +236,20 @@ impl Serializer for DataElement {
         writer.write_with_context::<Self>(|writer| {
             match self {
                 Self::Value(value) => {
-                    writer.write_u8(0)?;
+                    0u8.write(writer)?;
                     value.write(writer)
                 }
                 Self::Array(values) => {
-                    writer.write_u8(1)?;
-                    writer.write_u8(values.len() as u8)?; // we accept up to 255 values
+                    1u8.write(writer)?;
+                    (values.len() as u8).write(writer)?; // we accept up to 255 values
                     for value in values {
                         value.write(writer)?;    
                     }
                     Ok(())
                 }
                 Self::Fields(fields) => {
-                    writer.write_u8(2)?;
-                    writer.write_u8(fields.len() as u8)?;
+                    2u8.write(writer)?;
+                    (fields.len() as u8).write(writer)?;
                     for (key, value) in fields {
                         key.write(writer)?;
                         value.write(writer)?;
@@ -450,28 +448,28 @@ impl DataValue {
 
     fn read_with_type<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>, value_type: ValueType) -> Result<Self, ReaderError> {
         Ok(match value_type {
-            ValueType::Bool => Self::Bool(reader.read_bool()?),
-            ValueType::String => Self::String(reader.read_string()?),
-            ValueType::U8 => Self::U8(reader.read_u8()?),
-            ValueType::U16 => Self::U16(reader.read_u16()?),
-            ValueType::U32 => Self::U32(reader.read_u32()?),
-            ValueType::U64 => Self::U64(reader.read_u64()?),
-            ValueType::U128 => Self::U128(reader.read_u128()?),
-            ValueType::Hash => Self::Hash(reader.read_hash()?),
+            ValueType::Bool => Self::Bool(bool::read(reader)?),
+            ValueType::String => Self::String(String::read(reader)?),
+            ValueType::U8 => Self::U8(u8::read(reader)?),
+            ValueType::U16 => Self::U16(u16::read(reader)?),
+            ValueType::U32 => Self::U32(u32::read(reader)?),
+            ValueType::U64 => Self::U64(u64::read(reader)?),
+            ValueType::U128 => Self::U128(u128::read(reader)?),
+            ValueType::Hash => Self::Hash(Hash::read(reader)?),
             ValueType::Blob => Self::Blob(Vec::read(reader)?)
         })
     }
 
     fn write_no_type<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
         match self {
-            Self::Bool(bool) => writer.write_bool(*bool),
+            Self::Bool(bool) => bool.write(writer),
             Self::String(string) => string.write(writer),
-            Self::U8(value) => writer.write_u8(*value),
-            Self::U16(value) => writer.write_u16(*value),
+            Self::U8(value) => value.write(writer),
+            Self::U16(value) => value.write(writer),
             Self::U32(value) => value.write(writer),
             Self::U64(value) => value.write(writer),
             Self::U128(value) => value.write(writer),
-            Self::Hash(hash) => writer.write_hash(hash),
+            Self::Hash(hash) => hash.write(writer),
             Self::Blob(blob) => blob.write(writer),
         }
     }

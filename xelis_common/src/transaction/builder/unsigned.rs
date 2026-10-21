@@ -14,11 +14,9 @@ use crate::{
         Readable,
         Reader,
         ReaderError,
-        ReaderExt,
         Serializer,
         Writable,
         Writer,
-        WriterExt,
     },
     transaction::{
         multisig::{MultiSig, SignatureId},
@@ -101,7 +99,7 @@ impl UnsignedTransaction {
         }
         self.nonce.write(writer)?;
 
-        writer.write_u8(self.source_commitments.len() as u8)?;
+        (self.source_commitments.len() as u8).write(writer)?;
         for commitment in &self.source_commitments {
             commitment.write(writer)?;
         }
@@ -165,16 +163,16 @@ impl Serializer for UnsignedTransaction {
             let version = TxVersion::read(reader)?;
             let source = PublicKey::read(reader)?;
             let data = TransactionType::read(reader)?;
-            let fee = reader.read_u64()?;
+            let fee = u64::read(reader)?;
             let fee_limit = if version >= TxVersion::V2 {
-                reader.read_u64()?
+                u64::read(reader)?
             } else {
                 fee
             };
 
             let nonce = Nonce::read(reader)?;
 
-            let source_commitments_len = reader.read_u8()?;
+            let source_commitments_len = u8::read(reader)?;
             let mut source_commitments = Vec::with_capacity(source_commitments_len as usize);
             for _ in 0..source_commitments_len {
                 source_commitments.push(SourceCommitment::read(reader)?);

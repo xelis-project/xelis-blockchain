@@ -9,7 +9,6 @@ use crate::{
         Readable,
         Reader,
         ReaderError,
-        ReaderExt,
         Serializer,
         Writable,
         Writer,
@@ -45,7 +44,7 @@ impl Serializer for Reference {
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Reference, ReaderError> {
         reader.read_with_context(|reader| {
             let hash = Hash::read(reader)?;
-            let topoheight = reader.read()?;
+            let topoheight = TopoHeight::read(reader)?;
             Ok(Reference {
                 hash,
                 topoheight

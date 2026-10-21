@@ -9,11 +9,9 @@ use crate::{
         Readable,
         Reader,
         ReaderError,
-        ReaderExt,
         Serializer,
         Writable,
         Writer,
-        WriterExt,
     },
     versioned::TopoHeightVersioned,
     crypto::elgamal::{
@@ -47,16 +45,16 @@ impl Serializer for BalanceType {
     fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
         writer.write_with_context::<Self>(|writer| {
             match self {
-                BalanceType::Input => writer.write_u8(0),
-                BalanceType::Output => writer.write_u8(1),
-                BalanceType::Both => writer.write_u8(2)
+                BalanceType::Input => 0u8.write(writer),
+                BalanceType::Output => 1u8.write(writer),
+                BalanceType::Both => 2u8.write(writer)
             }
         })
     }
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            match reader.read_u8()? {
+            match u8::read(reader)? {
                 0 => Ok(BalanceType::Input),
                 1 => Ok(BalanceType::Output),
                 2 => Ok(BalanceType::Both),

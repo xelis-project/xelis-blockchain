@@ -69,7 +69,7 @@ pub enum ScheduledExecutionKindLog {
 impl Serializer for ScheduledExecutionKind {
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            let tag = reader.read_u8()?;
+            let tag = u8::read(reader)?;
             match tag {
                 0 => Ok(ScheduledExecutionKind::TopoHeight {
                     execution_topoheight: TopoHeight::read(reader)?,
@@ -85,11 +85,11 @@ impl Serializer for ScheduledExecutionKind {
         writer.write_with_context::<Self>(|writer| {
             match self {
                 ScheduledExecutionKind::TopoHeight { execution_topoheight, registration_topoheight } => {
-                    writer.write_u8(0)?;
+                    0u8.write(writer)?;
                     execution_topoheight.write(writer)?;
                     registration_topoheight.write(writer)
                 },
-                ScheduledExecutionKind::BlockEnd => writer.write_u8(1),
+                ScheduledExecutionKind::BlockEnd => 1u8.write(writer),
             }
         })
     }
@@ -105,7 +105,7 @@ impl Serializer for ScheduledExecutionKind {
 impl Serializer for ScheduledExecutionKindLog {
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            let tag = reader.read_u8()?;
+            let tag = u8::read(reader)?;
             match tag {
                 0 => Ok(ScheduledExecutionKindLog::TopoHeight { execution_topoheight: TopoHeight::read(reader)?, registration_topoheight: TopoHeight::read(reader)? }),
                 1 => Ok(ScheduledExecutionKindLog::BlockEnd {
@@ -122,12 +122,12 @@ impl Serializer for ScheduledExecutionKindLog {
         writer.write_with_context::<Self>(|writer| {
             match self {
                 ScheduledExecutionKindLog::TopoHeight { execution_topoheight, registration_topoheight } => {
-                    writer.write_u8(0)?;
+                    0u8.write(writer)?;
                     execution_topoheight.write(writer)?;
                     registration_topoheight.write(writer)
                 },
                 ScheduledExecutionKindLog::BlockEnd { chunk_id, max_gas, params }=> {
-                    writer.write_u8(1)?;
+                    1u8.write(writer)?;
                     chunk_id.write(writer)?;
                     max_gas.write(writer)?;
                     params.write(writer)

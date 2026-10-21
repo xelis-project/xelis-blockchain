@@ -1,6 +1,6 @@
 mod defaults;
+mod primitives;
 mod reader;
-mod writer;
 mod hexable;
 mod raw;
 mod count;
@@ -11,7 +11,6 @@ use matriochka::ResultExt;
 use octet::DecodeError as OctetDecodeError;
 
 pub use reader::*;
-pub use writer::WriterExt;
 pub use octet::{Readable, Reader, SliceSource, Writable, Writer};
 pub use matriochka::{Error, Error as ReaderError};
 pub use defaults::DEFAULT_MAX_ITEMS;

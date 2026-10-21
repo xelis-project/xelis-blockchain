@@ -175,7 +175,7 @@ impl From<ContractLogs> for Vec<ContractLog> {
 impl Serializer for ContractLogs {
     fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
         writer.write_with_context::<Self>(|writer| {
-            writer.write_u16(self.0.len() as u16)?;
+            (self.0.len() as u16).write(writer)?;
             for log in &self.0 {
                 log.write(writer)?;
             }
@@ -185,7 +185,7 @@ impl Serializer for ContractLogs {
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            let count = reader.read_u16()? as usize;
+            let count = u16::read(reader)? as usize;
             let mut logs = Vec::with_capacity(count);
             for _ in 0..count {
                 logs.push(ContractLog::read(reader)?);
@@ -204,62 +204,62 @@ impl Serializer for ContractLog {
         writer.write_with_context::<Self>(|writer| {
             match self {
                 ContractLog::RefundGas { amount } => {
-                    writer.write_u8(0)?;
+                    0u8.write(writer)?;
                     amount.write(writer)
                 },
                 ContractLog::Transfer { contract, amount, asset, destination } => {
-                    writer.write_u8(1)?;
+                    1u8.write(writer)?;
                     contract.write(writer)?;
                     amount.write(writer)?;
                     asset.write(writer)?;
                     destination.write(writer)
                 },
                 ContractLog::TransferContract { contract, amount, asset, destination } => {
-                    writer.write_u8(2)?;
+                    2u8.write(writer)?;
                     contract.write(writer)?;
                     amount.write(writer)?;
                     asset.write(writer)?;
                     destination.write(writer)
                 },
                 ContractLog::Mint { contract, asset, amount } => {
-                    writer.write_u8(3)?;
+                    3u8.write(writer)?;
                     contract.write(writer)?;
                     asset.write(writer)?;
                     amount.write(writer)
                 },
                 ContractLog::Burn { contract, asset, amount } => {
-                    writer.write_u8(4)?;
+                    4u8.write(writer)?;
                     contract.write(writer)?;
                     asset.write(writer)?;
                     amount.write(writer)
                 },
                 ContractLog::NewAsset { contract, asset } => {
-                    writer.write_u8(5)?;
+                    5u8.write(writer)?;
                     contract.write(writer)?;
                     asset.write(writer)
                 },
                 ContractLog::ExitCode(code) => {
-                    writer.write_u8(6)?;
+                    6u8.write(writer)?;
                     code.write(writer)
                 },
-                ContractLog::RefundDeposits => writer.write_u8(7),
+                ContractLog::RefundDeposits => 7u8.write(writer),
                 ContractLog::GasInjection { contract, amount } => {
-                    writer.write_u8(8)?;
+                    8u8.write(writer)?;
                     contract.write(writer)?;
                     amount.write(writer)
                 },
                 ContractLog::ScheduledExecution { contract, hash, kind } => {
-                    writer.write_u8(9)?;
+                    9u8.write(writer)?;
                     contract.write(writer)?;
                     hash.write(writer)?;
                     kind.write(writer)
                 },
                 ContractLog::ExitPayload(payload) => {
-                    writer.write_u8(10)?;
+                    10u8.write(writer)?;
                     payload.write(writer)
                 },
                 ContractLog::TransferPayload { contract, amount, asset, destination, payload } => {
-                    writer.write_u8(11)?;
+                    11u8.write(writer)?;
                     contract.write(writer)?;
                     amount.write(writer)?;
                     asset.write(writer)?;
@@ -267,11 +267,11 @@ impl Serializer for ContractLog {
                     payload.write(writer)
                 },
                 ContractLog::ExitError(err) => {
-                    writer.write_u8(12)?;
+                    12u8.write(writer)?;
                     err.write(writer)
                 },
                 ContractLog::Event { contract, event_id } => {
-                    writer.write_u8(13)?;
+                    13u8.write(writer)?;
                     contract.write(writer)?;
                     event_id.write(writer)
                 },
@@ -281,7 +281,7 @@ impl Serializer for ContractLog {
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            Ok(match reader.read_u8()? {
+            Ok(match u8::read(reader)? {
                 0 => {
                     let amount = u64::read(reader)?;
                     ContractLog::RefundGas { amount }

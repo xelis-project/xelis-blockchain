@@ -33,20 +33,20 @@ impl Serializer for ContractCallChunk {
     fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
         writer.write_with_context::<Self>(|writer| {
             match self {
-                ContractCallChunk::All => writer.write_u8(0),
+                ContractCallChunk::All => 0u8.write(writer),
                 ContractCallChunk::Specific(chunks) => {
-                    writer.write_u8(1)?;
-                    writer.write_u8(chunks.len() as u8)?;
+                    1u8.write(writer)?;
+                    (chunks.len() as u8).write(writer)?;
                     for chunk in chunks {
-                        writer.write_u16(*chunk)?;
+                        chunk.write(writer)?;
                     }
                     Ok(())
                 }
                 ContractCallChunk::Exclude(chunks) => {
-                    writer.write_u8(2)?;
-                    writer.write_u8(chunks.len() as u8)?;
+                    2u8.write(writer)?;
+                    (chunks.len() as u8).write(writer)?;
                     for chunk in chunks {
-                        writer.write_u16(*chunk)?;
+                        chunk.write(writer)?;
                     }
                     Ok(())
                 }
@@ -56,14 +56,14 @@ impl Serializer for ContractCallChunk {
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            let tag = reader.read_u8()?;
+            let tag = u8::read(reader)?;
             match tag {
                 0 => Ok(ContractCallChunk::All),
                 1 => {
-                    let len = reader.read_u8()? as usize;
+                    let len = u8::read(reader)? as usize;
                     let mut chunks = IndexSet::with_capacity(len);
                     for _ in 0..len {
-                        let chunk = reader.read_u16()?;
+                        let chunk = u16::read(reader)?;
                         if !chunks.insert(chunk) {
                             return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("duplicate chunk ID {chunk} in contract call inclusion list")));
                         }
@@ -71,10 +71,10 @@ impl Serializer for ContractCallChunk {
                     Ok(ContractCallChunk::Specific(chunks))
                 }
                 2 => {
-                    let len = reader.read_u8()? as usize;
+                    let len = u8::read(reader)? as usize;
                     let mut chunks = IndexSet::with_capacity(len);
                     for _ in 0..len {
-                        let chunk = reader.read_u16()?;
+                        let chunk = u16::read(reader)?;
                         if !chunks.insert(chunk) {
                             return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("duplicate chunk ID {chunk} in contract call exclusion list")));
                         }
@@ -191,21 +191,21 @@ impl Serializer for InterContractPermission {
     fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
         writer.write_with_context::<Self>(|writer| {
             match self {
-                InterContractPermission::None => writer.write_u8(0),
-                InterContractPermission::All => writer.write_u8(1),
+                InterContractPermission::None => 0u8.write(writer),
+                InterContractPermission::All => 1u8.write(writer),
                 InterContractPermission::Specific(allowed) => {
-                    writer.write_u8(2)?;
+                    2u8.write(writer)?;
 
-                    writer.write_u8(allowed.len() as u8)?;
+                    (allowed.len() as u8).write(writer)?;
                     for hash in allowed {
                         hash.write(writer)?;
                     }
                     Ok(())
                 }
                 InterContractPermission::Exclude(excluded) => {
-                    writer.write_u8(3)?;
+                    3u8.write(writer)?;
 
-                    writer.write_u8(excluded.len() as u8)?;
+                    (excluded.len() as u8).write(writer)?;
                     for hash in excluded {
                         hash.write(writer)?;
                     }
@@ -217,12 +217,12 @@ impl Serializer for InterContractPermission {
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            let tag = reader.read_u8()?;
+            let tag = u8::read(reader)?;
             match tag {
                 0 => Ok(InterContractPermission::None),
                 1 => Ok(InterContractPermission::All),
                 2 => {
-                    let len = reader.read_u8()? as usize;
+                    let len = u8::read(reader)? as usize;
                     let mut allowed = IndexSet::with_capacity(len);
                     for _ in 0..len {
                         let call = ContractCall::read(reader)?;
@@ -234,7 +234,7 @@ impl Serializer for InterContractPermission {
                     Ok(InterContractPermission::Specific(allowed))
                 }
                 3 => {
-                    let len = reader.read_u8()? as usize;
+                    let len = u8::read(reader)? as usize;
                     let mut excluded = IndexSet::with_capacity(len);
                     for _ in 0..len {
                         let call = ContractCall::read(reader)?;

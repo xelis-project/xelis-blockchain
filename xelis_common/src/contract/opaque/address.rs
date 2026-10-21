@@ -13,7 +13,7 @@ use xelis_vm::{
 use crate::{
     contract::{ContractMetadata, ModuleMetadata, OpaqueRistrettoPoint},
     crypto::{Address, NORMAL_ADDRESS_LEN},
-    serializer::{Error as SerializationError, Serializer, Writer, WriterExt},
+    serializer::{Error as SerializationError, Serializer, Writer},
 };
 
 use super::ADDRESS_OPAQUE_ID;
@@ -22,7 +22,7 @@ impl DynSerializable for Address {
     fn serialize(&self, buffer: &mut Vec<u8>) -> Result<usize, SerializationError> {
         let start = buffer.len();
         let mut writer = Writer::new(&mut *buffer);
-        writer.write_u8(ADDRESS_OPAQUE_ID)?;
+        ADDRESS_OPAQUE_ID.write(&mut writer)?;
         self.write(&mut writer)?;
         Ok(buffer.len() - start)
     }

@@ -22,11 +22,9 @@ use crate::{
         Readable,
         Reader,
         ReaderError,
-        ReaderExt,
         Serializer,
         Writable,
         Writer,
-        WriterExt,
     },
     time::TimestampMillis,
     immutable::Immutable
@@ -274,15 +272,15 @@ impl Serializer for BlockHeader {
             self.height.write(writer)?; // 1 + 8 = 9
             self.timestamp.write(writer)?; // 9 + 8 = 17
             self.nonce.write(writer)?; // 17 + 8 = 25
-            writer.write_bytes(&self.extra_nonce)?; // 25 + 32 = 57
-            writer.write_u8(self.tips.len() as u8)?; // 57 + 1 = 58
+            writer.extend_bytes(&self.extra_nonce)?; // 25 + 32 = 57
+            (self.tips.len() as u8).write(writer)?; // 57 + 1 = 58
             for tip in self.tips.iter() {
-                writer.write_hash(tip)?; // 32 per hash
+                tip.write(writer)?; // 32 per hash
             }
 
-            writer.write_u16(self.txs_hashes.len() as u16)?; // 58 + (N*32) + 2 = 60 + (N*32)
+            (self.txs_hashes.len() as u16).write(writer)?; // 58 + (N*32) + 2 = 60 + (N*32)
             for tx in &self.txs_hashes {
-                writer.write_hash(tx)?; // 32
+                tx.write(writer)?; // 32
             }
             self.miner.write(writer) // 60 + (N*32) + (T*32) + 32 = 92 + (N*32) + (T*32)
             // Minimum size is 92 bytes
@@ -292,12 +290,12 @@ impl Serializer for BlockHeader {
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<BlockHeader, ReaderError> {
         reader.read_with_context(|reader| {
             let version = BlockVersion::read(reader)?;
-            let height = reader.read_u64()?;
-            let timestamp = reader.read_u64()?;
-            let nonce = reader.read_u64()?;
-            let extra_nonce: [u8; 32] = reader.read_bytes_32()?;
+            let height = u64::read(reader)?;
+            let timestamp = u64::read(reader)?;
+            let nonce = u64::read(reader)?;
+            let extra_nonce: [u8; 32] = <[u8; 32]>::read(reader)?;
 
-            let tips_count = reader.read_u8()?;
+            let tips_count = u8::read(reader)?;
             if tips_count as usize > TIPS_LIMIT {
                 debug!("Error, too many tips in block header");
                 return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("block header has {tips_count} tips; maximum is {TIPS_LIMIT}")))
@@ -305,16 +303,16 @@ impl Serializer for BlockHeader {
 
             let mut tips = IndexSet::with_capacity(tips_count as usize);
             for _ in 0..tips_count {
-                if !tips.insert(reader.read_hash()?) {
+                if !tips.insert(Hash::read(reader)?) {
                     debug!("Error, duplicate tip found in block header");
                     return Err(SerializationError::new(DecodeError::InvalidValue).context("duplicate tip hash in block header"))
                 }
             }
 
-            let txs_count = reader.read_u16()?;
+            let txs_count = u16::read(reader)?;
             let mut txs_hashes = IndexSet::with_capacity(txs_count as usize);
             for _ in 0..txs_count {
-                if !txs_hashes.insert(reader.read_hash()?) {
+                if !txs_hashes.insert(Hash::read(reader)?) {
                     debug!("Error, duplicate tx hash found in block header");
                     return Err(SerializationError::new(DecodeError::InvalidValue).context("duplicate transaction hash in block header"))
                 }

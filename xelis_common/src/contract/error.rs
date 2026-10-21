@@ -61,19 +61,19 @@ impl Serializer for ExitError {
     fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
         writer.write_with_context::<Self>(|writer| {
             match self {
-                ExitError::InvalidEntryPayloadReturn => writer.write_u8(0),
-                ExitError::UnknownHook => writer.write_u8(1),
-                ExitError::InvalidEntry => writer.write_u8(2),
-                ExitError::MissingEntryExitCode => writer.write_u8(3),
-                ExitError::IllegalState => writer.write_u8(4),
-                ExitError::DivisionByZero => writer.write_u8(5),
-                ExitError::AssertionFailed => writer.write_u8(6),
-                ExitError::OutOfBounds => writer.write_u8(7),
-                ExitError::OutOfMemory => writer.write_u8(8),
-                ExitError::NotEnoughGas => writer.write_u8(9),
-                ExitError::GasOverflow => writer.write_u8(10),
+                ExitError::InvalidEntryPayloadReturn => 0u8.write(writer),
+                ExitError::UnknownHook => 1u8.write(writer),
+                ExitError::InvalidEntry => 2u8.write(writer),
+                ExitError::MissingEntryExitCode => 3u8.write(writer),
+                ExitError::IllegalState => 4u8.write(writer),
+                ExitError::DivisionByZero => 5u8.write(writer),
+                ExitError::AssertionFailed => 6u8.write(writer),
+                ExitError::OutOfBounds => 7u8.write(writer),
+                ExitError::OutOfMemory => 8u8.write(writer),
+                ExitError::NotEnoughGas => 9u8.write(writer),
+                ExitError::GasOverflow => 10u8.write(writer),
                 ExitError::RuntimeError(msg) => {
-                    writer.write_u8(11)?;
+                    11u8.write(writer)?;
                     msg.write(writer)
                 }
             }
@@ -82,7 +82,7 @@ impl Serializer for ExitError {
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            Ok(match reader.read_u8()? {
+            Ok(match u8::read(reader)? {
                 0 => ExitError::InvalidEntryPayloadReturn,
                 1 => ExitError::UnknownHook,
                 2 => ExitError::InvalidEntry,

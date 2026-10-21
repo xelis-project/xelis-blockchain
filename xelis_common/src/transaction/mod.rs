@@ -256,33 +256,33 @@ impl Serializer for TransactionType {
         writer.write_with_context::<Self>(|writer| {
             match self {
                 TransactionType::Burn(payload) => {
-                    writer.write_u8(0)?;
+                    0u8.write(writer)?;
                     payload.write(writer)
                 }
                 TransactionType::Transfers(txs) => {
-                    writer.write_u8(1)?;
+                    1u8.write(writer)?;
                     // max 255 txs per transaction
                     let len: u8 = txs.len() as u8;
-                    writer.write_u8(len)?;
+                    len.write(writer)?;
                     for tx in txs {
                         tx.write(writer)?;
                     }
                     Ok(())
                 },
                 TransactionType::MultiSig(payload) => {
-                    writer.write_u8(2)?;
+                    2u8.write(writer)?;
                     payload.write(writer)
                 },
                 TransactionType::InvokeContract(payload) => {
-                    writer.write_u8(3)?;
+                    3u8.write(writer)?;
                     payload.write(writer)
                 },
                 TransactionType::DeployContract(module) => {
-                    writer.write_u8(4)?;
+                    4u8.write(writer)?;
                     module.write(writer)
                 },
                 TransactionType::Blob(extra_data) => {
-                    writer.write_u8(5)?;
+                    5u8.write(writer)?;
                     extra_data.write(writer)
                 }
             }
@@ -291,13 +291,13 @@ impl Serializer for TransactionType {
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<TransactionType, ReaderError> {
         reader.read_with_context(|reader| {
-            Ok(match reader.read_u8()? {
+            Ok(match u8::read(reader)? {
                 0 => {
                     let payload = BurnPayload::read(reader)?;
                     TransactionType::Burn(payload)
                 },
                 1 => {
-                    let txs_count = reader.read_u8()?;
+                    let txs_count = u8::read(reader)?;
                     if txs_count == 0 || txs_count > MAX_TRANSFER_COUNT as u8 {
                         return Err(SerializationError::new(DecodeError::InvalidSize).context(format!("transaction contains {txs_count} transfers; expected 1..={MAX_TRANSFER_COUNT}")))
                     }
@@ -355,7 +355,7 @@ impl Serializer for Transaction {
 
             self.nonce.write(writer)?;
 
-            writer.write_u8(self.source_commitments.len() as u8)?;
+            (self.source_commitments.len() as u8).write(writer)?;
             for commitment in &self.source_commitments {
                 commitment.write(writer)?;
             }
@@ -380,16 +380,16 @@ impl Serializer for Transaction {
 
             let source = CompressedPublicKey::read(reader)?;
             let data = TransactionType::read(reader)?;
-            let fee = reader.read_u64()?;
+            let fee = u64::read(reader)?;
             let fee_limit = if version >= TxVersion::V2 {
-                reader.read_u64()?
+                u64::read(reader)?
             } else {
                 fee
             };
 
             let nonce = Nonce::read(reader)?;
 
-            let commitments_len = reader.read_u8()?;
+            let commitments_len = u8::read(reader)?;
             if commitments_len == 0 || commitments_len > MAX_TRANSFER_COUNT as u8 {
                 return Err(SerializationError::new(DecodeError::InvalidSize).context(format!("transaction contains {commitments_len} source commitments; expected 1..={MAX_TRANSFER_COUNT}")))
             }

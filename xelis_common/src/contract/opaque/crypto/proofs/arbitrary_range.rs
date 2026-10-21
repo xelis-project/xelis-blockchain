@@ -36,7 +36,7 @@ impl DynSerializable for ArbitraryRangeProof {
     fn serialize(&self, buffer: &mut Vec<u8>) -> Result<usize, SerializationError> {
         let start = buffer.len();
         let mut writer = Writer::new(&mut *buffer);
-        writer.write_u8(ARBITRARY_RANGE_PROOF_OPAQUE_ID)?;
+        ARBITRARY_RANGE_PROOF_OPAQUE_ID.write(&mut writer)?;
         self.write(&mut writer)?;
         Ok(buffer.len() - start)
     }

@@ -29,14 +29,14 @@ use crate::{
         Address,
         elgamal::*
     },
-    serializer::{Error as SerializationError, Serializer, Writer, WriterExt},
+    serializer::{Error as SerializationError, Serializer, Writer},
 };
 
 impl DynSerializable for CiphertextCache {
     fn serialize(&self, buffer: &mut Vec<u8>) -> Result<usize, SerializationError> {
         let start = buffer.len();
         let mut writer = Writer::new(&mut *buffer);
-        writer.write_u8(CIPHERTEXT_OPAQUE_ID)?;
+        CIPHERTEXT_OPAQUE_ID.write(&mut writer)?;
         self.write(&mut writer)?;
         Ok(buffer.len() - start)
     }

@@ -76,54 +76,54 @@ impl Serializer for TypePacked {
     fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
         writer.write_with_context::<Self>(|writer| {
             match self {
-                TypePacked::Number(NumberType::U8) => writer.write_u8(0),
-                TypePacked::Number(NumberType::U16) => writer.write_u8(1),
-                TypePacked::Number(NumberType::U32) => writer.write_u8(2),
-                TypePacked::Number(NumberType::U64) => writer.write_u8(3),
-                TypePacked::Number(NumberType::U128) => writer.write_u8(4),
-                TypePacked::Number(NumberType::U256) => writer.write_u8(5),
-                TypePacked::Bool => writer.write_u8(6),
-                TypePacked::Bytes => writer.write_u8(7),
-                TypePacked::String => writer.write_u8(8),
+                TypePacked::Number(NumberType::U8) => 0u8.write(writer),
+                TypePacked::Number(NumberType::U16) => 1u8.write(writer),
+                TypePacked::Number(NumberType::U32) => 2u8.write(writer),
+                TypePacked::Number(NumberType::U64) => 3u8.write(writer),
+                TypePacked::Number(NumberType::U128) => 4u8.write(writer),
+                TypePacked::Number(NumberType::U256) => 5u8.write(writer),
+                TypePacked::Bool => 6u8.write(writer),
+                TypePacked::Bytes => 7u8.write(writer),
+                TypePacked::String => 8u8.write(writer),
                 TypePacked::Opaque(id) => {
-                    writer.write_u8(9)?;
-                    writer.write_u16(*id)
+                    9u8.write(writer)?;
+                    id.write(writer)
                 },
                 TypePacked::Range(inner) => match **inner {
-                    NumberType::U8 => writer.write_u8(10),
-                    NumberType::U16 => writer.write_u8(11),
-                    NumberType::U32 => writer.write_u8(12),
-                    NumberType::U64 => writer.write_u8(13),
-                    NumberType::U128 => writer.write_u8(14),
-                    NumberType::U256 => writer.write_u8(15),
+                    NumberType::U8 => 10u8.write(writer),
+                    NumberType::U16 => 11u8.write(writer),
+                    NumberType::U32 => 12u8.write(writer),
+                    NumberType::U64 => 13u8.write(writer),
+                    NumberType::U128 => 14u8.write(writer),
+                    NumberType::U256 => 15u8.write(writer),
                 },
                 TypePacked::Array(inner) => {
-                    writer.write_u8(16)?;
+                    16u8.write(writer)?;
                     inner.write(writer)
                 },
                 TypePacked::Tuples(fields) => {
-                    writer.write_u8(17)?;
-                    writer.write_u8(fields.len() as u8)?;
+                    17u8.write(writer)?;
+                    (fields.len() as u8).write(writer)?;
                     for field in fields {
                         field.write(writer)?;
                     }
                     Ok(())
                 },
                 TypePacked::Map(key, value) => {
-                    writer.write_u8(18)?;
+                    18u8.write(writer)?;
                     key.write(writer)?;
                     value.write(writer)
                 },
                 TypePacked::Optional(inner) => {
-                    writer.write_u8(19)?;
+                    19u8.write(writer)?;
                     inner.write(writer)
                 },
-                TypePacked::Any => writer.write_u8(20),
+                TypePacked::Any => 20u8.write(writer),
                 TypePacked::OneOf(variants) => {
-                    writer.write_u8(21)?;
-                    writer.write_u8(variants.len() as u8)?;
+                    21u8.write(writer)?;
+                    (variants.len() as u8).write(writer)?;
                     for variant in variants {
-                        writer.write_u8(variant.len() as u8)?;
+                        (variant.len() as u8).write(writer)?;
                         for v in variant {
                             v.write(writer)?;
                         }
@@ -162,7 +162,7 @@ impl Serializer for TypePacked {
                             return Err(SerializationError::new(DecodeError::InvalidSize).context(format!("packed type nesting depth {depth} exceeds the maximum of {MAX_DEPTH}")));
                         }
 
-                        let tag = reader.read_u8()?;
+                        let tag = u8::read(reader)?;
                         match tag {
                             0 => tmp.push(TypePacked::Number(NumberType::U8)),
                             1 => tmp.push(TypePacked::Number(NumberType::U16)),
@@ -174,7 +174,7 @@ impl Serializer for TypePacked {
                             7 => tmp.push(TypePacked::Bytes),
                             8 => tmp.push(TypePacked::String),
                             9 => {
-                                let id = reader.read_u16()?;
+                                let id = u16::read(reader)?;
                                 tmp.push(TypePacked::Opaque(id));
                             },
                             10 => tmp.push(TypePacked::Range(Box::new(NumberType::U8))),
@@ -188,7 +188,7 @@ impl Serializer for TypePacked {
                                 stack.push((WorkItem::ReadType, depth + 1));
                             },
                             17 => {
-                                let len = reader.read_u8()? as usize;
+                                let len = u8::read(reader)? as usize;
                                 if len == 0 {
                                     tmp.push(TypePacked::Tuples(Vec::new()));
                                 } else {
@@ -206,11 +206,11 @@ impl Serializer for TypePacked {
                             },
                             20 => tmp.push(TypePacked::Any),
                             21 => {
-                                let len = reader.read_u8()? as usize;
+                                let len = u8::read(reader)? as usize;
                                 if len == 0 {
                                     tmp.push(TypePacked::OneOf(Vec::new()));
                                 } else {
-                                    let first_variant_len = reader.read_u8()? as usize;
+                                    let first_variant_len = u8::read(reader)? as usize;
                                     if first_variant_len == 0 {
                                         stack.push((WorkItem::BuildOneOf {
                                             remaining_variants: len - 1,
@@ -277,7 +277,7 @@ impl Serializer for TypePacked {
                                 variants.push(current_variant);
 
                                 if remaining_variants > 0 {
-                                    let next_variant_len = reader.read_u8()? as usize;
+                                    let next_variant_len = u8::read(reader)? as usize;
                                     if next_variant_len == 0 {
                                         stack.push((WorkItem::BuildOneOf {
                                             remaining_variants: remaining_variants - 1,
@@ -302,7 +302,7 @@ impl Serializer for TypePacked {
                             variants.push(current_variant);
 
                             if remaining_variants > 0 {
-                                let next_variant_len = reader.read_u8()? as usize;
+                                let next_variant_len = u8::read(reader)? as usize;
                                 if next_variant_len == 0 {
                                     stack.push((WorkItem::BuildOneOf {
                                         remaining_variants: remaining_variants - 1,

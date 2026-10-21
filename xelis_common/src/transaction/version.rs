@@ -4,11 +4,9 @@ use crate::serializer::{
     Readable,
     Reader,
     ReaderError,
-    ReaderExt,
     Serializer,
     Writable,
     Writer,
-    WriterExt,
 };
 use schemars::JsonSchema;
 use core::fmt;
@@ -63,13 +61,13 @@ impl Into<u64> for TxVersion {
 
 impl Serializer for TxVersion {
     fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
-        writer.write_with_context::<Self>(|writer| writer.write_u8(*self as u8))
+        writer.write_with_context::<Self>(|writer| (*self as u8).write(writer))
     }
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError>
         where Self: Sized {
         reader.read_with_context(|reader| {
-            let id = reader.read_u8()?;
+            let id = u8::read(reader)?;
             Self::try_from(id).map_err(|_| SerializationError::new(DecodeError::InvalidValue).context(format!("unsupported transaction version {id}")))
         })
     }

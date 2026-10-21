@@ -26,7 +26,7 @@ use crate::{
         elgamal::SCALAR_SIZE,
         proofs::G
     },
-    serializer::{Error as SerializationError, Serializer, Writer, WriterExt},
+    serializer::{Error as SerializationError, Serializer, Writer},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Opaque)]
@@ -37,7 +37,7 @@ impl DynSerializable for OpaqueScalar {
     fn serialize(&self, buffer: &mut Vec<u8>) -> Result<usize, SerializationError> {
         let start = buffer.len();
         let mut writer = Writer::new(&mut *buffer);
-        writer.write_u8(SCALAR_OPAQUE_ID)?;
+        SCALAR_OPAQUE_ID.write(&mut writer)?;
         self.0.write(&mut writer)?;
         Ok(buffer.len() - start)
     }

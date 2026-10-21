@@ -47,12 +47,12 @@ impl fmt::Display for ContractVersion {
 
 impl Serializer for ContractVersion {
     fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
-        writer.write_with_context::<Self>(|writer| writer.write_u8(*self as u8))
+        writer.write_with_context::<Self>(|writer| (*self as u8).write(writer))
     }
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            match reader.read_u8()? {
+            match u8::read(reader)? {
                 0 => Ok(ContractVersion::V0),
                 1 => Ok(ContractVersion::V1),
                 tag => Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown contract version tag {tag}"))),

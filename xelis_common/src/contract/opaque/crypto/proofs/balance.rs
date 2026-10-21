@@ -35,7 +35,7 @@ impl DynSerializable for BalanceProof {
     fn serialize(&self, buffer: &mut Vec<u8>) -> Result<usize, SerializationError> {
         let start = buffer.len();
         let mut writer = Writer::new(&mut *buffer);
-        writer.write_u8(BALANCE_PROOF_OPAQUE_ID)?;
+        BALANCE_PROOF_OPAQUE_ID.write(&mut writer)?;
         self.write(&mut writer)?;
         Ok(buffer.len() - start)
     }

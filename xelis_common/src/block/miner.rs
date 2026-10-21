@@ -16,11 +16,9 @@ use crate::{
         Readable,
         Reader,
         ReaderError,
-        ReaderExt,
         Serializer,
         Writable,
         Writer,
-        WriterExt,
     },
     time::TimestampMillis,
 };
@@ -316,7 +314,7 @@ impl<'a> Serializer for MinerWork<'a> {
             self.header_work_hash.write(writer)?; // 32
             self.timestamp.write(writer)?; // 32 + 8 = 40
             self.nonce.write(writer)?; // 40 + 8 = 48
-            writer.write_bytes(&self.extra_nonce)?; // 48 + 32 = 80
+            writer.extend_bytes(&self.extra_nonce)?; // 48 + 32 = 80
 
             // 80 + 32 = 112
             let miner = self.miner.as_ref()
@@ -328,10 +326,10 @@ impl<'a> Serializer for MinerWork<'a> {
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<MinerWork<'a>, ReaderError> {
         reader.read_with_context(|reader| {
-            let header_work_hash = reader.read_hash()?;
-            let timestamp = reader.read_u64()?;
-            let nonce = reader.read_u64()?;
-            let extra_nonce = reader.read_bytes_32()?;
+            let header_work_hash = Hash::read(reader)?;
+            let timestamp = u64::read(reader)?;
+            let nonce = u64::read(reader)?;
+            let extra_nonce = <[u8; 32]>::read(reader)?;
             let miner = Some(Cow::Owned(PublicKey::read(reader)?));
 
             Ok(MinerWork {

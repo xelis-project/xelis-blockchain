@@ -163,12 +163,12 @@ impl CompressedPublicKey {
 
 impl Serializer for CompressedRistretto {
     fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
-        writer.write_with_context::<Self>(|writer| writer.write_bytes(self.as_bytes()))
+        writer.write_with_context::<Self>(|writer| writer.extend_bytes(self.as_bytes()))
     }
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            let bytes = reader.read_bytes_32()?;
+            let bytes = <[u8; 32]>::read(reader)?;
             let point = CompressedRistretto::from_slice(&bytes).map_err(SerializationError::new)?;
 
             Ok(point)
@@ -231,8 +231,8 @@ impl Serializer for CompressedPublicKey {
 impl Serializer for CompressedCiphertext {
     fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
         writer.write_with_context::<Self>(|writer| {
-            writer.write_bytes(self.commitment.as_bytes())?;
-            writer.write_bytes(self.handle.as_bytes())
+            writer.extend_bytes(self.commitment.as_bytes())?;
+            writer.extend_bytes(self.handle.as_bytes())
         })
     }
 
@@ -253,12 +253,12 @@ impl Serializer for CompressedCiphertext {
 
 impl Serializer for Scalar {
     fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
-        writer.write_with_context::<Self>(|writer| writer.write_bytes(self.as_bytes()))
+        writer.write_with_context::<Self>(|writer| writer.extend_bytes(self.as_bytes()))
     }
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            let bytes = reader.read_bytes_32()?;
+            let bytes = <[u8; 32]>::read(reader)?;
             let scalar: Option<Scalar> = Scalar::from_canonical_bytes(bytes).into();
             scalar.ok_or_else(|| SerializationError::new(DecodeError::InvalidValue).context("scalar bytes are not a canonical scalar encoding"))
         })

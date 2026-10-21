@@ -123,13 +123,13 @@ impl Serializer for OpaqueWrapper {
             self.as_serializable()
                 .ok_or_else(|| SerializationError::new(ValueError::InvalidOpaqueTypeMismatch).context("opaque value does not support binary serialization"))?
                 .serialize(&mut bytes)?;
-            writer.write_bytes(&bytes)
+            writer.extend_bytes(&bytes)
         })
     }
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            Ok(match reader.read_u8()? {
+            Ok(match u8::read(reader)? {
                 HASH_OPAQUE_ID => OpaqueWrapper::new(Hash::read(reader)?),
                 ADDRESS_OPAQUE_ID => OpaqueWrapper::new(Address::read(reader)?),
                 SIGNATURE_OPAQUE_ID => OpaqueWrapper::new(Signature::read(reader)?),

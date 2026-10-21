@@ -33,7 +33,7 @@ impl DynSerializable for CommitmentEqProof {
     fn serialize(&self, buffer: &mut Vec<u8>) -> Result<usize, SerializationError> {
         let start = buffer.len();
         let mut writer = Writer::new(&mut *buffer);
-        writer.write_u8(COMMITMENT_EQUALITY_PROOF_OPAQUE_ID)?;
+        COMMITMENT_EQUALITY_PROOF_OPAQUE_ID.write(&mut writer)?;
         self.write(&mut writer)?;
         Ok(buffer.len() - start)
     }

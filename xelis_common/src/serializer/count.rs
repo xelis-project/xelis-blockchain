@@ -7,7 +7,7 @@ impl Serializer for Count {
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            Ok(Self(reader.read_all_bytes()?.len()))
+            Ok(Self(RawBytes::read(reader)?.len()))
         })
     }
 

@@ -17,14 +17,14 @@ use xelis_vm::{
 use crate::{
     contract::{ModuleMetadata, ContractMetadata, HASH_OPAQUE_ID},
     crypto::{hash, Hash, HASH_SIZE},
-    serializer::{Error as SerializationError, Serializer, Writer, WriterExt},
+    serializer::{Error as SerializationError, Serializer, Writer},
 };
 
 impl DynSerializable for Hash {
     fn serialize(&self, buffer: &mut Vec<u8>) -> Result<usize, SerializationError> {
         let start = buffer.len();
         let mut writer = Writer::new(&mut *buffer);
-        writer.write_u8(HASH_OPAQUE_ID)?;
+        HASH_OPAQUE_ID.write(&mut writer)?;
         self.write(&mut writer)?;
         Ok(buffer.len() - start)
     }

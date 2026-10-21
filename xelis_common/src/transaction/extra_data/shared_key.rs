@@ -21,7 +21,7 @@ impl Serializer for SharedKey {
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            Ok(Self(reader.read()?))
+            Ok(Self(<[u8; 32]>::read(reader)?))
         })
     }
 

@@ -28,19 +28,19 @@ impl Serializer for Source {
         writer.write_with_context::<Self>(|writer| {
             match self {
                 Source::Contract(hash) => {
-                    writer.write_u8(0)?;
+                    0u8.write(writer)?;
                     hash.write(writer)
                 }
                 Source::Account(account) => {
-                    writer.write_u8(1)?;
+                    1u8.write(writer)?;
                     account.write(writer)
                 }
                 Source::ContractBalance(hash) => {
-                    writer.write_u8(2)?;
+                    2u8.write(writer)?;
                     hash.write(writer)
                 }
                 Source::AccountBalance(account) => {
-                    writer.write_u8(3)?;
+                    3u8.write(writer)?;
                     account.write(writer)
                 }
             }
@@ -49,7 +49,7 @@ impl Serializer for Source {
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            let tag = reader.read_u8()?;
+            let tag = u8::read(reader)?;
             match tag {
                 0 => {
                     let hash = Hash::read(reader)?;

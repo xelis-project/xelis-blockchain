@@ -3,11 +3,9 @@ use crate::serializer::{
     Readable,
     Reader,
     ReaderError,
-    ReaderExt,
     Serializer,
     Writable,
     Writer,
-    WriterExt,
 };
 use std::ops::{Deref, DerefMut};
 
@@ -26,13 +24,11 @@ impl RawBytes {
 
 impl Serializer for RawBytes {
     fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
-        writer.write_with_context::<Self>(|writer| writer.write_bytes(&self.0))
+        writer.write_with_context::<Self>(|writer| writer.extend_bytes(&self.0))
     }
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
-        reader.read_with_context(|reader| {
-            Ok(Self(reader.read_all_bytes()?))
-        })
+        reader.read_with_context(|reader| reader.read_remaining_bytes().map(Self))
     }
 
     fn to_bytes(&self) -> Result<Vec<u8>, SerializationError> {

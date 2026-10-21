@@ -26,7 +26,7 @@ pub enum PlaintextFlag {
 impl Serializer for PlaintextFlag {
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            match reader.read_u8()? {
+            match u8::read(reader)? {
                 0 => Ok(Self::Private),
                 1 => Ok(Self::Public),
                 2 => Ok(Self::Proprietary),
@@ -38,13 +38,13 @@ impl Serializer for PlaintextFlag {
 
     fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
         writer.write_with_context::<Self>(|writer| {
-            let id = match self {
+            let id: u8 = match self {
                 Self::Private => 0,
                 Self::Public => 1,
                 Self::Proprietary => 2,
                 Self::Failed => 3
             };
-            writer.write_u8(id)
+            id.write(writer)
         })
     }
 

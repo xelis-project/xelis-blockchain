@@ -6,11 +6,9 @@ use crate::{
         Readable,
         Reader,
         ReaderError,
-        ReaderExt,
         Serializer,
         Writable,
         Writer,
-        WriterExt,
     },
 };
 use super::{ExtraData, PlaintextData};
@@ -76,15 +74,15 @@ impl Serializer for ExtraDataType {
         writer.write_with_context::<Self>(|writer| {
             match self {
                 Self::Private(payload) => {
-                    writer.write_u8(0)?;
+                    0u8.write(writer)?;
                     payload.write(writer)
                 },
                 Self::Public(payload) => {
-                    writer.write_u8(1)?;
+                    1u8.write(writer)?;
                     payload.0.write(writer)
                 },
                 Self::Proprietary(payload) => {
-                    writer.write_u8(2)?;
+                    2u8.write(writer)?;
                     payload.write(writer)
                 }
             }
@@ -93,12 +91,12 @@ impl Serializer for ExtraDataType {
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            Ok(match reader.read_u8()? {
+            Ok(match u8::read(reader)? {
                 0 => Self::Private(ExtraData::read(reader)?),
                 1 => Self::Public(PlaintextData(Vec::read(reader)?)),
                 2 => {
                     // We read manually to prevent the max default items limit
-                    let len = reader.read_u16()?;
+                    let len = u16::read(reader)?;
                     let values = reader.read_vec(len as usize)?;
                     Self::Proprietary(values)
                 },

@@ -12,11 +12,11 @@ pub struct DynamicLen(pub usize);
 impl Serializer for DynamicLen {
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            let tag = reader.read_u8()?;
+            let tag = u8::read(reader)?;
             let len = match tag {
                 n @ 0x00..=0xFC => n as usize,
-                0xFD => reader.read_u16()? as usize,
-                0xFE => reader.read_u32()? as usize,
+                0xFD => u16::read(reader)? as usize,
+                0xFE => u32::read(reader)? as usize,
                 _ => return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unsupported dynamic length tag {tag:#04x}; 0xff is reserved"))),
             };
             Ok(Self(len))
@@ -27,13 +27,13 @@ impl Serializer for DynamicLen {
         writer.write_with_context::<Self>(|writer| {
             let len = self.0;
             if len <= 0xFC {
-                writer.write_u8(len as u8)
+                (len as u8).write(writer)
             } else if len <= 0xFFFF {
-                writer.write_u8(0xFD)?;
-                writer.write_u16(len as u16)
+                0xFDu8.write(writer)?;
+                (len as u16).write(writer)
             } else {
-                writer.write_u8(0xFE)?;
-                writer.write_u32(len as u32)
+                0xFEu8.write(writer)?;
+                (len as u32).write(writer)
             }
         })
     }

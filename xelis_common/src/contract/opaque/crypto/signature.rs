@@ -14,7 +14,7 @@ use xelis_vm::{
 use crate::{
     contract::{ModuleMetadata, ContractMetadata, OpaqueRistrettoPoint, SIGNATURE_OPAQUE_ID},
     crypto::{Signature, SIGNATURE_SIZE},
-    serializer::{Error as SerializationError, Serializer, Writer, WriterExt},
+    serializer::{Error as SerializationError, Serializer, Writer},
 };
 
 impl DynSerializable for Signature {
@@ -25,7 +25,7 @@ impl DynSerializable for Signature {
     fn serialize(&self, buffer: &mut Vec<u8>) -> Result<usize, SerializationError> {
         let start = buffer.len();
         let mut writer = Writer::new(&mut *buffer);
-        writer.write_u8(SIGNATURE_OPAQUE_ID)?;
+        SIGNATURE_OPAQUE_ID.write(&mut writer)?;
         self.write(&mut writer)?;
         Ok(buffer.len() - start)
     }

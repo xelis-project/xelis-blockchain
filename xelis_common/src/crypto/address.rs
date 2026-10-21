@@ -14,11 +14,9 @@ use crate::{
         Readable,
         Reader,
         ReaderError,
-        ReaderExt,
         Serializer,
         Writable,
         Writer,
-        WriterExt,
     },
     transaction::EXTRA_DATA_LIMIT_SIZE
 };
@@ -244,9 +242,9 @@ impl Serializer for AddressType {
     fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
         writer.write_with_context::<Self>(|writer| {
             match self {
-                AddressType::Normal => writer.write_u8(0),
+                AddressType::Normal => 0u8.write(writer),
                 AddressType::Data(data) => {
-                    writer.write_u8(1)?;
+                    1u8.write(writer)?;
                     data.write(writer)
                 }
             }
@@ -255,7 +253,7 @@ impl Serializer for AddressType {
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<AddressType, ReaderError> {
         reader.read_with_context(|reader| {
-            let _type = match reader.read_u8()? {
+            let _type = match u8::read(reader)? {
                 0 => AddressType::Normal,
                 1 => {
                     let read = reader.total_read();

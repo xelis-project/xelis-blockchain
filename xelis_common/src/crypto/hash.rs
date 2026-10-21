@@ -6,11 +6,9 @@ use crate::{
         Readable,
         Reader,
         ReaderError,
-        ReaderExt,
         Serializer,
         Writable,
         Writer,
-        WriterExt,
     },
 };
 use std::{
@@ -116,13 +114,12 @@ pub fn pow_hash(work: &[u8], algorithm: Algorithm) -> Result<Hash, XelisHashErro
 impl Serializer for Hash {
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            let hash = reader.read_hash()?;
-            Ok(hash)
+            <[u8; HASH_SIZE]>::read(reader).map(Hash::new)
         })
     }
 
     fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
-        writer.write_with_context::<Self>(|writer| writer.write_hash(self))
+        writer.write_with_context::<Self>(|writer| writer.extend_bytes(self.as_bytes()))
     }
 
     fn size(&self) -> usize {

@@ -35,7 +35,7 @@ impl Serializer for BlobPayload {
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
             let data = UnknownExtraDataFormat::read(reader)?;
-            let len = reader.read_u8()?;
+            let len = u8::read(reader)?;
             let mut destinations = IndexSet::new();
             for _ in 0..len {
                 let pk = CompressedPublicKey::read(reader)?;
@@ -52,7 +52,7 @@ impl Serializer for BlobPayload {
     fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
         writer.write_with_context::<Self>(|writer| {
             self.data.write(writer)?;
-            writer.write_u8(self.destinations.len() as u8)?;
+            (self.destinations.len() as u8).write(writer)?;
             for pk in &self.destinations {
                 pk.write(writer)?;
             }

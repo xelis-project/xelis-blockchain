@@ -24,7 +24,7 @@ impl Serializer for BurnPayload {
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<BurnPayload, ReaderError> {
         reader.read_with_context(|reader| {
             let asset = Hash::read(reader)?;
-            let amount = reader.read_u64()?;
+            let amount = u64::read(reader)?;
             Ok(BurnPayload {
                 asset,
                 amount
