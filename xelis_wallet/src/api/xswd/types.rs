@@ -162,9 +162,9 @@ impl ApplicationData {
 impl Serializer for ApplicationData {
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            let id = reader.read_string()?;
-            let name = reader.read_string()?;
-            let description = reader.read_string()?;
+            let id = String::read(reader)?;
+            let name = String::read(reader)?;
+            let description = String::read(reader)?;
             let url = Option::read(reader)?;
             let permissions = IndexSet::read(reader)?;
 
@@ -211,10 +211,10 @@ pub enum EncryptionMode {
 impl Serializer for EncryptionMode {
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            let mode = reader.read_u8()?;
+            let mode = u8::read(reader)?;
             match mode {
-                0 => Ok(Self::AES { key: reader.read_bytes_32()? }),
-                1 => Ok(Self::Chacha20Poly1305 { key: reader.read_bytes_32()? }),
+                0 => Ok(Self::AES { key: <[u8; 32]>::read(reader)? }),
+                1 => Ok(Self::Chacha20Poly1305 { key: <[u8; 32]>::read(reader)? }),
                 tag => Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown XSWD encryption mode tag {tag}")))
             }
         })
@@ -224,11 +224,11 @@ impl Serializer for EncryptionMode {
         writer.write_with_context::<Self>(|writer| {
             match self {
                 Self::AES { key } => {
-                    writer.write_u8(0)?;
+                    0u8.write(writer)?;
                     key.write(writer)
                 }
                 Self::Chacha20Poly1305 { key } => {
-                    writer.write_u8(1)?;
+                    1u8.write(writer)?;
                     key.write(writer)
                 }
             }
@@ -255,8 +255,11 @@ impl Serializer for ApplicationDataRelayer {
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
             let app_data = ApplicationData::read(reader)?;
-            let n = reader.read_u16()?;
-            let relayer = reader.read_string_with_size(n as _)?;
+            let n = u16::read(reader)?;
+            let relayer = String::from_utf8(reader.read_vec(n as usize)?)
+                .map_err(|error| SerializationError::new(error)
+                    .context("decoding UTF-8 string")
+                )?;
             let encryption_mode = Option::read(reader)?;
             Ok(Self {
                 app_data,
@@ -271,7 +274,7 @@ impl Serializer for ApplicationDataRelayer {
             self.app_data.write(writer)?;
 
             let bytes = self.relayer.as_bytes();
-            writer.write_u16(bytes.len() as u16)?;
+            (bytes.len() as u16).write(writer)?;
             bytes.write(writer)?;
 
             self.encryption_mode.write(writer)

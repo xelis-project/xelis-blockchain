@@ -33,10 +33,10 @@ impl Serializer for PasswordConfig {
         writer.write_with_context::<Self>(|writer| {
             match self {
                 Self::Argon2id { memory_cost_kib, parallelism, iterations } => {
-                    writer.write_u8(0)?;
-                    writer.write_u32(*memory_cost_kib)?;
-                    writer.write_u32(*parallelism)?;
-                    writer.write_u32(*iterations)
+                    0u8.write(writer)?;
+                    memory_cost_kib.write(writer)?;
+                    parallelism.write(writer)?;
+                    iterations.write(writer)
                 }
             }
         })
@@ -44,11 +44,11 @@ impl Serializer for PasswordConfig {
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
-            match reader.read_u8()? {
+            match u8::read(reader)? {
                 0 => Ok(Self::Argon2id {
-                    memory_cost_kib: reader.read_u32()?,
-                    parallelism: reader.read_u32()?,
-                    iterations: reader.read_u32()?,
+                    memory_cost_kib: u32::read(reader)?,
+                    parallelism: u32::read(reader)?,
+                    iterations: u32::read(reader)?,
                 }),
                 tag => Err(SerializationError::new(DecodeError::InvalidValue).context(format!("unknown password configuration tag {tag}"))),
             }

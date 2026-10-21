@@ -3,11 +3,9 @@ use xelis_common::serializer::{
     Readable,
     Reader,
     ReaderError,
-    ReaderExt,
     Serializer,
     Writable,
     Writer,
-    WriterExt,
 };
 use anyhow::Result;
 use log::warn;
@@ -295,7 +293,7 @@ impl Db {
 
         // Write the trees
         let len = trees.len() as u16;
-        writer.write_u16(len)?;
+        len.write(writer)?;
         for (k, v) in trees.iter() {
             k.write(writer)?;
             v.export(writer)?;
@@ -313,7 +311,7 @@ impl Db {
         self.default.populate(reader)?;
 
         // Read the trees
-        let len = reader.read_u16()?;
+        let len = u16::read(reader)?;
         for _ in 0..len {
             let k = IVec::read(reader)?;
             let tree = InnerTree::new(k.clone());
@@ -460,7 +458,7 @@ impl InnerTree {
             .map_err(|_| DbError::Poisoned)?;
 
         let len = entries.len() as u16;
-        writer.write_u16(len)?;
+        len.write(writer)?;
         for (k, v) in entries.iter() {
             k.write(writer)?;
             v.write(writer)?;
@@ -474,7 +472,7 @@ impl InnerTree {
         let mut entries = self.entries.lock()
             .map_err(|_| DbError::Poisoned)?;
 
-        let len = reader.read_u16()?;
+        let len = u16::read(reader)?;
         for _ in 0..len {
             let k = IVec::read(reader)?;
             let v = IVec::read(reader)?;
