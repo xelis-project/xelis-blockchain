@@ -5,6 +5,7 @@ mod hexable;
 mod raw;
 mod count;
 mod dynamic_len;
+mod option_non_zero;
 
 use std::{any::type_name, marker::Sized};
 use matriochka::ResultExt;
@@ -18,6 +19,7 @@ pub use hexable::*;
 pub use raw::*;
 pub use count::*;
 pub use dynamic_len::*;
+pub use option_non_zero::OptionNonZero;
 
 /// XELIS binary encoding over octet sources and sinks.
 ///

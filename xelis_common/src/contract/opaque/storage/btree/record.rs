@@ -1,5 +1,6 @@
 use crate::serializer::{
     Error as SerializationError,
+    OptionNonZero,
     Readable,
     Reader,
     ReaderError,
@@ -57,9 +58,9 @@ impl Serializer for NodeRecord {
     fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
         writer.write_with_context::<Self>(|writer| {
             debug_assert!(self.key.len() <= u32::MAX as usize);
-            self.parent.unwrap_or(0).write(writer)?;
-            self.left.unwrap_or(0).write(writer)?;
-            self.right.unwrap_or(0).write(writer)?;
+            OptionNonZero(self.parent).write(writer)?;
+            OptionNonZero(self.left).write(writer)?;
+            OptionNonZero(self.right).write(writer)?;
             (self.key.len() as u32).write(writer)?;
             writer.extend_bytes(&self.key)?;
             self.value.write(writer)
@@ -77,9 +78,9 @@ pub fn read_node_header_from_reader<'ty, 'r, R: Readable>(reader: &mut Reader<'t
 }
 
 pub fn read_node_header_parts<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<(Option<u64>, Option<u64>, Option<u64>, Vec<u8>), ReaderError> {
-    let parent = match u64::read(reader)? { 0 => None, value => Some(value) };
-    let left = match u64::read(reader)? { 0 => None, value => Some(value) };
-    let right = match u64::read(reader)? { 0 => None, value => Some(value) };
+    let parent = OptionNonZero::<u64>::read(reader)?.0;
+    let left = OptionNonZero::<u64>::read(reader)?.0;
+    let right = OptionNonZero::<u64>::read(reader)?.0;
 
     let key_len = u32::read(reader)? as usize;
     let key = reader.read_vec(key_len)?;
