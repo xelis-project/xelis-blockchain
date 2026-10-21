@@ -28,7 +28,10 @@ impl Serializer for RawBytes {
     }
 
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
-        reader.read_with_context(|reader| reader.read_remaining_bytes().map(Self))
+        reader.read_with_context(|reader| {
+            let mut bytes = Vec::new();
+            reader.read_to_end(&mut bytes).map(|()| Self(bytes))
+        })
     }
 
     fn to_bytes(&self) -> Result<Vec<u8>, SerializationError> {
