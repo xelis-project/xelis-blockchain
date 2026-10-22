@@ -1571,7 +1571,7 @@ impl<S: Storage> P2pServer<S> {
                     debug!("Exit message received, stopping blocks processing task");
                     break 'main;
                 }
-                msg = receiver.recv() => {
+                msg = receiver.recv(), if pending_requests.len() < TIPS_LIMIT * STABLE_LIMIT as usize => {
                     let Some((peer, header, block_hash)) = msg else {
                         debug!("No more blocks to process, stopping blocks processing task");
                         break 'main;
@@ -1695,7 +1695,7 @@ impl<S: Storage> P2pServer<S> {
                         debug!("Error while processing TX: {}", e);
                     }
                 },
-                Some((peer, hash)) = receiver.recv() => {
+                Some((peer, hash)) = receiver.recv(), if pending_requests.len() + txs_executor.len() < TRANSACTIONS_CHANNEL_CAPACITY => {
                     if !pending_requests.insert(hash.clone()) {
                         debug!("TX {} is already requested, skipping it", hash);
                         continue;
@@ -2494,6 +2494,7 @@ impl<S: Storage> P2pServer<S> {
     // Packet is read from the same task always, while its handling is delegated to a unique task
     async fn listen_connection(self: &Arc<Self>, peer: &Arc<Peer>, mut receiver: mpsc::Receiver<Packet<'static>>) -> Result<(), P2pError> {
         let mut executor = SequentialExecutor::new();
+        let mut independent = FuturesUnordered::new();
         let mut peer_exit = peer.get_exit_receiver();
 
         loop {
@@ -2503,8 +2504,19 @@ impl<S: Storage> P2pServer<S> {
                     debug!("Peer {} has exited, stopping packet listener...", peer);
                     break;
                 },
+                Some(close) = executor.next() => {
+                    if close {
+                        break;
+                    }
+                },
+                Some(close) = independent.next() => {
+                    if close {
+                        break;
+                    }
+                },
                 Some(packet) = receiver.recv() => {
                     let dependent = packet.is_order_dependent();
+                    let response = matches!(&packet, Packet::ObjectResponse(_) | Packet::ChainResponse(_) | Packet::BootstrapChainResponse(_));
                     let future = {
                         let zelf = Arc::clone(self);
                         let peer = Arc::clone(peer);
@@ -2541,34 +2553,16 @@ impl<S: Storage> P2pServer<S> {
                         }
                     };
 
-                    if !self.config.handle_peer_packets_in_dedicated_task {
-                        // If we don't handle packets in dedicated task, we can just run it directly
-                        // This is useful when we want to handle packets immediately
+                    // Responses must reach their waiters even when a request
+                    // handler is suspended on storage or processor backpressure.
+                    if response || executor.len() + independent.len() >= self.config.concurrency_task_count_limit {
                         if future.await {
                             break;
                         }
+                    } else if self.config.handle_peer_packets_in_dedicated_task && !dependent {
+                        independent.push(future);
                     } else {
-                        if dependent {
-                            executor.push_back(future);
-                        } else {
-                            // Detached packet handlers must still stop when their peer
-                            // is removed, otherwise they retain Arc<Peer> and its socket.
-                            let mut peer_exit = peer.get_exit_receiver();
-                            let future = async move {
-                                select! {
-                                    biased;
-                                    _ = peer_exit.recv() => true,
-                                    result = future => result
-                                }
-                            };
-                            tokio::spawn(future);
-                        }
-                    }
-
-                },
-                Some(res) = executor.next() => {
-                    if res {
-                        break;
+                        executor.push_back(future);
                     }
                 },
                 else => {
