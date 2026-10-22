@@ -32,7 +32,7 @@ use super::{
         Connection,
         packet::*,
         error::P2pError,
-        P2pTimeouts,
+        P2pPeerConfig,
     },
     SharedPeerList,
 };
@@ -169,7 +169,7 @@ pub struct Peer {
     // It is maybe another (bad) chain
     sync_chain_failed: AtomicBool,
     request_id: AtomicU64,
-    timeouts: P2pTimeouts,
+    config: P2pPeerConfig,
 }
 
 impl Peer {
@@ -188,7 +188,7 @@ impl Peer {
         peer_list: SharedPeerList,
         flags: Flags,
         propagate_txs: bool,
-        timeouts: P2pTimeouts
+        config: P2pPeerConfig
     ) -> (Self, Rx) {
         let mut outgoing_address = *connection.get_address();
         outgoing_address.set_port(local_port);
@@ -237,7 +237,7 @@ impl Peer {
             propagate_txs: AtomicBool::new(propagate_txs),
             sync_chain_failed: AtomicBool::new(false),
             request_id: AtomicU64::new(0),
-            timeouts,
+            config,
         }, rx)
     }
 
@@ -569,7 +569,7 @@ impl Peer {
         let mut exit_channel = self.get_exit_receiver();
         let object = select! {
             _ = exit_channel.recv() => return Err(P2pError::Disconnected),
-            res = timeout(self.timeouts.request_object.into(), receiver.recv()) => match res {
+            res = timeout(self.config.request_object.into(), receiver.recv()) => match res {
                 Ok(res) => res.context("Error on blocking object response")?,
                 Err(_) => {
                     warn!("Requested data {} from {} has timed out", request, self);
@@ -630,7 +630,7 @@ impl Peer {
                 counter!("xelis_p2p_bootstrap_request_outcomes_total", "outcome" => "disconnected").increment(1u64);
                 return Err(P2pError::Disconnected)
             },
-            res = timeout(self.timeouts.bootstrap.into(), receiver) => match res {
+            res = timeout(self.config.bootstrap.into(), receiver) => match res {
                 Ok(res) => res?,
                 Err(e) => {
                     // Clear the bootstrap chain channel to preserve the order
@@ -683,7 +683,7 @@ impl Peer {
                 counter!("xelis_p2p_chain_sync_request_outcomes_total", "outcome" => "disconnected").increment(1u64);
                 return Err(P2pError::Disconnected)
             },
-            res = timeout(self.timeouts.chain_sync.into(), receiver) => match res {
+            res = timeout(self.config.chain_sync.into(), receiver) => match res {
                 Ok(res) => res?,
                 Err(e) => {
                     // Clear the sync chain channel

@@ -8,12 +8,13 @@ use super::{
     error::P2pError,
     packet::Packet,
     EncryptionKey,
-    P2pTimeouts
+    P2pPeerConfig
 };
 use std::{
     borrow::Cow,
     convert::TryInto,
     fmt::{Display, Error, Formatter},
+    io::{IoSlice, Error as IOError, ErrorKind},
     net::SocketAddr,
     sync::atomic::{
         AtomicBool,
@@ -84,16 +85,17 @@ pub struct Connection {
     encryption: Encryption,
     // Compression state used for packets
     compression: Compression,
-    timeouts: P2pTimeouts,
+    config: P2pPeerConfig,
 }
 
 // We are rotating every 1GB sent
 const ROTATE_EVERY_N_BYTES: usize = 1024 * 1024 * 1024;
 
 impl Connection {
-    pub fn new(stream: TcpStream, addr: SocketAddr, out: bool, timeouts: P2pTimeouts) -> Self {
+    pub fn new(stream: TcpStream, addr: SocketAddr, out: bool, config: P2pPeerConfig) -> P2pResult<Self> {
+        stream.set_nodelay(config.no_delay)?;
         let (read, write) = stream.into_split();
-        Self {
+        Ok(Self {
             out,
             state: State::Pending,
             write: Mutex::new(write),
@@ -108,8 +110,8 @@ impl Connection {
             rotate_key_out: AtomicUsize::new(0),
             encryption: Encryption::new(),
             compression: Compression::new(),
-            timeouts,
-        }
+            config,
+        })
     }
 
     // Do a key exchange with the peer
@@ -142,7 +144,7 @@ impl Connection {
 
         // Wait for the peer to receive its key
         let Packet::KeyExchange(peer_dh_key) = timeout(
-            self.timeouts.handshake.into(),
+            self.config.handshake.into(),
             self.read_packet(buffer, 256)
         ).await?? else {
             error!("Expected KeyExchange packet");
@@ -188,7 +190,7 @@ impl Connection {
         trace!("Waiting for key from {}", self.addr);
         // Wait for the shared key of the peer to receive
         let Packet::KeyExchange(peer_key) = timeout(
-            self.timeouts.handshake.into(),
+            self.config.handshake.into(),
             self.read_packet(buffer, 256)
         ).await?? else {
             error!("Expected KeyExchange packet");
@@ -271,8 +273,16 @@ impl Connection {
     async fn send_packet_bytes_internal(&self, stream: &mut OwnedWriteHalf, packet: &[u8]) -> P2pResult<()> {
         let packet_len = packet.len() as u32;
         counter!("xelis_p2p_bytes_out_total").increment(packet_len as u64);
-        stream.write_all(&packet_len.to_be_bytes()).await?;
-        stream.write_all(packet).await?;
+        let length = packet_len.to_be_bytes();
+        let mut buffers = [IoSlice::new(&length), IoSlice::new(packet)];
+        let mut remaining = buffers.as_mut_slice();
+        while !remaining.is_empty() {
+            let written = stream.write_vectored(remaining).await?;
+            if written == 0 {
+                return Err(IOError::new(ErrorKind::WriteZero, "failed to write peer packet frame").into())
+            }
+            IoSlice::advance_slices(&mut remaining, written);
+        }
 
         Ok(())
     }
@@ -280,7 +290,7 @@ impl Connection {
     // Send bytes to the tcp stream with a timeout
     // if an error occurs, the connection is closed
     pub async fn send_bytes(&self, packet: &mut impl Buffer) -> P2pResult<()> {
-        match timeout(self.timeouts.send.into(), self.send_bytes_internal(packet)).await {
+        match timeout(self.config.send.into(), self.send_bytes_internal(packet)).await {
             Ok(Ok(())) => Ok(()),
             Ok(Err(e)) => {
                 debug!("Failed to send bytes to {}: {}", self.get_address(), e);

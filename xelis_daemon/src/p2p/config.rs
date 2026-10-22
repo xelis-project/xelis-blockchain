@@ -32,7 +32,7 @@ fn default_chain_sync_timeout() -> HumanDuration {
 }
 
 #[derive(Debug, Clone, Copy, clap::Args, Serialize, Deserialize)]
-pub struct P2pTimeouts {
+pub struct P2pPeerConfig {
     /// Timeout for the P2P key exchange and handshake.
     #[clap(name = "p2p-handshake-timeout", long, default_value_t = default_handshake_timeout())]
     #[serde(with = "humantime_serde", default = "default_handshake_timeout")]
@@ -53,9 +53,13 @@ pub struct P2pTimeouts {
     #[clap(name = "p2p-chain-sync-timeout", long, default_value_t = default_chain_sync_timeout())]
     #[serde(with = "humantime_serde", default = "default_chain_sync_timeout")]
     pub chain_sync: HumanDuration,
+    /// Enable no-delay mode for P2P sockets. This disables Nagle's algorithm and can improve latency at the cost of increased bandwidth usage.
+    #[clap(name = "p2p-no-delay", long, default_value_t = false)]
+    #[serde(default)]
+    pub no_delay: bool,
 }
 
-impl Default for P2pTimeouts {
+impl Default for P2pPeerConfig {
     fn default() -> Self {
         Self {
             handshake: default_handshake_timeout(),
@@ -63,6 +67,7 @@ impl Default for P2pTimeouts {
             request_object: default_request_timeout(),
             bootstrap: default_bootstrap_timeout(),
             chain_sync: default_chain_sync_timeout(),
+            no_delay: false,
         }
     }
 }

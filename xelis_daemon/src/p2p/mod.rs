@@ -478,7 +478,7 @@ impl<S: Storage> P2pServer<S> {
             return Ok(())
         }
 
-        let connection = Connection::new(stream, addr, false, self.config.timeouts);
+        let connection = Connection::new(stream, addr, false, self.config.peer_config)?;
         let mut buffer = [0; 512];
         match self.create_verified_peer(&mut buffer, connection, false).await {
             Ok((peer, rx)) => {
@@ -645,7 +645,7 @@ impl<S: Storage> P2pServer<S> {
             mempool.size().await > 0
         };
 
-        Ok(handshake.create_peer(connection, priority, self.peer_list.clone(), !has_any_tx, self.config.timeouts))
+        Ok(handshake.create_peer(connection, priority, self.peer_list.clone(), !has_any_tx, self.config.peer_config))
     }
 
     // this function handle all new connections
@@ -666,7 +666,7 @@ impl<S: Storage> P2pServer<S> {
         }
 
         // wait on the handshake packet
-        let mut handshake: Handshake<'static> = match timeout(self.config.timeouts.handshake.into(), connection.read_packet(buf, buf.len() as u32)).await?? {
+        let mut handshake: Handshake<'static> = match timeout(self.config.peer_config.handshake.into(), connection.read_packet(buf, buf.len() as u32)).await?? {
             // only allow handshake packet
             Packet::Handshake(h) => h.into_owned(),
             _ => return Err(P2pError::ExpectedHandshake)
@@ -808,8 +808,7 @@ impl<S: Storage> P2pServer<S> {
             timeout(self.config.outgoing_connection_timeout.into(), TcpStream::connect(&addr)).await??
         };
 
-        let connection = Connection::new(stream, addr, true, self.config.timeouts);
-        Ok(connection)
+        Connection::new(stream, addr, true, self.config.peer_config)
     }
 
     // Send a handshake to a connection (this is used to determine if its a potential peer)
@@ -1345,7 +1344,7 @@ impl<S: Storage> P2pServer<S> {
     // this is used to prevent holding too many entries in memory
     async fn requests_cache_task(self: Arc<Self>) {
         debug!("Starting requests cache cleaning task...");
-        let duration = self.config.timeouts.request_object.into();
+        let duration = self.config.peer_config.request_object.into();
         loop {
             if !self.is_running() {
                 debug!("Requests cache cleaning task is stopped!");

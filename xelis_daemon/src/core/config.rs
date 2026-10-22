@@ -17,7 +17,7 @@ use xelis_common::{
 };
 use crate::{
     config::*,
-    p2p::{KeyVerificationAction, WrappedSecret, P2pTimeouts}
+    p2p::{KeyVerificationAction, WrappedSecret, P2pPeerConfig}
 };
 
 use super::{error::BlockchainError, simulator::Simulator};
@@ -419,7 +419,7 @@ pub struct P2pConfig {
     /// P2P protocol and request timeout settings.
     #[clap(flatten)]
     #[serde(flatten)]
-    pub timeouts: P2pTimeouts,
+    pub peer_config: P2pPeerConfig,
     /// Proxy settings for outbound P2P connections.
     #[clap(flatten)]
     pub proxy: ProxyConfig,
@@ -600,7 +600,7 @@ pub struct P2pConfig {
 impl Default for P2pConfig {
     fn default() -> Self {
         Self {
-            timeouts: P2pTimeouts::default(),
+            peer_config: P2pPeerConfig::default(),
             proxy: ProxyConfig::default(),
             tag: None,
             bind_address: default_p2p_bind_address(),
