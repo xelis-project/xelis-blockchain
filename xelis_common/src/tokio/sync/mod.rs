@@ -20,6 +20,7 @@ pub use tokio::sync::*;
 #[cfg(feature = "deadlock-detection")]
 pub use tokio::sync::{
     Semaphore,
+    OwnedSemaphorePermit,
     mpsc,
     broadcast,
     oneshot,

@@ -18,7 +18,7 @@ use tokio::{
 use log::{debug, error, log, Level};
 
 // Simple wrapper around RwLock
-// to panic on a failed lock and print all actual lock locations
+// to report slow lock acquisitions and their active guard locations
 pub struct RwLock<T: ?Sized> {
     init_location: &'static Location<'static>,
     active_write_location: Arc<StdMutex<Option<(&'static Location<'static>, Instant)>>>,
@@ -129,7 +129,7 @@ impl<T: ?Sized> RwLock<T> {
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        if !show {
+                        if show {
                             self.show_locations(location, true);
                             show = false;
                         }
@@ -147,6 +147,9 @@ impl<T: ?Sized> RwLock<T> {
                             init_location: self.init_location,
                             inner: Some(guard),
                             active_location: self.active_write_location.clone(),
+                            locations: self.active_read_locations.clone(),
+                            read_guards: self.read_guards.clone(),
+                            location,
                         };
                     }
                 }
@@ -166,22 +169,16 @@ pub struct RwLockReadGuard<'a, T: ?Sized> {
 
 impl<'a, T: ?Sized> Drop for RwLockReadGuard<'a, T> {
     fn drop(&mut self) {
-        {
-            let guard = self.inner.take().expect("drop");
-            drop(guard);
-        }
-
         // We don't use a HashSet in case of multi threading where we would lock at same location
-        let mut locations = self.locations.lock()
-            .expect("locations");
-
-        let index = locations.iter()
-            .position(|(v, _)| *v == self.location)
-            .expect("location position");
-    
-        let (_, lifetime) = locations.remove(index);
-        let guards = self.read_guards.fetch_sub(1, Ordering::SeqCst);
-        debug!("Dropping {} RwLockReadGuard at {} after {:?} (guards = {})", self.init_location, self.location, lifetime.elapsed(), guards);
+        {
+            let mut locations = self.locations.lock().expect("locations");
+            if let Some(index) = locations.iter().position(|(v, _)| *v == self.location) {
+                let (_, lifetime) = locations.remove(index);
+                let guards = self.read_guards.fetch_sub(1, Ordering::SeqCst);
+                debug!("Dropping {} RwLockReadGuard at {} after {:?} (guards = {})", self.init_location, self.location, lifetime.elapsed(), guards);
+            }
+        }
+        drop(self.inner.take());
     }
 }
 
@@ -198,18 +195,24 @@ pub struct RwLockWriteGuard<'a, T: ?Sized> {
     init_location: &'static Location<'static>,
     inner: Option<InnerRwLockWriteGuard<'a, T>>,
     active_location: Arc<StdMutex<Option<(&'static Location<'static>, Instant)>>>,
+    locations: Arc<StdMutex<Vec<(&'static Location<'static>, Instant)>>>,
+    read_guards: Arc<AtomicU64>,
+    location: &'static Location<'static>,
 }
 
 impl<'a, T: ?Sized> RwLockWriteGuard<'a, T> {
     /// Downgrades this write guard to a read guard, keeping the same location and updating the active guards accordingly.
     #[allow(dead_code)]
     pub fn downgrade(mut guard: Self) -> RwLockReadGuard<'a, T> {
-        let location = guard.init_location;
+        let location = guard.location;
         debug!("Downgrading {} RwLockWriteGuard to read guard at {}", guard.init_location, location);
 
         // Clear active write location
-        let (location, instant) = guard.active_location.lock().expect("active write location").take()
-            .expect("active write location should be set");
+        let instant = guard.active_location.lock().expect("active write location").take()
+            .map(|(_, instant)| instant)
+            .unwrap_or_else(Instant::now);
+        guard.locations.lock().expect("active read locations").push((location, instant));
+        guard.read_guards.fetch_add(1, Ordering::SeqCst);
 
         let inner = guard.inner.take().expect("write guard");
         let read_guard = InnerRwLockWriteGuard::downgrade(inner);
@@ -217,27 +220,24 @@ impl<'a, T: ?Sized> RwLockWriteGuard<'a, T> {
         RwLockReadGuard {
             init_location: guard.init_location,
             inner: Some(read_guard),
-            locations: Arc::new(StdMutex::new(vec![(location, instant)])),
+            locations: guard.locations.clone(),
             location,
-            read_guards: Arc::new(AtomicU64::new(1)),
+            read_guards: guard.read_guards.clone(),
         }
     }
 }
 
 impl<'a, T: ?Sized> Drop for RwLockWriteGuard<'a, T> {
     fn drop(&mut self) {
-        {
-            if let Some(guard) = self.inner.take() {
-                drop(guard);
+        if self.inner.is_some() {
+            if let Some((active_location, lifetime)) = self.active_location.lock()
+                .expect("active write location")
+                .take()
+            {
+                debug!("Dropping {} RwLockWriteGuard at {} after {:?}", self.init_location, active_location, lifetime.elapsed());
             }
         }
-
-        if let Some((active_location, lifetime)) = self.active_location.lock()
-            .expect("active write location")
-            .take()
-        {
-            debug!("Dropping {} RwLockWriteGuard at {} after {:?}", self.init_location, active_location, lifetime.elapsed());
-        }
+        drop(self.inner.take());
     }
 }
 
@@ -255,26 +255,6 @@ impl<'a, T: ?Sized> DerefMut for RwLockWriteGuard<'a, T> {
             .expect("not dropped")
     }
 }
-
-// impl<T: ?Sized> AsRef<InnerRwLock<T>> for RwLock<T> {
-//     fn as_ref(&self) -> &InnerRwLock<T> {
-//         &self.inner
-//     }
-// }
-
-// impl<T: ?Sized> Deref for RwLock<T> {
-//     type Target = InnerRwLock<T>;
-
-//     fn deref(&self) -> &Self::Target {
-//         &self.inner
-//     }
-// }
-
-// impl<T: ?Sized> DerefMut for RwLock<T> {
-//     fn deref_mut(&mut self) -> &mut Self::Target {
-//         &mut self.inner
-//     }
-// }
 
 impl<T: ?Sized> std::fmt::Debug for RwLock<T>
 where
