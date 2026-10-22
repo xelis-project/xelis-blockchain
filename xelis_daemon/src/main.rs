@@ -534,7 +534,7 @@ async fn show_emitted_supply_at_topoheight<S: Storage>(manager: &CommandManager,
     let topoheight: u64 = if args.has_argument("topoheight") {
         args.get_value("topoheight")?.to_number()?
     } else {
-        blockchain.get_topo_height().await
+        storage.chain_cache().await.topoheight
     };
 
     let supply = storage.get_emitted_supply_at_topo_height(topoheight).await

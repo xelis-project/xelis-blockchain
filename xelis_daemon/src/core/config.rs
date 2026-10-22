@@ -568,11 +568,11 @@ pub struct P2pConfig {
     #[clap(name = "disable-p2p-fetching-txs-propagated", long)]
     #[serde(default)]
     pub disable_fetching_txs_propagated: bool,
-    /// Handle eligible peer packets in dedicated tasks.
+    /// Handle eligible peer packets concurrently.
     ///
     /// Order-dependent packets still use a sequential executor. This can reduce
-    /// latency during heavy network activity, but may increase resource usage
-    /// under high load.
+    /// latency during heavy network activity. Protocol responses are always
+    /// delivered independently of queued request handlers.
     #[clap(name = "p2p-handle-peer-packets-in-dedicated-task", long)]
     #[serde(default)]
     pub handle_peer_packets_in_dedicated_task: bool,
@@ -843,6 +843,11 @@ impl BlockchainConfig {
             return Err(BlockchainError::InvalidConfig);
         } else {
             info!("Will use {} threads for TXs verification", self.txs_verification_threads_count);
+        }
+
+        if self.concurrency == 0 {
+            error!("Concurrency must be above 0");
+            return Err(BlockchainError::InvalidConfig)
         }
 
         // A semaphore with no permits would leave block pre-verification waiting forever.
