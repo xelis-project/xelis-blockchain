@@ -596,6 +596,11 @@ impl<H> WebSocketServer<H> where H: WebSocketHandler + 'static + Send + Sync {
             };
         };
 
+        // Cancel handlers before on_close: a suspended handler may own a lock
+        // that the close callback also needs.
+        drop(executor);
+        rx.close();
+
         debug!("Session #{} is closing", session.id);
         // attempt to close connection gracefully
         self.delete_session(&session, reason).await;
