@@ -464,15 +464,16 @@ impl<S: Storage> GetWorkServer<S> {
             BlockResult::Accepted(hash) => {
                 debug!("Miner {} found block {}!", miner, hash);
                 miner.add_new_accepted_block(hash);
-
+                drop(miners);
                 session.send_json(Response::BlockAccepted).await?;
             },
             BlockResult::Rejected(err) => {
                 debug!("Miner {} sent an invalid block", miner);
                 miner.mark_rejected_block();
-
+                let key = miner.get_public_key().clone();
+                drop(miners);
                 session.send_json(Response::BlockRejected(err.to_string())).await?;
-                self.send_new_job(session, miner.get_public_key()).await?;
+                self.send_new_job(session, &key).await?;
             }
         };
 
