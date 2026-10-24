@@ -201,6 +201,8 @@ pub const PEER_PEERS_CACHE_SIZE: usize = 1024;
 pub const PEER_BLOCK_CACHE_SIZE: usize = 1024;
 // Peer packet channel size
 pub const PEER_PACKET_CHANNEL_SIZE: usize = 1024;
+// Reserved block announcement channel size, prioritized by each peer's writer.
+pub const PEER_BLOCK_BROADCAST_CHANNEL_SIZE: usize = 64;
 // Peer timeout for packet channel
 // Millis
 pub const PEER_SEND_BYTES_TIMEOUT: u64 = 3_000;

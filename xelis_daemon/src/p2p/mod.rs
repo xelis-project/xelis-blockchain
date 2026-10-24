@@ -1730,7 +1730,7 @@ impl<S: Storage> P2pServer<S> {
         let mut peer_exit = peer.get_exit_receiver();
         let mut interval = interval(self.config.heartbeat_interval.into());
         loop {
-            select! {
+            let bytes = select! {
                 biased;
                 // exit message from the read task
                 _ = &mut task_rx => {
@@ -1753,16 +1753,21 @@ impl<S: Storage> P2pServer<S> {
                         debug!("{} has not sent a ping packet for {} seconds, closing connection...", peer, self.config.ping_timeout.as_secs());
                         break;
                     }
+                    continue;
                 },
-                // all packets to be sent to the peer are received here
-                Some(bytes) = rx.recv() => {
-                    // there is a overhead of 4 for each packet (packet size u32 4 bytes, packet id u8 is counted in the packet size)
-                    trace!("Sending packet with real length: {} and packet id #{}", bytes.len(), bytes[0]);
-                    let mut buffer = BytesMut::from(bytes);
-                    peer.get_connection().send_bytes(&mut buffer).await?;
-                    trace!("data sucessfully sent!");
-                }
-            }
+                // Block announcements take priority over every ordinary packet.
+                Some(block) = rx.blocks.recv() => match peer.prepare_block_broadcast(block, self.config.block_propagation_log_level.into()).await {
+                    Some(bytes) => bytes,
+                    None => continue,
+                },
+                Some(bytes) = rx.packets.recv() => bytes,
+            };
+
+            let packet_id = bytes[0];
+            trace!("sending packet with real length: {} and packet id #{}", bytes.len(), packet_id);
+            let mut buffer = BytesMut::from(bytes);
+            peer.get_connection().send_bytes(&mut buffer).await?;
+            trace!("packet #{} sucessfully sent!", packet_id);
         }
         Ok(())
     }
@@ -1842,7 +1847,8 @@ impl<S: Storage> P2pServer<S> {
                 peer.set_write_task_state(TaskState::Exiting).await;
 
                 // clean shutdown
-                rx.close();
+                rx.blocks.close();
+                rx.packets.close();
 
                 debug!("Closing {} from write task", peer);
                 if let Err(e) = peer.close().await {
@@ -2832,103 +2838,33 @@ impl<S: Storage> P2pServer<S> {
         }
 
         trace!("start broadcasting block {} to all peers", hash);
-        // Move the reference only which is copy
-        let packet_block_bytes = &packet_block_bytes;
-        let packet_ping_bytes = &packet_ping_bytes;
+        let announcement = BlockBroadcast {
+            hash: Arc::clone(hash),
+            height: block.get_height(),
+            stable_limit: get_stable_limit(block.get_version()),
+            block_bytes: packet_block_bytes,
+            ping_bytes: packet_ping_bytes,
+            is_from_mining,
+            send_ping,
+        };
 
-        let stable_limit = get_stable_limit(block.get_version());
-
+        // Enqueue without waiting on any peer. Its writer prioritizes this channel
+        // and rechecks eligibility and duplicate suppression before transmission.
         // Prepare all the futures to execute them in parallel
+        let announcement = &announcement;
         stream::iter(self.peer_list.get_cloned_peers().await)
-            .for_each_concurrent(self.config.stream_concurrency, |peer| async move {
-                // A propagated block must never be sent back to the peer it
-                // came from. The per-peer propagation cache provides a second
-                // layer of protection, but this explicit identity check also
-                // covers fast propagation before the block is fully queued.
+            .for_each_concurrent(None, |peer| async move {
                 if exclude_peer_id.is_some_and(|peer_id| peer.get_id() == peer_id) {
-                    trace!("Skipping {} for block {} because it is the source peer", peer, hash);
                     return;
                 }
 
-                // if the peer can directly accept this new block, send it
-                let peer_height = peer.get_height();
-
-                // if the peer is not too far from us, send the block
-                // check that peer height is greater or equal to block height but still under or equal to STABLE_LIMIT
-                // or, check that peer height has a difference of maximum 1 block
-                // (block height is always + 1 above the highest tip height, so we can just check that peer height is not above block height + 1, it's enough in 90% of time)
-                // chain can accept old blocks (up to STABLE_LIMIT) but new blocks only N+1
-                // Easier way: we could simply check that the block height is above peer stable height
-                if (peer_height >= block.get_height() && peer_height - block.get_height() <= stable_limit) || (peer_height <= block.get_height() && block.get_height() - peer_height <= 1) {
-                    // Don't lock the blocks propagation while sending the packet
-                    let send_block = {
-                        trace!("locking blocks propagation for peer {}", peer);
-                        let mut blocks_propagation = peer.get_blocks_propagation().write().await;
-                        trace!("end locking blocks propagation for peer {}", peer);
-
-                        // If the peer is marked as common, lets send him anyway for better propagation
-                        let send = is_from_mining || blocks_propagation.peek(hash)
-                            .map_or(true, |(_, is_common)| *is_common);
-
-                        // check that this block was never shared with this peer
-                        if send {
-                            // we broadcasted to him, add it to the cache
-                            // he should not send it back to us if it's a block found by us
-                            // Because only us is aware of this block
-                            let direction = if is_from_mining {
-                                TimedDirection::Both {
-                                    sent_at: get_current_time_in_millis(),
-                                    // Never received, but locked
-                                    received_at: 0
-                                }
-                            } else {
-                                TimedDirection::Out {
-                                    sent_at: get_current_time_in_millis()
-                                }
-                            };
-                            blocks_propagation.put(hash.clone(), (direction, false));
-                        }
-
-                        send
-                    };
-
-                    if send_block {
-                        log!(self.config.block_propagation_log_level.into(), "Broadcast {} to {}", hash, peer);
-
-                        // We update the peer height to the block height
-                        // As we expect that the peer will accept this block
-                        peer.set_height(block.get_height().max(peer.get_height()));
-
-                        if let Err(e) = peer.send_bytes(packet_block_bytes.clone()).await {
-                            debug!("Error on broadcast block {} to {}: {}", hash, peer, e);
-                        }
-                        trace!("{} has been broadcasted to {}", hash, peer);
-                    } else if send_ping {
-                        log!(self.config.block_propagation_log_level.into(), "{} contains {}, don't broadcast block to him", peer, hash);
-                        // But we can notify him with a ping packet that we got the block
-                        if let Err(e) = peer.send_bytes(packet_ping_bytes.clone()).await {
-                            debug!("Error on sending ping for notifying that we accepted the block {} to {}: {}", hash, peer, e);
-                        } else {
-                            trace!("{} has been notified that we have the block {}", peer, hash);
-                            peer.set_last_ping_sent(get_current_time_in_seconds());
-                        }
-                    }
-                } else if send_ping && peer_height >= block.get_height().saturating_sub(stable_limit) {
-                    // Peer is above us, send him a ping packet to inform him we got a block propagated
-                    log!(self.config.block_propagation_log_level.into(), "send ping (block {}) for propagation to {}", hash, peer);
-                    if let Err(e) = peer.send_bytes(packet_ping_bytes.clone()).await {
-                        debug!("Error on sending ping to peer for notifying that we got the block {} to {}: {}", hash, peer, e);
-                    } else {
-                        trace!("{} has been notified that we received the block {}", peer, hash);
-                        peer.set_last_ping_sent(get_current_time_in_seconds());
-                    }
-                } else {
-                    // Peer is too far, don't send the block and neither the ping packet
-                    log!(self.config.block_propagation_log_level.into(), "Cannot broadcast {} at height {} to {}, too far", hash, block.get_height(), peer);
+                if let Err(e) = peer.queue_block_broadcast(announcement.clone()).await {
+                    counter!("xelis_p2p_block_broadcast_queue_errors_total").increment(1u64);
+                    debug!("Error scheduling block {} broadcast to {}: {}", hash, peer, e);
                 }
-        }).await;
+            }).await;
 
-        debug!("broadcasting block {} is done", hash);
+        debug!("Block {} broadcast scheduled", hash);
     }
 
     // Build a block id list to share our DAG order and chain state

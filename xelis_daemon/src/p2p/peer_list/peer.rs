@@ -2,7 +2,7 @@ use crate::{
     config::{
         PEER_FAIL_TIME_RESET, PEER_BLOCK_CACHE_SIZE,
         PEER_TX_CACHE_SIZE,
-        PEER_PACKET_CHANNEL_SIZE, PEER_PEERS_CACHE_SIZE,
+        PEER_PACKET_CHANNEL_SIZE, PEER_PEERS_CACHE_SIZE, PEER_BLOCK_BROADCAST_CHANNEL_SIZE,
         PEER_OBJECTS_CONCURRENCY, PEER_LATENCY_AVG_WINDOW, MILLIS_PER_SECOND
     },
     p2p::packet::PacketWrapper
@@ -13,7 +13,7 @@ use xelis_common::{
     serializer::Serializer,
     tokio::{
         select,
-        sync::{broadcast, mpsc, oneshot, Mutex, RwLock, Semaphore},
+        sync::{broadcast, mpsc::{self, Receiver, Sender}, oneshot, Mutex, RwLock, Semaphore},
         time::timeout,
     },
     api::daemon::{Direction, TimedDirection},
@@ -53,6 +53,7 @@ use bytes::Bytes;
 use log::{
     Level,
     log_enabled,
+    log,
     trace,
     debug,
     warn,
@@ -62,8 +63,23 @@ use log::{
 // This is done to be awaitable with a timeout
 pub type RequestedObjects = LruCache<ObjectRequest, broadcast::Sender<OwnedObjectResponse>>;
 
-pub type Tx = mpsc::Sender<Bytes>;
-pub type Rx = mpsc::Receiver<Bytes>;
+pub type Tx = Sender<Bytes>;
+
+#[derive(Clone)]
+pub struct BlockBroadcast {
+    pub(crate) hash: Arc<Hash>,
+    pub(crate) height: u64,
+    pub(crate) stable_limit: u64,
+    pub(crate) block_bytes: Bytes,
+    pub(crate) ping_bytes: Bytes,
+    pub(crate) is_from_mining: bool,
+    pub(crate) send_ping: bool,
+}
+
+pub struct Rx {
+    pub(crate) packets: Receiver<Bytes>,
+    pub(crate) blocks: Receiver<BlockBroadcast>,
+}
 
 // Enum used to track the state of a task
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -153,6 +169,8 @@ pub struct Peer {
     flags: Flags,
     // Channel to send bytes to the writer task
     tx: Tx,
+    // Reserved channel consumed by the writer before ordinary packets.
+    block_broadcast_tx: Sender<BlockBroadcast>,
     // Channel to notify the tasks to exit
     exit_channel: broadcast::Sender<()>,
     // Tracking dedicated tasks
@@ -195,6 +213,7 @@ impl Peer {
 
         let (exit_channel, _) = broadcast::channel(1);
         let (tx, rx) = mpsc::channel(PEER_PACKET_CHANNEL_SIZE);
+        let (block_broadcast_tx, block_broadcast_rx) = mpsc::channel(PEER_BLOCK_BROADCAST_CHANNEL_SIZE);
 
         (Self {
             connection,
@@ -231,6 +250,7 @@ impl Peer {
             flags,
             exit_channel,
             tx,
+            block_broadcast_tx,
             read_task: RwLock::new(TaskState::Inactive),
             write_task: RwLock::new(TaskState::Inactive),
             objects_semaphore: Semaphore::new(PEER_OBJECTS_CONCURRENCY),
@@ -238,7 +258,7 @@ impl Peer {
             sync_chain_failed: AtomicBool::new(false),
             request_id: AtomicU64::new(0),
             config,
-        }, rx)
+        }, Rx { packets: rx, blocks: block_broadcast_rx })
     }
 
     // Flags enabled by the peer
@@ -843,6 +863,70 @@ impl Peer {
     pub async fn send_bytes(&self, bytes: Bytes) -> Result<(), P2pError> {
         self.tx.send(bytes).await
             .map_err(|e| P2pError::SendError(e.to_string()))
+    }
+
+    // Queue a block broadcast to be sent to the peer
+    pub async fn queue_block_broadcast(&self, block: BlockBroadcast) -> Result<(), P2pError> {
+        if self.connection.is_closed() {
+            return Err(P2pError::Disconnected)
+        }
+
+        self.block_broadcast_tx.send(block).await
+            .map_err(|e| P2pError::SendError(e.to_string()))
+    }
+
+    // Recheck a queued announcement when the writer selects it for transmission.
+    pub async fn prepare_block_broadcast(&self, block: BlockBroadcast, log_level: Level) -> Option<Bytes> {
+        if self.connection.is_closed() {
+            return None
+        }
+
+        let can_accept_block = |height: u64| {
+            (height >= block.height && height - block.height <= block.stable_limit)
+                || (height <= block.height && block.height - height <= 1)
+        };
+
+        let can_accept_ping = |height: u64| block.send_ping && height >= block.height.saturating_sub(block.stable_limit);
+        let peer_height = self.get_height();
+        if !can_accept_block(peer_height) && !can_accept_ping(peer_height) {
+            trace!("Skipping block {} broadcast to {} because it is too far", block.hash, self);
+            return None
+        }
+
+        // State may have changed since this announcement entered the channel.
+        if can_accept_block(peer_height) {
+            let mut propagation = self.blocks_propagation.write().await;
+            let send = block.is_from_mining || propagation.peek(&block.hash)
+                .map_or(true, |(_, is_common)| *is_common);
+            if send {
+                let direction = if block.is_from_mining {
+                    TimedDirection::Both {
+                        sent_at: get_current_time_in_millis(),
+                        received_at: 0,
+                    }
+                } else {
+                    TimedDirection::Out {
+                        sent_at: get_current_time_in_millis(),
+                    }
+                };
+
+                // The announcement has already been accepted by the block channel.
+                // Update duplicate suppression before the socket write can yield.
+                propagation.put(Arc::clone(&block.hash), (direction, false));
+                drop(propagation);
+                self.height.fetch_max(block.height, Ordering::SeqCst);
+                log!(log_level, "Broadcast {} to {}", block.hash, self);
+                return Some(block.block_bytes)
+            }
+        }
+
+        if can_accept_ping(peer_height) {
+            self.set_last_ping_sent(get_current_time_in_seconds());
+            trace!("Sending {} a ping for block {}", self, block.hash);
+            return Some(block.ping_bytes)
+        }
+
+        None
     }
 
     pub async fn set_read_task_state(&self, state: TaskState) {
