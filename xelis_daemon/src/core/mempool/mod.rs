@@ -259,7 +259,9 @@ impl Mempool {
         };
         let mut backend = self.backend.write().await;
         backend.store_verified(&verification, verified)?;
-        backend.get_sorted_tx(&hash).cloned()
+        backend.get_sorted_tx(&hash)
+            .cloned()
+            .ok_or(BlockchainError::Unknown)
     }
 }
 
