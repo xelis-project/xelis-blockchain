@@ -438,8 +438,8 @@ impl<S: Storage> P2pServer<S> {
                 } {
                     let (block, cache) = match data {
                         Some(data) => {
-                            let block = self.request_block_with_storage(peer, &hash, data.header, StorageHolder::Snapshot(snapshot)).await?;
-                            let cache = PreVerifyBlock::Partial { block_hash: hash.clone(), pow_hash:  data.pow_hash };
+                            let block = self.request_block_with_storage(peer, data.header, StorageHolder::Snapshot(snapshot)).await?;
+                            let cache = PreVerifyBlock::Partial { block_hash: hash, pow_hash: data.pow_hash };
                             (block, cache)
                         },
                         None => {

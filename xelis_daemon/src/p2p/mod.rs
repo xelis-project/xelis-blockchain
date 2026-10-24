@@ -1462,30 +1462,20 @@ impl<S: Storage> P2pServer<S> {
     }
 
     // Request a block using its block hash if we don't have enough TXs locally
-    async fn request_block_with_storage(&self, peer: &Arc<Peer>, block_hash: &Hash, header: impl Into<Arc<BlockHeader>>, storage: StorageHolder<'_, S>) -> Result<Block, BlockchainError> {
+    async fn request_block_with_storage(&self, peer: &Arc<Peer>, header: impl Into<Arc<BlockHeader>>, storage: StorageHolder<'_, S>) -> Result<Block, BlockchainError> {
         let header = header.into();
 
         // All futures containing the TXs requested
         let mut txs_futures = FuturesOrdered::new();
         // used to know if we request the whole block or only some TXs
         // Currently, if we have at least one TX missing, we request them all
-        let mut txs_to_request = 0;
 
         for tx_hash in header.get_txs_hashes() {
-            let tx = self.blockchain.get_tx_with_storage(tx_hash, storage).await.ok();
-            if tx.is_none() {
-                txs_to_request += 1;
-                if txs_to_request > 1 {
-                    // no need to continue, we will request the whole block
-                    break;
-                }
-            }
-
             let fut = async move {
                 // check first on disk in case it was already fetch by a previous block
                 // it can happens as TXs can be integrated in multiple blocks and executed only one time
                 // check if we find it
-                if let Some(tx) = tx {
+                if let Some(tx) = self.blockchain.get_tx_with_storage(tx_hash, storage).await? {
                     trace!("Found the transaction {} on disk", tx_hash);
                     Ok(tx.into_arc())
                 } else {
@@ -1500,19 +1490,9 @@ impl<S: Storage> P2pServer<S> {
             txs_futures.push_back(fut);
         }
 
-        // If we have more than one request, lets request big block (for one time big packet)
-        let block = if txs_to_request > 1 {
-            debug!("requesting big block {} because we have more than one TX to request from peer", block_hash);
-            self.request_blocking_object_from_peer(peer, ObjectRequest::Block(Immutable::Owned(block_hash.clone()))).await?
-                .into_block()?
-                .0
-        } else {
-            let transactions = txs_futures.try_collect().await?;
-            // Assemble back the block and add it to the chain
-            Block::new(header, transactions)
-        };
-
-        Ok(block)
+        let transactions = txs_futures.try_collect().await?;
+        // Assemble back the block and add it to the chain
+        Ok(Block::new(header, transactions))
     }
 
     // Task for all blocks propagation
@@ -1549,7 +1529,7 @@ impl<S: Storage> P2pServer<S> {
                     counter!("xelis_p2p_incoming_blocks_propagated_total").increment(1u64);
 
                     let future = async {
-                       let res = self.request_block_with_storage(&peer, &block_hash, header, StorageHolder::Storage(self.blockchain.get_storage())).await;
+                       let res = self.request_block_with_storage(&peer, header, StorageHolder::Storage(self.blockchain.get_storage())).await;
 
                        (res, block_hash, peer)
                     };
@@ -1619,10 +1599,9 @@ impl<S: Storage> P2pServer<S> {
         debug!("Requesting TX {} from {}", hash, peer);
 
         // First, re-check that we don't already have it somewhere
-        if self.blockchain.has_tx(&hash).await? {
+        if let Some(tx) = self.blockchain.get_tx(&hash).await? {
             debug!("TX {} was found in chain, retrieve it instead of requesting {}", hash, peer);
-            let tx = self.blockchain.get_tx(&hash).await?;
-            return Ok::<_, BlockchainError>(Some(tx.into_arc()))
+            return Ok(Some(tx.into_arc()))
         }
 
         debug!("Requesting TX object {}", hash);
@@ -2284,13 +2263,13 @@ impl<S: Storage> P2pServer<S> {
                     },
                     ObjectRequest::Transaction(hash) => {
                         debug!("{} asked tx {}", peer, hash);
-                        match self.blockchain.get_tx(hash).await {
-                            Ok(tx) => {
+                        match self.blockchain.get_tx(hash).await? {
+                            Some(tx) => {
                                 debug!("tx {} found, sending it", hash);
                                 peer.send_packet(Packet::ObjectResponse(ObjectResponse::Transaction(Cow::Borrowed(&tx)))).await?;
                             },
-                            Err(e) => {
-                                debug!("{} asked tx '{}' but not present in our chain: {}", peer, hash, e);
+                            None => {
+                                debug!("{} asked tx '{}' but not present in our chain", peer, hash);
                                 peer.send_packet(Packet::ObjectResponse(ObjectResponse::NotFound(request))).await?;
                             }
                         }

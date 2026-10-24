@@ -719,9 +719,8 @@ impl<S: Storage> P2pServer<S> {
                             debug!("Retrieving {} txs for block {}", header.get_txs_count(), hash);
                             for tx_hash in header.get_txs_hashes() {
                                 trace!("Retrieving TX {} for block {}", tx_hash, hash);
-                                let tx = if self.blockchain.has_tx(tx_hash).await? {
-                                    self.blockchain.get_tx(tx_hash).await?
-                                        .into_arc()
+                                let tx = if let Some(tx) = self.blockchain.get_tx(tx_hash).await? {
+                                    tx.into_arc()
                                 } else {
                                     let (tx, _) = self.request_blocking_object_from_peer(peer, ObjectRequest::Transaction(Immutable::Owned(tx_hash.clone()))).await?
                                         .into_transaction()?;

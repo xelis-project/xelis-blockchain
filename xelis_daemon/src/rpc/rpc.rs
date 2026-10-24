@@ -1242,8 +1242,7 @@ async fn get_transactions_summary<S: Storage>(context: &Context<'_, '_>, params:
     let mainnet = blockchain.get_network().is_mainnet();
     let mut transactions = Vec::with_capacity(hashes.len());
     for hash in hashes {
-        let tx = blockchain.get_tx(&hash).await
-            .ok()
+        let tx = blockchain.get_tx(&hash).await?
             .map(|tx| TransactionSummary {
                 hash: Cow::Owned(hash),
                 source: tx.get_source().as_address(mainnet),

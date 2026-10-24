@@ -338,16 +338,14 @@ impl MempoolBackend {
         self.txs.contains_key(hash)
     }
 
-    /// Borrow a transaction and its cached metadata, or return `TxNotFound`.
-    pub fn get_sorted_tx(&self, hash: &Hash) -> Result<&SortedTx, BlockchainError> {
+    /// Borrow a transaction and its cached metadata
+    pub fn get_sorted_tx(&self, hash: &Hash) -> Option<&SortedTx> {
         self.txs.get(hash)
-            .ok_or_else(|| BlockchainError::TxNotFound(hash.clone()))
     }
 
     /// Clone the shared transaction handle for a hash, or return `TxNotFound`.
-    pub fn get_tx(&self, hash: &Hash) -> Result<Arc<Transaction>, BlockchainError> {
-        let tx = self.get_sorted_tx(hash)?;
-        Ok(Arc::clone(tx.get_tx()))
+    pub fn get_tx(&self, hash: &Hash) -> Option<Arc<Transaction>> {
+        self.get_sorted_tx(hash).map(|sorted_tx| sorted_tx.get_tx().clone())
     }
 
     /// Borrow a shared transaction handle without cloning it, or return `TxNotFound`.

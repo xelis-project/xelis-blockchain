@@ -1215,12 +1215,12 @@ impl<S: Storage> Blockchain<S> {
 
     // retrieve the TX based on its hash by searching in mempool then on disk
     #[inline(always)]
-    pub async fn get_tx(&self, hash: &Hash) -> Result<Immutable<Transaction>, BlockchainError> {
+    pub async fn get_tx(&self, hash: &Hash) -> Result<Option<Immutable<Transaction>>, BlockchainError> {
         self.get_tx_with_storage(hash, StorageHolder::Storage(&self.storage)).await
     }
 
     // retrieve the TX based on its hash by searching in mempool then on disk
-    pub async fn get_tx_with_storage(&self, hash: &Hash, storage: StorageHolder<'_, S>) -> Result<Immutable<Transaction>, BlockchainError> {
+    pub async fn get_tx_with_storage(&self, hash: &Hash, storage: StorageHolder<'_, S>) -> Result<Option<Immutable<Transaction>>, BlockchainError> {
         trace!("get tx {} from blockchain", hash);
 
         // check in mempool first
@@ -1230,9 +1230,9 @@ impl<S: Storage> Blockchain<S> {
             let mempool = self.mempool.read().await;
             let mempool = mempool.read().await;
             debug!("Mempool locked for get tx {}", hash);
-            if let Ok(tx) =  mempool.get_tx(hash) {
+            if let Some(tx) =  mempool.get_tx(hash) {
                 debug!("found {} in mempool", hash);
-                return Ok(Immutable::Arc(tx))
+                return Ok(Some(Immutable::Arc(tx)))
             }
         }
 
@@ -1243,11 +1243,11 @@ impl<S: Storage> Blockchain<S> {
             debug!("get tx {} storage read acquired", hash);
             if storage.has_transaction(&hash).await? {
                 debug!("tx {} is in storage", hash);
-                return storage.get_transaction(hash).await
+                return storage.get_transaction(hash).await.map(Some)
             }
         }
 
-        Err(BlockchainError::TxNotFound(hash.clone()))
+        Ok(None)
     }
 
     pub async fn get_block_header_template(&self, address: PublicKey) -> Result<BlockHeader, BlockchainError> {
@@ -1390,7 +1390,8 @@ impl<S: Storage> Blockchain<S> {
             // Map every tx hash to a TxSelectorEntry
             let txs = cache_txs.iter()
                 .map(|tx_hash| {
-                    let sorted_tx = mempool.get_sorted_tx(tx_hash)?;
+                    let sorted_tx = mempool.get_sorted_tx(tx_hash)
+                        .ok_or_else(|| BlockchainError::TxNotFound(tx_hash.as_ref().clone()))?;
                     Ok(TxSelectorEntry {
                         size: sorted_tx.get_size(),
                         hash: tx_hash,
@@ -1564,7 +1565,8 @@ impl<S: Storage> Blockchain<S> {
             trace!("Searching TX {} for building block", hash);
             // at this point, we don't want to lose/remove any tx, we clone it only
             let tx = if mempool.contains_tx(hash) {
-                mempool.get_tx(hash)?
+                mempool.get_tx(hash)
+                    .ok_or_else(|| BlockchainError::TxNotFound(hash.clone()))?
             } else {
                 storage.get_transaction(hash).await?
                     .into_arc()
