@@ -1244,9 +1244,6 @@ impl<S: Storage> P2pServer<S> {
                             // Is it a peer from our local network
                             let is_local_peer = is_local_address(peer.get_connection().get_address());
         
-                            // all the peers we already shared with this peer
-                            let mut shared_peers = peer.get_peers().lock().await;
-        
                             // iterate through our peerlist to determinate which peers we have to send
                             for p in all_peers.iter() {
                                 // don't send him itself
@@ -1268,11 +1265,16 @@ impl<S: Storage> P2pServer<S> {
                                     sent_at: get_current_time_in_millis()
                                 };
         
-                                let send = match shared_peers.get_mut(addr) {
-                                    Some(e) => e.update(direction),
-                                    None => {
-                                        shared_peers.put(*addr, direction);
-                                        true
+
+                                let send = {
+                                    // all the peers we already shared with this peer
+                                    let mut shared_peers = peer.get_peers().write().await;
+                                    match shared_peers.get_mut(addr) {
+                                        Some(e) => e.update(direction),
+                                        None => {
+                                            shared_peers.put(*addr, direction);
+                                            true
+                                        }
                                     }
                                 };
         
@@ -1943,7 +1945,7 @@ impl<S: Storage> P2pServer<S> {
         debug!("get common peers for {}", peer);
         trace!("locked peer_list, locking peers received (common peers)");
         let peer_peers = {
-            let lock = peer.get_peers().lock().await;
+            let lock = peer.get_peers().read().await;
             lock.iter()
                 .map(|(addr, direction)| (*addr, *direction))
                 .collect::<Vec<_>>()
@@ -2076,7 +2078,7 @@ impl<S: Storage> P2pServer<S> {
                 };
 
                 {
-                    let mut blocks_propagation = peer.get_blocks_propagation().lock().await;
+                    let mut blocks_propagation = peer.get_blocks_propagation().write().await;
                     if let Some((origin, is_common)) = blocks_propagation.get_mut(&block_hash) {
                         let tmp = *is_common;
 
@@ -2110,7 +2112,7 @@ impl<S: Storage> P2pServer<S> {
                         let block_hash = &block_hash;
                         async move {
                             debug!("{} is a common peer with {}, adding block {} to its cache", common_peer, peer, block_hash);
-                            let mut blocks_propagation = common_peer.get_blocks_propagation().lock().await;
+                            let mut blocks_propagation = common_peer.get_blocks_propagation().write().await;
                             if !blocks_propagation.contains(block_hash) {
                                 debug!("Adding block {} to common {} cache", block_hash, common_peer);
                                 // Out allow to get "In" again, because it's a prediction, don't block it completely
@@ -2464,7 +2466,7 @@ impl<S: Storage> P2pServer<S> {
                 let addr = packet.to_addr();
                 debug!("{} disconnected from {}", addr, peer);
                 {
-                    let mut shared_peers = peer.get_peers().lock().await;
+                    let mut shared_peers = peer.get_peers().write().await;
                     if shared_peers.pop(&addr).is_none() {
                         debug!("{} disconnected from {} but its not in our shared peer, maybe it disconnected from us too", addr, peer.get_outgoing_address());
                         return Ok(())
@@ -2753,7 +2755,7 @@ impl<S: Storage> P2pServer<S> {
         let direction = TimedDirection::In {
             received_at: get_current_time_in_millis()
         };
-        let mut blocks_propagation = peer.get_blocks_propagation().lock().await;
+        let mut blocks_propagation = peer.get_blocks_propagation().write().await;
         match blocks_propagation.get_mut(&hash) {
             Some((origin, is_common)) => {
                 *is_common = false;
@@ -2908,7 +2910,7 @@ impl<S: Storage> P2pServer<S> {
                     // Don't lock the blocks propagation while sending the packet
                     let send_block = {
                         trace!("locking blocks propagation for peer {}", peer);
-                        let mut blocks_propagation = peer.get_blocks_propagation().lock().await;
+                        let mut blocks_propagation = peer.get_blocks_propagation().write().await;
                         trace!("end locking blocks propagation for peer {}", peer);
 
                         // If the peer is marked as common, lets send him anyway for better propagation

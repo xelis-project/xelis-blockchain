@@ -92,33 +92,35 @@ impl<'a> Ping<'a> {
 
         if !self.peer_list.is_empty() {
             debug!("Received a peer list ({:?}) for {}", self.peer_list, peer.get_outgoing_address());
-            let mut shared_peers = peer.get_peers().lock().await;
-            debug!("Our peer list is ({:?}) for {}", shared_peers, peer.get_outgoing_address());
-            let peer_addr = peer.get_connection().get_address();
-            for addr in &self.peer_list {
-                if peer_addr == addr {
-                    return Err(P2pError::OwnSocketAddress(*addr))
-                }
-
-                // Local addresses are not allowed
-                if is_local_address(&addr) {
-                    return Err(P2pError::LocalSocketAddress(*addr))
-                }
-
-                debug!("Adding {} for {} in ping packet", addr, peer.get_outgoing_address());
-                let direction = TimedDirection::In {
-                    received_at: get_current_time_in_millis()
-                };
-
-                if let Some(origin) = shared_peers.get_mut(addr) {
-                    if !origin.update(direction) {
-                        // prevent holding the lock below
-                        let origin = *origin;
-                        debug!("Received peer list: {:?}, our peerlist is: {:?}", self.peer_list, shared_peers);
-                        return Err(P2pError::DuplicatedPeer(*addr, *peer.get_outgoing_address(), origin))
+            {
+                let mut shared_peers = peer.get_peers().write().await;
+                debug!("Our peer list is ({:?}) for {}", shared_peers, peer.get_outgoing_address());
+                let peer_addr = peer.get_connection().get_address();
+                for addr in &self.peer_list {
+                    if peer_addr == addr {
+                        return Err(P2pError::OwnSocketAddress(*addr))
                     }
-                } else {
-                    shared_peers.put(*addr, direction);
+    
+                    // Local addresses are not allowed
+                    if is_local_address(&addr) {
+                        return Err(P2pError::LocalSocketAddress(*addr))
+                    }
+    
+                    debug!("Adding {} for {} in ping packet", addr, peer.get_outgoing_address());
+                    let direction = TimedDirection::In {
+                        received_at: get_current_time_in_millis()
+                    };
+    
+                    if let Some(origin) = shared_peers.get_mut(addr) {
+                        if !origin.update(direction) {
+                            // prevent holding the lock below
+                            let origin = *origin;
+                            debug!("Received peer list: {:?}, our peerlist is: {:?}", self.peer_list, shared_peers);
+                            return Err(P2pError::DuplicatedPeer(*addr, *peer.get_outgoing_address(), origin))
+                        }
+                    } else {
+                        shared_peers.put(*addr, direction);
+                    }
                 }
             }
 

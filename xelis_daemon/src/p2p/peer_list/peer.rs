@@ -114,7 +114,7 @@ pub struct Peer {
     // map of requested objects from this peer
     objects_requested: Mutex<RequestedObjects>,
     // all peers sent/received
-    peers: Mutex<LruCache<SocketAddr, TimedDirection>>,
+    peers: RwLock<LruCache<SocketAddr, TimedDirection>>,
     // last time we received a peerlist from this peer
     last_peer_list: AtomicU64,
     // last time we got a ping packet from this peer
@@ -130,7 +130,7 @@ pub struct Peer {
     // All transactions propagated from/to this peer
     txs_cache: Mutex<LruCache<Arc<Hash>, (Direction, bool)>>,
     // last blocks propagated to/from this peer
-    blocks_propagation: Mutex<LruCache<Arc<Hash>, (TimedDirection, bool)>>,
+    blocks_propagation: RwLock<LruCache<Arc<Hash>, (TimedDirection, bool)>>,
     // last time we got an inventory packet from this peer
     last_inventory: AtomicU64,
     // if we requested this peer to send us an inventory notification
@@ -212,7 +212,7 @@ impl Peer {
             last_chain_sync_out: AtomicU64::new(0),
             peer_list,
             objects_requested: Mutex::new(LruCache::new(NonZeroUsize::new(PEER_OBJECTS_CONCURRENCY).expect("PEER_OBJECTS_CONCURRENCY must be non-zero"))),
-            peers: Mutex::new(LruCache::new(NonZeroUsize::new(PEER_PEERS_CACHE_SIZE).expect("PEER_PEERS_CACHE_SIZE must be non-zero"))),
+            peers: RwLock::new(LruCache::new(NonZeroUsize::new(PEER_PEERS_CACHE_SIZE).expect("PEER_PEERS_CACHE_SIZE must be non-zero"))),
             last_peer_list: AtomicU64::new(0),
             last_ping: AtomicU64::new(0),
             last_ping_sent: AtomicU64::new(0),
@@ -220,7 +220,7 @@ impl Peer {
             latency_sample_index: AtomicUsize::new(0),
             cumulative_difficulty: RwLock::new(cumulative_difficulty),
             txs_cache: Mutex::new(LruCache::new(NonZeroUsize::new(PEER_TX_CACHE_SIZE).expect("PEER_TX_CACHE_SIZE must be non-zero"))),
-            blocks_propagation: Mutex::new(LruCache::new(NonZeroUsize::new(PEER_BLOCK_CACHE_SIZE).expect("PEER_BLOCK_CACHE_SIZE must be non-zero"))),
+            blocks_propagation: RwLock::new(LruCache::new(NonZeroUsize::new(PEER_BLOCK_CACHE_SIZE).expect("PEER_BLOCK_CACHE_SIZE must be non-zero"))),
             last_inventory: AtomicU64::new(0),
             requested_inventory: AtomicBool::new(false),
             pruned_topoheight: AtomicU64::new(pruned_topoheight.unwrap_or(0)),
@@ -300,7 +300,7 @@ impl Peer {
     }
 
     // Get all blocks propagated from/to this peer
-    pub fn get_blocks_propagation(&self) -> &Mutex<LruCache<Arc<Hash>, (TimedDirection, bool)>> {
+    pub fn get_blocks_propagation(&self) -> &RwLock<LruCache<Arc<Hash>, (TimedDirection, bool)>> {
         &self.blocks_propagation
     }
 
@@ -730,7 +730,7 @@ impl Peer {
     }
 
     // Get all shared peers between this peer and us
-    pub fn get_peers(&self) -> &Mutex<LruCache<SocketAddr, TimedDirection>> {
+    pub fn get_peers(&self) -> &RwLock<LruCache<SocketAddr, TimedDirection>> {
         &self.peers
     }
 
@@ -866,7 +866,7 @@ impl Display for Peer {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::result::Result<(), Error> {
         // update fail counter to have up-to-date data to display
         self.update_fail_count_default();
-        let peers = if let Ok(peers) = self.get_peers().try_lock() {
+        let peers = if let Ok(peers) = self.get_peers().try_read() {
             if log_enabled!(Level::Trace) {
                 let peers = peers.iter()
                     .map(|(p, d)| format!("{} = {:?}", p, d))

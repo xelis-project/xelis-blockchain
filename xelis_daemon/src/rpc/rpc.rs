@@ -304,7 +304,7 @@ pub async fn get_transaction_response_for_hash<'a, S: Storage>(blockchain: &Bloc
 
 // Get a Peer Entry based on peer data
 pub async fn get_peer_entry<'a>(peer: &'a Peer) -> PeerEntry<'a> {
-    let peers = { peer.get_peers().lock().await.clone() };
+    let peers = { peer.get_peers().read().await.clone() };
     let top_block_hash = peer.get_top_block_hash().await;
     let cumulative_difficulty = peer.get_cumulative_difficulty().await;
 
@@ -2453,8 +2453,12 @@ async fn get_p2p_block_propagation<S: Storage>(context: &Context<'_, '_>, params
 
     let hash = params.hash.into_owned();
     for peer in p2p.get_peer_list().get_cloned_peers().await {
-        let blocks_propagation = peer.get_blocks_propagation().lock().await;
-        if let Some((timed_direction, is_common)) = blocks_propagation.peek(&hash).copied() {
+        let entry = {
+            let blocks_propagation = peer.get_blocks_propagation().read().await;
+            blocks_propagation.peek(&hash).copied()
+        };
+
+        if let Some((timed_direction, is_common)) = entry {
             // We don't count common peers
             // Because we haven't really sent them it
             if !is_common {
