@@ -904,13 +904,13 @@ impl<S: Storage> P2pServer<S> {
 
                 // Avoid selecting peers that have a weaker cumulative difficulty than us
                 let peer_cd = {
-                    let cumulative_difficulty = p.get_cumulative_difficulty().lock().await;
-                    if *cumulative_difficulty <= our_cumulative_difficulty {
+                    let cumulative_difficulty = p.get_cumulative_difficulty().await;
+                    if cumulative_difficulty <= our_cumulative_difficulty {
                         debug!("{} has a lower cumulative difficulty than us, skipping...", p);
                         return None;
                     }
 
-                    *cumulative_difficulty
+                    cumulative_difficulty
                 };
 
                 let peer_topoheight = p.get_topoheight();
@@ -2643,13 +2643,14 @@ impl<S: Storage> P2pServer<S> {
         let mut count = 0;
         for peer in self.peer_list.get_peers().read().await.values() {
             if peer.is_priority() {
-                if let Some(cumulative_difficulty) = &cumulative_difficulty {
-                    let peer_cumulative_difficulty = peer.get_cumulative_difficulty().lock().await;
-                    if *peer_cumulative_difficulty < *cumulative_difficulty {
+                if let Some(cumulative_difficulty) = cumulative_difficulty.as_ref() {
+                    let peer_cumulative_difficulty = peer.get_cumulative_difficulty().await;
+                    if peer_cumulative_difficulty < *cumulative_difficulty {
                         debug!("Skipping {} because its cumulative difficulty is lower than ours in is_connected_to_a_synced_priority_node", peer);
                         continue
                     }
                 }
+
                 let peer_topoheight = peer.get_topoheight();
                 if peer_topoheight >= topoheight || topoheight - peer_topoheight < STABLE_LIMIT {
                     count += 1;

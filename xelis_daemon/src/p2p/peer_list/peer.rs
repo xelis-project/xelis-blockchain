@@ -13,7 +13,7 @@ use xelis_common::{
     serializer::Serializer,
     tokio::{
         select,
-        sync::{broadcast, mpsc, oneshot, Mutex, Semaphore},
+        sync::{broadcast, mpsc, oneshot, Mutex, RwLock, Semaphore},
         time::timeout,
     },
     api::daemon::{Direction, TimedDirection},
@@ -96,7 +96,7 @@ pub struct Peer {
     // if this node can be trusted (seed node or added manually by user)
     priority: bool,
     // current block top hash for this peer
-    top_hash: Mutex<Hash>,
+    top_hash: RwLock<Hash>,
     // current highest topo height for this peer
     topoheight: AtomicU64,
     // current highest block height for this peer
@@ -126,7 +126,7 @@ pub struct Peer {
     // Next latency sample index
     latency_sample_index: AtomicUsize,
     // cumulative difficulty of peer chain
-    cumulative_difficulty: Mutex<CumulativeDifficulty>,
+    cumulative_difficulty: RwLock<CumulativeDifficulty>,
     // All transactions propagated from/to this peer
     txs_cache: Mutex<LruCache<Arc<Hash>, (Direction, bool)>>,
     // last blocks propagated to/from this peer
@@ -156,8 +156,8 @@ pub struct Peer {
     // Channel to notify the tasks to exit
     exit_channel: broadcast::Sender<()>,
     // Tracking dedicated tasks
-    read_task: Mutex<TaskState>,
-    write_task: Mutex<TaskState>,
+    read_task: RwLock<TaskState>,
+    write_task: RwLock<TaskState>,
     // Semaphore to prevent requesting too many
     // objects at once
     objects_semaphore: Semaphore,
@@ -202,7 +202,7 @@ impl Peer {
             node_tag,
             local_port,
             version,
-            top_hash: Mutex::new(top_hash),
+            top_hash: RwLock::new(top_hash),
             topoheight: AtomicU64::new(topoheight),
             height: AtomicU64::new(height),
             priority,
@@ -218,7 +218,7 @@ impl Peer {
             last_ping_sent: AtomicU64::new(0),
             latency_samples: std::array::from_fn(|_| AtomicU64::new(0)),
             latency_sample_index: AtomicUsize::new(0),
-            cumulative_difficulty: Mutex::new(cumulative_difficulty),
+            cumulative_difficulty: RwLock::new(cumulative_difficulty),
             txs_cache: Mutex::new(LruCache::new(NonZeroUsize::new(PEER_TX_CACHE_SIZE).expect("PEER_TX_CACHE_SIZE must be non-zero"))),
             blocks_propagation: Mutex::new(LruCache::new(NonZeroUsize::new(PEER_BLOCK_CACHE_SIZE).expect("PEER_BLOCK_CACHE_SIZE must be non-zero"))),
             last_inventory: AtomicU64::new(0),
@@ -231,8 +231,8 @@ impl Peer {
             flags,
             exit_channel,
             tx,
-            read_task: Mutex::new(TaskState::Inactive),
-            write_task: Mutex::new(TaskState::Inactive),
+            read_task: RwLock::new(TaskState::Inactive),
+            write_task: RwLock::new(TaskState::Inactive),
             objects_semaphore: Semaphore::new(PEER_OBJECTS_CONCURRENCY),
             propagate_txs: AtomicBool::new(propagate_txs),
             sync_chain_failed: AtomicBool::new(false),
@@ -375,23 +375,23 @@ impl Peer {
 
     // Store the top block hash 
     pub async fn set_top_block_hash(&self, hash: Hash) {
-        *self.top_hash.lock().await = hash
+        *self.top_hash.write().await = hash
     }
 
     // Get the top block hash of peer chain
-    pub fn get_top_block_hash(&self) -> &Mutex<Hash> {
-        &self.top_hash
+    pub async fn get_top_block_hash(&self) -> Hash {
+        self.top_hash.read().await.clone()
     }
 
     // Get the cumulative difficulty
-    pub fn get_cumulative_difficulty(&self) -> &Mutex<CumulativeDifficulty> {
-        &self.cumulative_difficulty
+    pub async fn get_cumulative_difficulty(&self) -> CumulativeDifficulty {
+        *self.cumulative_difficulty.read().await
     }
 
     // Store the cumulative difficulty
     // This is updated by ping packet
     pub async fn set_cumulative_difficulty(&self, cumulative_difficulty: CumulativeDifficulty) {
-        *self.cumulative_difficulty.lock().await = cumulative_difficulty;
+        *self.cumulative_difficulty.write().await = cumulative_difficulty;
     }
 
     // Verify if its a outgoing connection
@@ -846,19 +846,19 @@ impl Peer {
     }
 
     pub async fn set_read_task_state(&self, state: TaskState) {
-        *self.read_task.lock().await = state;
+        *self.read_task.write().await = state;
     }
 
     pub async fn set_write_task_state(&self, state: TaskState) {
-        *self.write_task.lock().await = state;
+        *self.write_task.write().await = state;
     }
 
     pub async fn get_read_task_state(&self) -> TaskState {
-        *self.read_task.lock().await
+        *self.read_task.read().await
     }
 
     pub async fn get_write_task_state(&self) -> TaskState {
-        *self.write_task.lock().await
+        *self.write_task.read().await
     }
 }
 
@@ -880,7 +880,7 @@ impl Display for Peer {
             "Couldn't retrieve data".to_string()
         };
 
-        let top_hash = if let Ok(hash) = self.get_top_block_hash().try_lock() {
+        let top_hash = if let Ok(hash) = self.top_hash.try_read() {
             hash.to_string()
         } else {
             "Couldn't retrieve data".to_string()
@@ -892,8 +892,8 @@ impl Display for Peer {
             "No".to_string()
         };
 
-        let read_task = self.read_task.try_lock().map(|v| *v).unwrap_or(TaskState::Unknown);
-        let write_task = self.write_task.try_lock().map(|v| *v).unwrap_or(TaskState::Unknown);
+        let read_task = self.read_task.try_read().map(|v| *v).unwrap_or(TaskState::Unknown);
+        let write_task = self.write_task.try_read().map(|v| *v).unwrap_or(TaskState::Unknown);
 
         write!(f, "Peer[connection: {}, id: {}, topoheight: {}, top hash: {}, height: {}, pruned: {}, priority: {}, tag: {}, version: {}, fail count: {}, out: {}, peers: {}, tasks: {:?}/{:?}, txs: {}]",
             self.get_connection(),
