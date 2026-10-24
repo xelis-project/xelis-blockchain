@@ -40,7 +40,7 @@ use crate::{
         PEER_TEMP_BAN_TIME_ON_CONNECT,
         P2P_PEERLIST_RETRY_AFTER
     },
-    p2p::packet::PacketPeerDisconnected
+    p2p::{packet::PacketPeerDisconnected, PeerEvent}
 };
 use super::{
     error::P2pError,
@@ -58,10 +58,8 @@ pub type SharedPeerList = Arc<PeerList>;
 pub struct PeerList {
     // Keep track of all connected peers
     peers: RwLock<HashMap<u64, Arc<Peer>>>,
-    // used to notify the server that a peer disconnected
-    // this is done through a channel to not have to handle generic types
-    // and to be flexible in the future
-    peer_disconnect_channel: Option<Sender<Arc<Peer>>>,
+    // Queue notifications without waiting on the server's RPC event worker.
+    event_sender: Sender<PeerEvent>,
     // We only keep one "peer" per address in case the peer changes multiple
     // times its local port
     cache: DiskCache,
@@ -103,11 +101,11 @@ pub struct PeerListEntry {
 }
 
 impl PeerList {
-    pub fn new(capacity: usize, stream_concurrency: usize, filename: String, peer_disconnect_channel: Option<Sender<Arc<Peer>>>) -> Result<SharedPeerList, P2pError> {
+    pub fn new(capacity: usize, stream_concurrency: usize, filename: String, event_sender: Sender<PeerEvent>) -> Result<SharedPeerList, P2pError> {
         Ok(Arc::new(
             Self {
                 peers: RwLock::new(HashMap::with_capacity(capacity)),
-                peer_disconnect_channel,
+                event_sender,
                 cache: DiskCache::new(filename)?,
                 stream_concurrency,
                 outgoing_peers: AtomicUsize::new(0)
@@ -207,10 +205,10 @@ impl PeerList {
         // Update the peerlist entry
         self.update_peer(&peer, true).await?;
 
-        if let Some(peer_disconnect_channel) = &self.peer_disconnect_channel {
+        if peer.shareable() {
             debug!("Notifying server that {} disconnected", peer);
-            if let Err(e) = peer_disconnect_channel.send(peer).await {
-                error!("Error while sending peer disconnect notification: {}", e);
+            if let Err(e) = self.event_sender.try_send(PeerEvent::Disconnected(peer)) {
+                error!("Peer disconnect notification skipped because it could not be queued: {}", e);
             }
         }
 

@@ -9,6 +9,7 @@ mod encryption;
 mod compression;
 mod chain_sync;
 mod expirable_cache;
+mod events;
 
 pub use encryption::EncryptionKey;
 pub use config::*;
@@ -17,6 +18,7 @@ pub use packet::*;
 pub use peer_list::*;
 pub use error::*;
 pub use diffie_hellman::*;
+pub use events::PeerEvent;
 
 use std::{
     time::Instant,
@@ -49,8 +51,6 @@ use lru::LruCache;
 use xelis_common::{
     api::daemon::{
         Direction,
-        NotifyEvent,
-        PeerPeerDisconnectedEvent,
         TimedDirection
     },
     block::{
@@ -75,7 +75,7 @@ use xelis_common::{
         spawn_task,
         sync::{
             broadcast,
-            mpsc,
+            mpsc::{self, Receiver, Sender},
             oneshot,
             RwLock,
         },
@@ -99,11 +99,11 @@ use crate::{
         storage::{Storage, snapshot::StorageHolder},
         config::{P2pConfig, ProxyKind},
     },
-    rpc::rpc::get_peer_entry
 };
 use expirable_cache::ExpirableCache;
 
 pub const TRANSACTIONS_CHANNEL_CAPACITY: usize = 128;
+const PEER_EVENTS_CHANNEL_CAPACITY: usize = 1024;
 
 // P2pServer is a fully async TCP server
 // Each connection will block on a data to send or to receive
@@ -123,6 +123,8 @@ pub struct P2pServer<S: Storage> {
     is_running: AtomicBool,
     // Sender channel to pass a newly connected peer to the handler
     peer_sender: mpsc::Sender<(Peer, Rx)>,
+    // RPC notifications are delivered by one worker, independently of packets.
+    event_sender: Sender<PeerEvent>,
     // Synced cache to prevent concurrent tasks adding the block
     // Timestamp is None if block is not yet executed
     blocks_propagation_queue: RwLock<LruCache<Arc<Hash>, Option<TimestampMillis>>>,
@@ -239,12 +241,12 @@ impl<S: Storage> P2pServer<S> {
 
         let (ping_sender, ping_receiver) = mpsc::channel(1);
 
-        let (sender, event_receiver) = mpsc::channel::<Arc<Peer>>(config.max_peers); 
+        let (event_sender, event_receiver) = mpsc::channel(PEER_EVENTS_CHANNEL_CAPACITY);
         let peer_list = PeerList::new(
             config.max_peers,
             config.stream_concurrency,
             format!("{}peerlist-{}", dir_path.unwrap_or_default(), blockchain.get_network().to_string().to_lowercase()),
-            Some(sender)
+            event_sender.clone()
         )?;
 
         // Set our flags
@@ -268,6 +270,7 @@ impl<S: Storage> P2pServer<S> {
             blockchain,
             is_running: AtomicBool::new(true),
             peer_sender,
+            event_sender,
             blocks_propagation_queue: RwLock::new(LruCache::new(NonZeroUsize::new(STABLE_LIMIT as usize * TIPS_LIMIT).expect("non-zero blocks propagation queue"))),
             blocks_processor,
             txs_propagation_queue: RwLock::new(LruCache::new(NonZeroUsize::new(TRANSACTIONS_CHANNEL_CAPACITY).expect("non-zero transactions propagation queue"))),
@@ -384,7 +387,7 @@ impl<S: Storage> P2pServer<S> {
         blocks_processor_receiver: mpsc::Receiver<(Arc<Peer>, BlockHeader, Arc<Hash>)>,
         txs_processor_receiver: mpsc::Receiver<(Arc<Peer>, Arc<Hash>)>,
         ping_receiver: mpsc::Receiver<()>,
-        event_receiver: mpsc::Receiver<Arc<Peer>>
+        event_receiver: Receiver<PeerEvent>
     ) -> Result<(), P2pError> {
         let listener = TcpListener::bind(self.get_bind_address()).await?;
         info!("P2p Server will listen on: {}", self.get_bind_address());
@@ -403,8 +406,9 @@ impl<S: Storage> P2pServer<S> {
         // Start the same task for transactions propagated
         spawn_task("p2p-transactions", Arc::clone(&self).txs_processing_task(txs_processor_receiver));
 
-        // start the event loop task to handle peer disconnect events
-        spawn_task("p2p-events", Arc::clone(&self).event_loop(event_receiver));
+        // Subscribe before spawning so shutdown cannot be missed by the worker.
+        let event_exit = self.exit_sender.subscribe();
+        spawn_task("p2p-events", Arc::clone(&self).event_loop(event_receiver, event_exit));
 
         // start another task for peerlist loop
         spawn_task("p2p-peerlist", Arc::clone(&self).peerlist_loop());
@@ -705,16 +709,7 @@ impl<S: Storage> P2pServer<S> {
 
         self.peer_list.add_peer(peer, self.get_max_peers()).await?;
 
-        if peer.shareable() {
-            trace!("Locking RPC Server to notify PeerConnected event");
-            if let Some(rpc) = self.blockchain.get_rpc().read().await.as_ref() {
-                if rpc.is_event_tracked(&NotifyEvent::PeerConnected).await {
-                    debug!("Notifying clients with PeerConnected event");
-                    rpc.notify_clients_with(&NotifyEvent::PeerConnected, get_peer_entry(&peer).await).await;
-                }
-            }
-            trace!("End locking for PeerConnected event");
-        }
+        self.notify_peer_event(PeerEvent::Connected(Arc::clone(peer)));
 
         counter!("xelis_p2p_peers_total").increment(1u64);
         self.handle_connection(peer.clone(), rx).await
@@ -1466,39 +1461,6 @@ impl<S: Storage> P2pServer<S> {
         }
     }
 
-    // This function is used to broadcast PeerDisconnected event to listeners
-    // We use a channel to avoid having to pass the Blockchain<S> to the Peerlist & Peers
-    async fn event_loop(self: Arc<Self>, mut receiver: mpsc::Receiver<Arc<Peer>>) {
-        debug!("Starting event loop task...");
-        let mut server_exit = self.exit_sender.subscribe();
-
-        loop {
-            select! {
-                biased;
-                _ = server_exit.recv() => {
-                    debug!("Exit message received, stopping event loop task");
-                    break;
-                },
-                peer = receiver.recv() => {
-                    if let Some(peer) = peer {
-                        if peer.shareable() {
-                            if let Some(rpc) = self.blockchain.get_rpc().read().await.as_ref() {
-                                if rpc.is_event_tracked(&NotifyEvent::PeerDisconnected).await {
-                                    debug!("Notifying clients with PeerDisconnected event");
-                                    rpc.notify_clients_with(&NotifyEvent::PeerDisconnected, get_peer_entry(&peer).await).await;
-                                }
-                            }
-                        }
-                    } else {
-                        debug!("No more events to notify, stopping event loop task");
-                        break;
-                    }
-                }
-            }
-        }
-        debug!("Event loop task is stopped!");
-    }
-
     // Request a block using its block hash if we don't have enough TXs locally
     async fn request_block_with_storage(&self, peer: &Arc<Peer>, block_hash: &Hash, header: impl Into<Arc<BlockHeader>>, storage: StorageHolder<'_, S>) -> Result<Block, BlockchainError> {
         let header = header.into();
@@ -1990,7 +1952,7 @@ impl<S: Storage> P2pServer<S> {
                 let (hash, ping) = packet_wrapper.consume();
                 let hash = Arc::new(hash.into_owned());
 
-                ping.into_owned().update_peer(peer, &self.blockchain).await?;
+                self.update_peer(peer, ping.into_owned()).await?;
 
                 // peer should not send us twice the same transaction
                 debug!("Received tx hash {} from {}", hash, peer.get_outgoing_address());
@@ -2064,7 +2026,7 @@ impl<S: Storage> P2pServer<S> {
             Packet::BlockPropagation(packet_wrapper) => {
                 trace!("Received a block propagation packet from {}", peer);
                 let (header, ping) = packet_wrapper.consume();
-                ping.into_owned().update_peer(peer, &self.blockchain).await?;
+                self.update_peer(peer, ping.into_owned()).await?;
 
                 // check that the block height is valid
                 let header = header.into_owned();
@@ -2195,7 +2157,7 @@ impl<S: Storage> P2pServer<S> {
             Packet::ChainRequest(packet_wrapper) => {
                 trace!("Received a chain request from {}", peer);
                 let (request, ping) = packet_wrapper.consume();
-                ping.into_owned().update_peer(peer, &self.blockchain).await?;
+                self.update_peer(peer, ping.into_owned()).await?;
                 let request = request.into_owned();
                 let last_request = peer.get_last_chain_sync();
                 let time = get_current_time_in_seconds();
@@ -2270,7 +2232,7 @@ impl<S: Storage> P2pServer<S> {
                     }
                 }
 
-                ping.into_owned().update_peer(peer, &self.blockchain).await?;
+                self.update_peer(peer, ping.into_owned()).await?;
             },
             Packet::ObjectRequest(request) => {
                 trace!("Received a object request from {}", peer);
@@ -2350,7 +2312,7 @@ impl<S: Storage> P2pServer<S> {
             Packet::NotifyInventoryRequest(packet_wrapper) => {
                 trace!("Received a inventory request from {}", peer);
                 let (request, ping) = packet_wrapper.consume();
-                ping.into_owned().update_peer(peer, &self.blockchain).await?;
+                self.update_peer(peer, ping.into_owned()).await?;
 
                 let request = request.into_owned();
 
@@ -2473,19 +2435,10 @@ impl<S: Storage> P2pServer<S> {
                     }
                 }
 
-                if peer.shareable() {
-                    trace!("Locking RPC Server to notify PeerDisconnected event");
-                    if let Some(rpc) = self.blockchain.get_rpc().read().await.as_ref() {
-                        if rpc.is_event_tracked(&NotifyEvent::PeerPeerDisconnected).await {
-                            let value = PeerPeerDisconnectedEvent {
-                                peer_id: peer.get_id(),
-                                peer_addr: addr
-                            };
-                            rpc.notify_clients_with(&NotifyEvent::PeerPeerDisconnected, value).await;
-                        }
-                    }
-                    trace!("End locking for PeerDisconnected event");
-                }
+                self.notify_peer_event(PeerEvent::PeerDisconnected {
+                    peer: Arc::clone(peer),
+                    addr,
+                });
             }
         };
         Ok(())

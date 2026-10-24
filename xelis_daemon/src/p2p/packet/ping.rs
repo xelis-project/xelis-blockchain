@@ -1,6 +1,6 @@
 use indexmap::IndexSet;
 use xelis_common::{
-    api::daemon::{NotifyEvent, PeerPeerListUpdatedEvent, TimedDirection},
+    api::daemon::TimedDirection,
     crypto::Hash,
     difficulty::CumulativeDifficulty,
     serializer::{
@@ -17,16 +17,11 @@ use xelis_common::{
 };
 use crate::{
     config::P2P_PING_PEER_LIST_LIMIT,
-    core::{
-        blockchain::Blockchain,
-        storage::Storage
-    },
     p2p::{
         error::P2pError,
         Peer,
         is_local_address,
     },
-    rpc::rpc::get_peer_entry
 };
 use std::{
     fmt::Display,
@@ -58,7 +53,8 @@ impl<'a> Ping<'a> {
         }
     }
 
-    pub async fn update_peer<S: Storage>(self, peer: &Arc<Peer>, blockchain: &Arc<Blockchain<S>>) -> Result<(), P2pError> {
+    // Apply protocol state immediately; the server queues RPC notifications separately.
+    pub async fn update_peer(self, peer: &Arc<Peer>) -> Result<IndexSet<SocketAddr>, P2pError> {
         trace!("Updating {} with {}", peer, self);
         peer.set_top_block_hash(self.top_hash.into_owned()).await;
         peer.set_topoheight(self.topoheight);
@@ -79,16 +75,6 @@ impl<'a> Ping<'a> {
 
         peer.set_pruned_topoheight(self.pruned_topoheight);
         peer.set_cumulative_difficulty(self.cumulative_difficulty).await;
-
-        if peer.shareable() {
-            trace!("Locking RPC Server to notify PeerStateUpdated event");
-            if let Some(rpc) = blockchain.get_rpc().read().await.as_ref() {
-                if rpc.is_event_tracked(&NotifyEvent::PeerStateUpdated).await {
-                    rpc.notify_clients_with(&NotifyEvent::PeerStateUpdated, get_peer_entry(peer).await).await;
-                }
-            }
-            trace!("End locking for PeerStateUpdated event");
-        }
 
         if !self.peer_list.is_empty() {
             debug!("Received a peer list ({:?}) for {}", self.peer_list, peer.get_outgoing_address());
@@ -124,22 +110,9 @@ impl<'a> Ping<'a> {
                 }
             }
 
-            if peer.shareable() {
-                trace!("Locking RPC Server to notify PeerPeerListUpdated event");
-                if let Some(rpc) = blockchain.get_rpc().read().await.as_ref() {
-                    if rpc.is_event_tracked(&NotifyEvent::PeerPeerListUpdated).await {
-                        let value = PeerPeerListUpdatedEvent {
-                            peer_id: peer.get_id(),
-                            peerlist: self.peer_list
-                        };
-                        rpc.notify_clients_with(&NotifyEvent::PeerPeerListUpdated, value).await;
-                    }
-                }
-                trace!("End locking for PeerPeerListUpdated event");
-            }
         }
 
-        Ok(())
+        Ok(self.peer_list)
     }
 
     pub fn get_height(&self) -> u64 {
