@@ -1,16 +1,10 @@
 use std::{net::SocketAddr, sync::Arc};
 use indexmap::IndexSet;
-use log::{debug, error};
-use xelis_common::{
-    api::daemon::{NotifyEvent, PeerPeerDisconnectedEvent, PeerPeerListUpdatedEvent},
-    tokio::{
-        select,
-        sync::{broadcast::Receiver as BroadcastReceiver, mpsc::Receiver},
-    },
-};
+use log::error;
+use xelis_common::api::daemon::{NotifyEvent, PeerPeerDisconnectedEvent, PeerPeerListUpdatedEvent};
 use crate::{
     core::storage::Storage,
-    rpc::rpc::get_peer_entry,
+    rpc::{rpc::get_peer_entry, DaemonRpcServer, RpcEvent},
 };
 use super::{P2pError, P2pServer, Peer, Ping};
 
@@ -41,7 +35,7 @@ impl<S: Storage> P2pServer<S> {
     pub(super) fn notify_peer_event(&self, event: PeerEvent) {
         if event.peer().shareable() {
             // Notifications are best effort under overload; never stall packets.
-            if let Err(e) = self.event_sender.try_send(event) {
+            if let Err(e) = self.event_sender.try_send(RpcEvent::Peer(event)) {
                 error!("P2P notification skipped because it could not be queued: {}", e);
             }
         }
@@ -55,39 +49,11 @@ impl<S: Storage> P2pServer<S> {
         });
         Ok(())
     }
+}
 
-    pub(super) async fn event_loop(self: Arc<Self>, mut receiver: Receiver<PeerEvent>, mut exit: BroadcastReceiver<()>) {
-        debug!("Starting P2P event loop task");
-        if !self.is_running() {
-            return;
-        }
-        loop {
-            let event = select! {
-                biased;
-                _ = exit.recv() => break,
-                event = receiver.recv() => match event {
-                    Some(event) => event,
-                    None => break,
-                },
-            };
-            // Shutdown also interrupts a notification stalled on a subscriber.
-            select! {
-                biased;
-                _ = exit.recv() => break,
-                _ = self.send_peer_event(event) => (),
-            }
-        }
-        debug!("P2P event loop task is stopped");
-    }
-
-    async fn send_peer_event(&self, event: PeerEvent) {
-        // Release the blockchain RPC lock before building or delivering events.
-        let rpc = { self.blockchain.get_rpc().read().await.clone() };
-        let Some(rpc) = rpc else {
-            return;
-        };
-
-        match event {
+impl PeerEvent {
+    pub(crate) async fn notify<S: Storage>(self, rpc: &DaemonRpcServer<S>) {
+        match self {
             PeerEvent::Connected(peer) => {
                 if rpc.is_event_tracked(&NotifyEvent::PeerConnected).await {
                     rpc.notify_clients_with(&NotifyEvent::PeerConnected, get_peer_entry(&peer).await).await;

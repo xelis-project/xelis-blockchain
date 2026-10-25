@@ -40,7 +40,8 @@ use crate::{
         PEER_TEMP_BAN_TIME_ON_CONNECT,
         P2P_PEERLIST_RETRY_AFTER
     },
-    p2p::{packet::PacketPeerDisconnected, PeerEvent}
+    p2p::{packet::PacketPeerDisconnected, PeerEvent},
+    rpc::RpcEvent,
 };
 use super::{
     error::P2pError,
@@ -58,8 +59,8 @@ pub type SharedPeerList = Arc<PeerList>;
 pub struct PeerList {
     // Keep track of all connected peers
     peers: RwLock<HashMap<u64, Arc<Peer>>>,
-    // Queue notifications without waiting on the server's RPC event worker.
-    event_sender: Sender<PeerEvent>,
+    // Share the RPC event queue owned by the blockchain.
+    event_sender: Sender<RpcEvent>,
     // We only keep one "peer" per address in case the peer changes multiple
     // times its local port
     cache: DiskCache,
@@ -101,7 +102,7 @@ pub struct PeerListEntry {
 }
 
 impl PeerList {
-    pub fn new(capacity: usize, stream_concurrency: usize, filename: String, event_sender: Sender<PeerEvent>) -> Result<SharedPeerList, P2pError> {
+    pub fn new(capacity: usize, stream_concurrency: usize, filename: String, event_sender: Sender<RpcEvent>) -> Result<SharedPeerList, P2pError> {
         Ok(Arc::new(
             Self {
                 peers: RwLock::new(HashMap::with_capacity(capacity)),
@@ -207,7 +208,7 @@ impl PeerList {
 
         if peer.shareable() {
             debug!("Notifying server that {} disconnected", peer);
-            if let Err(e) = self.event_sender.try_send(PeerEvent::Disconnected(peer)) {
+            if let Err(e) = self.event_sender.try_send(RpcEvent::Peer(PeerEvent::Disconnected(peer))) {
                 error!("Peer disconnect notification skipped because it could not be queued: {}", e);
             }
         }

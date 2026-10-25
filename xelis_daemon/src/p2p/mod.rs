@@ -75,7 +75,7 @@ use xelis_common::{
         spawn_task,
         sync::{
             broadcast,
-            mpsc::{self, Receiver, Sender},
+            mpsc::{self, Sender},
             oneshot,
             RwLock,
         },
@@ -99,11 +99,11 @@ use crate::{
         storage::{Storage, snapshot::StorageHolder},
         config::{P2pConfig, ProxyKind},
     },
+    rpc::RpcEvent,
 };
 use expirable_cache::ExpirableCache;
 
 pub const TRANSACTIONS_CHANNEL_CAPACITY: usize = 128;
-const PEER_EVENTS_CHANNEL_CAPACITY: usize = 1024;
 
 // P2pServer is a fully async TCP server
 // Each connection will block on a data to send or to receive
@@ -124,7 +124,7 @@ pub struct P2pServer<S: Storage> {
     // Sender channel to pass a newly connected peer to the handler
     peer_sender: mpsc::Sender<(Peer, Rx)>,
     // RPC notifications are delivered by one worker, independently of packets.
-    event_sender: Sender<PeerEvent>,
+    event_sender: Sender<RpcEvent>,
     // Synced cache to prevent concurrent tasks adding the block
     // Timestamp is None if block is not yet executed
     blocks_propagation_queue: RwLock<LruCache<Arc<Hash>, Option<TimestampMillis>>>,
@@ -164,6 +164,7 @@ impl<S: Storage> P2pServer<S> {
         config: P2pConfig,
         dir_path: Option<String>,
         blockchain: Arc<Blockchain<S>>,
+        event_sender: Sender<RpcEvent>,
         txs_verification_concurrency: usize,
     ) -> Result<Arc<Self>, P2pError> {
         if config.tag.as_ref().is_some_and(|tag| tag.len() == 0 || tag.len() > 16) {
@@ -241,7 +242,6 @@ impl<S: Storage> P2pServer<S> {
 
         let (ping_sender, ping_receiver) = mpsc::channel(1);
 
-        let (event_sender, event_receiver) = mpsc::channel(PEER_EVENTS_CHANNEL_CAPACITY);
         let peer_list = PeerList::new(
             config.max_peers,
             config.stream_concurrency,
@@ -295,8 +295,7 @@ impl<S: Storage> P2pServer<S> {
                     peer_receiver,
                     blocks_processor_receiver,
                     txs_processor_receiver,
-                    ping_receiver,
-                    event_receiver
+                    ping_receiver
                 ).await {
                     error!("Unexpected error on P2p module: {}", e);
                 }
@@ -386,8 +385,7 @@ impl<S: Storage> P2pServer<S> {
         mut peer_receiver: mpsc::Receiver<(Peer, Rx)>,
         blocks_processor_receiver: mpsc::Receiver<(Arc<Peer>, BlockHeader, Arc<Hash>)>,
         txs_processor_receiver: mpsc::Receiver<(Arc<Peer>, Arc<Hash>)>,
-        ping_receiver: mpsc::Receiver<()>,
-        event_receiver: Receiver<PeerEvent>
+        ping_receiver: mpsc::Receiver<()>
     ) -> Result<(), P2pError> {
         let listener = TcpListener::bind(self.get_bind_address()).await?;
         info!("P2p Server will listen on: {}", self.get_bind_address());
@@ -405,10 +403,6 @@ impl<S: Storage> P2pServer<S> {
         spawn_task("p2p-blocks", Arc::clone(&self).blocks_processing_task(blocks_processor_receiver));
         // Start the same task for transactions propagated
         spawn_task("p2p-transactions", Arc::clone(&self).txs_processing_task(txs_processor_receiver));
-
-        // Subscribe before spawning so shutdown cannot be missed by the worker.
-        let event_exit = self.exit_sender.subscribe();
-        spawn_task("p2p-events", Arc::clone(&self).event_loop(event_receiver, event_exit));
 
         // start another task for peerlist loop
         spawn_task("p2p-peerlist", Arc::clone(&self).peerlist_loop());

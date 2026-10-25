@@ -1,3 +1,5 @@
+mod events;
+
 use anyhow::Error;
 use futures::{StreamExt, TryStreamExt, future::ready, stream};
 use linked_hash_table::LinkedHashSet;
@@ -81,7 +83,7 @@ use xelis_common::{
         spawn_task,
         is_multi_threads_supported,
         task::spawn_blocking,
-        sync::{RwLock, Semaphore}
+        sync::{mpsc::{self, Sender}, Mutex, RwLock, Semaphore}
     },
     varuint::VarUint,
     contract::{ContractMetadata, ContractVersion, build_environment},
@@ -119,7 +121,11 @@ use crate::{
             get_block_response
         },
         DaemonRpcServer,
-        SharedDaemonRpcServer
+        SharedDaemonRpcServer,
+        RpcEvent,
+        RpcEventBatch,
+        RpcEventWorker,
+        RPC_EVENT_CHANNEL_CAPACITY,
     }
 };
 use std::{
@@ -207,6 +213,9 @@ pub struct Blockchain<S: Storage> {
     p2p: RwLock<Option<Arc<P2pServer<S>>>>,
     // RPC module
     rpc: RwLock<Option<SharedDaemonRpcServer<S>>>,
+    // One worker delivers RPC events independently of chain processing.
+    rpc_event_sender: Sender<RpcEvent>,
+    rpc_event_worker: Mutex<Option<RpcEventWorker>>,
     // if a simulator is set
     simulator: Option<Simulator>,
     // if we should skip PoW verification
@@ -254,6 +263,7 @@ impl<S: Storage> Blockchain<S> {
             .collect();
 
         info!("Initializing chain...");
+        let (rpc_event_sender, rpc_event_receiver) = mpsc::channel(RPC_EVENT_CHANNEL_CAPACITY);
         let blockchain = Self {
             mempool: RwLock::new(Mempool::new(network, config.disable_zkp_cache, config.mempool.tx_expiration_time.as_secs(), config.mempool.max_memory_usage)),
             storage: RwLock::new(storage),
@@ -263,6 +273,8 @@ impl<S: Storage> Blockchain<S> {
             environments,
             p2p: RwLock::new(None),
             rpc: RwLock::new(None),
+            rpc_event_sender,
+            rpc_event_worker: Mutex::new(None),
             skip_pow_verification: config.skip_pow_verification || config.simulator.is_some(),
             simulator: config.simulator,
             network,
@@ -318,6 +330,8 @@ impl<S: Storage> Blockchain<S> {
         }
 
         let arc = Arc::new(blockchain);
+        // One shared RPC event worker serves both blockchain and P2P producers.
+        arc.start_rpc_event_worker(rpc_event_receiver).await;
         // create P2P Server
         if !config.p2p.disable {
             info!("Starting P2p server...");
@@ -325,6 +339,7 @@ impl<S: Storage> Blockchain<S> {
                 config.p2p,
                 config.dir_path,
                 Arc::clone(&arc),
+                arc.rpc_event_sender.clone(),
                 config.txs_verification_threads_count,
             ).await {
                 Ok(server) => {
@@ -342,7 +357,9 @@ impl<S: Storage> Blockchain<S> {
                 Arc::clone(&arc),
                 config.rpc
             ).await {
-                Ok(server) => *arc.rpc.write().await = Some(server),
+                Ok(server) => {
+                    *arc.rpc.write().await = Some(Arc::clone(&server));
+                },
                 Err(e) => error!("Error while starting RPC server: {}", e)
             };
         }
@@ -422,6 +439,8 @@ impl<S: Storage> Blockchain<S> {
                 p2p.stop().await;
             }
         }
+
+        self.stop_rpc_event_worker().await;
 
         {
             debug!("stopping rpc module");
@@ -1103,7 +1122,8 @@ impl<S: Storage> Blockchain<S> {
             }
 
             // broadcast to websocket this tx
-            if let Some(rpc) = self.rpc.read().await.as_ref() {
+            let rpc = { self.rpc.read().await.clone() };
+            if let Some(rpc) = rpc {
                 // Notify miners if getwork is enabled
                 if let Some(getwork) = rpc.getwork_server() {
                     let getwork = getwork.clone();
@@ -1128,12 +1148,7 @@ impl<S: Storage> Blockchain<S> {
                         json!(data)
                     };
 
-                    let rpc = rpc.clone();
-                    spawn_task("rpc-notify-tx", async move {
-                        if let Err(e) = rpc.notify_clients(&NotifyEvent::TransactionAddedInMempool, json).await {
-                            debug!("Error while broadcasting event TransactionAddedInMempool to websocket: {}", e);
-                        }
-                    });
+                    self.queue_rpc_events(RpcEventBatch::single(NotifyEvent::TransactionAddedInMempool, json));
                 }
             }
         }
@@ -2250,15 +2265,15 @@ impl<S: Storage> Blockchain<S> {
 
         debug!("New tips: {}", tips.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(","));
 
-        // rpc server lock
-        let rpc_server = self.rpc.read().await;
+        // Keep an RPC handle without retaining its guard during chain processing.
+        let rpc_server = { self.rpc.read().await.clone() };
         let should_track_events = if let Some(rpc) = rpc_server.as_ref() {
             rpc.get_tracked_events().await
         } else {
             HashSet::new()
         };
         // track all events to notify websocket
-        let mut events: HashMap<NotifyEvent, Vec<Value>> = HashMap::new();
+        let mut events: IndexMap<NotifyEvent, Vec<Value>> = IndexMap::new();
         let mut block_is_ordered = false;
 
         let best_tip = blockdag::find_best_tip_by_cumulative_difficulty(&*storage, tips.iter()).await?;
@@ -2961,20 +2976,7 @@ impl<S: Storage> Blockchain<S> {
                 };
             }
 
-            let rpc = rpc.clone();
-            // don't block mutex/lock more than necessary, we move it in another task
-            spawn_task("rpc-notify-events", async move {
-                let start = Instant::now();
-                for (event, values) in events {
-                    for value in values {
-                        if let Err(e) = rpc.notify_clients(&event, value).await {
-                            debug!("Error while broadcasting event to websocket: {}", e);
-                        }
-                    }
-                }
-
-                histogram!("xelis_new_block_notify_events_ms").record(start.elapsed().as_millis() as f64);
-            });
+            self.queue_rpc_events(RpcEventBatch::block(events));
         }
 
         Ok(())
@@ -3187,36 +3189,25 @@ impl<S: Storage> Blockchain<S> {
             chain_cache.stable_topoheight = stable_topoheight;
 
             // if we have a RPC server, propagate the StableHeightChanged if necessary
-            if let Some(rpc) = self.rpc.read().await.as_ref() {
+            let rpc = { self.rpc.read().await.clone() };
+            if let Some(rpc) = rpc {
                 if stable_height != previous_stable_height {
                     if rpc.is_event_tracked(&NotifyEvent::StableHeightChanged).await {
-                        let rpc = rpc.clone();
-                        spawn_task("rpc-notify-stable-height", async move {
-                            let event = json!(StableHeightChangedEvent {
-                                previous_stable_height,
-                                new_stable_height: stable_height
-                            });
-    
-                            if let Err(e) = rpc.notify_clients(&NotifyEvent::StableHeightChanged, event).await {
-                                debug!("Error while broadcasting event StableHeightChanged to websocket: {}", e);
-                            }
+                        let event = json!(StableHeightChangedEvent {
+                            previous_stable_height,
+                            new_stable_height: stable_height
                         });
+                        self.queue_rpc_events(RpcEventBatch::single(NotifyEvent::StableHeightChanged, event));
                     }
                 }
 
                 if stable_topoheight != previous_stable_topoheight {
                     if rpc.is_event_tracked(&NotifyEvent::StableTopoHeightChanged).await {
-                        let rpc = rpc.clone();
-                        spawn_task("rpc-notify-stable-topoheight", async move {
-                            let event = json!(StableTopoHeightChangedEvent {
-                                previous_stable_topoheight,
-                                new_stable_topoheight: stable_topoheight
-                            });
-    
-                            if let Err(e) = rpc.notify_clients(&NotifyEvent::StableTopoHeightChanged, event).await {
-                                debug!("Error while broadcasting event StableTopoHeightChanged to websocket: {}", e);
-                            }
+                        let event = json!(StableTopoHeightChangedEvent {
+                            previous_stable_topoheight,
+                            new_stable_topoheight: stable_topoheight
                         });
+                        self.queue_rpc_events(RpcEventBatch::single(NotifyEvent::StableTopoHeightChanged, event));
                     }
                 }
             }

@@ -1,5 +1,8 @@
 pub mod rpc;
 pub mod getwork;
+mod events;
+
+pub use events::{RpcEvent, RpcEventBatch, RpcEventWorker, RPC_EVENT_CHANNEL_CAPACITY};
 
 use crate::core::{
     blockchain::Blockchain,
