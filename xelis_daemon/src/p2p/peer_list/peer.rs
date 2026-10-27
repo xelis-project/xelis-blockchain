@@ -577,7 +577,11 @@ impl Peer {
 
                 if let Err(e) = self.send_packet(Packet::ObjectRequest(Cow::Borrowed(&request).into())).await {
                     let mut objects = self.objects_requested.lock().await;
-                    objects.pop(&request);
+                    // A failed send cancels this channel, including its other
+                    // waiters, but must not remove a replacement request.
+                    if objects.peek(&request).is_some_and(|sender| receiver.same_channel(&sender.subscribe())) {
+                        objects.pop(&request);
+                    }
                     return Err(e)
                 }
                 sent_at = Some(get_current_time_in_millis());
@@ -594,8 +598,14 @@ impl Peer {
                 Err(_) => {
                     warn!("Requested data {} from {} has timed out", request, self);
                     let mut objects = self.objects_requested.lock().await;
-                    // remove it from request list
-                    objects.pop(&request);
+                    let same_channel = objects.peek(&request)
+                        .is_some_and(|sender| receiver.same_channel(&sender.subscribe()));
+                    // Drop this waiter while the map is locked, so simultaneous timeouts
+                    // cannot both observe another receiver and leave an unused entry behind.
+                    drop(receiver);
+                    if same_channel && objects.peek(&request).is_some_and(|sender| sender.receiver_count() == 0) {
+                        objects.pop(&request);
+                    }
                     return Err(P2pError::ObjectRequestTimedOut(request));
                 }
             }
