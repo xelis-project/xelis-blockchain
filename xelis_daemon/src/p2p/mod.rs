@@ -1990,19 +1990,16 @@ impl<S: Storage> P2pServer<S> {
                    return Ok(())
                 }
 
-                // Check that we are not already waiting on it
+                // Check and reserve the hash under the same write lock.
                 {
                     debug!("checking TX {} in propagation queue", hash);
-                    let txs_propagation_queue = self.txs_propagation_queue.read().await;
+                    let mut txs_propagation_queue = self.txs_propagation_queue.write().await;
                     if txs_propagation_queue.contains(&hash) {
                         debug!("TX {} propagated is already in processing from another peer", hash);
                         return Ok(())
                     }
-                }
 
-                {
                     debug!("adding TX {} in propagation queue", hash);
-                    let mut txs_propagation_queue = self.txs_propagation_queue.write().await;
                     txs_propagation_queue.put(hash.clone(), get_current_time_in_millis());
                 }
 
@@ -2087,20 +2084,16 @@ impl<S: Storage> P2pServer<S> {
                     }
                 }
 
-                // Check that we are not already waiting on it
+                // Check and reserve the hash under the same write lock.
                 {
                     debug!("checking block {} in propagation queue", block_hash);
-                    let blocks_propagation_queue = self.blocks_propagation_queue.read().await;
+                    let mut blocks_propagation_queue = self.blocks_propagation_queue.write().await;
                     if blocks_propagation_queue.contains(&block_hash) {
                         debug!("Block {} propagated is already in processing from another peer", block_hash);
                         return Ok(())
                     }
-                }
 
-                // Add it in queue
-                {
                     debug!("adding block {} in propagation queue", block_hash);
-                    let mut blocks_propagation_queue = self.blocks_propagation_queue.write().await;
                     blocks_propagation_queue.put(block_hash.clone(), None);
                 }
 
