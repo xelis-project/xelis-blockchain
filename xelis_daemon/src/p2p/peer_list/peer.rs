@@ -149,8 +149,8 @@ pub struct Peer {
     blocks_propagation: RwLock<LruCache<Arc<Hash>, (TimedDirection, bool)>>,
     // last time we got an inventory packet from this peer
     last_inventory: AtomicU64,
-    // if we requested this peer to send us an inventory notification
-    requested_inventory: AtomicBool,
+    // Reservation covering the full inventory exchange, including pagination
+    requested_inventory: Mutex<bool>,
     // pruned topoheight if its a pruned node
     pruned_topoheight: AtomicU64,
     // Store the pruned state of the peer
@@ -241,7 +241,7 @@ impl Peer {
             txs_cache: Mutex::new(LruCache::new(NonZeroUsize::new(PEER_TX_CACHE_SIZE).expect("PEER_TX_CACHE_SIZE must be non-zero"))),
             blocks_propagation: RwLock::new(LruCache::new(NonZeroUsize::new(PEER_BLOCK_CACHE_SIZE).expect("PEER_BLOCK_CACHE_SIZE must be non-zero"))),
             last_inventory: AtomicU64::new(0),
-            requested_inventory: AtomicBool::new(false),
+            requested_inventory: Mutex::new(false),
             pruned_topoheight: AtomicU64::new(pruned_topoheight.unwrap_or(0)),
             is_pruned: AtomicBool::new(pruned_topoheight.is_some()),
             bootstrap_requests: Mutex::new(LruCache::new(NonZeroUsize::new(PEER_OBJECTS_CONCURRENCY).expect("PEER_OBJECTS_CONCURRENCY must be non-zero"))),
@@ -795,14 +795,9 @@ impl Peer {
         self.last_inventory.store(value, Ordering::SeqCst)
     }
 
-    // Get the requested inventory flag
-    pub fn has_requested_inventory(&self) -> bool {
-        self.requested_inventory.load(Ordering::SeqCst)
-    }
-
-    // Set the requested inventory flag
-    pub fn set_requested_inventory(&self, value: bool) {
-        self.requested_inventory.store(value, Ordering::SeqCst)
+    // Lock the inventory exchange while sending or processing a page.
+    pub fn get_requested_inventory(&self) -> &Mutex<bool> {
+        &self.requested_inventory
     }
 
     // Get the outgoing address of the peer

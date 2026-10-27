@@ -797,7 +797,7 @@ impl<S: Storage> P2pServer<S> {
 
         // Request its inventory
         if self.blockchain.get_height().await == peer.get_height() {
-            self.request_inventory_of(peer).await?;
+            self.request_inventory_of(peer, false).await?;
         }
 
         Ok(())

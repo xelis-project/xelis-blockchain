@@ -880,7 +880,7 @@ impl<S: Storage> P2pServer<S> {
                     let peer_topoheight = peer.get_topoheight();
                     // verify that we synced it partially well
                     if peer_topoheight >= our_topoheight && peer_topoheight - our_topoheight < STABLE_LIMIT {
-                        if let Err(e) = self.request_inventory_of(&peer).await {
+                        if let Err(e) = self.request_inventory_of(&peer, false).await {
                             error!("Error while asking inventory to {}: {}", peer, e);
                         }
                     } else {

@@ -586,14 +586,13 @@ impl<S: Storage> P2pServer<S> {
         Ok(())
     }
 
-    // Request the inventory of all connected peers
+    // Request the inventory of all connected peers by forcing it
     pub async fn request_peers_inventory(&self) {
         let peers = self.peer_list.get_cloned_peers().await;
         stream::iter(peers)
             .for_each_concurrent(self.config.stream_concurrency, |peer| async move {
                 debug!("Requesting inventory from peer {}", peer);
-                peer.set_requested_inventory(false);
-                if let Err(e) = self.request_inventory_of(&peer).await {
+                if let Err(e) = self.request_inventory_of(&peer, true).await {
                     debug!("Error while requesting inventory from peer {}: {}", peer, e);
                 }
             })
@@ -1880,7 +1879,7 @@ impl<S: Storage> P2pServer<S> {
         let our_height = self.blockchain.get_height().await;
         let peer_height = peer.get_height();
         if our_height == peer_height {
-            if let Err(e) = self.request_inventory_of(&peer).await {
+            if let Err(e) = self.request_inventory_of(&peer, false).await {
                 warn!("Error while requesting inventory of {}: {}", peer, e);
             }
         }
@@ -2356,14 +2355,16 @@ impl<S: Storage> P2pServer<S> {
                 }
             },
             Packet::NotifyInventoryResponse(inventory) => {
-                if !peer.has_requested_inventory() {
+                let mut guard = peer.get_requested_inventory().lock().await;
+                if !*guard {
                     warn!("Received a notify inventory from {} but we didn't request it", peer);
                     return Err(P2pError::UnrequestedPacket)
                 }
+
                 let inventory = inventory.open()?;
                 debug!("Received a notify inventory from {}: {} txs", peer, inventory.len());
                 // we received the inventory
-                peer.set_requested_inventory(false);
+                *guard = false;
                 peer.set_last_inventory(get_current_time_in_seconds());
 
                 let next_page = inventory.next();
@@ -2395,8 +2396,8 @@ impl<S: Storage> P2pServer<S> {
                     trace!("Requesting next page of inventory from {}", peer);
                     let packet = Cow::Owned(NotifyInventoryRequest::new(next_page));
                     let ping = Cow::Owned(self.build_generic_ping_packet().await?);
-                    peer.set_requested_inventory(true);
                     peer.send_packet(Packet::NotifyInventoryRequest(PacketWrapper::new(packet, ping).into())).await?;
+                    *guard = true;
                 } else {
                     // Last inventory response has been processed,
                     // we can know send back any TX in case we have any
@@ -2910,13 +2911,15 @@ impl<S: Storage> P2pServer<S> {
 
     // Request the inventory of a peer
     // This will sends him a request packet so we get notified of all its TXs hashes in its mempool
-    async fn request_inventory_of(&self, peer: &Arc<Peer>) -> Result<(), BlockchainError> {
+    async fn request_inventory_of(&self, peer: &Arc<Peer>, force: bool) -> Result<(), BlockchainError> {
         if self.config.disable_fetching_txs_propagated {
             debug!("skipping inventory request from {} due to fetching disabled", peer);                    
             return Ok(())
         }
 
-        if peer.has_requested_inventory() {
+        // Keep the lock until we've sent the request to avoid sending multiple requests to the same peer
+        let mut inventory = peer.get_requested_inventory().lock().await;
+        if !force && *inventory {
             debug!("skipping inventory request from {} due to already requested", peer);                    
             return Ok(())
         }
@@ -2926,8 +2929,9 @@ impl<S: Storage> P2pServer<S> {
 
         let packet = Cow::Owned(NotifyInventoryRequest::new(None));
         let ping = Cow::Owned(self.build_generic_ping_packet().await?);
-        peer.set_requested_inventory(true);
         peer.send_packet(Packet::NotifyInventoryRequest(PacketWrapper::new(packet, ping).into())).await?;
+        *inventory = true;
+
         Ok(())
     }
 
