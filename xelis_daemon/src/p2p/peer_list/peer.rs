@@ -118,7 +118,7 @@ pub struct Peer {
     // current highest block height for this peer
     height: AtomicU64,
     // last time we got a chain request
-    last_chain_sync: AtomicU64,
+    last_chain_sync: Mutex<TimestampSeconds>,
     // last time we sent a chain request
     last_chain_sync_out: AtomicU64,
     // last time we got a fail
@@ -227,7 +227,7 @@ impl Peer {
             priority,
             last_fail_count: AtomicU64::new(0),
             fail_count: AtomicU8::new(0),
-            last_chain_sync: AtomicU64::new(0),
+            last_chain_sync: Mutex::new(0),
             last_chain_sync_out: AtomicU64::new(0),
             peer_list,
             objects_requested: Mutex::new(LruCache::new(NonZeroUsize::new(PEER_OBJECTS_CONCURRENCY).expect("PEER_OBJECTS_CONCURRENCY must be non-zero"))),
@@ -489,15 +489,9 @@ impl Peer {
 
     // Get the last time we got a chain sync request
     // This is used to prevent spamming the chain sync packet
-    pub fn get_last_chain_sync(&self) -> TimestampSeconds {
-        self.last_chain_sync.load(Ordering::SeqCst)
+    pub fn get_last_chain_sync(&self) -> &Mutex<TimestampSeconds> {
+        &self.last_chain_sync
     }
-
-    // Store the last time we got a chain sync request
-    pub fn set_last_chain_sync(&self, time: TimestampSeconds) {
-        self.last_chain_sync.store(time, Ordering::SeqCst);
-    }
-
 
     // Get the last time we've sent a chain sync request
     // This is used to prevent spamming the chain sync packet

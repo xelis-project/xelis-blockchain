@@ -2140,22 +2140,24 @@ impl<S: Storage> P2pServer<S> {
             },
             Packet::ChainRequest(packet_wrapper) => {
                 trace!("Received a chain request from {}", peer);
-                let last_request = peer.get_last_chain_sync();
-                let time = get_current_time_in_seconds();
 
-                // Node is trying to ask too fast our chain
-                // Don't allow faster than 1/3 of the delay
-                if (last_request * MILLIS_PER_SECOND) + (CHAIN_SYNC_DELAY * MILLIS_PER_SECOND * 2 / 3) > time * MILLIS_PER_SECOND {
-                    debug!("{} requested sync chain too fast!", peer);
-                    return Err(P2pError::RequestSyncChainTooFast)
+                {
+                    let mut last_request = peer.get_last_chain_sync().lock().await;
+                    let time = get_current_time_in_seconds();
+    
+                    // Node is trying to ask too fast our chain
+                    // Don't allow faster than 1/3 of the delay
+                    if (*last_request * MILLIS_PER_SECOND) + (CHAIN_SYNC_DELAY * MILLIS_PER_SECOND * 2 / 3) > time * MILLIS_PER_SECOND {
+                        debug!("{} requested sync chain too fast!", peer);
+                        return Err(P2pError::RequestSyncChainTooFast)
+                    }
+                    *last_request = time;
                 }
 
                 let (request, ping) = packet_wrapper.open()?.consume();
                 self.update_peer(peer, ping.into_owned()).await?;
 
                 let request = request.into_owned();
-
-                peer.set_last_chain_sync(time);
 
                 // at least one block necessary (genesis block)
                 let request_size = request.len();
