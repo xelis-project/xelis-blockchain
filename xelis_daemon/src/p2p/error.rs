@@ -217,6 +217,24 @@ pub enum P2pError {
     Any(#[from] Error)
 }
 
+impl P2pError {
+    pub fn is_fatal(&self) -> bool {
+        matches!(self,
+            | P2pError::ReaderError(_)
+            | P2pError::InvalidPacket
+            | P2pError::MalformedPacket
+            | P2pError::UnrequestedPacket
+            | P2pError::InvalidPacketNotFullRead
+            | P2pError::InvalidPacketSize
+            | P2pError::InvalidObjectResponse(_)
+            | P2pError::InvalidObjectResponseType
+            | P2pError::InvalidBootstrapStep(_, _)
+            | P2pError::FastSyncDisabled
+            | P2pError::AsyncTimeOut(_)
+        )
+    }
+}
+
 impl From<BlockchainError> for P2pError {
     fn from(err: BlockchainError) -> Self {
         Self::BlockchainError(Box::new(err))

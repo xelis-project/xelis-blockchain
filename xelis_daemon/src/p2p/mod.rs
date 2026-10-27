@@ -2496,9 +2496,9 @@ impl<S: Storage> P2pServer<S> {
                                 warn!("Error while handling packet #{} from {}: {}", packet_id, peer, e);
 
                                 // Malformed payloads close the peer.
-                                if matches!(e, P2pError::ReaderError(_) | P2pError::InvalidPacketNotFullRead) {
+                                if e.is_fatal() {
                                     if let Err(e) = peer.close().await {
-                                        debug!("Error while closing {} after malformed packet: {}", peer, e);
+                                        debug!("Error while closing {} after fatal error: {}", peer, e);
                                     }
                                     return true
                                 }
