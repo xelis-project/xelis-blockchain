@@ -164,7 +164,7 @@ impl PeerList {
         if notify && peer.shareable() {
             // now remove this peer from all peers that tracked it
             let addr = peer.get_outgoing_address();
-            let packet = Bytes::from(Packet::PeerDisconnected(PacketPeerDisconnected::new(*addr)).to_bytes()?);
+            let packet = Bytes::from(Packet::PeerDisconnected(PacketPeerDisconnected::new(*addr).into()).to_bytes()?);
 
             // Reference is Copy
             let packet = &packet;

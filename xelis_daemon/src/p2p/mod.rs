@@ -621,7 +621,7 @@ impl<S: Storage> P2pServer<S> {
         };
 
         let handshake = Handshake::new(Cow::Owned(VERSION.to_owned()), *self.blockchain.get_network(), Cow::Borrowed(self.get_tag()), Cow::Borrowed(&NETWORK_ID), self.get_peer_id(), self.bind_address.port(), get_current_time_in_seconds(), topoheight, block.get_height(), pruned_topoheight, Cow::Borrowed(&top_hash), genesis_block, Cow::Borrowed(&cumulative_difficulty), self.flags);
-        Ok(Packet::Handshake(Cow::Owned(handshake)).to_bytes()?)
+        Ok(Packet::Handshake(PacketMode::Opened(Cow::Owned(handshake))).to_bytes()?)
     }
 
     // Create a valid peer using the connection, if an error happen, it will close the stream and return the error
@@ -664,11 +664,11 @@ impl<S: Storage> P2pServer<S> {
         }
 
         // wait on the handshake packet
-        let mut handshake: Handshake<'static> = match timeout(self.config.peer_config.handshake.into(), connection.read_packet(buf, buf.len() as u32)).await?? {
-            // only allow handshake packet
-            Packet::Handshake(h) => h.into_owned(),
-            _ => return Err(P2pError::ExpectedHandshake)
+        let Packet::Handshake(packet) = timeout(self.config.peer_config.handshake.into(), connection.read_packet(buf, buf.len() as u32)).await?? else {
+            return Err(P2pError::ExpectedHandshake)
         };
+
+        let mut handshake = packet.open()?.into_owned();
 
         trace!("received handshake packet!");
         self.verify_handshake(connection, &mut handshake).await?;
@@ -1282,7 +1282,7 @@ impl<S: Storage> P2pServer<S> {
                             // update the ping packet with the new peers
                             debug!("Set peers: {:?}, going to {}", ping.get_peers(), peer.get_outgoing_address());
                             // send the ping packet to the peer
-                            if let Err(e) = peer.send_packet(Packet::Ping(Cow::Borrowed(&ping))).await {
+                            if let Err(e) = peer.send_packet(Packet::Ping(Cow::Borrowed(&ping).into())).await {
                                 debug!("Error sending specific ping packet to {}: {}", peer, e);
                             } else {
                                 peer.set_last_ping_sent(current_time);
@@ -1296,7 +1296,7 @@ impl<S: Storage> P2pServer<S> {
                 last_peerlist_update = get_current_time_in_seconds();
             } else {
                 trace!("Sending generic ping packet...");
-                let packet = Packet::Ping(Cow::Owned(ping));
+                let packet = Packet::Ping(PacketMode::Opened(Cow::Owned(ping)));
                 let bytes = match packet.to_bytes() {
                     Ok(bytes) => Bytes::from(bytes),
                     Err(e) => {
@@ -1752,15 +1752,28 @@ impl<S: Storage> P2pServer<S> {
         let mut peer_exit = peer.get_exit_receiver();
 
         // Read peer packets from a dedicated task
-        async fn read_peer_packet_task(peer: Arc<Peer>, sender: mpsc::Sender<Packet<'static>>) -> Result<(), P2pError> {
+        async fn read_peer_packet_task(peer: Arc<Peer>, sender: mpsc::Sender<(Packet<'static>, Option<oneshot::Sender<()>>)>) -> Result<(), P2pError> {
             let mut buf = [0u8; 1024];
             loop {
                 let packet = peer.get_connection()
                     .read_packet(&mut buf, PEER_MAX_PACKET_SIZE).await?;
                 trace!("received a new packet #{} from {}", packet.get_id(), peer);
 
-                sender.send(packet).await
+                // The next frame may use the new key. Wait for dispatch to
+                // apply the rotation before reading and decrypting it.
+                let (handled, wait) = if matches!(&packet, Packet::KeyExchange(_)) {
+                    let (sender, receiver) = oneshot::channel();
+                    (Some(sender), Some(receiver))
+                } else {
+                    (None, None)
+                };
+
+                sender.send((packet, handled)).await
                     .context("Error while sending raw packet")?;
+
+                if let Some(wait) = wait {
+                    wait.await.context("Error while waiting for peer key rotation")?;
+                }
             }
         }
 
@@ -1923,12 +1936,12 @@ impl<S: Storage> P2pServer<S> {
             },
             Packet::KeyExchange(key) => {
                 trace!("{}: Rotate key packet", peer);
-                let key = key.into_owned();
+                let key = key.open()?.into_owned();
                 peer.get_connection().rotate_peer_key(key).await?;
             },
             Packet::TransactionPropagation(packet_wrapper) => {
                 trace!("{}: Transaction Propagation packet", peer);
-                let (hash, ping) = packet_wrapper.consume();
+                let (hash, ping) = packet_wrapper.open()?.consume();
                 let hash = Arc::new(hash.into_owned());
 
                 self.update_peer(peer, ping.into_owned()).await?;
@@ -2004,7 +2017,7 @@ impl<S: Storage> P2pServer<S> {
             },
             Packet::BlockPropagation(packet_wrapper) => {
                 trace!("Received a block propagation packet from {}", peer);
-                let (header, ping) = packet_wrapper.consume();
+                let (header, ping) = packet_wrapper.open()?.consume();
                 self.update_peer(peer, ping.into_owned()).await?;
 
                 // check that the block height is valid
@@ -2135,17 +2148,21 @@ impl<S: Storage> P2pServer<S> {
             },
             Packet::ChainRequest(packet_wrapper) => {
                 trace!("Received a chain request from {}", peer);
-                let (request, ping) = packet_wrapper.consume();
-                self.update_peer(peer, ping.into_owned()).await?;
-                let request = request.into_owned();
                 let last_request = peer.get_last_chain_sync();
                 let time = get_current_time_in_seconds();
+
                 // Node is trying to ask too fast our chain
                 // Don't allow faster than 1/3 of the delay
-                if (last_request * MILLIS_PER_SECOND)  + (CHAIN_SYNC_DELAY * MILLIS_PER_SECOND * 2 / 3) > time * MILLIS_PER_SECOND {
+                if (last_request * MILLIS_PER_SECOND) + (CHAIN_SYNC_DELAY * MILLIS_PER_SECOND * 2 / 3) > time * MILLIS_PER_SECOND {
                     debug!("{} requested sync chain too fast!", peer);
                     return Err(P2pError::RequestSyncChainTooFast)
                 }
+
+                let (request, ping) = packet_wrapper.open()?.consume();
+                self.update_peer(peer, ping.into_owned()).await?;
+
+                let request = request.into_owned();
+
                 peer.set_last_chain_sync(time);
 
                 // at least one block necessary (genesis block)
@@ -2168,17 +2185,19 @@ impl<S: Storage> P2pServer<S> {
             },
             Packet::ChainResponse(response) => {
                 trace!("Received a chain response from {}", peer);
+
                 let sender = peer.get_sync_chain_channel()
                     .lock().await
                     .take()
                     .ok_or(P2pError::UnrequestedChainResponse)?;
 
-                if sender.send(response).is_err() {
+                if sender.send(response.open()?).is_err() {
                     error!("Error while sending chain response to channel of {}", peer);
                 }
             },
             Packet::Ping(ping) => {
                 trace!("Received a ping packet from {}", peer);
+                let ping = ping.open()?;
                 let current_time = get_current_time_in_seconds();
                 let empty_peer_list = ping.get_peers().is_empty();
 
@@ -2215,7 +2234,7 @@ impl<S: Storage> P2pServer<S> {
             },
             Packet::ObjectRequest(request) => {
                 trace!("Received a object request from {}", peer);
-                let request = request.into_owned();
+                let request = request.open()?.into_owned();
                 match &request {
                     ObjectRequest::Block(hash) => {
                         debug!("{} asked full block {}", peer, hash);
@@ -2228,11 +2247,11 @@ impl<S: Storage> P2pServer<S> {
                         match block {
                             Ok(block) => {
                                 debug!("block {} found, sending it", hash);
-                                peer.send_packet(Packet::ObjectResponse(ObjectResponse::Block(Cow::Borrowed(&block)))).await?;
+                                peer.send_packet(Packet::ObjectResponse(ObjectResponse::Block(Cow::Borrowed(&block)).into())).await?;
                             },
                             Err(e) => {
                                 debug!("{} asked block '{}' but not present in our chain: {}", peer, hash, e);
-                                peer.send_packet(Packet::ObjectResponse(ObjectResponse::NotFound(request))).await?;
+                                peer.send_packet(Packet::ObjectResponse(ObjectResponse::NotFound(request).into())).await?;
                             }
                         };
                     },
@@ -2247,11 +2266,11 @@ impl<S: Storage> P2pServer<S> {
                         match block {
                             Ok(block) => {
                                 debug!("block header {} found, sending it", hash);
-                                peer.send_packet(Packet::ObjectResponse(ObjectResponse::BlockHeader(Cow::Borrowed(&block)))).await?;
+                                peer.send_packet(Packet::ObjectResponse(ObjectResponse::BlockHeader(Cow::Borrowed(&block)).into())).await?;
                             },
                             Err(e) => {
                                 debug!("{} asked block header '{}' but not present in our chain: {}", peer, hash, e);
-                                peer.send_packet(Packet::ObjectResponse(ObjectResponse::NotFound(request))).await?;
+                                peer.send_packet(Packet::ObjectResponse(ObjectResponse::NotFound(request).into())).await?;
                             }
                         };
                     },
@@ -2260,11 +2279,11 @@ impl<S: Storage> P2pServer<S> {
                         match self.blockchain.get_tx(hash).await? {
                             Some(tx) => {
                                 debug!("tx {} found, sending it", hash);
-                                peer.send_packet(Packet::ObjectResponse(ObjectResponse::Transaction(Cow::Borrowed(&tx)))).await?;
+                                peer.send_packet(Packet::ObjectResponse(ObjectResponse::Transaction(Cow::Borrowed(&tx)).into())).await?;
                             },
                             None => {
                                 debug!("{} asked tx '{}' but not present in our chain", peer, hash);
-                                peer.send_packet(Packet::ObjectResponse(ObjectResponse::NotFound(request))).await?;
+                                peer.send_packet(Packet::ObjectResponse(ObjectResponse::NotFound(request).into())).await?;
                             }
                         }
                     }
@@ -2272,7 +2291,7 @@ impl<S: Storage> P2pServer<S> {
             },
             Packet::ObjectResponse(response) => {
                 trace!("Received a object response from {}", peer);
-                let response = response.to_owned();
+                let response = response.open()?.to_owned();
                 trace!("Object response received is {}", response.get_hash());
 
                 // check if we requested it from this peer directly
@@ -2290,7 +2309,7 @@ impl<S: Storage> P2pServer<S> {
             },
             Packet::NotifyInventoryRequest(packet_wrapper) => {
                 trace!("Received a inventory request from {}", peer);
-                let (request, ping) = packet_wrapper.consume();
+                let (request, ping) = packet_wrapper.open()?.consume();
                 self.update_peer(peer, ping.into_owned()).await?;
 
                 let request = request.into_owned();
@@ -2319,7 +2338,7 @@ impl<S: Storage> P2pServer<S> {
                     };
 
                     let is_last = next_page.is_none();
-                    let packet = Packet::NotifyInventoryResponse(NotifyInventoryResponse::new(next_page, Cow::Owned(txs))).to_bytes()?;
+                    let packet = Packet::NotifyInventoryResponse(NotifyInventoryResponse::new(next_page, Cow::Owned(txs)).into()).to_bytes()?;
                     (is_last, packet)
                 };
 
@@ -2337,12 +2356,12 @@ impl<S: Storage> P2pServer<S> {
                 }
             },
             Packet::NotifyInventoryResponse(inventory) => {
-                debug!("Received a notify inventory from {}: {} txs", peer, inventory.len());
                 if !peer.has_requested_inventory() {
                     warn!("Received a notify inventory from {} but we didn't request it", peer);
                     return Err(P2pError::UnrequestedPacket)
                 }
-
+                let inventory = inventory.open()?;
+                debug!("Received a notify inventory from {}: {} txs", peer, inventory.len());
                 // we received the inventory
                 peer.set_requested_inventory(false);
                 peer.set_last_inventory(get_current_time_in_seconds());
@@ -2377,7 +2396,7 @@ impl<S: Storage> P2pServer<S> {
                     let packet = Cow::Owned(NotifyInventoryRequest::new(next_page));
                     let ping = Cow::Owned(self.build_generic_ping_packet().await?);
                     peer.set_requested_inventory(true);
-                    peer.send_packet(Packet::NotifyInventoryRequest(PacketWrapper::new(packet, ping))).await?;
+                    peer.send_packet(Packet::NotifyInventoryRequest(PacketWrapper::new(packet, ping).into())).await?;
                 } else {
                     // Last inventory response has been processed,
                     // we can know send back any TX in case we have any
@@ -2386,10 +2405,14 @@ impl<S: Storage> P2pServer<S> {
                 }
             },
             Packet::BootstrapChainRequest(request) => {
-                let response = self.handle_bootstrap_chain_request(peer, request).await?;
-                peer.send_packet(Packet::BootstrapChainResponse(response)).await?;
+                if self.flags.contains(Flags::DISABLE_FAST_SYNC) {
+                    return Err(P2pError::FastSyncDisabled)
+                }
+                let response = self.handle_bootstrap_chain_request(peer, request.open()?).await?;
+                peer.send_packet(Packet::BootstrapChainResponse(response.into())).await?;
             },
             Packet::BootstrapChainResponse(response) => {
+                let response = response.open()?;
                 debug!("Received a bootstrap chain response ({:?}) from {}", response.kind(), peer);
                 if let Some(sender) = peer.get_bootstrap_request_with_id(response.id()).await {
                     trace!("Sending bootstrap chain response ({:?})", response.kind());
@@ -2404,7 +2427,7 @@ impl<S: Storage> P2pServer<S> {
             },
             Packet::PeerDisconnected(packet) => {
                 // This packet is used to keep sync between peers being shared
-                let addr = packet.to_addr();
+                let addr = packet.open()?.to_addr();
                 debug!("{} disconnected from {}", addr, peer);
                 {
                     let mut shared_peers = peer.get_peers().write().await;
@@ -2425,7 +2448,7 @@ impl<S: Storage> P2pServer<S> {
 
     // Listen to incoming packets from a connection
     // Packet is read from the same task always, while its handling is delegated to a unique task
-    async fn listen_connection(self: &Arc<Self>, peer: &Arc<Peer>, mut receiver: mpsc::Receiver<Packet<'static>>) -> Result<(), P2pError> {
+    async fn listen_connection(self: &Arc<Self>, peer: &Arc<Peer>, mut receiver: mpsc::Receiver<(Packet<'static>, Option<oneshot::Sender<()>>)>) -> Result<(), P2pError> {
         let mut executor = SequentialExecutor::new();
         let mut independent = FuturesUnordered::new();
         let mut peer_exit = peer.get_exit_receiver();
@@ -2447,9 +2470,9 @@ impl<S: Storage> P2pServer<S> {
                         break;
                     }
                 },
-                Some(packet) = receiver.recv() => {
+                Some((packet, handled)) = receiver.recv() => {
                     let dependent = packet.is_order_dependent();
-                    let response = matches!(&packet, Packet::ObjectResponse(_) | Packet::ChainResponse(_) | Packet::BootstrapChainResponse(_));
+                    let response = packet.is_response() || handled.is_some();
                     let future = {
                         let zelf = Arc::clone(self);
                         let peer = Arc::clone(peer);
@@ -2462,6 +2485,7 @@ impl<S: Storage> P2pServer<S> {
                                 "peer_id" => peer.get_id().to_string(),
                                 "packet_id" => packet_id.to_string()
                             ).increment(1u64);
+
                             if let Err(e) = zelf.handle_incoming_packet(&peer, packet).await {
                                 counter!(
                                     "xelis_p2p_packet_errors_total",
@@ -2469,6 +2493,15 @@ impl<S: Storage> P2pServer<S> {
                                     "packet_id" => packet_id.to_string()
                                 ).increment(1u64);
                                 warn!("Error while handling packet #{} from {}: {}", packet_id, peer, e);
+
+                                // Malformed payloads close the peer.
+                                if matches!(e, P2pError::ReaderError(_) | P2pError::InvalidPacketNotFullRead) {
+                                    if let Err(e) = peer.close().await {
+                                        debug!("Error while closing {} after malformed packet: {}", peer, e);
+                                    }
+                                    return true
+                                }
+
                                 // check that we don't have too many fails
                                 // otherwise disconnect peer
                                 // Priority nodes are not disconnected
@@ -2480,6 +2513,10 @@ impl<S: Storage> P2pServer<S> {
 
                                     return true
                                 }
+                            }
+
+                            if let Some(handled) = handled {
+                                let _ = handled.send(());
                             }
 
                             false
@@ -2715,7 +2752,7 @@ impl<S: Storage> P2pServer<S> {
         };
         debug!("Ping packet has been generated for tx broadcast");
         let current_topoheight = ping.get_topoheight();
-        let packet = Packet::TransactionPropagation(PacketWrapper::new(Cow::Borrowed(&tx), Cow::Owned(ping)));
+        let packet = Packet::TransactionPropagation(PacketWrapper::new(Cow::Borrowed(tx.as_ref()), Cow::Owned(ping)).into());
         // transform packet to bytes (so we don't need to transform it for each peer)
         let bytes = match packet.to_bytes() {
             Ok(bytes) => Bytes::from(bytes),
@@ -2787,7 +2824,7 @@ impl<S: Storage> P2pServer<S> {
         counter!("xelis_p2p_broadcast_block").increment(1u64);
 
         // Build the block propagation packet
-        let block_packet = Packet::BlockPropagation(PacketWrapper::new(Cow::Borrowed(block), Cow::Borrowed(&ping)));
+        let block_packet = Packet::BlockPropagation(PacketWrapper::new(Cow::Borrowed(block), Cow::Borrowed(&ping)).into());
         let packet_block_bytes = match block_packet.to_bytes() {
             Ok(bytes) => Bytes::from(bytes),
             Err(e) => {
@@ -2795,7 +2832,7 @@ impl<S: Storage> P2pServer<S> {
                 return;
             }
         };
-        let packet_ping_bytes = match Packet::Ping(Cow::Owned(ping)).to_bytes() {
+        let packet_ping_bytes = match Packet::Ping(PacketMode::Opened(Cow::Owned(ping))).to_bytes() {
             Ok(bytes) => Bytes::from(bytes),
             Err(e) => {
                 error!("Error while serializing ping packet: {}", e);
@@ -2890,7 +2927,7 @@ impl<S: Storage> P2pServer<S> {
         let packet = Cow::Owned(NotifyInventoryRequest::new(None));
         let ping = Cow::Owned(self.build_generic_ping_packet().await?);
         peer.set_requested_inventory(true);
-        peer.send_packet(Packet::NotifyInventoryRequest(PacketWrapper::new(packet, ping))).await?;
+        peer.send_packet(Packet::NotifyInventoryRequest(PacketWrapper::new(packet, ping).into())).await?;
         Ok(())
     }
 

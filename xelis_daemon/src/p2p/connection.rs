@@ -28,7 +28,7 @@ use human_bytes::human_bytes;
 use humantime::format_duration;
 use metrics::counter;
 use xelis_common::{
-    serializer::{Reader, Serializer},
+    serializer::Serializer,
     tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::{
@@ -136,7 +136,7 @@ impl Connection {
         {
             trace!("Sending our DH key to {}", self.addr);
             let pk_bytes = keypair.get_public_key().as_bytes();
-            let packet = Packet::KeyExchange(Cow::Borrowed(pk_bytes));
+            let packet = Packet::KeyExchange(Cow::Borrowed(pk_bytes).into());
 
             let mut buffer = packet.to_bytes()?;
             self.send_bytes(&mut buffer).await?;
@@ -153,7 +153,7 @@ impl Connection {
 
         trace!("Received DH key from {}", self.addr);
 
-        let peer_dh_key = diffie_hellman::PublicKey::from(peer_dh_key.into_owned());
+        let peer_dh_key = diffie_hellman::PublicKey::from(peer_dh_key.open()?.into_owned());
 
         // Verify the key of the peer
         if let Some(expected_key) = expected_key {
@@ -200,7 +200,7 @@ impl Connection {
         trace!("Received encryption key from {}", self.addr);
 
         // Now that we got the shared peer key, update our encryption state
-        self.encryption.rotate_key(peer_key.into_owned(), CipherSide::Peer).await?;
+        self.encryption.rotate_key(peer_key.open()?.into_owned(), CipherSide::Peer).await?;
 
         trace!("Key exchange with {} successful", self.addr);
 
@@ -233,7 +233,7 @@ impl Connection {
     // Rotate the current key with a new key and generate the packet
     async fn generate_rotate_key_packet(&self, new_key: EncryptionKey) -> P2pResult<Vec<u8>> {
         // Build the packet
-        let mut packet = Packet::KeyExchange(Cow::Borrowed(&new_key)).to_bytes()?;
+        let mut packet = Packet::KeyExchange(Cow::Borrowed(&new_key).into()).to_bytes()?;
 
         if self.encryption.is_write_ready().await {
             self.compression.compress(&mut packet).await?;
@@ -358,23 +358,11 @@ impl Connection {
         self.read_all_bytes(&mut stream, buf, size as usize).await
     }
 
-    // Deserialize a packet from bytes and verify its integrity
-    pub async fn read_packet_from_bytes(&self, bytes: &[u8]) -> P2pResult<Packet<'static>> {
-        let mut reader = Reader::new(bytes);
-        let packet = Packet::read(&mut reader)?;
-        if reader.total_read() != bytes.len() {
-            warn!("read {:?} only {}/{} on bytes available from {}", packet, reader.total_read(), bytes.len(), self);
-            return Err(P2pError::InvalidPacketNotFullRead)
-        }
-
-        Ok(packet)
-    }
-
-    // Read a packet and deserialize it
-    // This will read the packet size and then read the packet bytes
+    // Read and decrypt a complete frame, then decode only its packet ID.
+    // The caller must check the context before opening the payload.
     pub async fn read_packet(&self, buf: &mut [u8], max_size: u32) -> P2pResult<Packet<'static>> {
         let bytes = self.read_packet_bytes(buf, max_size).await?;
-        self.read_packet_from_bytes(&bytes).await
+        Ok(Packet::from_frame(bytes)?)
     }
 
     // Read the packet size, this is always sent in raw (not encrypted)

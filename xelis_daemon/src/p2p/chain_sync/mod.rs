@@ -237,7 +237,7 @@ impl<S: Storage> P2pServer<S> {
         histogram!("xelis_p2p_chain_request_s").record(elapsed.as_secs_f64());
 
         debug!("Sending {} blocks & {} top blocks as response to {} in {:?}", response_blocks.len(), top_blocks.len(), peer, elapsed);
-        peer.send_packet(Packet::ChainResponse(ChainResponse::new(common_point, lowest_common_height, response_blocks, top_blocks))).await?;
+        peer.send_packet(Packet::ChainResponse(ChainResponse::new(common_point, lowest_common_height, response_blocks, top_blocks).into())).await?;
         Ok(())
     }
 

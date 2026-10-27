@@ -575,7 +575,7 @@ impl Peer {
 
                 drop(objects);
 
-                if let Err(e) = self.send_packet(Packet::ObjectRequest(Cow::Borrowed(&request))).await {
+                if let Err(e) = self.send_packet(Packet::ObjectRequest(Cow::Borrowed(&request).into())).await {
                     let mut objects = self.objects_requested.lock().await;
                     objects.pop(&request);
                     return Err(e)
@@ -638,7 +638,7 @@ impl Peer {
         }
 
         let start = get_current_time_in_millis();
-        if let Err(e) = self.send_packet(Packet::BootstrapChainRequest(BootstrapChainRequest::new(id, step))).await {
+        if let Err(e) = self.send_packet(Packet::BootstrapChainRequest(BootstrapChainRequest::new(id, step).into())).await {
             let mut senders = self.bootstrap_requests.lock().await;
             senders.pop(&id);
             return Err(e)
@@ -690,7 +690,7 @@ impl Peer {
 
         trace!("sending chain request packet");
         let start = get_current_time_in_millis();
-        if let Err(e) = self.send_packet(Packet::ChainRequest(request)).await {
+        if let Err(e) = self.send_packet(Packet::ChainRequest(request.into())).await {
             let mut sender_lock = self.sync_chain.lock().await;
             sender_lock.take();
             return Err(e)
