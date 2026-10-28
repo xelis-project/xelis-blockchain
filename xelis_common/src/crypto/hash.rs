@@ -29,9 +29,8 @@ use xelis_hash::{v1, v2, v3};
 pub const HASH_SIZE: usize = 32; // 32 bytes / 256 bits
 
 /// A cryptographic hash represented as a 32-byte array.
-#[derive(Eq, PartialEq, PartialOrd, Ord, Clone, Debug, JsonSchema)]
+#[derive(Eq, PartialEq, PartialOrd, Ord, Clone, Debug, JsonSchema, Opaque, Default)]
 #[schemars(with = "String")]
-#[derive(Opaque)]
 #[opaque(json, display, serializable, hash, eq)]
 pub struct Hash([u8; HASH_SIZE]);
 
