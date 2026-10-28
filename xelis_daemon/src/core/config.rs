@@ -570,9 +570,9 @@ pub struct P2pConfig {
     pub disable_fetching_txs_propagated: bool,
     /// Handle eligible peer packets concurrently.
     ///
-    /// Order-dependent packets still use a sequential executor. This can reduce
-    /// latency during heavy network activity. Protocol responses are always
-    /// delivered independently of queued request handlers.
+    /// Order-dependent packet bodies still use a sequential executor. Embedded
+    /// peer state is applied in receive order. Block announcements and protocol
+    /// responses always bypass queued request handlers.
     #[clap(name = "p2p-handle-peer-packets-in-dedicated-task", long)]
     #[serde(default)]
     pub handle_peer_packets_in_dedicated_task: bool,

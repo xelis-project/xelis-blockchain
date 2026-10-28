@@ -59,18 +59,38 @@ pub enum PacketMode<T> {
 }
 
 impl<T: Serializer> PacketMode<T> {
-    pub fn open(self) -> Result<T, P2pError> {
+    fn open_packet(bytes: &Box<[u8]>) -> Result<T, P2pError> {
+        let mut reader = Reader::new(bytes.as_ref());
+        let packet = T::read(&mut reader)?;
+        if reader.total_read() != bytes.len() {
+            warn!("read packet payload only {}/{} bytes", reader.total_read(), bytes.len());
+            return Err(P2pError::InvalidPacketNotFullRead)
+        }
+        Ok(packet)
+    }
+
+    // Open the packet and get a mutable reference from it
+    pub fn open_mut<'a>(&'a mut self) -> Result<&'a mut T, P2pError> {
         match self {
             Self::Opened(packet) => Ok(packet),
             Self::Unopened(bytes) => {
-                let mut reader = Reader::new(bytes.as_ref());
-                let packet = T::read(&mut reader)?;
-                if reader.total_read() != bytes.len() {
-                    warn!("read packet payload only {}/{} bytes", reader.total_read(), bytes.len());
-                    return Err(P2pError::InvalidPacketNotFullRead)
-                }
+                let opened = Self::open_packet(&bytes)?;
+                *self = Self::Opened(opened);
+
+                let Self::Opened(packet) = self else {
+                    unreachable!()
+                };
+
                 Ok(packet)
-            }
+            },
+        }
+    }
+
+    // Open and consume the PacketMode
+    pub fn open(self) -> Result<T, P2pError> {
+        match self {
+            Self::Opened(packet) => Ok(packet),
+            Self::Unopened(bytes) => Self::open_packet(&bytes),
         }
     }
 }
@@ -103,7 +123,6 @@ impl<T: Serializer> Serializer for PacketMode<T> {
     }
 }
 
-// PacketWrapper allows us to link any Packet to a Ping
 #[derive(Debug)]
 pub struct PacketWrapper<'a, T: Serializer + Clone> {
     packet: Cow<'a, T>,
@@ -118,7 +137,17 @@ impl<'a, T: Serializer + Clone> PacketWrapper<'a, T> {
         }
     }
 
-    pub fn consume(self) -> (Cow<'a, T>, Cow<'a, Ping<'a>>) {
+    pub fn take_ping(&mut self) -> Cow<'a, Ping<'a>> {
+        std::mem::take(&mut self.ping)
+    }
+
+    // Returns the packet actually wrapped
+    pub fn packet(self) -> Cow<'a, T> {
+        self.packet
+    }
+
+    // Returns the ping that was sent with this packet, which may be used to update the peer state.
+    pub fn into_parts(self) -> (Cow<'a, T>, Cow<'a, Ping<'a>>) {
         (self.packet, self.ping)
     }
 }
@@ -206,6 +235,12 @@ impl Packet<'_> {
 
     pub fn is_response(&self) -> bool {
         matches!(self, Self::ObjectResponse(_) | Self::ChainResponse(_) | Self::BootstrapChainResponse(_))
+    }
+
+    pub fn is_immediate(&self) -> bool {
+        self.is_response() || matches!(self,
+            Self::BlockPropagation(_) | Self::Ping(_) | Self::PeerDisconnected(_)
+            | Self::KeyExchange(_) | Self::Handshake(_))
     }
 }
 

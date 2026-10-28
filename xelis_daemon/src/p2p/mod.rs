@@ -10,6 +10,7 @@ mod compression;
 mod chain_sync;
 mod expirable_cache;
 mod events;
+mod block_queue;
 
 pub use encryption::EncryptionKey;
 pub use config::*;
@@ -44,7 +45,8 @@ use futures::{
     stream::{self, FuturesOrdered, FuturesUnordered},
     Stream,
     StreamExt,
-    TryStreamExt
+    TryStreamExt,
+    future::OptionFuture,
 };
 use indexmap::IndexSet;
 use lru::LruCache;
@@ -102,6 +104,7 @@ use crate::{
     rpc::RpcEvent,
 };
 use expirable_cache::ExpirableCache;
+use block_queue::BlockQueue;
 
 pub const TRANSACTIONS_CHANNEL_CAPACITY: usize = 128;
 
@@ -128,7 +131,7 @@ pub struct P2pServer<S: Storage> {
     // Synced cache to prevent concurrent tasks adding the block
     // Timestamp is None if block is not yet executed
     blocks_propagation_queue: RwLock<LruCache<Arc<Hash>, Option<TimestampMillis>>>,
-    // Sender for the blocks processing task to have an ordered queue
+    // Sender for bounded block preparation and dependency-aware insertion
     blocks_processor: mpsc::Sender<(Arc<Peer>, BlockHeader, Arc<Hash>)>,
     // Sender for the transactions propagated
     // Synced cache to prevent concurrent tasks adding the block
@@ -1488,96 +1491,160 @@ impl<S: Storage> P2pServer<S> {
         Ok(Block::new(header, transactions))
     }
 
+    // Storage checks and trusted-peer forwarding run outside the packet dispatcher.
+    async fn prepare_propagated_block(self: &Arc<Self>, peer: &Arc<Peer>, header: BlockHeader, block_hash: &Arc<Hash>) -> Result<Option<Block>, BlockchainError> {
+        {
+            let storage = self.blockchain.get_storage().read().await;
+            if storage.has_block_with_hash(block_hash).await? {
+                debug!("{}: {} with hash {} is already in our chain. Skipping propagation", peer, header, block_hash);
+                return Ok(None)
+            }
+        }
+
+        debug!("Received block at height {} from {}", header.get_height(), peer);
+        if self.config.allow_priority_blocks && peer.is_priority() {
+            debug!("fast propagating block {} from {}", block_hash, peer);
+
+            let zelf = Arc::clone(self);
+            let block_hash = block_hash.clone();
+            let header = header.clone();
+            let source_peer_id = peer.get_id();
+
+            spawn_task("p2p-broadcast-priority-block", async move {
+                debug!("building generic ping packet for priority block");
+                match zelf.build_generic_ping_packet().await {
+                    Ok(mut ping) => {
+                        // We provide the highest height available
+                        ping.set_height(header.get_height().max(ping.get_height()));
+
+                        debug!("broadcasting priority block {} with ping packet to all peers", block_hash);
+                        zelf.broadcast_block_with_ping(
+                            &header,
+                            ping,
+                            &block_hash,
+                            false,
+                            false,
+                            Some(source_peer_id),
+                        ).await;
+                    },
+                    Err(e) => {
+                        error!("Error while trying to broadcast priority block {}: {}", block_hash, e);
+                    }
+                }
+            });
+        }
+
+        self.request_block_with_storage(peer, header, StorageHolder::Storage(self.blockchain.get_storage())).await.map(Some)
+    }
+
+    // cache common block will include the block hash to the peers of the provided peer
+    async fn cache_common_block(&self, peer: Arc<Peer>, block_hash: Arc<Hash>) {
+        // Avoid sending the same block to a common peer that may have already got it
+        // because we track peerlist of each peers, we can try to determinate it
+        self.get_common_peers_for(&peer).await
+            .for_each_concurrent(self.config.stream_concurrency, |common_peer| {
+                let block_hash = &block_hash;
+                let peer = &peer;
+                async move {
+                    debug!("{} is a common peer with {}, adding block {} to its cache", common_peer, peer, block_hash);
+                    let mut blocks_propagation = common_peer.get_blocks_propagation().write().await;
+                    if !blocks_propagation.contains(block_hash) {
+                        debug!("Adding block {} to common {} cache", block_hash, common_peer);
+                        // Out allow to get "In" again, because it's a prediction, don't block it completely
+                        blocks_propagation.put(block_hash.clone(), (TimedDirection::In {
+                            received_at: 0,
+                        }, true));
+                    }
+                }
+            }).await;
+    }
+
     // Task for all blocks propagation
     async fn blocks_processing_task(self: Arc<Self>, mut receiver: mpsc::Receiver<(Arc<Peer>, BlockHeader, Arc<Hash>)>) {
         debug!("Starting blocks processing task");
         let mut server_exit = self.exit_sender.subscribe();
 
-        // All blocks being in the process
-        let mut pending_requests = HashSet::new();
-        // All pending blocks
-        let mut scheduler = OrderedConcurrentExecutor::new(Some(PEER_OBJECTS_CONCURRENCY));
-        // Sequential blocks executor
-        let mut blocks_executor = SequentialExecutor::new();
+        let capacity = TIPS_LIMIT * STABLE_LIMIT as usize;
+        let mut queue: BlockQueue<Arc<Peer>> = BlockQueue::new();
+        let mut preparing = FuturesUnordered::new();
+        let mut bookkeeping = FuturesUnordered::new();
+        // At most one block is inserted at a time, after its pending parents.
+        let mut block_executor = None;
 
         'main: loop {
+            if block_executor.is_none() {
+                if let Some((block, block_hash, peer)) = queue.pop_ready() {
+                    let zelf = &self;
+                    block_executor = Some(Box::pin(async move {
+                        {
+                            let mut propagation = zelf.blocks_propagation_queue.write().await;
+                            if let Some(timestamp) = propagation.peek_mut(&block_hash) {
+                                *timestamp = Some(get_current_time_in_millis());
+                            }
+                        }
+
+                        debug!("Adding received block {} from {} to chain", block_hash, peer);
+                        match zelf.blockchain.add_new_block(block, PreVerifyBlock::Hash(Immutable::Arc(block_hash.clone())), BroadcastOption::All, false).await {
+                            Ok(()) | Err(BlockchainError::AlreadyInChain) => peer.set_sync_chain_failed(false),
+                            Err(e) => {
+                                warn!("Error while adding new block {} from {}: {}", block_hash, peer, e);
+                                zelf.clear_block_propagation(&block_hash).await;
+                                peer.increment_fail_count();
+                            }
+                        }
+                        block_hash
+                    }));
+                }
+            }
+
+            gauge!("xelis_p2p_blocks_processing_queue").set(preparing.len() as f64);
+            gauge!("xelis_p2p_blocks_executor_queue").set((queue.prepared_len() + usize::from(block_executor.is_some())) as f64);
+
             select! {
                 biased;
                 _ = server_exit.recv() => {
                     debug!("Exit message received, stopping blocks processing task");
                     break 'main;
-                }
-                msg = receiver.recv(), if pending_requests.len() < TIPS_LIMIT * STABLE_LIMIT as usize => {
-                    let Some((peer, header, block_hash)) = msg else {
-                        debug!("No more blocks to process, stopping blocks processing task");
-                        break 'main;
-                    };
-
-                    // prevent any duplicated block
-                    if !pending_requests.insert(block_hash.clone()) {
-                        debug!("Block {} is already being processed, skipping it", block_hash);
-                        continue;
-                    }
-
-                    counter!("xelis_p2p_incoming_blocks_propagated_total").increment(1u64);
-
-                    let future = async {
-                       let res = self.request_block_with_storage(&peer, header, StorageHolder::Storage(self.blockchain.get_storage())).await;
-
-                       (res, block_hash, peer)
-                    };
-
-                    scheduler.push_back(future);
-                    gauge!("xelis_p2p_blocks_processing_queue").set(scheduler.len() as f64);
                 },
-                Some(block_hash) = blocks_executor.next() => {
-                    pending_requests.remove(&block_hash);
-                    scheduler.increment_n();
-                    gauge!("xelis_p2p_blocks_executor_queue").set(blocks_executor.len() as f64);
+                Some(block_hash) = OptionFuture::from(block_executor.as_mut()) => {
+                    block_executor = None;
+                    queue.complete(&block_hash);
                 },
-                Some((res, block_hash, peer)) = scheduler.next() => {
-                    gauge!("xelis_p2p_blocks_processing_queue").set(scheduler.len() as f64);
-                    // Mark the timestamp of when its being added
+                Some((res, block_hash, peer)) = preparing.next() => {
                     match res {
-                        Ok(block) => {
-                            let zelf = &self;
-                            let future = async move {
-                                {
-                                    debug!("Locking blocks propagation queue to mark the execution timestamp for {}", block_hash);
-                                    let mut blocks_propagation_queue = zelf.blocks_propagation_queue.write().await;
-                                    match blocks_propagation_queue.peek_mut(&block_hash) {
-                                        Some(v) => {
-                                            *v = Some(get_current_time_in_millis());
-                                        },
-                                        None => {
-                                            warn!("Block propagation {} not found in queue, are we overloaded?", block_hash);
-                                        }
-                                    }
-                                }
-    
-                                debug!("Adding received block {} from {} to chain", block_hash, peer);
-                                if let Err(e) = zelf.blockchain.add_new_block(block, PreVerifyBlock::Hash(Immutable::Arc(block_hash.clone())), BroadcastOption::All, false).await {
-                                    warn!("Error while adding new block {} from {}: {}", block_hash, peer, e);
-                                    zelf.clear_block_propagation(&block_hash).await;
-                                    peer.increment_fail_count();
-                                } else {
-                                    peer.set_sync_chain_failed(false);
-                                }
-
-                                block_hash
-                            };
-
-                            scheduler.decrement_n();
-                            blocks_executor.push_back(future);
-                            gauge!("xelis_p2p_blocks_executor_queue").set(blocks_executor.len() as f64);
+                        Ok(Some(block)) => queue.push(block, block_hash, peer),
+                        Ok(None) => {
+                            queue.complete(&block_hash);
+                            self.clear_block_propagation(&block_hash).await;
                         },
                         Err(e) => {
-                            pending_requests.remove(&block_hash);
+                            queue.complete(&block_hash);
                             self.clear_block_propagation(&block_hash).await;
                             warn!("Error on blocks processing task: {}", e);
                         }
                     }
-                }
+                },
+                msg = receiver.recv(), if queue.len() < capacity && preparing.len() < PEER_OBJECTS_CONCURRENCY => {
+                    let Some((peer, header, block_hash)) = msg else {
+                        debug!("No more blocks to process, stopping blocks processing task");
+                        break 'main;
+                    };
+                    if !queue.reserve(block_hash.clone()) {
+                        debug!("Block {} is already being processed, skipping it", block_hash);
+                        continue;
+                    }
+                    counter!("xelis_p2p_incoming_blocks_propagated_total").increment(1u64);
+                    // Common-peer predictions are optional bookkeeping. Bound them
+                    // separately so their cache locks cannot delay block admission.
+                    if bookkeeping.len() < capacity {
+                        bookkeeping.push(self.cache_common_block(Arc::clone(&peer), Arc::clone(&block_hash)));
+                    }
+                    preparing.push(async {
+                        let res = self.prepare_propagated_block(&peer, header, &block_hash).await;
+                        (res, block_hash, peer)
+                    });
+                },
+                Some(()) = bookkeeping.next() => {},
             }
         }
 
@@ -1923,10 +1990,64 @@ impl<S: Storage> P2pServer<S> {
             })
     }
 
+    async fn prepare_wrapped_packet<'a, T: Serializer + Clone>(&self, peer: &Arc<Peer>, packet: &mut PacketMode<PacketWrapper<'a, T>>) -> Result<(), P2pError> {
+        let packet = packet.open_mut()?;
+        self.update_peer(peer, packet.take_ping().into_owned()).await
+    }
+
+    // Apply embedded peer state in receive order, before handlers can run in
+    // different lanes. Slow body processing must never replay an older ping.
+    async fn prepare_incoming_packet(&self, peer: &Arc<Peer>, packet: &mut Packet<'static>) -> Result<(), P2pError> {
+        match packet {
+            Packet::TransactionPropagation(packet) => self.prepare_wrapped_packet(peer, packet).await,
+            Packet::BlockPropagation(packet) => self.prepare_wrapped_packet(peer, packet).await,
+            Packet::NotifyInventoryRequest(packet) => self.prepare_wrapped_packet(peer, packet).await,
+            Packet::ChainRequest(packet) => {
+                {
+                    let mut last_request = peer.get_last_chain_sync().lock().await;
+                    let time = get_current_time_in_seconds();
+                    // Enforce the rate limit before decoding a chain request.
+                    if (*last_request * MILLIS_PER_SECOND) + (CHAIN_SYNC_DELAY * MILLIS_PER_SECOND * 2 / 3) > time * MILLIS_PER_SECOND {
+                        return Err(P2pError::RequestSyncChainTooFast)
+                    }
+                    *last_request = time;
+                }
+
+                self.prepare_wrapped_packet(peer, packet).await
+            },
+            _ => Ok(())
+        }
+    }
+
+    async fn handle_packet_error(&self, peer: &Arc<Peer>, packet_id: u8, error: P2pError) -> bool {
+        counter!(
+            "xelis_p2p_packet_errors_total",
+            "peer_id" => peer.get_id().to_string(),
+            "packet_id" => packet_id.to_string()
+        ).increment(1u64);
+        warn!("Error while handling packet #{} from {}: {}", packet_id, peer, error);
+
+        if error.is_fatal() {
+            if let Err(e) = peer.close().await {
+                debug!("Error while closing {} after fatal error: {}", peer, e);
+            }
+            return true
+        }
+
+        if peer.get_fail_count() >= self.config.fail_count_limit && !peer.is_priority() {
+            warn!("High fail count detected for {}! Closing connection...", peer);
+            if let Err(e) = peer.close_and_temp_ban(self.config.temp_ban_duration.into()).await {
+                error!("Error while trying to close connection with {} due to high fail count: {}", peer, e);
+            }
+            return true
+        }
+        false
+    }
+
     // Main function used by every nodes connections
     // This is handling each packet available in our p2p protocol
     // Each packet is a enum variant
-    async fn handle_incoming_packet(self: &Arc<Self>, peer: &Arc<Peer>, packet: Packet<'_>) -> Result<(), P2pError> {
+    async fn handle_incoming_packet(self: &Arc<Self>, peer: &Arc<Peer>, packet: Packet<'static>) -> Result<(), P2pError> {
         match packet {
             Packet::Handshake(_) => {
                 error!("{} sent us handshake packet (not valid!)", peer);
@@ -1940,10 +2061,10 @@ impl<S: Storage> P2pServer<S> {
             },
             Packet::TransactionPropagation(packet_wrapper) => {
                 trace!("{}: Transaction Propagation packet", peer);
-                let (hash, ping) = packet_wrapper.open()?.consume();
-                let hash = Arc::new(hash.into_owned());
-
-                self.update_peer(peer, ping.into_owned()).await?;
+                let hash = Arc::new(packet_wrapper.open()?
+                    .packet()
+                    .into_owned()
+                );
 
                 // peer should not send us twice the same transaction
                 debug!("Received tx hash {} from {}", hash, peer.get_outgoing_address());
@@ -2013,11 +2134,11 @@ impl<S: Storage> P2pServer<S> {
             },
             Packet::BlockPropagation(packet_wrapper) => {
                 trace!("Received a block propagation packet from {}", peer);
-                let (header, ping) = packet_wrapper.open()?.consume();
-                self.update_peer(peer, ping.into_owned()).await?;
+                let header = packet_wrapper.open()?
+                    .packet()
+                    .into_owned();
 
                 // check that the block height is valid
-                let header = header.into_owned();
                 let block_hash = Arc::new(header.hash());
 
                 log!(self.config.block_propagation_log_level.into(), "Received block {} from {}", block_hash, peer);
@@ -2055,35 +2176,6 @@ impl<S: Storage> P2pServer<S> {
                     }
                 }
 
-                // Avoid sending the same block to a common peer that may have already got it
-                // because we track peerlist of each peers, we can try to determinate it
-                self.get_common_peers_for(&peer).await
-                    .for_each_concurrent(self.config.stream_concurrency, |common_peer| {
-                        let block_hash = &block_hash;
-                        async move {
-                            debug!("{} is a common peer with {}, adding block {} to its cache", common_peer, peer, block_hash);
-                            let mut blocks_propagation = common_peer.get_blocks_propagation().write().await;
-                            if !blocks_propagation.contains(block_hash) {
-                                debug!("Adding block {} to common {} cache", block_hash, common_peer);
-                                // Out allow to get "In" again, because it's a prediction, don't block it completely
-                                blocks_propagation.put(block_hash.clone(), (TimedDirection::In {
-                                    received_at: 0,
-                                }, true));
-                            }
-                        }
-                    }).await;
-
-                // check that we don't have this block in our chain
-                {
-                    debug!("locking storage for block propagation {}", block_hash);
-                    let storage = self.blockchain.get_storage().read().await;
-                    debug!("storage read acquired for block propagation");
-                    if storage.has_block_with_hash(&block_hash).await? {
-                        debug!("{}: {} with hash {} is already in our chain. Skipping", peer, header, block_hash);
-                        return Ok(())
-                    }
-                }
-
                 // Check and reserve the hash under the same write lock.
                 {
                     debug!("checking block {} in propagation queue", block_hash);
@@ -2097,39 +2189,6 @@ impl<S: Storage> P2pServer<S> {
                     blocks_propagation_queue.put(block_hash.clone(), None);
                 }
 
-                debug!("Received block at height {} from {}", header.get_height(), peer);
-                if self.config.allow_priority_blocks && peer.is_priority() {
-                    debug!("fast propagating block {} from {}", block_hash, peer);
-
-                    let zelf = Arc::clone(self);
-                    let block_hash = block_hash.clone();
-                    let header = header.clone();
-                    let source_peer_id = peer.get_id();
-
-                    spawn_task("p2p-broadcast-priority-block", async move {
-                        debug!("building generic ping packet for priority block");
-                        match zelf.build_generic_ping_packet().await {
-                            Ok(mut ping) => {
-                                // We provide the highest height available
-                                ping.set_height(header.get_height().max(ping.get_height()));
-
-                                debug!("broadcasting priority block {} with ping packet to all peers", block_hash);
-                                zelf.broadcast_block_with_ping(
-                                    &header,
-                                    ping,
-                                    &block_hash,
-                                    false,
-                                    false,
-                                    Some(source_peer_id),
-                                ).await;
-                            },
-                            Err(e) => {
-                                error!("Error while trying to broadcast priority block {}: {}", block_hash, e);
-                            }
-                        }
-                    });
-                }
-
                 let peer = Arc::clone(peer);
 
                 // This will block the task if the bounded channel is full
@@ -2141,23 +2200,9 @@ impl<S: Storage> P2pServer<S> {
             Packet::ChainRequest(packet_wrapper) => {
                 trace!("Received a chain request from {}", peer);
 
-                {
-                    let mut last_request = peer.get_last_chain_sync().lock().await;
-                    let time = get_current_time_in_seconds();
-    
-                    // Node is trying to ask too fast our chain
-                    // Don't allow faster than 1/3 of the delay
-                    if (*last_request * MILLIS_PER_SECOND) + (CHAIN_SYNC_DELAY * MILLIS_PER_SECOND * 2 / 3) > time * MILLIS_PER_SECOND {
-                        debug!("{} requested sync chain too fast!", peer);
-                        return Err(P2pError::RequestSyncChainTooFast)
-                    }
-                    *last_request = time;
-                }
-
-                let (request, ping) = packet_wrapper.open()?.consume();
-                self.update_peer(peer, ping.into_owned()).await?;
-
-                let request = request.into_owned();
+                let request = packet_wrapper.open()?
+                    .packet()
+                    .into_owned();
 
                 // at least one block necessary (genesis block)
                 let request_size = request.len();
@@ -2303,10 +2348,9 @@ impl<S: Storage> P2pServer<S> {
             },
             Packet::NotifyInventoryRequest(packet_wrapper) => {
                 trace!("Received a inventory request from {}", peer);
-                let (request, ping) = packet_wrapper.open()?.consume();
-                self.update_peer(peer, ping.into_owned()).await?;
-
-                let request = request.into_owned();
+                let request = packet_wrapper.open()?
+                    .packet()
+                    .into_owned();
 
                 let page = request.page();
                 let page_id = page.unwrap_or(0);
@@ -2466,47 +2510,38 @@ impl<S: Storage> P2pServer<S> {
                         break;
                     }
                 },
-                Some((packet, handled)) = receiver.recv() => {
+                Some((mut packet, handled)) = receiver.recv() => {
+                    let packet_id = packet.get_id();
+                    trace!("received packet #{} from {}", packet_id, peer);
+                    counter!(
+                        "xelis_p2p_packets_total",
+                        "peer_id" => peer.get_id().to_string(),
+                        "packet_id" => packet_id.to_string()
+                    ).increment(1u64);
+
+                    match self.prepare_incoming_packet(peer, &mut packet).await {
+                        Ok(packet) => packet,
+                        Err(e) => {
+                            if self.handle_packet_error(peer, packet_id, e).await {
+                                break;
+                            }
+                            continue;
+                        }
+                    };
+
                     let dependent = packet.is_order_dependent();
-                    let response = packet.is_response() || handled.is_some();
+                    // Blocks have a short admission path, with no storage lookup
+                    // or common-peer scans. Run it before queued TX body handlers.
+                    // Peer-state packets also run inline to preserve receive order.
+                    let immediate = packet.is_immediate() || handled.is_some();
                     let future = {
                         let zelf = Arc::clone(self);
                         let peer = Arc::clone(peer);
 
                         async move {
-                            let packet_id = packet.get_id();
                             trace!("handling received packet #{} from {}", packet_id, peer);
-                            counter!(
-                                "xelis_p2p_packets_total",
-                                "peer_id" => peer.get_id().to_string(),
-                                "packet_id" => packet_id.to_string()
-                            ).increment(1u64);
-
                             if let Err(e) = zelf.handle_incoming_packet(&peer, packet).await {
-                                counter!(
-                                    "xelis_p2p_packet_errors_total",
-                                    "peer_id" => peer.get_id().to_string(),
-                                    "packet_id" => packet_id.to_string()
-                                ).increment(1u64);
-                                warn!("Error while handling packet #{} from {}: {}", packet_id, peer, e);
-
-                                // Malformed payloads close the peer.
-                                if e.is_fatal() {
-                                    if let Err(e) = peer.close().await {
-                                        debug!("Error while closing {} after fatal error: {}", peer, e);
-                                    }
-                                    return true
-                                }
-
-                                // check that we don't have too many fails
-                                // otherwise disconnect peer
-                                // Priority nodes are not disconnected
-                                if peer.get_fail_count() >= zelf.config.fail_count_limit && !peer.is_priority() {
-                                    warn!("High fail count detected for {}! Closing connection...", peer);
-                                    if let Err(e) = peer.close_and_temp_ban(zelf.config.temp_ban_duration.into()).await {
-                                        error!("Error while trying to close connection with {} due to high fail count: {}", peer, e);
-                                    }
-
+                                if zelf.handle_packet_error(&peer, packet_id, e).await {
                                     return true
                                 }
                             }
@@ -2519,9 +2554,9 @@ impl<S: Storage> P2pServer<S> {
                         }
                     };
 
-                    // Responses must reach their waiters even when a request
-                    // handler is suspended on storage or processor backpressure.
-                    if response || executor.len() + independent.len() >= self.config.concurrency_task_count_limit {
+                    // Responses and block admission bypass the ordinary backlog.
+                    // Keep backpressure when the ordinary handler limit is reached.
+                    if immediate || executor.len() + independent.len() >= self.config.concurrency_task_count_limit {
                         if future.await {
                             break;
                         }
