@@ -1,6 +1,6 @@
 use std::ops::{Deref, DerefMut};
 
-use xelis_vm::ValueCell;
+use xelis_vm::OwnedValue;
 
 use crate::{
     contract::{ExitError, ScheduledExecutionKindLog},
@@ -78,7 +78,7 @@ pub enum ContractLog {
         kind: ScheduledExecutionKindLog,
     },
     // Payload returned on contract exit
-    ExitPayload(ValueCell),
+    ExitPayload(OwnedValue),
     // Transfer an asset to another account with payload
     TransferPayload {
         contract: Hash,
@@ -89,7 +89,7 @@ pub enum ContractLog {
         /// The destination of the transfer
         destination: PublicKey,
         /// The payload sent with the transfer
-        payload: ValueCell,
+        payload: OwnedValue,
     },
     // Exit error returned by the Contract
     ExitError(ExitError),
@@ -329,7 +329,7 @@ impl Serializer for ContractLog {
                     kind: ScheduledExecutionKindLog::read(reader)?,
                 },
                 10 => {
-                    let payload = ValueCell::read(reader)?;
+                    let payload = OwnedValue::read(reader)?;
                     ContractLog::ExitPayload(payload)
                 },
                 11 => {
@@ -337,7 +337,7 @@ impl Serializer for ContractLog {
                     let amount = u64::read(reader)?;
                     let asset = Hash::read(reader)?;
                     let destination = PublicKey::read(reader)?;
-                    let payload = ValueCell::read(reader)?;
+                    let payload = OwnedValue::read(reader)?;
                     ContractLog::TransferPayload { contract, amount, asset, destination, payload }
                 },
                 12 => {

@@ -1,4 +1,4 @@
-use xelis_vm::ValueCell;
+use xelis_vm::OwnedValue;
 use super::*;
 
 #[tokio::test]
@@ -49,7 +49,7 @@ async fn test_read_only_storage_can_read_other_contract_without_mutating_it() {
         &mut chain_state,
         &reader,
         InvokeContract::Entry(0),
-        vec![ValueCell::Opaque(writer.clone().into()).into()],
+        vec![OwnedValue::Opaque(writer.clone().into()).into()],
     )
     .await
     .expect("read target storage");
@@ -60,7 +60,7 @@ async fn test_read_only_storage_can_read_other_contract_without_mutating_it() {
         .storage;
     assert_eq!(
         writer_storage
-            .get(&ValueCell::Bytes(b"key".to_vec()))
+            .get(&OwnedValue::Bytes(b"key".to_vec()))
             .and_then(|entry| entry.as_ref())
             .and_then(|(_, value)| value.as_ref())
             .and_then(|value| value.as_u64().ok()),
@@ -69,7 +69,7 @@ async fn test_read_only_storage_can_read_other_contract_without_mutating_it() {
     );
     assert_eq!(
         writer_storage
-            .get(&ValueCell::Bytes(b"other".to_vec()))
+            .get(&OwnedValue::Bytes(b"other".to_vec()))
             .and_then(|entry| entry.as_ref())
             .and_then(|(_, value)| value.as_ref())
             .and_then(|value| value.as_string().ok()),
@@ -98,7 +98,7 @@ async fn test_read_only_storage_new_returns_null_for_unknown_contract() {
         &mut chain_state,
         &contract_hash,
         InvokeContract::Entry(0),
-        vec![ValueCell::Opaque(unknown.into()).into()],
+        vec![OwnedValue::Opaque(unknown.into()).into()],
     )
     .await
     .expect("unknown read only storage");
@@ -177,14 +177,14 @@ async fn test_read_only_storage_rejects_reserved_btree_keys() {
     let reserved_key = || {
         let mut bytes = Vec::from([0u8]);
         bytes.extend_from_slice(b"btree:orders:root");
-        ValueCell::Bytes(bytes)
+        OwnedValue::Bytes(bytes)
     };
 
     let has = invoke_contract(
         &mut chain_state,
         &reader,
         InvokeContract::Entry(0),
-        vec![ValueCell::Opaque(target.clone().into()).into(), reserved_key()],
+        vec![OwnedValue::Opaque(target.clone().into()).into(), reserved_key()],
     )
     .await
     .expect("read only has reserved key");
@@ -194,7 +194,7 @@ async fn test_read_only_storage_rejects_reserved_btree_keys() {
         &mut chain_state,
         &reader,
         InvokeContract::Entry(1),
-        vec![ValueCell::Opaque(target.into()).into(), reserved_key()],
+        vec![OwnedValue::Opaque(target.into()).into(), reserved_key()],
     )
     .await
     .expect("read only load reserved key");

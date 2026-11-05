@@ -1,3 +1,4 @@
+use crate::contract::OwnedValueCapabilities;
 use std::{
     cmp::Ordering,
     collections::hash_map::Entry,
@@ -7,6 +8,8 @@ use std::{
 };
 use matriochka::ResultExt;
 use xelis_vm::{
+    RuntimeValue,
+    Heap,
     PrimitiveInteger,
     Opaque,
     VMContext,
@@ -14,10 +17,9 @@ use xelis_vm::{
     FnInstance,
     FnParams,
     FnReturnType,
-    OpaqueWrapper,
     Primitive,
     SysCallResult,
-    ValueCell,
+    OwnedValue,
 };
 
 use crate::{
@@ -54,7 +56,7 @@ pub struct OpaqueBTreeStore {
     eq,
     children = self.cached_value.iter(),
     deep_clone = Self {
-        cached_value: self.cached_value.as_ref().map(ValueCell::deep_clone),
+        cached_value: self.cached_value.as_ref().map(OwnedValue::clone),
         ..self.clone()
     }
 )]
@@ -62,7 +64,7 @@ pub struct OpaqueBTreeCursor {
     contract: Hash,
     namespace: Vec<u8>,
     current_node: Option<u64>,
-    cached_value: Option<ValueCell>,
+    cached_value: Option<OwnedValue>,
     cached_key: Option<Vec<u8>>,
     ascending: bool,
     // If true, the next call to `next` will return the current element
@@ -99,7 +101,7 @@ impl StdHash for OpaqueBTreeCursor {
 struct Node {
     id: u64,
     key: Vec<u8>,
-    value: ValueCell,
+    value: OwnedValue,
     parent: Option<u64>,
     left: Option<u64>,
     right: Option<u64>,
@@ -191,7 +193,7 @@ impl<'ctx, 'ty, P: ContractProvider<'ty>> TreeContext<'ctx, 'ty, P> {
     }
 
     #[inline]
-    fn cached_value<'a>(&'a mut self, key: &ValueCell) -> Option<&'a ValueCell> {
+    fn cached_value<'a>(&'a mut self, key: &OwnedValue) -> Option<&'a OwnedValue> {
         let cache = get_cache_for_contract(&mut self.state.changes.caches, self.state.global_caches, self.contract.clone(), self.state.block_version < BlockVersion::V6);
         cache
             .storage
@@ -202,13 +204,13 @@ impl<'ctx, 'ty, P: ContractProvider<'ty>> TreeContext<'ctx, 'ty, P> {
     /// Returns true if the cache contains an entry for the key,
     /// regardless of whether it is a valid value or a tombstone (deleted).
     #[inline]
-    fn cache_has_entry(&mut self, key: &ValueCell) -> bool {
+    fn cache_has_entry(&mut self, key: &OwnedValue) -> bool {
         let cache = get_cache_for_contract(&mut self.state.changes.caches, self.state.global_caches, self.contract.clone(), self.state.block_version < BlockVersion::V6);
         cache.storage.contains_key(key)
     }
 
     #[inline]
-    fn cache_insert_entry(&mut self, key: ValueCell, entry: Option<(VersionedState, Option<ValueCell>)>) {
+    fn cache_insert_entry(&mut self, key: OwnedValue, entry: Option<(VersionedState, Option<OwnedValue>)>) {
         let cache = get_cache_for_contract(&mut self.state.changes.caches, self.state.global_caches, self.contract.clone(), self.state.block_version < BlockVersion::V6);
         cache.storage.insert(key, entry);
     }
@@ -219,17 +221,16 @@ async fn with_store_ctx<'a, 'ty, 'r, P: ContractProvider<'ty>, F>(
     instance: FnInstance<'a>,
     metadata: &ModuleMetadata<'_>,
     context: &mut VMContext<'ty, 'r>,
-    f: F,
-) -> FnReturnType<ContractMetadata>
+    f: F, heap: &mut Heap) -> FnReturnType<ContractMetadata>
 where
-    F: for<'s> FnOnce(&'s OpaqueBTreeStore, &'s mut TreeContext<'_, 'ty, P>, &'s Hash) -> Pin<Box<dyn Future<Output = FnReturnType<ContractMetadata>> + Send + 's>>,
+    F: for<'s> FnOnce(&'s OpaqueBTreeStore, &'s mut TreeContext<'_, 'ty, P>, &'s Hash, &'s mut Heap) -> Pin<Box<dyn Future<Output = FnReturnType<ContractMetadata>> + 's>>,
 {
     let (storage, state) = from_context::<P>(context)?;
     let instance = instance?;
-    let store: &OpaqueBTreeStore = instance.as_opaque_type()?;
+    let store = instance.as_opaque_type::<OpaqueBTreeStore>(heap)?.clone();
     let contract = &metadata.metadata.contract_executor;
     let mut tree_ctx = TreeContext::new(storage, state, contract, &store.namespace);
-    let res = f(store, &mut tree_ctx, contract).await;
+    let res = f(&store, &mut tree_ctx, contract, heap).await;
     tree_ctx.finish().charge(context)?;
     res
 }
@@ -238,17 +239,17 @@ where
 async fn with_cursor_ctx_mut<'a, 'ty, 'r, P: ContractProvider<'ty>, F>(
     instance: FnInstance<'a>,
     context: &mut VMContext<'ty, 'r>,
-    f: F,
-) -> FnReturnType<ContractMetadata>
+    f: F, heap: &mut Heap) -> FnReturnType<ContractMetadata>
 where
-    F: for<'s> FnOnce(&'s mut OpaqueBTreeCursor, &'s mut TreeContext<'_, 'ty, P>) -> Pin<Box<dyn Future<Output = FnReturnType<ContractMetadata>> + Send + 's>>,
+    F: for<'s> FnOnce(&'s mut OpaqueBTreeCursor, &'s mut TreeContext<'_, 'ty, P>, &'s mut Heap) -> Pin<Box<dyn Future<Output = FnReturnType<ContractMetadata>> + 's>>,
 {
     let (storage, state) = from_context::<P>(context)?;
-    let mut instance = instance?;
-    let cursor: &mut OpaqueBTreeCursor = instance.as_opaque_type_mut()?;
+    let instance = instance?;
+    let mut cursor = instance.as_opaque_type::<OpaqueBTreeCursor>(heap)?.clone();
     let (contract, namespace) = (cursor.contract.clone(), cursor.namespace.clone());
     let mut tree_ctx = TreeContext::new(storage, state, &contract, &namespace);
-    let res = f(cursor, &mut tree_ctx).await;
+    let res = f(&mut cursor, &mut tree_ctx, heap).await;
+    *instance.as_opaque_type_mut::<OpaqueBTreeCursor>(heap)? = cursor;
     tree_ctx.finish().charge(context)?;
     res
 }
@@ -329,13 +330,13 @@ const fn missing() -> EnvironmentError { EnvironmentError::Static(ERR_MISSING_NO
 
 impl Node {
     #[inline]
-    fn new(id: u64, key: Vec<u8>, value: ValueCell, parent: Option<u64>) -> Self {
+    fn new(id: u64, key: Vec<u8>, value: OwnedValue, parent: Option<u64>) -> Self {
         Self { id, key, value, parent, left: None, right: None }
     }
 
     #[inline]
-    fn to_value(&self) -> Result<ValueCell, EnvironmentError> {
-        self.to_bytes().map(ValueCell::Bytes).map_err(|error| EnvironmentError::Any(error.into()))
+    fn to_value(&self) -> Result<OwnedValue, EnvironmentError> {
+        self.to_bytes().map(OwnedValue::Bytes).map_err(|error| EnvironmentError::Any(error.into()))
     }
 
     fn to_bytes(&self) -> Result<Vec<u8>, SerializationError> {
@@ -348,7 +349,7 @@ impl Node {
         Ok(bytes)
     }
 
-    fn from_value(id: u64, value: &ValueCell) -> Result<Self, EnvironmentError> {
+    fn from_value(id: u64, value: &OwnedValue) -> Result<Self, EnvironmentError> {
         let bytes = value.as_bytes()?;
 
         let mut reader = Reader::new(bytes);
@@ -360,9 +361,9 @@ impl Node {
 
 fn decode_header_and_maybe_value(
     id: u64,
-    cell: &ValueCell,
+    cell: &OwnedValue,
     with_value: bool,
-) -> Result<(NodeHeader, Option<ValueCell>), EnvironmentError> {
+) -> Result<(NodeHeader, Option<OwnedValue>), EnvironmentError> {
     let bytes = cell.as_bytes()?;
 
     let mut r = Reader::new(bytes);
@@ -370,7 +371,7 @@ fn decode_header_and_maybe_value(
         .context("Node header read")?;
 
     if with_value {
-        let node_value = ValueCell::read(&mut r)
+        let node_value = OwnedValue::read(&mut r)
             .context("Node value read")?;
 
         Ok((header, Some(node_value)))
@@ -380,7 +381,7 @@ fn decode_header_and_maybe_value(
 }
 
 #[inline]
-fn node_header_from_value(id: u64, value: &ValueCell) -> Result<NodeHeader, EnvironmentError> {
+fn node_header_from_value(id: u64, value: &OwnedValue) -> Result<NodeHeader, EnvironmentError> {
     decode_header_and_maybe_value(id, value, false).map(|(h, _)| h)
 }
 
@@ -494,14 +495,14 @@ async fn rotate_right<'ty, P: ContractProvider<'ty>>(
 
 /* ------------------------ end Treap helpers ------------------------- */
 
-pub fn btree_store_new(_: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext)
+pub fn btree_store_new(_: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap)
 -> FnReturnType<ContractMetadata> {
-    let namespace = read_bytes(params.remove(0).into_owned(), "namespace")?;
+    let namespace = read_bytes(heap.export(params.remove(0))?, "namespace")?;
     if namespace.len() > MAX_NAMESPACE_SIZE {
         return Err(EnvironmentError::Static("namespace is too large"));
     }
 
-    Ok(SysCallResult::Return(ValueCell::Opaque(OpaqueWrapper::new(OpaqueBTreeStore { namespace })).into()))
+    Ok(SysCallResult::Return(RuntimeValue::Opaque(OpaqueBTreeStore { namespace }.into()).into()))
 }
 
 /// Inserts a value for `key`, allowing duplicates. Duplicates are stored in insertion order.
@@ -509,59 +510,55 @@ pub fn btree_store_new(_: FnInstance, mut params: FnParams, _: &ModuleMetadata<'
 /// This always returns `null` as it does not replace existing values.
 pub async fn btree_store_insert<'a, 'ty, 'r, P: ContractProvider<'ty>>(
     instance: FnInstance<'a>,
-    mut params: FnParams,
+    params: FnParams<'_>,
     metadata: &ModuleMetadata<'_>,
-    context: &mut VMContext<'ty, 'r>
-) -> FnReturnType<ContractMetadata> {
-    let value = params.remove(1).into_owned();
+    context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    let value = heap.export(params.remove(1))?;
     ensure_value_constraints(&value)?;
 
-    let key = read_seek_key_bytes(params.remove(0).into_owned())?;
+    let key = read_seek_key_bytes(heap.export(params.remove(0))?)?;
 
-    with_store_ctx(instance, metadata, context, |_store, ctx: &mut TreeContext<'_, 'ty, P>, _contract| Box::pin(async move {
+    with_store_ctx(instance, metadata, context, |_store, ctx: &mut TreeContext<'_, 'ty, P>, _contract, _heap| Box::pin(async move {
         insert_key(ctx, key, value).await?;
         Ok(SysCallResult::None)
-    })).await
+    }), heap).await
 }
 
 /// Finds the first node whose key matches `key`. Returns the earliest value for that key (insertion order).
 pub async fn btree_store_get<'a, 'ty, 'r, P: ContractProvider<'ty>>(
     instance: FnInstance<'a>,
-    mut params: FnParams,
+    params: FnParams<'_>,
     metadata: &ModuleMetadata<'_>,
-    context: &mut VMContext<'ty, 'r>
-) -> FnReturnType<ContractMetadata> {
-    let key = read_key_bytes(params.remove(0).into_owned())?;
-    with_store_ctx(instance, metadata, context, |_store, ctx: &mut TreeContext<'_, 'ty, P>, _contract| Box::pin(async move {
-        Ok(find_key(ctx, &key).await?.unwrap_or_default().into())
-    })).await
+    context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    let key = read_key_bytes(heap.export(params.remove(0))?)?;
+    with_store_ctx(instance, metadata, context, |_store, ctx: &mut TreeContext<'_, 'ty, P>, _contract, heap| Box::pin(async move {
+        Ok(SysCallResult::Return(heap.import_owned(find_key(ctx, &key).await?.unwrap_or_default()).into()))
+    }), heap).await
 }
 
 /// Removes one matching key. Repeated delete calls walk them in insertion order.
 pub async fn btree_store_delete<'a, 'ty, 'r, P: ContractProvider<'ty>>(
     instance: FnInstance<'a>,
-    mut params: FnParams,
+    params: FnParams<'_>,
     metadata: &ModuleMetadata<'_>,
-    context: &mut VMContext<'ty, 'r>
-) -> FnReturnType<ContractMetadata> {
-    let key = read_key_bytes(params.remove(0).into_owned())?;
-    with_store_ctx(instance, metadata, context, |_store, ctx: &mut TreeContext<'_, 'ty, P>, _contract| Box::pin(async move {
+    context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    let key = read_key_bytes(heap.export(params.remove(0))?)?;
+    with_store_ctx(instance, metadata, context, |_store, ctx: &mut TreeContext<'_, 'ty, P>, _contract, _heap| Box::pin(async move {
         Ok(SysCallResult::Return(Primitive::Boolean(delete_key(ctx, &key).await?).into()))
-    })).await
+    }), heap).await
 }
 
 pub async fn btree_store_seek<'a, 'ty, 'r, P: ContractProvider<'ty>>(
     instance: FnInstance<'a>,
-    mut params: FnParams,
+    params: FnParams<'_>,
     metadata: &ModuleMetadata<'_>,
-    context: &mut VMContext<'ty, 'r>
-) -> FnReturnType<ContractMetadata> {
+    context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let ascending = params.remove(2)
-        .as_bool()?;
-    let bias = read_bias(&params.remove(1))?;
-    let key = read_key_bytes(params.remove(0).into_owned())?;
+        .as_bool(heap)?;
+    let bias = read_bias(&heap.export(params.remove(1))?)?;
+    let key = read_key_bytes(heap.export(params.remove(0))?)?;
 
-    with_store_ctx(instance, metadata, context, |store, ctx: &mut TreeContext<'_, 'ty, P>, contract| Box::pin(async move {
+    with_store_ctx(instance, metadata, context, |store, ctx: &mut TreeContext<'_, 'ty, P>, contract, heap| Box::pin(async move {
         let node = seek_node(ctx, &key, bias).await?;
 
         let cursor = OpaqueBTreeCursor {
@@ -574,37 +571,36 @@ pub async fn btree_store_seek<'a, 'ty, 'r, P: ContractProvider<'ty>>(
             skip_next_step: false,
         };
 
-        let entry = node.map_or(Primitive::Null.into(), |n| ValueCell::Object(vec![
-            ValueCell::Bytes(n.key).into(),
-            n.value.deep_clone().into(),
-        ]));
+        let entry = node.map_or(RuntimeValue::default(), |n| {
+            let key = heap.insert(RuntimeValue::Bytes(n.key));
+            let value = heap.import_owned(n.value);
+            RuntimeValue::Object(vec![key, heap.insert(value)])
+        });
 
-        let result = ValueCell::Object(vec![
-            ValueCell::Opaque(cursor.into()).into(),
-            entry.into(),
+        let result = RuntimeValue::Object(vec![
+            heap.insert(cursor.into()),
+            heap.insert(entry),
         ]);
         Ok(SysCallResult::Return(result.into()))
-    })).await
+    }), heap).await
 }
 
 pub async fn btree_store_len<'a, 'ty, 'r, P: ContractProvider<'ty>>(
     instance: FnInstance<'a>,
-    _: FnParams,
+    _: FnParams<'_>,
     metadata: &ModuleMetadata<'_>,
-    context: &mut VMContext<'ty, 'r>
-) -> FnReturnType<ContractMetadata> {
-    with_store_ctx(instance, metadata, context, |_store, ctx: &mut TreeContext<'_, 'ty, P>, _contract| Box::pin(async move {
+    context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    with_store_ctx(instance, metadata, context, |_store, ctx: &mut TreeContext<'_, 'ty, P>, _contract, _heap| Box::pin(async move {
         Ok(SysCallResult::Return(Primitive::Integer(PrimitiveInteger::U64(read_size(ctx).await?)).into()))
-    })).await
+    }), heap).await
 }
 
 pub async fn btree_cursor_next<'a, 'ty, 'r, P: ContractProvider<'ty>>(
     instance: FnInstance<'a>,
-    _: FnParams,
+    _: FnParams<'_>,
     _: &ModuleMetadata<'_>,
-    context: &mut VMContext<'ty, 'r>
-) -> FnReturnType<ContractMetadata> {
-    with_cursor_ctx_mut(instance, context, |cursor, ctx: &mut TreeContext<'_, 'ty, P>| Box::pin(async move {
+    context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    with_cursor_ctx_mut(instance, context, |cursor, ctx: &mut TreeContext<'_, 'ty, P>, heap| Box::pin(async move {
         if cursor.skip_next_step {
             cursor.skip_next_step = false;
         } else {
@@ -629,27 +625,24 @@ pub async fn btree_cursor_next<'a, 'ty, 'r, P: ContractProvider<'ty>>(
         refresh_cursor_cache(cursor, ctx).await?;
         let out = match (cursor.current_node, &cursor.cached_key, &cursor.cached_value) {
             (Some(_), Some(k), Some(v)) => {
-                // Deep clone the value to prevent any shared references
-                ValueCell::Object(vec![
-                    ValueCell::Bytes(k.clone()).into(),
-                    v.deep_clone().into()
-                ])
+                let key = heap.insert(RuntimeValue::Bytes(k.clone()));
+                let value = heap.import(v);
+                RuntimeValue::Object(vec![key, heap.insert(value)])
             },
             _ => Default::default(),
         };
         Ok(SysCallResult::Return(out.into()))
-    })).await
+    }), heap).await
 }
 
 pub async fn btree_cursor_delete<'a, 'ty, 'r, P: ContractProvider<'ty>>(
     instance: FnInstance<'a>,
-    _: FnParams,
+    _: FnParams<'_>,
     _: &ModuleMetadata<'_>,
-    context: &mut VMContext<'ty, 'r>
-) -> FnReturnType<ContractMetadata> {
-    with_cursor_ctx_mut(instance, context, |cursor, ctx: &mut TreeContext<'_, 'ty, P>| Box::pin(async move {
+    context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    with_cursor_ctx_mut(instance, context, |cursor, ctx: &mut TreeContext<'_, 'ty, P>, _heap| Box::pin(async move {
         Ok(SysCallResult::Return(Primitive::Boolean(delete_at_cursor(cursor, ctx).await?).into()))
-    })).await
+    }), heap).await
 }
 
 async fn refresh_cursor_cache<'ty, P: ContractProvider<'ty>>(
@@ -708,7 +701,7 @@ async fn delete_at_cursor<'ty, P: ContractProvider<'ty>>(
 async fn insert_key<'ty, P: ContractProvider<'ty>>(
     ctx: &mut TreeContext<'_, 'ty, P>,
     key: Vec<u8>,
-    value: ValueCell,
+    value: OwnedValue,
 ) -> Result<(), EnvironmentError> {
     // Allocate id first so (key,id) defines total order and deterministic priority.
     let id = allocate_node_id(ctx).await?;
@@ -828,7 +821,7 @@ async fn treap_delete_node<'ty, P: ContractProvider<'ty>>(
 async fn find_key<'ty, P: ContractProvider<'ty>>(
     ctx: &mut TreeContext<'_, 'ty, P>,
     key: &[u8],
-) -> Result<Option<ValueCell>, EnvironmentError> {
+) -> Result<Option<OwnedValue>, EnvironmentError> {
     Ok(find_node_by_key(ctx, key).await?.map(|n| n.value))
 }
 
@@ -1086,7 +1079,7 @@ async fn write_next_id<'ty, P: ContractProvider<'ty>>(ctx: &mut TreeContext<'_, 
 
 async fn read_u64_slot<'ty, P: ContractProvider<'ty>>(
     ctx: &mut TreeContext<'_, 'ty, P>,
-    key: ValueCell,
+    key: OwnedValue,
     default: u64,
 ) -> Result<u64, EnvironmentError> {
     ensure_cache_entry(ctx, &key).await?;
@@ -1100,7 +1093,7 @@ async fn read_u64_slot<'ty, P: ContractProvider<'ty>>(
 
 async fn write_u64_slot<'ty, P: ContractProvider<'ty>>(
     ctx: &mut TreeContext<'_, 'ty, P>,
-    key: ValueCell,
+    key: OwnedValue,
     value: u64,
 ) -> Result<(), EnvironmentError> {
     write_storage_value(ctx, key, Some(Primitive::Integer(PrimitiveInteger::U64(value)).into())).await.map(|_| ())
@@ -1168,14 +1161,14 @@ async fn write_node<'ty, P: ContractProvider<'ty>>(
 
 async fn write_storage_value<'ty, P: ContractProvider<'ty>>(
     ctx: &mut TreeContext<'_, 'ty, P>,
-    key: ValueCell,
-    value: Option<ValueCell>,
-) -> Result<Option<ValueCell>, EnvironmentError> {
+    key: OwnedValue,
+    value: Option<OwnedValue>,
+) -> Result<Option<OwnedValue>, EnvironmentError> {
     let size = data_size_in_bytes(&key) + value.as_ref().map_or(0, |v| data_size_in_bytes(v));
     ctx.charge_write(size)?;
 
     let cache = get_cache_for_contract(&mut ctx.state.changes.caches, ctx.state.global_caches, ctx.contract.clone(), ctx.state.block_version < BlockVersion::V6);
-    Ok(match cache.storage.entry(key.clone_ref()) {
+    Ok(match cache.storage.entry(key.clone()) {
         Entry::Occupied(mut occ) => {
             let slot = occ.get_mut();
             if let Some((version, stored)) = slot {
@@ -1207,7 +1200,7 @@ async fn write_storage_value<'ty, P: ContractProvider<'ty>>(
     })
 }
 
-async fn ensure_cache_entry<'ty, P: ContractProvider<'ty>>(ctx: &mut TreeContext<'_, 'ty, P>, key: &ValueCell) -> Result<(), EnvironmentError> {
+async fn ensure_cache_entry<'ty, P: ContractProvider<'ty>>(ctx: &mut TreeContext<'_, 'ty, P>, key: &OwnedValue) -> Result<(), EnvironmentError> {
     if ctx.cache_has_entry(key) {
         return Ok(());
     }
@@ -1228,38 +1221,38 @@ async fn ensure_cache_entry<'ty, P: ContractProvider<'ty>>(ctx: &mut TreeContext
 }
 
 #[inline]
-fn root_storage_key(namespace: &[u8]) -> ValueCell {
+fn root_storage_key(namespace: &[u8]) -> OwnedValue {
     storage_key(namespace, b"root")
 }
 
 #[inline]
-fn size_storage_key(namespace: &[u8]) -> ValueCell {
+fn size_storage_key(namespace: &[u8]) -> OwnedValue {
     storage_key(namespace, b"size")
 }
 
 #[inline]
-fn next_storage_key(namespace: &[u8]) -> ValueCell {
+fn next_storage_key(namespace: &[u8]) -> OwnedValue {
     storage_key(namespace, b"next")
 }
 
 #[inline]
-fn node_storage_key(namespace: &[u8], id: u64) -> ValueCell {
+fn node_storage_key(namespace: &[u8], id: u64) -> OwnedValue {
     storage_key(namespace, format!("node:{id}").as_bytes())
 }
 
-fn storage_key(namespace: &[u8], suffix: &[u8]) -> ValueCell {
+fn storage_key(namespace: &[u8], suffix: &[u8]) -> OwnedValue {
     let mut bytes = Vec::with_capacity(PREFIX.len() + namespace.len() + 1 + suffix.len());
     bytes.extend_from_slice(PREFIX);
     bytes.extend_from_slice(namespace);
     bytes.push(b':');
     bytes.extend_from_slice(suffix);
 
-    ValueCell::Bytes(bytes)
+    OwnedValue::Bytes(bytes)
 }
 
-fn read_bytes(value: ValueCell, field: &str) -> Result<Vec<u8>, EnvironmentError> {
-    match value {
-        ValueCell::Bytes(bytes) => Ok(bytes),
+fn read_bytes(mut value: OwnedValue, field: &str) -> Result<Vec<u8>, EnvironmentError> {
+    match &mut value {
+        OwnedValue::Bytes(bytes) => Ok(std::mem::take(bytes)),
         _ => Err(EnvironmentError::Static(match field {
             "namespace" => "BTree namespace must be bytes",
             "key" => "BTree key must be bytes",
@@ -1268,7 +1261,7 @@ fn read_bytes(value: ValueCell, field: &str) -> Result<Vec<u8>, EnvironmentError
     }
 }
 
-fn read_key_bytes(value: ValueCell) -> Result<Vec<u8>, EnvironmentError> {
+fn read_key_bytes(value: OwnedValue) -> Result<Vec<u8>, EnvironmentError> {
     let bytes = read_bytes(value, "key")?;
     if bytes.is_empty() {
         return Err(EnvironmentError::Static("key cannot be empty"));
@@ -1279,7 +1272,7 @@ fn read_key_bytes(value: ValueCell) -> Result<Vec<u8>, EnvironmentError> {
     Ok(bytes)
 }
 
-fn read_seek_key_bytes(value: ValueCell) -> Result<Vec<u8>, EnvironmentError> {
+fn read_seek_key_bytes(value: OwnedValue) -> Result<Vec<u8>, EnvironmentError> {
     let bytes = read_bytes(value, "key")?;
     validate_key_bytes(&bytes)?;
 
@@ -1299,9 +1292,9 @@ fn validate_key_bytes(bytes: &[u8]) -> Result<(), EnvironmentError> {
 }
 
 #[inline]
-pub(super) fn is_reserved_storage_key(key: &ValueCell) -> bool {
+pub(super) fn is_reserved_storage_key(key: &OwnedValue) -> bool {
     match key {
-        ValueCell::Bytes(bytes) => is_reserved_storage_key_bytes(bytes),
+        OwnedValue::Bytes(bytes) => is_reserved_storage_key_bytes(bytes),
         _ => false,
     }
 }
@@ -1311,7 +1304,7 @@ fn is_reserved_storage_key_bytes(bytes: &[u8]) -> bool {
     bytes.starts_with(PREFIX)
 }
 
-fn ensure_value_constraints(value: &ValueCell) -> Result<(), EnvironmentError> {
+fn ensure_value_constraints(value: &OwnedValue) -> Result<(), EnvironmentError> {
     let size = data_size_in_bytes(value);
     if size > MAX_VALUE_SIZE {
         return Err(EnvironmentError::Static("value is too large"));
@@ -1325,7 +1318,7 @@ fn ensure_value_constraints(value: &ValueCell) -> Result<(), EnvironmentError> {
 }
 
 #[inline]
-fn read_bias(cell: &ValueCell) -> Result<BTreeSeekBias, EnvironmentError> {
+fn read_bias(cell: &OwnedValue) -> Result<BTreeSeekBias, EnvironmentError> {
     let (variant, _) = cell.as_enum()?;
     Ok(BTreeSeekBias::try_from(variant)?)
 }

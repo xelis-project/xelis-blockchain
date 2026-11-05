@@ -1,14 +1,14 @@
 use matriochka::{Error, OptionExt, ResultExt};
 use log::debug;
 use xelis_vm::{
-    ValueCell,
+    RuntimeValue,
+    Heap,
     PrimitiveInteger,
     Opaque,
     VMContext,
     FnInstance,
     FnParams,
     FnReturnType,
-    OpaqueWrapper,
     Primitive,
     SysCallResult,
     U256
@@ -36,7 +36,7 @@ fn random_fill_buffer(random: Option<&mut DeterministicRandom>, buffer: &mut [u8
         .context("filling random buffer")
 }
 
-pub fn random_fn(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn random_fn(_: FnInstance, _: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext, _heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     // Create a deterministic random for the contract
     let state = state_from_context(context)?;
     let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.block_version < BlockVersion::V6);
@@ -47,10 +47,10 @@ pub fn random_fn(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, cont
         cache.random = Some(DeterministicRandom::new(&metadata.metadata.contract_executor, state.block_hash, state.topoheight, &state.caller.get_hash()));
     }
 
-    Ok(SysCallResult::Return(ValueCell::Opaque(OpaqueWrapper::new(OpaqueRandom)).into()))
+    Ok(SysCallResult::Return(RuntimeValue::Opaque(OpaqueRandom.into()).into()))
 }
 
-pub fn random_u8(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn random_u8(_: FnInstance, _: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext, _heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let state = state_from_context(context)?;
 
     let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.block_version < BlockVersion::V6);
@@ -62,7 +62,7 @@ pub fn random_u8(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, cont
     Ok(SysCallResult::Return(Primitive::Integer(PrimitiveInteger::U8(value)).into()))
 }
 
-pub fn random_u16(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn random_u16(_: FnInstance, _: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext, _heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let state = state_from_context(context)?;
 
     let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.block_version < BlockVersion::V6);
@@ -73,7 +73,7 @@ pub fn random_u16(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, con
     Ok(SysCallResult::Return(Primitive::Integer(PrimitiveInteger::U16(value)).into()))
 }
 
-pub fn random_u32(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn random_u32(_: FnInstance, _: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext, _heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let state = state_from_context(context)?;
 
     let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.block_version < BlockVersion::V6);
@@ -84,7 +84,7 @@ pub fn random_u32(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, con
     Ok(SysCallResult::Return(Primitive::Integer(PrimitiveInteger::U32(value)).into()))
 }
 
-pub fn random_u64(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn random_u64(_: FnInstance, _: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext, _heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let state = state_from_context(context)?;
 
     let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.block_version < BlockVersion::V6);
@@ -95,7 +95,7 @@ pub fn random_u64(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, con
     Ok(SysCallResult::Return(Primitive::Integer(PrimitiveInteger::U64(value)).into()))
 }
 
-pub fn random_u128(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn random_u128(_: FnInstance, _: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext, _heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let state = state_from_context(context)?;
 
     let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.block_version < BlockVersion::V6);
@@ -106,7 +106,7 @@ pub fn random_u128(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, co
     Ok(SysCallResult::Return(Primitive::Integer(PrimitiveInteger::U128(value)).into()))
 }
 
-pub fn random_u256(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn random_u256(_: FnInstance, _: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext, _heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let state = state_from_context(context)?;
 
     let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.block_version < BlockVersion::V6);
@@ -116,7 +116,7 @@ pub fn random_u256(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, co
     Ok(SysCallResult::Return(Primitive::Integer(PrimitiveInteger::U256(value)).into()))
 }
 
-pub fn random_bool(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn random_bool(_: FnInstance, _: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext, _heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let state = state_from_context(context)?;
 
     let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.block_version < BlockVersion::V6);

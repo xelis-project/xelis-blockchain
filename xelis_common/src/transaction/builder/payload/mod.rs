@@ -1,7 +1,7 @@
 use indexmap::{IndexMap, IndexSet};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use xelis_vm::ValueCell;
+use xelis_vm::OwnedValue;
 use crate::{
     api::DataElement,
     contract::{ContractModule, InterContractPermission},
@@ -44,7 +44,7 @@ pub struct InvokeContractBuilder {
     pub contract: Hash,
     pub max_gas: u64,
     pub entry_id: u16,
-    pub parameters: Vec<ValueCell>,
+    pub parameters: Vec<OwnedValue>,
     #[serde(default)]
     pub deposits: IndexMap<Hash, ContractDepositBuilder>,
     pub permission: InterContractPermission,
@@ -93,7 +93,7 @@ mod tests {
             contract: XELIS_ASSET,
             max_gas: 1000,
             entry_id: 0,
-            parameters: vec![ValueCell::Primitive(Primitive::Integer(PrimitiveInteger::U64(100)))],
+            parameters: vec![OwnedValue::Primitive(Primitive::Integer(PrimitiveInteger::U64(100)))],
             deposits: indexmap! {
                 XELIS_ASSET => ContractDepositBuilder {
                     amount: 100,
@@ -109,13 +109,13 @@ mod tests {
 
     #[test]
     fn test_serde_value_cell_str() {
-        let str_cell = ValueCell::Primitive(Primitive::String("Hello, World!".to_string()));
+        let str_cell = OwnedValue::Primitive(Primitive::String("Hello, World!".to_string()));
 
         // JSON
         let str_data = serde_json::to_string_pretty(&str_cell).unwrap();
-        assert_eq!(str_cell, serde_json::from_str::<ValueCell>(&str_data).unwrap());
+        assert_eq!(str_cell, serde_json::from_str::<OwnedValue>(&str_data).unwrap());
 
         let bytes = str_cell.to_bytes().unwrap();
-        assert_eq!(str_cell, ValueCell::from_bytes(&bytes).unwrap());
+        assert_eq!(str_cell, OwnedValue::from_bytes(&bytes).unwrap());
     }
 }

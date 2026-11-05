@@ -1,3 +1,4 @@
+use crate::contract::OwnedValueCapabilities;
 use std::{
     borrow::Cow,
     collections::HashMap,
@@ -11,7 +12,7 @@ use thiserror::Error;
 use curve25519_dalek::Scalar;
 use log::{debug, log, trace, warn};
 use indexmap::IndexMap;
-use xelis_vm::{ModuleMetadata, Reference, VM, VMError, ValueCell};
+use xelis_vm::{ModuleMetadata, Reference, VM, VMError, OwnedValue};
 
 use crate::{
     block::BlockVersion,
@@ -126,7 +127,7 @@ impl<E, T: Into<ContractError>> From<T> for ContractStateError<E> {
 pub enum ExitValue {
     Error(ExitError),
     ExitCode(u64),
-    Payload(ValueCell),
+    Payload(OwnedValue),
 }
 
 impl ExitValue {
@@ -172,7 +173,7 @@ fn prepare_vm<'a: 'r, 'ty: 'a, 'r, I>(
     contract: &Hash,
 ) -> Result<(), ExitError>
 where
-    I: DoubleEndedIterator<Item = ValueCell> + ExactSizeIterator,
+    I: DoubleEndedIterator<Item = OwnedValue> + ExactSizeIterator,
 {
     // module is a reference to the module
     let module = metadata.module.clone();
@@ -213,7 +214,7 @@ pub(crate) async fn run_virtual_machine<'a, 'ty, P: for<'x> ContractProvider<'x>
     invoke: InvokeContract,
     contract: Cow<'a, Hash>,
     deposits: IndexMap<Hash, ContractDeposit>,
-    parameters: impl DoubleEndedIterator<Item = ValueCell> + ExactSizeIterator,
+    parameters: impl DoubleEndedIterator<Item = OwnedValue> + ExactSizeIterator,
     max_gas: u64,
 ) -> Result<(u64, u64, ExitValue), VMError> {
     let log_level = chain_state.log_level;
@@ -318,7 +319,7 @@ pub async fn invoke_contract<'a, 'ty, P: for<'x> ContractProvider<'x>, E, B: Blo
     contract: Cow<'a, Hash>,
     // TODO: rework it
     deposits: Option<(&'a IndexMap<Hash, ContractDeposit>, &HashMap<&Hash, DecompressedDepositCt>)>,
-    parameters: impl DoubleEndedIterator<Item = ValueCell> + ExactSizeIterator,
+    parameters: impl DoubleEndedIterator<Item = OwnedValue> + ExactSizeIterator,
     gas_sources: IndexMap<Source, u64>,
     max_gas: u64,
     invoke: InvokeContract,

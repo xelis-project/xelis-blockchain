@@ -5,7 +5,7 @@ use silex_builder::EnvironmentBuilder;
 use silex_compiler::Compiler;
 use silex_lexer::Lexer;
 use silex_parser::Parser;
-use xelis_vm::{PrimitiveInteger, Module, Primitive, ValueCell};
+use xelis_vm::{PrimitiveInteger, Module, Primitive, OwnedValue};
 
 use crate::{
     asset::{AssetData, AssetOwner, MaxSupplyMode},
@@ -105,7 +105,7 @@ pub async fn invoke_contract(
     state: &mut MockChainState,
     contract: &Hash,
     entry: InvokeContract,
-    params: Vec<ValueCell>,
+    params: Vec<OwnedValue>,
 ) -> Result<vm::ExecutionResult, ContractStateError<anyhow::Error>> {
     invoke_contract_with_permission(
         state,
@@ -120,7 +120,7 @@ pub async fn invoke_contract_with_permission<'a>(
     state: &mut MockChainState,
     contract: &Hash,
     entry: InvokeContract,
-    params: Vec<ValueCell>,
+    params: Vec<OwnedValue>,
     permission: InterContractPermission,
 ) -> Result<vm::ExecutionResult, ContractStateError<anyhow::Error>> {
     vm::invoke_contract(
@@ -318,4 +318,49 @@ async fn test_refund_with_gas_sources() {
     );
 
     assert_eq!(chain_state.contract_caches.len(), 3);
+}
+
+#[tokio::test]
+async fn native_point_return_preserves_instance_reference() {
+    let code = r#"
+        entry main() {
+            let point = RistrettoPoint::identity();
+            let returned = point.add_scalar(Scalar::ONE);
+            returned.sub_scalar(Scalar::ONE);
+            if !point.is_identity() {
+                return 1
+            }
+            return 0
+        }
+    "#;
+    let mut state = MockChainState::new();
+    let contract = create_contract(&mut state, code, ContractVersion::V1).unwrap();
+    let result = invoke_contract(&mut state, &contract, InvokeContract::Entry(0), vec![]).await.unwrap();
+    assert!(result.is_success(), "{:?}", result);
+}
+
+
+#[tokio::test]
+async fn native_runtime_results_roundtrip() {
+    let code = r#"
+        entry main() -> bytes {
+            let hash = Hash::max();
+            assert(Hash::from_array(hash.to_array()) == hash);
+            assert(Hash::from_bytes(hash.to_bytes()) == hash);
+            assert(Hash::from_hex(hash.to_hex()) == hash);
+            let scalar = Scalar::from_u64(7);
+            assert(Scalar::from_bytes(scalar.to_bytes()).unwrap() == scalar);
+            let block = Block::current();
+            assert(block.transactions_hashes().len() == block.transactions().len());
+            assert(get_deposits().len() == 0);
+            return hash.to_bytes()
+        }
+    "#;
+    let mut state = MockChainState::new();
+    let contract = create_contract(&mut state, code, ContractVersion::V1).unwrap();
+    let result = invoke_contract(&mut state, &contract, InvokeContract::Entry(0), vec![]).await.unwrap();
+    let vm::ExitValue::Payload(value) = result.exit_value else {
+        panic!("expected a payload from native runtime values");
+    };
+    assert_eq!(value, OwnedValue::Bytes(vec![u8::MAX; 32]));
 }

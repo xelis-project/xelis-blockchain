@@ -1,5 +1,6 @@
 
 use xelis_vm::{
+    Heap,
     traits::DynSerializable,
     VMContext,
     FnInstance,
@@ -34,50 +35,52 @@ impl DynSerializable for CiphertextValidityProof {
     }
 }
 
-pub fn ciphertext_validity_proof_verify(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
-    let commitment = PedersenCommitment::from_point(
-        params[0]
-            .as_mut()
-            .as_opaque_type_mut::<OpaqueRistrettoPoint>()?
-            .decompressed()?
-            .clone()
-    );
-    let dest_pubkey = PublicKey::from_point(
-        params[1]
-            .as_mut()
-            .as_opaque_type_mut::<OpaqueRistrettoPoint>()?
-            .decompressed()?
-            .clone()
-    );
-    let source_pubkey = PublicKey::from_point(
-        params[2]
-            .as_mut()
-            .as_opaque_type_mut::<OpaqueRistrettoPoint>()?
-            .decompressed()?
-            .clone()
-    );
-    let dest_handle = DecryptHandle::from_point(
-        params[3]
-            .as_mut()
-            .as_opaque_type_mut::<OpaqueRistrettoPoint>()?
-            .decompressed()?
-            .clone()
-    );
-    let source_handle = DecryptHandle::from_point(
-        params[4]
-            .as_mut()
-            .as_opaque_type_mut::<OpaqueRistrettoPoint>()?
-            .decompressed()?
-            .clone()
-    );
-    let transcript: &mut OpaqueTranscript = params[5]
-        .as_mut()
-        .as_opaque_type_mut()?;
-
+pub fn ciphertext_validity_proof_verify(zelf: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let zelf: &CiphertextValidityProof = zelf.as_opaque_type()?;
-    let valid = zelf.verify(&commitment, &dest_pubkey, &source_pubkey, &dest_handle, &source_handle, &mut transcript.0)
-        .is_ok();
+    heap.with_value(zelf, |zelf, heap| {
+        let commitment = PedersenCommitment::from_point(
+            params[0]
+                .as_mut(heap)
+                .as_opaque_type_mut::<OpaqueRistrettoPoint>()?
+                .decompressed()?
+                .clone()
+        );
+        let dest_pubkey = PublicKey::from_point(
+            params[1]
+                .as_mut(heap)
+                .as_opaque_type_mut::<OpaqueRistrettoPoint>()?
+                .decompressed()?
+                .clone()
+        );
+        let source_pubkey = PublicKey::from_point(
+            params[2]
+                .as_mut(heap)
+                .as_opaque_type_mut::<OpaqueRistrettoPoint>()?
+                .decompressed()?
+                .clone()
+        );
+        let dest_handle = DecryptHandle::from_point(
+            params[3]
+                .as_mut(heap)
+                .as_opaque_type_mut::<OpaqueRistrettoPoint>()?
+                .decompressed()?
+                .clone()
+        );
+        let source_handle = DecryptHandle::from_point(
+            params[4]
+                .as_mut(heap)
+                .as_opaque_type_mut::<OpaqueRistrettoPoint>()?
+                .decompressed()?
+                .clone()
+        );
+        let transcript: &mut OpaqueTranscript = params[5]
+            .as_mut(heap)
+            .as_opaque_type_mut()?;
 
-    Ok(SysCallResult::Return(Primitive::Boolean(valid).into()))
+        let zelf: &CiphertextValidityProof = zelf.as_opaque_type()?;
+        let valid = zelf.verify(&commitment, &dest_pubkey, &source_pubkey, &dest_handle, &source_handle, &mut transcript.0)
+            .is_ok();
+
+        Ok(SysCallResult::Return(Primitive::Boolean(valid).into()))
+    })
 }

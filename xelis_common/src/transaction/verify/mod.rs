@@ -21,7 +21,7 @@ use indexmap::IndexMap;
 use log::{warn, debug, trace};
 use merlin::Transcript;
 use metrics::histogram;
-use xelis_vm::{ModuleValidator, ValueCell};
+use xelis_vm::{ModuleValidator, OwnedValue};
 use crate::{
     account::Nonce,
     serializer::Serializer,
@@ -369,7 +369,7 @@ impl Transaction {
     fn verify_invoke_contract<E>(
         &self,
         deposits: &IndexMap<Hash, ContractDeposit>,
-        parameters: &[ValueCell],
+        parameters: &[OwnedValue],
         max_gas: u64,
         private_deposits: bool,
     ) -> Result<(), VerificationStateError<E>> {

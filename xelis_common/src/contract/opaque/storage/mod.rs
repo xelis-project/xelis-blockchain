@@ -1,3 +1,4 @@
+use crate::contract::OwnedValueCapabilities;
 mod btree;
 mod read_only;
 
@@ -7,16 +8,17 @@ use async_trait::async_trait;
 use matriochka::Error;
 use log::debug;
 use xelis_vm::{
+    RuntimeValue,
+    Heap,
     Opaque,
     VMContext,
     EnvironmentError,
     FnInstance,
     FnParams,
     FnReturnType,
-    OpaqueWrapper,
     Primitive,
     SysCallResult,
-    ValueCell
+    OwnedValue
 };
 use crate::{
     block::{TopoHeight, BlockVersion},
@@ -51,24 +53,24 @@ pub const MAX_KEY_SIZE: usize = 256;
 #[async_trait]
 pub trait ContractStorage {
     // load a value from the storage
-    async fn load_data(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<Option<(TopoHeight, Option<ValueCell>)>, Error>;
+    async fn load_data(&self, contract: &Hash, key: &OwnedValue, topoheight: TopoHeight) -> Result<Option<(TopoHeight, Option<OwnedValue>)>, Error>;
 
     // load the latest topoheight from the storage
-    async fn load_data_latest_topoheight(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<Option<TopoHeight>, Error>;
+    async fn load_data_latest_topoheight(&self, contract: &Hash, key: &OwnedValue, topoheight: TopoHeight) -> Result<Option<TopoHeight>, Error>;
 
     // check if a contract hash exists in the storage
     async fn has_contract(&self, contract: &Hash, topoheight: TopoHeight) -> Result<bool, Error>;
 }
 
 #[inline]
-pub fn data_size_in_bytes(value: &ValueCell) -> usize {
+pub fn data_size_in_bytes(value: &OwnedValue) -> usize {
     match value {
-        ValueCell::Bytes(v) => v.len(),
+        OwnedValue::Bytes(v) => v.len(),
         _ => value.size(),
     }
 }
 
-pub fn check_storage_entry_size(key: &ValueCell, value: &ValueCell) -> Result<usize, EnvironmentError> {
+pub fn check_storage_entry_size(key: &OwnedValue, value: &OwnedValue) -> Result<usize, EnvironmentError> {
     // special case: for raw bytes, we take the length of the bytes directly
     let value_size = data_size_in_bytes(value);
 
@@ -90,7 +92,7 @@ pub fn check_storage_entry_size(key: &ValueCell, value: &ValueCell) -> Result<us
     Ok(key_size + value_size)
 }
 
-fn check_storage_key(key: &ValueCell) -> Result<(), EnvironmentError> {
+fn check_storage_key(key: &OwnedValue) -> Result<(), EnvironmentError> {
     if !key.is_serializable() {
         return Err(EnvironmentError::Static("Key is not serializable"))
     }
@@ -113,35 +115,26 @@ fn check_storage_key(key: &ValueCell) -> Result<(), EnvironmentError> {
     Ok(())
 }
 
-pub fn storage(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
-    Ok(SysCallResult::Return(ValueCell::Opaque(OpaqueWrapper::new(OpaqueStorage)).into()))
+pub fn storage(_: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, _heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    Ok(SysCallResult::Return(RuntimeValue::Opaque(OpaqueStorage.into()).into()))
 }
 
-pub async fn storage_load<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+pub async fn storage_load<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, params: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let (storage, state) = from_context::<P>(context)?;
 
-    let key = params.remove(0)
-        .into_owned();
+    let key = heap.export(params.remove(0))?;
 
     check_storage_key(&key)?;
 
     let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.block_version < BlockVersion::V6);
-    let value = match cache.storage.entry(key.clone_ref()) {
+    let value = match cache.storage.entry(key.clone()) {
         Entry::Occupied(v) => v.get()
             .as_ref()
-            .and_then(|(_, v)| v.as_ref().map(|v| if state.block_version < BlockVersion::V6 {
-                v.clone_ref()
-            } else {
-                v.clone()
-            })),
+            .and_then(|(_, v)| v.clone()),
         Entry::Vacant(v) => match storage.load_data(&metadata.metadata.contract_executor, &key, state.topoheight).await? {
             Some((topoheight, constant)) => {
                 debug!("storage load cache missed for key {}, fetched at topoheight {}: {:?}", key, topoheight, constant);
-                let stored = constant.as_ref().map(|v| if state.block_version < BlockVersion::V6 {
-                    v.clone_ref()
-                } else {
-                    v.clone()
-                });
+                let stored = constant.clone();
                 v.insert(Some((VersionedState::FetchedAt(topoheight), stored)));
                 constant
             },
@@ -152,14 +145,13 @@ pub async fn storage_load<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'
         }
     };
 
-    Ok(SysCallResult::Return(value.unwrap_or_default().into()))
+    Ok(SysCallResult::Return(heap.import_owned(value.unwrap_or_default()).into()))
 }
 
-pub async fn storage_has<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+pub async fn storage_has<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, params: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let (storage, state) = from_context::<P>(context)?;
 
-    let key = params.remove(0)
-        .into_owned();
+    let key = heap.export(params.remove(0))?;
 
     check_storage_key(&key)?;
 
@@ -185,11 +177,9 @@ pub async fn storage_has<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a
     Ok(SysCallResult::Return(Primitive::Boolean(contains).into()))
 }
 
-pub async fn storage_store<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
-    let value = params.remove(1)
-        .into_owned();
-    let key = params.remove(0)
-        .into_owned();
+pub async fn storage_store<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, params: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    let value = heap.export(params.remove(1))?;
+    let key = heap.export(params.remove(0))?;
     
     // Dynamic gas cost depending on the size of the key and value
     check_storage_key(&key)?;
@@ -222,15 +212,13 @@ pub async fn storage_store<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<
         .and_then(|v| v.and_then(|(_, v)| v))
         .unwrap_or_default();
 
-    Ok(SysCallResult::Return(value.into()))
+    Ok(SysCallResult::Return(heap.import_owned(value).into()))
 }
 
-pub async fn storage_delete<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+pub async fn storage_delete<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, params: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let (storage, state) = from_context::<P>(context)?;
 
-    // into_owned calls `deep_clone`
-    let key = params.remove(0)
-        .into_owned();
+    let key = heap.export(params.remove(0))?;
 
     check_storage_key(&key)?;
 
@@ -242,7 +230,7 @@ pub async fn storage_delete<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance
                     .and_then(|v| v.and_then(|(_, v)| v))
                     .unwrap_or_default();
 
-                return Ok(SysCallResult::Return(value.into()));
+                return Ok(SysCallResult::Return(heap.import_owned(value).into()));
             },
             VersionedState::FetchedAt(topoheight) => VersionedState::Updated(*topoheight),
             VersionedState::Updated(topoheight) => VersionedState::Updated(*topoheight),
@@ -261,7 +249,7 @@ pub async fn storage_delete<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance
         .and_then(|v| v.and_then(|(_, v)| v))
         .unwrap_or_default();
 
-    Ok(SysCallResult::Return(value.into()))
+    Ok(SysCallResult::Return(heap.import_owned(value).into()))
 }
 
 #[cfg(test)]
@@ -273,7 +261,7 @@ mod tests {
         let mut key = btree::PREFIX.to_vec();
         key.extend_from_slice(b"orders:root");
 
-        assert!(check_storage_key(&ValueCell::Bytes(key)).is_err());
-        assert!(check_storage_key(&ValueCell::Bytes(b"orders:root".to_vec())).is_ok());
+        assert!(check_storage_key(&OwnedValue::Bytes(key)).is_err());
+        assert!(check_storage_key(&OwnedValue::Bytes(b"orders:root".to_vec())).is_ok());
     }
 }

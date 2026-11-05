@@ -1,11 +1,11 @@
 use xelis_vm::{
-    ValueCell,
+    RuntimeValue,
+    Heap,
     Opaque,
     VMContext,
     FnInstance,
     FnParams,
     FnReturnType,
-    OpaqueWrapper,
     Primitive,
     SysCallResult,
     EnvironmentError
@@ -32,31 +32,30 @@ pub struct OpaqueMemoryStorage {
     shared: bool,
 }
 
-pub fn memory_storage(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn memory_storage(_: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let shared = params[0]
-        .as_ref()
+        .as_ref(heap)
         .as_bool()?;
 
-    Ok(SysCallResult::Return(ValueCell::Opaque(OpaqueWrapper::new(OpaqueMemoryStorage {
+    Ok(SysCallResult::Return(RuntimeValue::Opaque(OpaqueMemoryStorage {
         shared,
-    })).into()))
+    }.into()).into()))
 }
 
-pub fn is_shared(instance: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn is_shared(instance: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let instance = instance?;
-    let storage: &OpaqueMemoryStorage = instance.as_opaque_type()?;
+    let storage = instance.as_opaque_type::<OpaqueMemoryStorage>(heap)?.clone();
 
     Ok(SysCallResult::Return(Primitive::Boolean(storage.shared).into()))
 }
 
-pub fn memory_storage_load<'ty, P: ContractProvider<'ty>>(instance: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn memory_storage_load<'ty, P: ContractProvider<'ty>>(instance: FnInstance, params: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let instance = instance?;
-    let storage: &OpaqueMemoryStorage = instance.as_opaque_type()?;
+    let storage = instance.as_opaque_type::<OpaqueMemoryStorage>(heap)?.clone();
 
     let state = state_from_context(context)?;
 
-    let key = params.remove(0)
-        .into_owned();
+    let key = heap.export(params.remove(0))?;
 
     if !key.is_hashable() {
         return Err(EnvironmentError::Static("Key is not hashable"))
@@ -68,24 +67,19 @@ pub fn memory_storage_load<'ty, P: ContractProvider<'ty>>(instance: FnInstance, 
             } else {
                 &cache.memory
             }.get(&key)
-            .map(|v| if state.block_version < BlockVersion::V6 {
-                v.clone_ref()
-            } else {
-                v.clone()
-            })
+            .cloned()
         ).unwrap_or_default();
 
-    Ok(SysCallResult::Return(value.into()))
+    Ok(SysCallResult::Return(heap.import_owned(value).into()))
 }
 
-pub fn memory_storage_has<'ty, P: ContractProvider<'ty>>(instance: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn memory_storage_has<'ty, P: ContractProvider<'ty>>(instance: FnInstance, params: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let instance = instance?;
-    let storage: &OpaqueMemoryStorage = instance.as_opaque_type()?;
+    let storage = instance.as_opaque_type::<OpaqueMemoryStorage>(heap)?.clone();
 
     let state = state_from_context(context)?;
 
-    let key = params.remove(0)
-        .into_owned();
+    let key = heap.export(params.remove(0))?;
 
     if !key.is_hashable() {
         return Err(EnvironmentError::Static("Key is not hashable"))
@@ -102,15 +96,13 @@ pub fn memory_storage_has<'ty, P: ContractProvider<'ty>>(instance: FnInstance, m
     Ok(SysCallResult::Return(Primitive::Boolean(contains).into()))
 }
 
-pub fn memory_storage_store<'ty, P: ContractProvider<'ty>>(instance: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn memory_storage_store<'ty, P: ContractProvider<'ty>>(instance: FnInstance, params: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let instance = instance?;
-    let storage: &OpaqueMemoryStorage = instance.as_opaque_type()?;
+    let storage = instance.as_opaque_type::<OpaqueMemoryStorage>(heap)?.clone();
 
-    let value = params.remove(1)
-        .into_owned();
+    let value = heap.export(params.remove(1))?;
 
-    let key = params.remove(0)
-        .into_owned();
+    let key = heap.export(params.remove(0))?;
 
     if !key.is_hashable() {
         return Err(EnvironmentError::Static("Key is not hashable"))
@@ -137,17 +129,16 @@ pub fn memory_storage_store<'ty, P: ContractProvider<'ty>>(instance: FnInstance,
     let value = memory.insert(key, value)
         .unwrap_or_default();
 
-    Ok(SysCallResult::Return(value.into()))
+    Ok(SysCallResult::Return(heap.import_owned(value).into()))
 }
 
-pub fn memory_storage_delete<'ty, P: ContractProvider<'ty>>(instance: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn memory_storage_delete<'ty, P: ContractProvider<'ty>>(instance: FnInstance, params: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let instance = instance?;
-    let storage: &OpaqueMemoryStorage = instance.as_opaque_type()?;
+    let storage = instance.as_opaque_type::<OpaqueMemoryStorage>(heap)?.clone();
 
     let state = state_from_context(context)?;
 
-    let key = params.remove(0)
-        .into_owned();
+    let key = heap.export(params.remove(0))?;
 
     if !key.is_hashable() {
         return Err(EnvironmentError::Static("Key is not hashable"))
@@ -168,5 +159,5 @@ pub fn memory_storage_delete<'ty, P: ContractProvider<'ty>>(instance: FnInstance
     let value = memory.remove(&key)
         .unwrap_or_default();
 
-    Ok(SysCallResult::Return(value.into()))
+    Ok(SysCallResult::Return(heap.import_owned(value).into()))
 }

@@ -3,6 +3,7 @@ mod manager;
 use matriochka::OptionExt;
 use log::{debug, log};
 use xelis_vm::{
+    Heap,
     PrimitiveInteger,
     Opaque,
     VMContext,
@@ -12,7 +13,7 @@ use xelis_vm::{
     FnReturnType,
     Primitive,
     SysCallResult,
-    ValueCell
+    RuntimeValue
 };
 use crate::{
     contract::{
@@ -55,173 +56,196 @@ impl PartialEq for OpaqueAsset {
 impl Eq for OpaqueAsset {}
 
 // Maximum supply set for this asset
-pub fn asset_get_max_supply(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn asset_get_max_supply(zelf: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, context: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let asset: &OpaqueAsset = zelf.as_opaque_type()?;
-    let state: &ChainState = context.get()
-        .context("Chain state not found")?;
-    let changes = get_asset_changes_for_hash(state, &asset.hash)?;
-    let value: ValueCell = changes.data.1
-        .get_max_supply()
-        .get_max()
-        .map(|v| Primitive::Integer(PrimitiveInteger::U64(v)).into())
-        .unwrap_or_default();
+    heap.with_value(zelf, |zelf, _heap| {
+        let asset: &OpaqueAsset = zelf.as_opaque_type()?;
+        let state: &ChainState = context.get()
+            .context("Chain state not found")?;
+        let changes = get_asset_changes_for_hash(state, &asset.hash)?;
+        let value: RuntimeValue = changes.data.1
+            .get_max_supply()
+            .get_max()
+            .map(|v| Primitive::Integer(PrimitiveInteger::U64(v)).into())
+            .unwrap_or_default();
 
-    Ok(SysCallResult::Return(value.into()))
+        Ok(SysCallResult::Return(value.into()))
+    })
 }
 
 // Contract hash that created this asset
-pub fn asset_get_contract_hash(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn asset_get_contract_hash(zelf: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, context: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let asset: &OpaqueAsset = zelf.as_opaque_type()?;
-    let state: &ChainState = context.get()
-        .context("Chain state not found")?;
-    let changes = get_asset_changes_for_hash(state, &asset.hash)?;
-    let hash = changes.data.1.get_owner()
-        .get_contract()
-        .map(|v| ValueCell::Opaque(v.clone().into()))
-        .unwrap_or_default();
+    heap.with_value(zelf, |zelf, _heap| {
+        let asset: &OpaqueAsset = zelf.as_opaque_type()?;
+        let state: &ChainState = context.get()
+            .context("Chain state not found")?;
+        let changes = get_asset_changes_for_hash(state, &asset.hash)?;
+        let hash = changes.data.1.get_owner()
+            .get_contract()
+            .map(|v| RuntimeValue::Opaque(v.clone().into()))
+            .unwrap_or_default();
 
-    Ok(SysCallResult::Return(hash.into()))
+        Ok(SysCallResult::Return(hash.into()))
+    })
 }
 
 // Contract hash that created this asset
-pub fn asset_get_contract_id(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn asset_get_contract_id(zelf: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, context: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let asset: &OpaqueAsset = zelf.as_opaque_type()?;
-    let state: &ChainState = context.get()
-        .context("Chain state not found")?;
-    let changes = get_asset_changes_for_hash(state, &asset.hash)?;
-    let id = changes.data.1.get_owner()
-        .get_id()
-        .map(|v| Primitive::Integer(PrimitiveInteger::U64(v)))
-        .unwrap_or_default();
+    heap.with_value(zelf, |zelf, _heap| {
+        let asset: &OpaqueAsset = zelf.as_opaque_type()?;
+        let state: &ChainState = context.get()
+            .context("Chain state not found")?;
+        let changes = get_asset_changes_for_hash(state, &asset.hash)?;
+        let id = changes.data.1.get_owner()
+            .get_id()
+            .map(|v| Primitive::Integer(PrimitiveInteger::U64(v)))
+            .unwrap_or_default();
 
-    Ok(SysCallResult::Return(id.into()))
+        Ok(SysCallResult::Return(id.into()))
+    })
 }
 
 // Circulating supply for this asset
-pub async fn asset_get_supply<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance<'a>, _: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+pub async fn asset_get_supply<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance<'a>, _: FnParams<'_>, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let asset: &OpaqueAsset = zelf.as_opaque_type()?;
+    let asset: &OpaqueAsset = zelf.as_opaque_type(heap)?;
     let (_, state) = from_context::<P>(context)?;
     let changes = get_asset_changes_for_hash_mut(state, &asset.hash)?;
     Ok(SysCallResult::Return(Primitive::Integer(PrimitiveInteger::U64(changes.circulating_supply.1)).into()))
 }
 
 // Get the self claimed asset name
-pub fn asset_get_name(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn asset_get_name(zelf: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, context: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let asset: &OpaqueAsset = zelf.as_opaque_type()?;
-    let state: &ChainState = context.get()
-        .context("Chain state not found")?;
-    let changes = get_asset_changes_for_hash(state, &asset.hash)?;
-    Ok(SysCallResult::Return(Primitive::String(changes.data.1.get_name().to_owned()).into()))
+    heap.with_value(zelf, |zelf, _heap| {
+        let asset: &OpaqueAsset = zelf.as_opaque_type()?;
+        let state: &ChainState = context.get()
+            .context("Chain state not found")?;
+        let changes = get_asset_changes_for_hash(state, &asset.hash)?;
+        Ok(SysCallResult::Return(Primitive::String(changes.data.1.get_name().to_owned()).into()))
+    })
 }
 
 // Get the decimals for this asset
-pub fn asset_get_decimals(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn asset_get_decimals(zelf: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, context: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let asset: &OpaqueAsset = zelf.as_opaque_type()?;
-    let state: &ChainState = context.get()
-        .context("Chain state not found")?;
-    let changes = get_asset_changes_for_hash(state, &asset.hash)?;
-    Ok(SysCallResult::Return(Primitive::Integer(PrimitiveInteger::U8(changes.data.1.get_decimals())).into()))
+    heap.with_value(zelf, |zelf, _heap| {
+        let asset: &OpaqueAsset = zelf.as_opaque_type()?;
+        let state: &ChainState = context.get()
+            .context("Chain state not found")?;
+        let changes = get_asset_changes_for_hash(state, &asset.hash)?;
+        Ok(SysCallResult::Return(Primitive::Integer(PrimitiveInteger::U8(changes.data.1.get_decimals())).into()))
+    })
 }
 
 // Get the hash representation of the asset
-pub fn asset_get_hash(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn asset_get_hash(zelf: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let asset: &OpaqueAsset = zelf.as_opaque_type()?;
-    Ok(SysCallResult::Return(ValueCell::Opaque(asset.hash.clone().into()).into()))
+    heap.with_value(zelf, |zelf, _heap| {
+        let asset: &OpaqueAsset = zelf.as_opaque_type()?;
+        Ok(SysCallResult::Return(RuntimeValue::Opaque(asset.hash.clone().into()).into()))
+    })
 }
 
 // Get the contract hash owner of this asset
-pub fn asset_get_owner(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn asset_get_owner(zelf: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, context: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let asset: &OpaqueAsset = zelf.as_opaque_type()?;
-    let state: &ChainState = context.get()
-        .context("Chain state not found")?;
+    heap.with_value(zelf, |zelf, _heap| {
+        let asset: &OpaqueAsset = zelf.as_opaque_type()?;
+        let state: &ChainState = context.get()
+            .context("Chain state not found")?;
 
-    let changes = get_asset_changes_for_hash(state, &asset.hash)?;
-    let owner_hash = match changes.data.1.get_owner().get_contract() {
-        Some(v) => ValueCell::Opaque(v.clone().into()),
-        None => ValueCell::Primitive(Primitive::Null)
-    };
-    Ok(SysCallResult::Return(owner_hash.into()))
+        let changes = get_asset_changes_for_hash(state, &asset.hash)?;
+        let owner_hash = match changes.data.1.get_owner().get_contract() {
+            Some(v) => RuntimeValue::Opaque(v.clone().into()),
+            None => RuntimeValue::Primitive(Primitive::Null)
+        };
+        Ok(SysCallResult::Return(owner_hash.into()))
+    })
 }
 
 // Get the contract creator
-pub fn asset_get_creator(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn asset_get_creator(zelf: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, context: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let asset: &OpaqueAsset = zelf.as_opaque_type()?;
-    let state: &ChainState = context.get()
-        .context("Chain state not found")?;
+    heap.with_value(zelf, |zelf, _heap| {
+        let asset: &OpaqueAsset = zelf.as_opaque_type()?;
+        let state: &ChainState = context.get()
+            .context("Chain state not found")?;
 
-    let changes = get_asset_changes_for_hash(state, &asset.hash)?;
-    let creator_hash = match changes.data.1.get_owner().get_origin_contract() {
-        Some(v) => ValueCell::Opaque(v.clone().into()),
-        None => ValueCell::Primitive(Primitive::Null)
-    };
-    Ok(SysCallResult::Return(creator_hash.into()))
+        let changes = get_asset_changes_for_hash(state, &asset.hash)?;
+        let creator_hash = match changes.data.1.get_owner().get_origin_contract() {
+            Some(v) => RuntimeValue::Opaque(v.clone().into()),
+            None => RuntimeValue::Primitive(Primitive::Null)
+        };
+        Ok(SysCallResult::Return(creator_hash.into()))
+    })
 }
 
 // Get the contract id owner of this asset
-pub fn asset_get_creator_id(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn asset_get_creator_id(zelf: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, context: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let asset: &OpaqueAsset = zelf.as_opaque_type()?;
-    let state: &ChainState = context.get()
-        .context("Chain state not found")?;
+    heap.with_value(zelf, |zelf, _heap| {
+        let asset: &OpaqueAsset = zelf.as_opaque_type()?;
+        let state: &ChainState = context.get()
+            .context("Chain state not found")?;
 
-    let changes = get_asset_changes_for_hash(state, &asset.hash)?;
-    let owner_id = match changes.data.1.get_owner().get_id() {
-        Some(v) => ValueCell::Primitive(Primitive::Integer(PrimitiveInteger::U64(v))),
-        None => ValueCell::Primitive(Primitive::Null)
-    };
-    Ok(SysCallResult::Return(owner_id.into()))
+        let changes = get_asset_changes_for_hash(state, &asset.hash)?;
+        let owner_id = match changes.data.1.get_owner().get_id() {
+            Some(v) => RuntimeValue::Primitive(Primitive::Integer(PrimitiveInteger::U64(v))),
+            None => RuntimeValue::Primitive(Primitive::Null)
+        };
+        Ok(SysCallResult::Return(owner_id.into()))
+    })
 }
 
 // Get the hash representation of the asset
-pub fn asset_get_ticker(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn asset_get_ticker(zelf: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, context: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let asset: &OpaqueAsset = zelf.as_opaque_type()?;
-    let state: &ChainState = context.get()
-        .context("Chain state not found")?;
-    let changes = get_asset_changes_for_hash(state, &asset.hash)?;
-    Ok(SysCallResult::Return(Primitive::String(changes.data.1.get_ticker().to_owned()).into()))
+    heap.with_value(zelf, |zelf, _heap| {
+        let asset: &OpaqueAsset = zelf.as_opaque_type()?;
+        let state: &ChainState = context.get()
+            .context("Chain state not found")?;
+        let changes = get_asset_changes_for_hash(state, &asset.hash)?;
+        Ok(SysCallResult::Return(Primitive::String(changes.data.1.get_ticker().to_owned()).into()))
+    })
 }
 
 // are we the owner of this or not
-pub fn asset_is_read_only(zelf: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn asset_is_read_only(zelf: FnInstance, _: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let asset: &OpaqueAsset = zelf.as_opaque_type()?;
-    let state: &ChainState = context.get()
-        .context("Chain state not found")?;
+    heap.with_value(zelf, |zelf, _heap| {
+        let asset: &OpaqueAsset = zelf.as_opaque_type()?;
+        let state: &ChainState = context.get()
+            .context("Chain state not found")?;
 
-    let changes = get_asset_changes_for_hash(state, &asset.hash)?;
-    let is_owner = changes.data.1
-        .get_owner()
-        .is_owner(&metadata.metadata.contract_executor);
+        let changes = get_asset_changes_for_hash(state, &asset.hash)?;
+        let is_owner = changes.data.1
+            .get_owner()
+            .is_owner(&metadata.metadata.contract_executor);
 
-    Ok(SysCallResult::Return(Primitive::Boolean(!is_owner).into()))
+        Ok(SysCallResult::Return(Primitive::Boolean(!is_owner).into()))
+    })
 }
 
-pub fn asset_is_mintable(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn asset_is_mintable(zelf: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, context: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let asset: &OpaqueAsset = zelf.as_opaque_type()?;
-    let state: &ChainState = context.get()
-        .context("Chain state not found")?;
-    let changes = get_asset_changes_for_hash(state, &asset.hash)?;
-    Ok(SysCallResult::Return(Primitive::Boolean(changes.data.1.get_max_supply().is_mintable()).into()))
+    heap.with_value(zelf, |zelf, _heap| {
+        let asset: &OpaqueAsset = zelf.as_opaque_type()?;
+        let state: &ChainState = context.get()
+            .context("Chain state not found")?;
+        let changes = get_asset_changes_for_hash(state, &asset.hash)?;
+        Ok(SysCallResult::Return(Primitive::Boolean(changes.data.1.get_max_supply().is_mintable()).into()))
+    })
 }
 
-pub async fn asset_transfer_ownership<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
-    let param: Hash = params.remove(0)
-        .into_owned()
+pub async fn asset_transfer_ownership<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance<'a>, params: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    let param: Hash = params.remove(0).into_owned(heap)?
         .into_opaque_type()?;
 
     let zelf = zelf?;
-    let asset: &OpaqueAsset = zelf.as_opaque_type()?;
+    let asset: &OpaqueAsset = zelf.as_opaque_type(heap)?;
     let (provider, state) = from_context::<P>(context)?;
     let log_level = state.log_level;
     log!(log_level, "Contract {} transferring ownership of asset {} to {}", metadata.metadata.contract_executor, asset.hash, param);
@@ -246,9 +270,9 @@ pub async fn asset_transfer_ownership<'a, 'ty, 'r, P: ContractProvider<'ty>>(zel
     Ok(SysCallResult::Return(Primitive::Boolean(transfer).into()))
 }
 
-pub async fn asset_mint<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance<'a>, params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
-    let mut zelf = zelf?;
-    let asset: &mut OpaqueAsset = zelf.as_opaque_type_mut()?;
+pub async fn asset_mint<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance<'a>, params: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    let zelf = zelf?;
+    let asset: &OpaqueAsset = zelf.as_opaque_type(heap)?;
     let (provider, state) = from_context::<P>(context)?;
     let log_level = state.log_level;
 
@@ -262,7 +286,7 @@ pub async fn asset_mint<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance<
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()))
     }
 
-    let amount = params[0].as_u64()?;
+    let amount = params[0].as_u64(heap)?;
     log!(log_level, "Contract {} minting {} of asset {}", metadata.metadata.contract_executor, amount, asset.hash);
     if amount == 0 {
         return Ok(SysCallResult::Return(Primitive::Boolean(false).into()))
@@ -303,31 +327,35 @@ pub async fn asset_mint<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance<
     Ok(SysCallResult::Return(Primitive::Boolean(true).into()))
 }
 
-pub fn max_supply_mode_get_max_supply(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn max_supply_mode_get_max_supply(zelf: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let (id, fields) = zelf.as_enum()?;
+    heap.with_value(zelf, |zelf, heap| {
+        let (id, fields) = zelf.as_enum(heap)?;
 
-    let max_supply = match id {
-        0 => None,
-        1 | 2 if fields.len() == 1 => Some(fields[0].as_ref().as_u64()?),
-        _ => return Err(EnvironmentError::InvalidType)
-    };
+        let max_supply = match id {
+            0 => None,
+            1 | 2 if fields.len() == 1 => Some(fields[0].as_ref(heap).as_u64()?),
+            _ => return Err(EnvironmentError::InvalidType)
+        };
 
-    Ok(SysCallResult::Return(match max_supply {
-        Some(v) => Primitive::Integer(PrimitiveInteger::U64(v)).into(),
-        None => ValueCell::Primitive(Primitive::Null).into()
-    }))
+        Ok(SysCallResult::Return(match max_supply {
+            Some(v) => RuntimeValue::Primitive(Primitive::Integer(PrimitiveInteger::U64(v))),
+            None => RuntimeValue::Primitive(Primitive::Null)
+        }.into()))
+    })
 }
 
-pub fn max_supply_mode_is_mintable(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn max_supply_mode_is_mintable(zelf: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let (id, _) = zelf.as_enum()?;
+    heap.with_value(zelf, |zelf, heap| {
+        let (id, _) = zelf.as_enum(heap)?;
 
-    let mintable = match id {
-        0 => true, // None
-        1 => false, // Fixed
-        2 => true, // Mintable
-        _ => return Err(EnvironmentError::InvalidType)
-    };
-    Ok(SysCallResult::Return(Primitive::Boolean(mintable).into()))
+        let mintable = match id {
+            0 => true, // None
+            1 => false, // Fixed
+            2 => true, // Mintable
+            _ => return Err(EnvironmentError::InvalidType)
+        };
+        Ok(SysCallResult::Return(Primitive::Boolean(mintable).into()))
+    })
 }

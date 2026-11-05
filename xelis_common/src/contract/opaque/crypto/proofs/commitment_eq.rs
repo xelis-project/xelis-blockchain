@@ -1,5 +1,6 @@
 
 use xelis_vm::{
+    Heap,
     traits::DynSerializable,
     VMContext,
     EnvironmentError,
@@ -39,35 +40,37 @@ impl DynSerializable for CommitmentEqProof {
     }
 }
 
-pub fn commitment_eq_proof_verify(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
-    let source_pubkey = PublicKey::from_point(
-        params[0]
-            .as_mut()
-            .as_opaque_type_mut::<OpaqueRistrettoPoint>()?
-            .decompressed()?
-            .clone()
-    );
-    let ciphertext = params[1]
-        .as_mut()
-        .as_opaque_type_mut::<CiphertextCache>()?
-        .decompressed()
-        .map_err(|e| EnvironmentError::Any(SerializationError::new(e)))?
-        .clone();
-    let commitment = PedersenCommitment::from_point(
-        params[2]
-            .as_mut()
-            .as_opaque_type_mut::<OpaqueRistrettoPoint>()?
-            .decompressed()?
-            .clone()
-    );
-    let transcript: &mut OpaqueTranscript = params[3]
-        .as_mut()
-        .as_opaque_type_mut()?;
-
+pub fn commitment_eq_proof_verify(zelf: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let zelf: &CommitmentEqProof = zelf.as_opaque_type()?;
-    let valid = zelf.verify(&source_pubkey, &ciphertext, &commitment, &mut transcript.0)
-        .is_ok();
+    heap.with_value(zelf, |zelf, heap| {
+        let source_pubkey = PublicKey::from_point(
+            params[0]
+                .as_mut(heap)
+                .as_opaque_type_mut::<OpaqueRistrettoPoint>()?
+                .decompressed()?
+                .clone()
+        );
+        let ciphertext = params[1]
+            .as_mut(heap)
+            .as_opaque_type_mut::<CiphertextCache>()?
+            .decompressed()
+            .map_err(|e| EnvironmentError::Any(SerializationError::new(e)))?
+            .clone();
+        let commitment = PedersenCommitment::from_point(
+            params[2]
+                .as_mut(heap)
+                .as_opaque_type_mut::<OpaqueRistrettoPoint>()?
+                .decompressed()?
+                .clone()
+        );
+        let transcript: &mut OpaqueTranscript = params[3]
+            .as_mut(heap)
+            .as_opaque_type_mut()?;
 
-    Ok(SysCallResult::Return(Primitive::Boolean(valid).into()))
+        let zelf: &CommitmentEqProof = zelf.as_opaque_type()?;
+        let valid = zelf.verify(&source_pubkey, &ciphertext, &commitment, &mut transcript.0)
+            .is_ok();
+
+        Ok(SysCallResult::Return(Primitive::Boolean(valid).into()))
+    })
 }

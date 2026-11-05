@@ -158,7 +158,7 @@ impl MockChainState {
                         self,
                         Cow::Owned(contract.clone()),
                         None,
-                        event.params.iter().map(|p| p.deep_clone()),
+                        event.params.iter().map(|p| p.clone()),
                         callback.gas_sources,
                         callback.max_gas,
                         InvokeContract::Chunk(callback.chunk_id, false),

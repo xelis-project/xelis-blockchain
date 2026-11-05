@@ -14,7 +14,7 @@ use serde::{
     Serializer,
     ser::SerializeSeq
 };
-use xelis_vm::ValueCell;
+use xelis_vm::OwnedValue;
 use crate::{
     account::{CiphertextCache, Nonce, VersionedBalance, VersionedNonce},
     block::{Algorithm, BlockVersion, TopoHeight, EXTRA_NONCE_SIZE, deserialize_extra_nonce_hex},
@@ -824,9 +824,9 @@ pub struct GetContractTransactionsParams<'a> {
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct ContractDataEntry {
     /// Contract storage key.
-    pub key: ValueCell,
+    pub key: OwnedValue,
     /// Contract storage value.
-    pub value: ValueCell,
+    pub value: OwnedValue,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
@@ -1146,7 +1146,7 @@ pub struct GetContractDataParams<'a> {
     /// Contract hash.
     pub contract: Cow<'a, Hash>,
     /// Key used by this field.
-    pub key: Cow<'a, ValueCell>
+    pub key: Cow<'a, OwnedValue>
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
@@ -1154,7 +1154,7 @@ pub struct HasContractDataParams<'a> {
     /// Contract hash.
     pub contract: Cow<'a, Hash>,
     /// Key used by this field.
-    pub key: Cow<'a, ValueCell>
+    pub key: Cow<'a, OwnedValue>
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
@@ -1162,7 +1162,7 @@ pub struct GetContractDataAtTopoHeightParams<'a> {
     /// Contract hash.
     pub contract: Cow<'a, Hash>,
     /// Key used by this field.
-    pub key: Cow<'a, ValueCell>,
+    pub key: Cow<'a, OwnedValue>,
     /// Topoheight at which to fetch contract data.
     pub topoheight: TopoHeight
 }
@@ -1209,7 +1209,7 @@ pub struct SimulateContractInvokeParams<'a> {
     /// It can only be a entry id
     pub entry_id: u16,
     /// The parameters to call the contract
-    pub parameters: Cow<'a, Vec<ValueCell>>,
+    pub parameters: Cow<'a, Vec<OwnedValue>>,
     /// The permission of this contract call
     /// It is used to restrict access to certain inter-contracts.
     #[serde(default)]
@@ -1473,7 +1473,7 @@ pub struct ContractEvent<'a> {
     /// the actual event_id fired
     pub event_id: u64,
     /// event data
-    pub data: Cow<'a, ValueCell>
+    pub data: Cow<'a, OwnedValue>
 }
 
 /// Value of NotifyEvent::PeerConnected

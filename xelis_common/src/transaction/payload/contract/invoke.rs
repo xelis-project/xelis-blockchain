@@ -1,6 +1,6 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use xelis_vm::ValueCell;
+use xelis_vm::OwnedValue;
 
 use crate::{
     contract::InterContractPermission,
@@ -27,7 +27,7 @@ pub struct InvokeContractPayload {
     // is still accepted by nodes but the contract execution is stopped
     pub max_gas: u64,
     // The parameters to call the contract
-    pub parameters: Vec<ValueCell>,
+    pub parameters: Vec<OwnedValue>,
     // The permission of this contract call
     // It is used to restrict access to certain inter-contracts.
     #[serde(default)]
@@ -63,7 +63,7 @@ impl Serializer for InvokeContractPayload {
             let len = u8::read(reader)? as usize;
             let mut parameters = Vec::with_capacity(len);
             for _ in 0..len {
-                parameters.push(ValueCell::read(reader)?);
+                parameters.push(OwnedValue::read(reader)?);
             }
             let permission = InterContractPermission::read(reader)?;
 
@@ -84,5 +84,48 @@ impl Serializer for InvokeContractPayload {
         size += self.permission.size();
 
         size
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::transaction::Transaction;
+    use super::*;
+
+    #[test]
+    fn owned_parameters_roundtrip_and_clone_independently() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<InvokeContractPayload>();
+        assert_send_sync::<Transaction>();
+
+        let payload = InvokeContractPayload {
+            contract: Hash::zero(),
+            deposits: Deposits::default(),
+            entry_id: 7,
+            max_gas: 1000,
+            parameters: vec![OwnedValue::Object(vec![OwnedValue::Map([
+                (OwnedValue::from("key".to_owned()), OwnedValue::Bytes(vec![1, 2, 3])),
+            ].into_iter().collect())])],
+            permission: InterContractPermission::All,
+        };
+        let bytes = payload.to_bytes().unwrap();
+        assert_eq!(bytes.len(), payload.size());
+        let decoded = InvokeContractPayload::from_bytes(&bytes).unwrap();
+        assert_eq!(decoded.parameters, payload.parameters);
+        assert_eq!(decoded.to_bytes().unwrap(), bytes);
+        let json = serde_json::to_vec(&payload).unwrap();
+        let decoded: InvokeContractPayload = serde_json::from_slice(&json).unwrap();
+        assert_eq!(decoded.parameters, payload.parameters);
+
+        let mut cloned = payload.clone();
+        cloned.parameters[0].as_mut_vec().unwrap()[0].as_mut_map().unwrap().clear();
+        assert_eq!(payload.to_bytes().unwrap(), bytes);
+        assert_ne!(cloned.parameters, payload.parameters);
+    }
+
+    #[test]
+    fn owned_values_preserve_primitive_wire_tags() {
+        assert_eq!(OwnedValue::from(42u8).to_bytes().unwrap(), vec![0, 1, 42]);
+        assert_eq!(OwnedValue::from(true).to_bytes().unwrap(), vec![0, 7, 1]);
     }
 }

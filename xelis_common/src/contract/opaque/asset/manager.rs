@@ -1,7 +1,8 @@
 use blake3::hash;
 use log::log;
 use xelis_vm::{
-    ValueCell,
+    RuntimeValue,
+    Heap,
     VMContext,
     EnvironmentError,
     FnInstance,
@@ -63,26 +64,26 @@ fn is_valid_char_for_asset(c: char, whitespace: bool, uppercase_only: bool) -> b
 
 // Create a new asset
 // Return None if the asset already exists
-pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, params: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let (provider, state) = from_context::<P>(context)?;
     let log_level = state.log_level;
     log!(log_level, "Contract {} creating an asset", metadata.metadata.contract_executor);
 
-    let (id, values) = params.remove(4).into_owned().to_enum()?;
+    let (id, values) = heap.export(params.remove(4))?.to_enum()?;
     let max_supply = match id {
         0 => MaxSupplyMode::None,
         1 => {
             if values.len() != 1 {
                 return Err(EnvironmentError::InvalidType)
             }
-            let max = values[0].as_ref().as_u64()?;
+            let max = values[0].as_u64()?;
             MaxSupplyMode::Fixed(max)
         },
         2 => {
             if values.len() != 1 {
                 return Err(EnvironmentError::InvalidType)
             }
-            let max = values[0].as_ref().as_u64()?;
+            let max = values[0].as_u64()?;
             MaxSupplyMode::Mintable(max)
         },
         _ => return Err(EnvironmentError::InvalidType)
@@ -94,12 +95,10 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'
         }
     }
 
-    let decimals = params.remove(3)
-        .into_owned()
+    let decimals = heap.export(params.remove(3))?
         .to_u8()?;
 
-    let ticker = params.remove(2)
-        .into_owned()
+    let ticker = params.remove(2).into_owned(heap)?
         .into_string()?;
 
     if ticker.len() > TICKER_LEN {
@@ -112,8 +111,7 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'
         return Err(EnvironmentError::Expect("Asset ticker must be ASCII only".to_owned()).into());
     }
 
-    let name = params.remove(1)
-        .into_owned()
+    let name = params.remove(1).into_owned(heap)?
         .into_string()?;
     if name.len() > u8::MAX as usize {
         return Err(EnvironmentError::Expect("Asset name is too long".to_owned()).into());
@@ -130,7 +128,7 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'
     }
 
     // Now proceed to generate the asset hash
-    let id = params.remove(0).as_u64()?;
+    let id = params.remove(0).as_u64(heap)?;
 
     let mut buffer = [0u8; 40];
     buffer[0..HASH_SIZE].copy_from_slice(metadata.metadata.contract_executor.as_bytes());
@@ -178,11 +176,11 @@ pub async fn asset_create<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'
     let asset = OpaqueAsset {
         hash: asset_hash
     };
-    Ok(SysCallResult::Return(ValueCell::Opaque(asset.into()).into()))
+    Ok(SysCallResult::Return(RuntimeValue::Opaque(asset.into()).into()))
 }
 
-pub async fn asset_get_by_id<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
-    let id = params[0].as_u64()?;
+pub async fn asset_get_by_id<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, params: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    let id = params[0].as_u64(heap)?;
     let (provider, chain_state) = from_context::<P>(context)?;
 
     let mut buffer = [0u8; 40];
@@ -197,12 +195,11 @@ pub async fn asset_get_by_id<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstanc
     let asset = OpaqueAsset {
         hash: asset_hash
     };
-    Ok(SysCallResult::Return(ValueCell::Opaque(asset.into()).into()))
+    Ok(SysCallResult::Return(RuntimeValue::Opaque(asset.into()).into()))
 }
 
-pub async fn asset_get_by_hash<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
-    let hash: Hash = params.remove(0)
-        .into_owned()
+pub async fn asset_get_by_hash<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, params: FnParams<'_>, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    let hash: Hash = params.remove(0).into_owned(heap)?
         .into_opaque_type()?;
 
     let (provider, chain_state) = from_context::<P>(context)?;
@@ -214,7 +211,7 @@ pub async fn asset_get_by_hash<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInsta
     let asset = OpaqueAsset {
         hash
     };
-    Ok(SysCallResult::Return(ValueCell::Opaque(asset.into()).into()))
+    Ok(SysCallResult::Return(RuntimeValue::Opaque(asset.into()).into()))
 }
 
 #[cfg(test)]

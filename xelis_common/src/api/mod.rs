@@ -9,7 +9,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use bulletproofs::RangeProof;
-use xelis_vm::ValueCell;
+use xelis_vm::OwnedValue;
 use crate::{
     account::Nonce,
     contract::{ContractLog, ScheduledExecutionKindLog, ExitError},
@@ -409,7 +409,7 @@ pub enum RPCContractLog<'a> {
     },
     ExitPayload {
         /// Payload returned by the contract.
-        payload: Cow<'a, ValueCell>,
+        payload: Cow<'a, OwnedValue>,
     },
     TransferPayload {
         /// Contract that emitted the transfer.
@@ -421,7 +421,7 @@ pub enum RPCContractLog<'a> {
         /// Destination address that received the transfer.
         destination: Cow<'a, Address>,
         /// Payload attached to the transfer.
-        payload: Cow<'a, ValueCell>,
+        payload: Cow<'a, OwnedValue>,
     },
     ExitError {
         /// Error returned by the contract.

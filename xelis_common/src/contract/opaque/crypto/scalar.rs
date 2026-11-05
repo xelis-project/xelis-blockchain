@@ -3,6 +3,8 @@ use curve25519_dalek::Scalar;
 use serde::{Deserialize, Serialize};
 use sha3::Sha3_512;
 use xelis_vm::{
+    RuntimeValue,
+    Heap,
     Opaque,
     traits::DynSerializable,
     VMContext,
@@ -11,8 +13,7 @@ use xelis_vm::{
     FnParams,
     FnReturnType,
     Primitive,
-    SysCallResult,
-    ValueCell
+    SysCallResult
 };
 
 use crate::{
@@ -47,96 +48,110 @@ impl DynSerializable for OpaqueScalar {
     }
 }
 
-pub fn scalar_from_u64(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn scalar_from_u64(_: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let value = params[0]
-        .as_u64()?;
+        .as_u64(heap)?;
 
     let scalar = Scalar::from(value);
     Ok(SysCallResult::Return(OpaqueScalar(scalar).into()))
 }
 
-pub fn scalar_invert(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn scalar_invert(zelf: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let zelf: &OpaqueScalar = zelf.as_opaque_type()?;
+    heap.with_value(zelf, |zelf, _heap| {
+        let zelf: &OpaqueScalar = zelf.as_opaque_type()?;
 
-    if zelf.0 == Scalar::ZERO {
-        return Err(EnvironmentError::Static("Division by zero"));
-    }
+        if zelf.0 == Scalar::ZERO {
+            return Err(EnvironmentError::Static("Division by zero"));
+        }
 
-    let inverted = zelf.0.invert();
-    Ok(SysCallResult::Return(OpaqueScalar(inverted).into()))
+        let inverted = zelf.0.invert();
+        Ok(SysCallResult::Return(OpaqueScalar(inverted).into()))
+    })
 }
 
-pub fn scalar_is_zero(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn scalar_is_zero(zelf: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let zelf: &OpaqueScalar = zelf.as_opaque_type()?;
-    let is_zero = zelf.0 == Scalar::ZERO;
+    heap.with_value(zelf, |zelf, _heap| {
+        let zelf: &OpaqueScalar = zelf.as_opaque_type()?;
+        let is_zero = zelf.0 == Scalar::ZERO;
 
-    Ok(SysCallResult::Return(Primitive::Boolean(is_zero).into()))
+        Ok(SysCallResult::Return(Primitive::Boolean(is_zero).into()))
+    })
 }
 
-pub fn scalar_mul_base(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn scalar_mul_base(zelf: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let zelf: &OpaqueScalar = zelf.as_opaque_type()?;
+    heap.with_value(zelf, |zelf, _heap| {
+        let zelf: &OpaqueScalar = zelf.as_opaque_type()?;
 
-    let point = zelf.0 * (*G);
+        let point = zelf.0 * (*G);
 
-    Ok(SysCallResult::Return(OpaqueRistrettoPoint::Decompressed(
-        None,
-        point,
-    ).into()))
+        Ok(SysCallResult::Return(OpaqueRistrettoPoint::Decompressed(
+            None,
+            point,
+        ).into()))
+    })
 }
 
-pub fn scalar_add(zelf: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn scalar_add(zelf: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let zelf: &OpaqueScalar = zelf.as_opaque_type()?;
-    let other: &OpaqueScalar = params[0]
-        .as_ref()
-        .as_opaque_type()?;
+    heap.with_value(zelf, |zelf, heap| {
+        let zelf: &OpaqueScalar = zelf.as_opaque_type()?;
+        let other: &OpaqueScalar = params[0]
+            .as_ref(heap)
+            .as_opaque_type()?;
 
-    let result = zelf.0 + other.0;
-    Ok(SysCallResult::Return(OpaqueScalar(result).into()))
+        let result = zelf.0 + other.0;
+        Ok(SysCallResult::Return(OpaqueScalar(result).into()))
+    })
 }
 
-pub fn scalar_sub(zelf: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn scalar_sub(zelf: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let zelf: &OpaqueScalar = zelf.as_opaque_type()?;
-    let other: &OpaqueScalar = params[0]
-        .as_ref()
-        .as_opaque_type()?;
+    heap.with_value(zelf, |zelf, heap| {
+        let zelf: &OpaqueScalar = zelf.as_opaque_type()?;
+        let other: &OpaqueScalar = params[0]
+            .as_ref(heap)
+            .as_opaque_type()?;
 
-    let result = zelf.0 - other.0;
-    Ok(SysCallResult::Return(OpaqueScalar(result).into()))
+        let result = zelf.0 - other.0;
+        Ok(SysCallResult::Return(OpaqueScalar(result).into()))
+    })
 }
 
-pub fn scalar_mul(zelf: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn scalar_mul(zelf: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let zelf: &OpaqueScalar = zelf.as_opaque_type()?;
-    let other: &OpaqueScalar = params[0]
-        .as_ref()
-        .as_opaque_type()?;
+    heap.with_value(zelf, |zelf, heap| {
+        let zelf: &OpaqueScalar = zelf.as_opaque_type()?;
+        let other: &OpaqueScalar = params[0]
+            .as_ref(heap)
+            .as_opaque_type()?;
 
-    let result = zelf.0 * other.0;
-    Ok(SysCallResult::Return(OpaqueScalar(result).into()))
+        let result = zelf.0 * other.0;
+        Ok(SysCallResult::Return(OpaqueScalar(result).into()))
+    })
 }
 
-pub fn scalar_div(zelf: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn scalar_div(zelf: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let zelf: &OpaqueScalar = zelf.as_opaque_type()?;
-    let other: &OpaqueScalar = params[0]
-        .as_ref()
-        .as_opaque_type()?;
+    heap.with_value(zelf, |zelf, heap| {
+        let zelf: &OpaqueScalar = zelf.as_opaque_type()?;
+        let other: &OpaqueScalar = params[0]
+            .as_ref(heap)
+            .as_opaque_type()?;
 
-    if other.0 == Scalar::ZERO {
-        return Err(EnvironmentError::Static("Division by zero"));
-    }
+        if other.0 == Scalar::ZERO {
+            return Err(EnvironmentError::Static("Division by zero"));
+        }
 
-    let result = zelf.0 * other.0.invert();
-    Ok(SysCallResult::Return(OpaqueScalar(result).into()))
+        let result = zelf.0 * other.0.invert();
+        Ok(SysCallResult::Return(OpaqueScalar(result).into()))
+    })
 }
 
-pub fn scalar_from_bytes(_: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
-    let bytes: [u8; SCALAR_SIZE] = ValueCell::to_bytes(&mut params.remove(0).into_owned())?
+pub fn scalar_from_bytes(_: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    let bytes: [u8; SCALAR_SIZE] = params.remove(0).into_owned(heap)?.to_bytes()?
         .try_into()
         .ok()
         .context("Expected a byte array of length 32")?;
@@ -149,17 +164,19 @@ pub fn scalar_from_bytes(_: FnInstance, mut params: FnParams, _: &ModuleMetadata
     Ok(SysCallResult::Return(scalar))
 }
 
-pub fn scalar_to_bytes(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn scalar_to_bytes(zelf: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let zelf: &OpaqueScalar = zelf.as_opaque_type()?;
-    let bytes = zelf.0.to_bytes().to_vec();
+    heap.with_value(zelf, |zelf, _heap| {
+        let zelf: &OpaqueScalar = zelf.as_opaque_type()?;
+        let bytes = zelf.0.to_bytes().to_vec();
 
-    Ok(SysCallResult::Return(ValueCell::Bytes(bytes).into()))
+        Ok(SysCallResult::Return(RuntimeValue::Bytes(bytes).into()))
+    })
 }
 
-pub fn scalar_hash_from_bytes(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn scalar_hash_from_bytes(_: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, context: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let bytes = params[0]
-        .as_ref()
+        .as_ref(heap)
         .as_bytes()?;
 
     context.increase_gas_usage(bytes.len() as u64 * 5)?;

@@ -1,6 +1,6 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use xelis_vm::ValueCell;
+use xelis_vm::OwnedValue;
 use crate::{
     block::TopoHeight,
     crypto::{Hash, hash_multiple},
@@ -62,7 +62,7 @@ pub enum ScheduledExecutionKindLog {
     BlockEnd {
         chunk_id: u16,
         max_gas: u64,
-        params: Vec<ValueCell>,
+        params: Vec<OwnedValue>,
     },
 }
 

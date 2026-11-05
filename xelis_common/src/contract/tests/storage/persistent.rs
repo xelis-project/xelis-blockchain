@@ -50,7 +50,7 @@ async fn test_insert_and_get() {
 
     assert!(result.is_success(), "insert should succeed: {:?}", result);
 
-    let key = ValueCell::Bytes(b"key".to_vec());
+    let key = OwnedValue::Bytes(b"key".to_vec());
     let storage = &chain_state.contract_caches.get(&contract_hash)
         .expect("contract cache")
         .storage;
@@ -83,11 +83,10 @@ async fn test_insert_and_get() {
         .as_vec()
         .unwrap()
         [0]
-        .as_ref()
         .as_vec()
         .unwrap()
         .iter()
-        .map(|v| v.as_ref().as_u64().unwrap())
+        .map(|v| v.as_u64().unwrap())
         .collect();
     assert!(values == vec![1, 2, 3]);
 }
@@ -139,7 +138,7 @@ async fn test_store_overwrite_delete_and_missing_keys() {
         .expect("contract cache")
         .storage;
     assert!(
-        storage.get(&ValueCell::Bytes(b"key".to_vec())).is_none_or(|entry| {
+        storage.get(&OwnedValue::Bytes(b"key".to_vec())).is_none_or(|entry| {
             entry.as_ref().is_none_or(|(_, value)| value.is_none())
         }),
         "deleted key should not persist with a value"

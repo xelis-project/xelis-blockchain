@@ -5,6 +5,8 @@ use matriochka::ResultExt;
 use curve25519_dalek::{ristretto::CompressedRistretto, traits::{Identity, IsIdentity}, RistrettoPoint, Scalar};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use xelis_vm::{
+    RuntimeValue,
+    Heap,
     Opaque,
     traits::DynSerializable,
     VMContext,
@@ -13,8 +15,7 @@ use xelis_vm::{
     FnParams,
     FnReturnType,
     Primitive,
-    SysCallResult,
-    ValueCell
+    SysCallResult
 };
 
 use crate::{
@@ -165,109 +166,127 @@ impl DynSerializable for OpaqueRistrettoPoint {
     }
 }
 
-pub fn ristretto_is_identity(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn ristretto_is_identity(zelf: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let zelf: &OpaqueRistrettoPoint = zelf.as_opaque_type()?;
-    Ok(SysCallResult::Return(Primitive::Boolean(zelf.is_identity()).into()))
+    heap.with_value(zelf, |zelf, _heap| {
+        let zelf: &OpaqueRistrettoPoint = zelf.as_opaque_type()?;
+        Ok(SysCallResult::Return(Primitive::Boolean(zelf.is_identity()).into()))
+    })
 }
 
-pub fn ristretto_identity(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn ristretto_identity(_: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, _heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let point = OpaqueRistrettoPoint::Compressed(CompressedRistretto::identity());
     Ok(SysCallResult::Return(point.into()))
 }
 
-pub fn ristretto_add_scalar(zelf: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
-    let mut zelf = zelf?;
-    let opaque: &mut OpaqueRistrettoPoint = zelf.as_opaque_type_mut()?;
-    let scalar: &OpaqueScalar = params[0]
-        .as_ref()
-        .as_opaque_type()?;
+pub fn ristretto_add_scalar(zelf: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    let zelf = zelf?;
+    heap.with_value(zelf, |zelf, heap| {
+        let opaque: &mut OpaqueRistrettoPoint = zelf.as_opaque_type_mut()?;
+        let scalar: &OpaqueScalar = params[0]
+            .as_ref(heap)
+            .as_opaque_type()?;
 
-    let computable = opaque.computable()
-        .context("Ciphertext not computable")?;
+        let computable = opaque.computable()
+            .context("Ciphertext not computable")?;
 
-    *computable += scalar.0 * (*G);
+        *computable += scalar.0 * (*G);
 
-    Ok(SysCallResult::Return(zelf))
+        Ok::<(), EnvironmentError>(())
+    })?;
+    Ok(SysCallResult::Return(zelf.reference(heap)))
 }
 
-pub fn ristretto_sub_scalar(zelf: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
-    let mut zelf = zelf?;
-    let opaque: &mut OpaqueRistrettoPoint = zelf.as_opaque_type_mut()?;
-    let scalar: &OpaqueScalar = params[0]
-        .as_ref()
-        .as_opaque_type()?;
+pub fn ristretto_sub_scalar(zelf: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    let zelf = zelf?;
+    heap.with_value(zelf, |zelf, heap| {
+        let opaque: &mut OpaqueRistrettoPoint = zelf.as_opaque_type_mut()?;
+        let scalar: &OpaqueScalar = params[0]
+            .as_ref(heap)
+            .as_opaque_type()?;
 
-    let computable = opaque.computable()?;
+        let computable = opaque.computable()?;
 
-    *computable -= scalar.0 * (*G);
+        *computable -= scalar.0 * (*G);
 
-    Ok(SysCallResult::Return(zelf))
+        Ok::<(), EnvironmentError>(())
+    })?;
+    Ok(SysCallResult::Return(zelf.reference(heap)))
 }
 
-pub fn ristretto_add(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
-    let mut zelf = zelf?;
-    let opaque: &mut OpaqueRistrettoPoint = zelf.as_opaque_type_mut()?;
-    let point: OpaqueRistrettoPoint = params.remove(0)
-        .into_owned()
-        .into_opaque_type()?;
+pub fn ristretto_add(zelf: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    let zelf = zelf?;
+    heap.with_value(zelf, |zelf, heap| {
+        let opaque: &mut OpaqueRistrettoPoint = zelf.as_opaque_type_mut()?;
+        let point: OpaqueRistrettoPoint = params.remove(0).into_owned(heap)?
+            .into_opaque_type()?;
 
-    let computable = opaque.computable()?;
+        let computable = opaque.computable()?;
 
-    *computable += point.into_point()?;
+        *computable += point.into_point()?;
 
-    Ok(SysCallResult::Return(zelf))
+        Ok::<(), EnvironmentError>(())
+    })?;
+    Ok(SysCallResult::Return(zelf.reference(heap)))
 }
 
-pub fn ristretto_sub(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
-    let mut zelf = zelf?;
-    let opaque: &mut OpaqueRistrettoPoint = zelf.as_opaque_type_mut()?;
-    let point: OpaqueRistrettoPoint = params.remove(0)
-        .into_owned()
-        .into_opaque_type()?;
+pub fn ristretto_sub(zelf: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    let zelf = zelf?;
+    heap.with_value(zelf, |zelf, heap| {
+        let opaque: &mut OpaqueRistrettoPoint = zelf.as_opaque_type_mut()?;
+        let point: OpaqueRistrettoPoint = params.remove(0).into_owned(heap)?
+            .into_opaque_type()?;
 
-    let computable = opaque.computable()?;
+        let computable = opaque.computable()?;
 
-    *computable -= point.into_point()?;
+        *computable -= point.into_point()?;
 
-    Ok(SysCallResult::Return(zelf))
+        Ok::<(), EnvironmentError>(())
+    })?;
+    Ok(SysCallResult::Return(zelf.reference(heap)))
 }
 
-pub fn ristretto_mul_scalar(zelf: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
-    let mut zelf = zelf?;
-    let opaque: &mut OpaqueRistrettoPoint = zelf.as_opaque_type_mut()?;
-    let scalar: &OpaqueScalar = params[0]
-        .as_ref()
-        .as_opaque_type()?;
+pub fn ristretto_mul_scalar(zelf: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    let zelf = zelf?;
+    heap.with_value(zelf, |zelf, heap| {
+        let opaque: &mut OpaqueRistrettoPoint = zelf.as_opaque_type_mut()?;
+        let scalar: &OpaqueScalar = params[0]
+            .as_ref(heap)
+            .as_opaque_type()?;
 
-    let computable = opaque.computable()?;
+        let computable = opaque.computable()?;
 
-    *computable *= scalar.0;
+        *computable *= scalar.0;
 
-    Ok(SysCallResult::Return(zelf))
+        Ok::<(), EnvironmentError>(())
+    })?;
+    Ok(SysCallResult::Return(zelf.reference(heap)))
 }
 
-pub fn ristretto_div_scalar(zelf: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
-    let mut zelf = zelf?;
-    let opaque: &mut OpaqueRistrettoPoint = zelf.as_opaque_type_mut()?;
-    let scalar: &OpaqueScalar = params[0]
-        .as_ref()
-        .as_opaque_type()?;
+pub fn ristretto_div_scalar(zelf: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    let zelf = zelf?;
+    heap.with_value(zelf, |zelf, heap| {
+        let opaque: &mut OpaqueRistrettoPoint = zelf.as_opaque_type_mut()?;
+        let scalar: &OpaqueScalar = params[0]
+            .as_ref(heap)
+            .as_opaque_type()?;
 
-    if scalar.0 == Scalar::ZERO {
-        return Err(EnvironmentError::Static("Scalar cannot be zero for division"));
-    }
+        if scalar.0 == Scalar::ZERO {
+            return Err(EnvironmentError::Static("Scalar cannot be zero for division"));
+        }
 
-    let computable = opaque.computable()?;
+        let computable = opaque.computable()?;
 
-    *computable *= scalar.0.invert();
+        *computable *= scalar.0.invert();
 
-    Ok(SysCallResult::Return(zelf))
+        Ok::<(), EnvironmentError>(())
+    })?;
+    Ok(SysCallResult::Return(zelf.reference(heap)))
 }
 
-pub fn ristretto_from_bytes(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn ristretto_from_bytes(_: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let bytes: &[u8] = params[0]
-        .as_ref()
+        .as_ref(heap)
         .as_bytes()?;
 
     let compressed = CompressedRistretto::from_slice(bytes)
@@ -277,11 +296,13 @@ pub fn ristretto_from_bytes(_: FnInstance, params: FnParams, _: &ModuleMetadata<
     Ok(SysCallResult::Return(point.into()))
 }
 
-pub fn ristretto_to_bytes(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn ristretto_to_bytes(zelf: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let zelf: &OpaqueRistrettoPoint = zelf.as_opaque_type()?;
-    let compressed = zelf.compressed();
+    heap.with_value(zelf, |zelf, _heap| {
+        let zelf: &OpaqueRistrettoPoint = zelf.as_opaque_type()?;
+        let compressed = zelf.compressed();
 
-    let bytes = compressed.as_bytes().to_vec();
-    Ok(SysCallResult::Return(ValueCell::Bytes(bytes).into()))
+        let bytes = compressed.as_bytes().to_vec();
+        Ok(SysCallResult::Return(RuntimeValue::Bytes(bytes).into()))
+    })
 }

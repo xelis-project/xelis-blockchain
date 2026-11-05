@@ -1,8 +1,9 @@
-use std::{collections::{VecDeque, hash_map::Entry}, hash, sync::Arc};
+use std::{collections::hash_map::Entry, hash, sync::Arc};
 
 use indexmap::IndexMap;
 use log::{debug, log};
 use xelis_vm::{
+    Heap,
     Opaque,
     VMContext,
     EnvironmentError,
@@ -53,11 +54,10 @@ impl hash::Hash for OpaqueContract {
     }
 }
 
-pub async fn contract_new<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+pub async fn contract_new<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, params: FnParams<'_>, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
-    let contract: Hash = params.remove(0)
-        .into_owned()
+    let contract: Hash = params.remove(0).into_owned(heap)?
         .into_opaque_type()?;
 
     // Load the module from the provider
@@ -92,27 +92,24 @@ pub async fn contract_new<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'
     Ok(SysCallResult::Return(opaque.into()))
 }
 
-pub async fn contract_call<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+pub async fn contract_call<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance<'a>, params: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let opaque: &OpaqueContract = zelf.as_opaque_type()?;
+    let opaque = zelf.as_opaque_type::<OpaqueContract>(heap)?.clone();
 
     let (provider, chain_state) = from_context::<P>(context)?;
     let log_level = chain_state.log_level;
 
-    let assets = params.remove(2)
-        .into_owned()
+    let assets = heap.export(params.remove(2))?
         .to_map()?;
 
-    let p = params.remove(1)
-        .into_owned()
+    let p = heap.export(params.remove(1))?
         .to_vec()?;
 
     if p.len() > (u8::MAX - 1) as usize {
         return Err(EnvironmentError::Static("Too many parameters"));
     }
 
-    let chunk_id = params.remove(0)
-        .into_owned()
+    let chunk_id = params.remove(0).into_owned(heap)?
         .as_u16()?;
 
     log!(log_level, "Contract {} calling contract {} chunk {} with {} assets and {} parameters", metadata.metadata.contract_executor, opaque.hash, chunk_id, assets.len(), p.len());
@@ -142,7 +139,7 @@ pub async fn contract_call<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstan
 
     // Verify the chunk and parameters before executing the contract
     let validator = ModuleValidator::new(&opaque.contract_module.module, environment.as_ref().map_or(&metadata.environment, |e| &e));
-    validator.verify_invoke_chunk(chunk_id as usize, p.iter().map(|v| v.as_ref()))
+    validator.verify_invoke_chunk(chunk_id as usize, p.iter())
         .map_err(|e| {
             debug!("Contract call {} chunk {} validation failed from {}: {}", opaque.hash, chunk_id, metadata.metadata.contract_executor, e);
             EnvironmentError::Static("Invalid parameters for contract call")
@@ -151,7 +148,7 @@ pub async fn contract_call<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstan
     let mut deposits = IndexMap::new();
     for (k, v) in assets {
         let asset: Hash = k.into_opaque_type()?;
-        let amount = v.as_ref().as_u64()?;
+        let amount = v.as_u64()?;
 
         if amount == 0 {
             return Err(EnvironmentError::Static("amount is zero"));
@@ -171,8 +168,8 @@ pub async fn contract_call<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstan
 
     let p = p.into_iter()
         .rev()
-        .map(|v| v.as_ref().clone().into())
-        .collect::<VecDeque<_>>();
+        .map(|v| heap.import_owned(v).into())
+        .collect::<Vec<_>>();
 
     Ok(SysCallResult::ModuleCall {
         module: opaque.contract_module.module.clone(),
@@ -188,19 +185,17 @@ pub async fn contract_call<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstan
     })
 }
 
-pub async fn contract_delegate<'a, 'ty, 'r>(zelf: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, _: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+pub async fn contract_delegate<'a, 'ty, 'r>(zelf: FnInstance<'a>, params: FnParams<'_>, metadata: &ModuleMetadata<'_>, _: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let opaque: &OpaqueContract = zelf.as_opaque_type()?;
-    let p = params.remove(1)
-        .into_owned()
+    let opaque = zelf.as_opaque_type::<OpaqueContract>(heap)?.clone();
+    let p = heap.export(params.remove(1))?
         .to_vec()?;
 
     if p.len() > (u8::MAX - 1) as usize {
         return Err(EnvironmentError::Static("Too many parameters"));
     }
 
-    let chunk_id = params.remove(0)
-        .into_owned()
+    let chunk_id = params.remove(0).into_owned(heap)?
         .as_u16()?;
 
     if !opaque.contract_module.module.is_public_chunk(chunk_id as usize) {
@@ -212,7 +207,7 @@ pub async fn contract_delegate<'a, 'ty, 'r>(zelf: FnInstance<'a>, mut params: Fn
     }
 
     let validator = ModuleValidator::new(&opaque.contract_module.module, &metadata.environment);
-    validator.verify_invoke_chunk(chunk_id as usize, p.iter().map(|v| v.as_ref()))
+    validator.verify_invoke_chunk(chunk_id as usize, p.iter())
         .map_err(|e| {
             debug!("Contract delegate {} chunk {} validation failed from {}: {}", opaque.hash, chunk_id, metadata.metadata.contract_executor, e);
             EnvironmentError::Static("Invalid parameters for contract delegate")
@@ -220,8 +215,8 @@ pub async fn contract_delegate<'a, 'ty, 'r>(zelf: FnInstance<'a>, mut params: Fn
 
     let p = p.into_iter()
         .rev()
-        .map(|v| v.to_owned().into())
-        .collect::<VecDeque<_>>();
+        .map(|v| heap.import_owned(v).into())
+        .collect::<Vec<_>>();
 
     Ok(SysCallResult::ModuleCall {
         module: opaque.contract_module.module.clone(),
@@ -237,9 +232,11 @@ pub async fn contract_delegate<'a, 'ty, 'r>(zelf: FnInstance<'a>, mut params: Fn
     })
 }
 
-pub fn contract_get_hash<'a>(zelf: FnInstance<'a>, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext<'_, '_>) -> FnReturnType<ContractMetadata> {
+pub fn contract_get_hash<'a>(zelf: FnInstance<'a>, _: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext<'_, '_>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let opaque: &OpaqueContract = zelf.as_opaque_type()?;
+    heap.with_value(zelf, |zelf, _heap| {
+        let opaque: &OpaqueContract = zelf.as_opaque_type()?;
 
-    Ok(SysCallResult::Return(opaque.hash.clone().into()))
+        Ok(SysCallResult::Return(opaque.hash.clone().into()))
+    })
 }

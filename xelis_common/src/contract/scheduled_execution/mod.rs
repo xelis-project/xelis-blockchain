@@ -8,6 +8,7 @@ use log::log;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use xelis_vm::{
+    Heap,
     PrimitiveInteger,
     Opaque,
     VMContext,
@@ -17,7 +18,7 @@ use xelis_vm::{
     FnReturnType,
     Primitive,
     SysCallResult,
-    ValueCell,
+    OwnedValue,
 };
 use crate::{
     config::{
@@ -108,7 +109,7 @@ pub struct ScheduledExecution {
     // Chunk id
     pub chunk_id: u16,
     // Parameters to give for the invoke
-    pub params: Vec<ValueCell>,
+    pub params: Vec<OwnedValue>,
     // Max gas available to the execution
     // the remaining gas will be paid back to
     // the contract balance
@@ -201,10 +202,9 @@ impl hash::Hash for OpaqueScheduledExecution {
 async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider<'ty>>(
     kind: ScheduledExecutionKind,
     _: FnInstance<'a>,
-    mut params: FnParams,
+    params: FnParams<'_>,
     metadata: &ModuleMetadata<'_>,
-    context: &mut VMContext<'ty, 'r>
-) -> FnReturnType<ContractMetadata> {
+    context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
     match kind {
@@ -227,13 +227,12 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider<'ty>>(
         }
     }
 
-    let use_contract_balance = params.remove(3).as_bool()?;
-    let max_gas = params.remove(2).as_u64()?;
-    let p = params.remove(1)
-        .into_owned()
+    let use_contract_balance = params.remove(3).as_bool(heap)?;
+    let max_gas = params.remove(2).as_u64(heap)?;
+    let p = heap.export(params.remove(1))?
         .into_vec()?;
 
-    let chunk_id = params.remove(0).as_u16()?;
+    let chunk_id = params.remove(0).as_u16(heap)?;
     if !metadata.module.is_callable_chunk(chunk_id as usize) {
         log!(state.log_level, "Scheduled execution for chunk {} is not callable", chunk_id);
         return Ok(SysCallResult::Return(Primitive::Null.into()));
@@ -254,8 +253,8 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider<'ty>>(
         return Ok(SysCallResult::Return(Primitive::Null.into()));
     }
 
-    let params: Vec<ValueCell> = p.into_iter()
-        .map(|v| v.into_owned().into())
+    let params: Vec<OwnedValue> = p.into_iter()
+        .map(|v| v.into())
         .collect();
 
     let params_size = params.size();
@@ -374,37 +373,35 @@ async fn schedule_execution<'a, 'ty, 'r, P: ContractProvider<'ty>>(
 
 pub async fn scheduled_execution_new_at_topoheight<'a, 'ty, 'r, P: ContractProvider<'ty>>(
     instance: FnInstance<'a>,
-    params: FnParams,
+    params: FnParams<'_>,
     metadata: &ModuleMetadata<'_>,
-    context: &mut VMContext<'ty, 'r>,
-) -> FnReturnType<ContractMetadata> {
-    let execution_topoheight = params[4].as_u64()?;
+    context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    let execution_topoheight = params[4].as_u64(heap)?;
     let registration_topoheight = state_from_context(context)?.topoheight;
-    schedule_execution::<P>(ScheduledExecutionKind::TopoHeight { execution_topoheight, registration_topoheight }, instance, params, metadata, context).await
+    schedule_execution::<P>(ScheduledExecutionKind::TopoHeight { execution_topoheight, registration_topoheight }, instance, params, metadata, context, heap).await
 }
 
 pub async fn scheduled_execution_new_at_block_end<'a, 'ty, 'r, P: ContractProvider<'ty>>(
     instance: FnInstance<'a>,
-    params: FnParams,
+    params: FnParams<'_>,
     metadata: &ModuleMetadata<'_>,
-    context: &mut VMContext<'ty, 'r>,
-) -> FnReturnType<ContractMetadata> {
-    schedule_execution::<P>(ScheduledExecutionKind::BlockEnd, instance, params, metadata, context).await
+    context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    schedule_execution::<P>(ScheduledExecutionKind::BlockEnd, instance, params, metadata, context, heap).await
 }
 
-pub fn scheduled_execution_get_hash(instance: FnInstance<'_>, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn scheduled_execution_get_hash(instance: FnInstance<'_>, _: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let instance = instance?;
     let scheduled_execution: &OpaqueScheduledExecution = instance
-        .as_ref()
+        .as_ref(heap)
         .as_opaque_type()?;
 
     Ok(SysCallResult::Return(scheduled_execution.hash.clone().into()))
 }
 
-pub fn scheduled_execution_get_topoheight(instance: FnInstance<'_>, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn scheduled_execution_get_topoheight(instance: FnInstance<'_>, _: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let instance = instance?;
     let scheduled_execution: &OpaqueScheduledExecution = instance
-        .as_ref()
+        .as_ref(heap)
         .as_opaque_type()?;
 
     match scheduled_execution.kind {
@@ -415,15 +412,14 @@ pub fn scheduled_execution_get_topoheight(instance: FnInstance<'_>, _: FnParams,
 
 pub fn scheduled_execution_get_max_gas<'a, 'ty, 'r>(
     instance: FnInstance<'a>,
-    _: FnParams,
+    _: FnParams<'_>,
     _: &ModuleMetadata<'_>,
-    context: &mut VMContext<'ty, 'r>,
-) -> FnReturnType<ContractMetadata> {
+    context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let state = state_from_context(context)?;
 
     let instance = instance?;
     let scheduled_execution: &OpaqueScheduledExecution = instance
-        .as_ref()
+        .as_ref(heap)
         .as_opaque_type()?;
 
     let execution = state.executions.get(&scheduled_execution.hash)?;
@@ -433,15 +429,14 @@ pub fn scheduled_execution_get_max_gas<'a, 'ty, 'r>(
 
 pub fn scheduled_execution_get_pending<'a, 'ty, 'r>(
     _: FnInstance<'a>,
-    params: FnParams,
+    params: FnParams<'_>,
     metadata: &ModuleMetadata<'_>,
-    context: &mut VMContext<'ty, 'r>,
-) -> FnReturnType<ContractMetadata> {
+    context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let state = state_from_context(context)?;
 
     let param = &params[0];
-    let kind = if !param.is_null() {
-        ScheduledExecutionKind::TopoHeight { execution_topoheight: param.as_u64()?, registration_topoheight: state.topoheight }
+    let kind = if !param.is_null(heap) {
+        ScheduledExecutionKind::TopoHeight { execution_topoheight: param.as_u64(heap)?, registration_topoheight: state.topoheight }
     } else {
         ScheduledExecutionKind::BlockEnd
     };
@@ -460,16 +455,15 @@ pub fn scheduled_execution_get_pending<'a, 'ty, 'r>(
 
 pub async fn scheduled_execution_increase_max_gas<'a, 'ty, 'r, P: ContractProvider<'ty>>(
     instance: FnInstance<'a>,
-    params: FnParams,
+    params: FnParams<'_>,
     metadata: &ModuleMetadata<'_>,
-    context: &mut VMContext<'ty, 'r>,
-) -> FnReturnType<ContractMetadata> {
-    let amount = params[0].as_u64()?;
-    let use_contract_balance = params[1].as_bool()?;
+    context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    let amount = params[0].as_u64(heap)?;
+    let use_contract_balance = params[1].as_bool(heap)?;
 
     let instance = instance?;
     let scheduled_execution: &OpaqueScheduledExecution = instance
-        .as_ref()
+        .as_ref(heap)
         .as_opaque_type()?;
 
     if amount == 0 {

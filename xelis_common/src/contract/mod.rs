@@ -29,6 +29,9 @@ use indexmap::IndexMap;
 use log::{debug, log};
 use silex_builder::{EnvironmentBuilder, xstd::*};
 use xelis_vm::{
+    RuntimeValue,
+    OpaqueChild,
+    Heap,
     PrimitiveInteger,
     VMContext,
     EnvironmentError,
@@ -37,11 +40,10 @@ use xelis_vm::{
     FnReturnType,
     FnType,
     FunctionHandler,
-    OpaqueWrapper,
     Primitive,
     SysCallResult,
     Type,
-    ValueCell,
+    OwnedValue,
     Environment,
 };
 use crate::{
@@ -108,17 +110,22 @@ pub struct CallbackEvent {
     // Event id
     pub event_id: u64,
     // Params to call the callback
-    pub params: Vec<ValueCell>,
+    pub params: Vec<OwnedValue>,
 }
 
 macro_rules! async_handler {
     ($func: expr) => {
-        move |a, b, c, d| {
-          Box::pin($func(a, b, c, d))
+        move |a, b, c, d, e| {
+          Box::pin($func(a, b, c, d, e))
         }
     };
 }
 
+// Native handlers below are trusted VM extensions. Runtime values stay in the
+// current execution and its local futures; only OwnedValue and portable opaque
+// payloads enter host caches, storage, events, and scheduled calls. Values
+// imported into the heap are owned trees, so they cannot introduce cycles.
+// These invariants justify the unchecked native registrations below.
 // Build the environment for the contract
 pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVersion) -> EnvironmentBuilder<'static, ContractMetadata> {
     debug!("Building environment for contract");
@@ -142,10 +149,10 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
     env.register_hook("constructor", vec![], Some(Type::U64));
 
     env.get_mut_function("println", None)
-        .set_on_call(FunctionHandler::Sync(println_fn));
+        .set_on_call(unsafe { FunctionHandler::sync_unchecked(println_fn) });
 
     env.get_mut_function("debug", None)
-        .set_on_call(FunctionHandler::Sync(debug_fn));
+        .set_on_call(unsafe { FunctionHandler::sync_unchecked(debug_fn) });
 
     // Opaque type but we provide getters
     // All opaque types not allowed as entry input
@@ -207,7 +214,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "current",
             tx_type.clone(),
             vec![],
-            FunctionHandler::Sync(transaction),
+            unsafe { FunctionHandler::sync_unchecked(transaction) },
             5,
             Some(Type::Optional(Box::new(tx_type.clone()))),
             "Returns the current transaction when execution was started by a transaction."
@@ -216,7 +223,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "nonce",
             Some(tx_type.clone()),
             vec![],
-            FunctionHandler::Sync(transaction_nonce),
+            unsafe { FunctionHandler::sync_unchecked(transaction_nonce) },
             5,
             Some(Type::U64),
             "Returns the transaction nonce."
@@ -225,7 +232,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "hash",
             Some(tx_type.clone()),
             vec![],
-            FunctionHandler::Sync(transaction_hash),
+            unsafe { FunctionHandler::sync_unchecked(transaction_hash) },
             5,
             Some(hash_type.clone()),
             "Returns the transaction hash."
@@ -234,7 +241,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "source",
             Some(tx_type.clone()),
             vec![],
-            FunctionHandler::Sync(transaction_source),
+            unsafe { FunctionHandler::sync_unchecked(transaction_source) },
             5,
             Some(address_type.clone()),
             "Returns the source address of the transaction."
@@ -243,7 +250,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "fee",
             Some(tx_type.clone()),
             vec![],
-            FunctionHandler::Sync(transaction_fee),
+            unsafe { FunctionHandler::sync_unchecked(transaction_fee) },
             5,
             Some(Type::U64),
             "Returns the transaction fee in atomic units."
@@ -252,7 +259,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "signature",
             Some(tx_type.clone()),
             vec![],
-            FunctionHandler::Sync(transaction_signature),
+            unsafe { FunctionHandler::sync_unchecked(transaction_signature) },
             5,
             Some(signature_type.clone()),
             "Returns the transaction signature."
@@ -266,7 +273,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "current",
             block_type.clone(),
             vec![],
-            FunctionHandler::Sync(block_current),
+            unsafe { FunctionHandler::sync_unchecked(block_current) },
             5,
             Some(block_type.clone()),
             "Returns the current block context."
@@ -275,7 +282,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "nonce",
             Some(block_type.clone()),
             vec![],
-            FunctionHandler::Sync(block_nonce),
+            unsafe { FunctionHandler::sync_unchecked(block_nonce) },
             5,
             Some(Type::U64),
             "Returns the block nonce."
@@ -284,7 +291,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "timestamp",
             Some(block_type.clone()),
             vec![],
-            FunctionHandler::Sync(block_timestamp),
+            unsafe { FunctionHandler::sync_unchecked(block_timestamp) },
             5,
             Some(Type::U64),
             "Returns the block timestamp."
@@ -293,7 +300,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "height",
             Some(block_type.clone()),
             vec![],
-            FunctionHandler::Sync(block_height),
+            unsafe { FunctionHandler::sync_unchecked(block_height) },
             5,
             Some(Type::U64),
             "Returns the block height."
@@ -302,7 +309,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "extra_nonce",
             Some(block_type.clone()),
             vec![],
-            FunctionHandler::Sync(block_extra_nonce),
+            unsafe { FunctionHandler::sync_unchecked(block_extra_nonce) },
             5,
             Some(Type::Bytes),
             "Returns the block extra nonce bytes."
@@ -311,7 +318,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "hash",
             Some(block_type.clone()),
             vec![],
-            FunctionHandler::Sync(block_hash),
+            unsafe { FunctionHandler::sync_unchecked(block_hash) },
             5,
             Some(hash_type.clone()),
             "Returns the block hash."
@@ -320,7 +327,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "miner",
             Some(block_type.clone()),
             vec![],
-            FunctionHandler::Sync(block_miner),
+            unsafe { FunctionHandler::sync_unchecked(block_miner) },
             5,
             Some(address_type.clone()),
             "Returns the miner address for the block."
@@ -329,7 +336,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "version",
             Some(block_type.clone()),
             vec![],
-            FunctionHandler::Sync(block_version),
+            unsafe { FunctionHandler::sync_unchecked(block_version) },
             5,
             Some(Type::U8),
             "Returns the block version."
@@ -338,7 +345,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "tips",
             Some(block_type.clone()),
             vec![],
-            FunctionHandler::Sync(block_tips),
+            unsafe { FunctionHandler::sync_unchecked(block_tips) },
             5,
             Some(Type::Array(Box::new(hash_type.clone()))),
             "Returns the block tip hashes."
@@ -347,7 +354,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "transactions_hashes",
             Some(block_type.clone()),
             vec![],
-            FunctionHandler::Sync(block_transactions_hashes),
+            unsafe { FunctionHandler::sync_unchecked(block_transactions_hashes) },
             50,
             Some(Type::Array(Box::new(hash_type.clone()))),
             "Returns the hashes of the transactions included in the block."
@@ -356,7 +363,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "transactions",
             Some(block_type.clone()),
             vec![],
-            FunctionHandler::Sync(block_transactions),
+            unsafe { FunctionHandler::sync_unchecked(block_transactions) },
             250,
             Some(Type::Array(Box::new(tx_type.clone()))),
             "Returns the transactions included in the block."
@@ -365,7 +372,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "transactions_count",
             Some(block_type.clone()),
             vec![],
-            FunctionHandler::Sync(block_transactions_count),
+            unsafe { FunctionHandler::sync_unchecked(block_transactions_count) },
             1,
             Some(Type::U32),
             "Returns the number of transactions in the block."
@@ -379,7 +386,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "new",
             storage_type.clone(),
             vec![],
-            FunctionHandler::Sync(storage),
+            unsafe { FunctionHandler::sync_unchecked(storage) },
             5,
             Some(storage_type.clone()),
             "Creates a persistent storage handle for the current contract."
@@ -388,7 +395,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "load",
             Some(storage_type.clone()),
             vec![("key", Type::Any)],
-            FunctionHandler::Async(async_handler!(storage_load::<P>)),
+            unsafe { FunctionHandler::async_unchecked(async_handler!(storage_load::<P>)) },
             FEE_PER_READ_CONTRACT,
             Some(Type::Optional(Box::new(Type::Any))),
             "Loads a value from contract storage by key."
@@ -397,7 +404,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "has",
             Some(storage_type.clone()),
             vec![("key", Type::Any)],
-            FunctionHandler::Async(async_handler!(storage_has::<P>)),
+            unsafe { FunctionHandler::async_unchecked(async_handler!(storage_has::<P>)) },
             FEE_PER_READ_CONTRACT,
             Some(Type::Bool),
             "Returns whether contract storage contains the key."
@@ -406,7 +413,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "store",
             Some(storage_type.clone()),
             vec![("key", Type::Any), ("value", Type::Any)],
-            FunctionHandler::Async(async_handler!(storage_store::<P>)),
+            unsafe { FunctionHandler::async_unchecked(async_handler!(storage_store::<P>)) },
             FEE_PER_STORE_CONTRACT,
             Some(Type::Optional(Box::new(Type::Any))),
             "Stores a value in contract storage and returns the previous value, if any."
@@ -415,7 +422,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "delete",
             Some(storage_type.clone()),
             vec![("key", Type::Any)],
-            FunctionHandler::Async(async_handler!(storage_delete::<P>)),
+            unsafe { FunctionHandler::async_unchecked(async_handler!(storage_delete::<P>)) },
             FEE_PER_STORE_CONTRACT,
             Some(Type::Optional(Box::new(Type::Any))),
             "Deletes a value from contract storage and returns the previous value, if any."
@@ -429,7 +436,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "new",
             read_only_storage_type.clone(),
             vec![("contract", hash_type.clone())],
-            FunctionHandler::Async(async_handler!(read_only_storage::<P>)),
+            unsafe { FunctionHandler::async_unchecked(async_handler!(read_only_storage::<P>)) },
             15,
             Some(Type::Optional(Box::new(read_only_storage_type.clone()))),
             "Opens read-only storage for another contract by hash, if available."
@@ -438,7 +445,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "load",
             Some(read_only_storage_type.clone()),
             vec![("key", Type::Any)],
-            FunctionHandler::Async(async_handler!(read_only_storage_load::<P>)),
+            unsafe { FunctionHandler::async_unchecked(async_handler!(read_only_storage_load::<P>)) },
             50,
             Some(Type::Optional(Box::new(Type::Any))),
             "Loads a value from another contract's read-only storage by key."
@@ -447,7 +454,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "has",
             Some(read_only_storage_type.clone()),
             vec![("key", Type::Any)],
-            FunctionHandler::Async(async_handler!(read_only_storage_has::<P>)),
+            unsafe { FunctionHandler::async_unchecked(async_handler!(read_only_storage_has::<P>)) },
             25,
             Some(Type::Bool),
             "Returns whether another contract's read-only storage contains the key."
@@ -463,7 +470,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "new",
             memory_storage_type.clone(),
             vec![("shared", Type::Bool)],
-            FunctionHandler::Sync(memory_storage),
+            unsafe { FunctionHandler::sync_unchecked(memory_storage) },
             5,
             Some(memory_storage_type.clone()),
             "Creates a temporary memory storage handle, shared or local."
@@ -472,7 +479,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "load",
             Some(memory_storage_type.clone()),
             vec![("key", Type::Any)],
-            FunctionHandler::Sync(memory_storage_load::<P>),
+            unsafe { FunctionHandler::sync_unchecked(memory_storage_load::<P>) },
             5,
             Some(Type::Optional(Box::new(Type::Any))),
             "Loads a value from temporary memory storage by key."
@@ -481,7 +488,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "has",
             Some(memory_storage_type.clone()),
             vec![("key", Type::Any)],
-            FunctionHandler::Sync(memory_storage_has::<P>),
+            unsafe { FunctionHandler::sync_unchecked(memory_storage_has::<P>) },
             5,
             Some(Type::Bool),
             "Returns whether temporary memory storage contains the key."
@@ -490,7 +497,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "store",
             Some(memory_storage_type.clone()),
             vec![("key", Type::Any), ("value", Type::Any)],
-            FunctionHandler::Sync(memory_storage_store::<P>),
+            unsafe { FunctionHandler::sync_unchecked(memory_storage_store::<P>) },
             5,
             Some(Type::Optional(Box::new(Type::Any))),
             "Stores a value in temporary memory storage and returns the previous value, if any."
@@ -499,7 +506,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "delete",
             Some(memory_storage_type.clone()),
             vec![("key", Type::Any)],
-            FunctionHandler::Sync(memory_storage_delete::<P>),
+            unsafe { FunctionHandler::sync_unchecked(memory_storage_delete::<P>) },
             5,
             Some(Type::Optional(Box::new(Type::Any))),
             "Deletes a value from temporary memory storage and returns the previous value, if any."
@@ -512,7 +519,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "is_mainnet",
             Some(address_type.clone()),
             vec![],
-            FunctionHandler::Sync(address_is_mainnet),
+            unsafe { FunctionHandler::sync_unchecked(address_is_mainnet) },
             5,
             Some(Type::Bool),
             "Returns whether the address targets mainnet."
@@ -521,7 +528,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "to_bytes",
             Some(address_type.clone()),
             vec![],
-            FunctionHandler::Sync(address_to_bytes),
+            unsafe { FunctionHandler::sync_unchecked(address_to_bytes) },
             5,
             Some(Type::Bytes),
             "Serializes the address to bytes."
@@ -530,7 +537,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "to_point",
             Some(address_type.clone()),
             vec![],
-            FunctionHandler::Sync(address_to_point),
+            unsafe { FunctionHandler::sync_unchecked(address_to_point) },
             10,
             Some(ristretto_type.clone()),
             "Returns the address public key as a Ristretto point."
@@ -539,7 +546,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "to_string",
             Some(address_type.clone()),
             vec![],
-            FunctionHandler::Sync(address_to_string),
+            unsafe { FunctionHandler::sync_unchecked(address_to_string) },
             100,
             Some(Type::String),
             "Encodes the address as a string."
@@ -548,7 +555,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "from_string",
             address_type.clone(),
             vec![("address", Type::String)],
-            FunctionHandler::Sync(address_from_string),
+            unsafe { FunctionHandler::sync_unchecked(address_from_string) },
             350,
             Some(address_type.clone()),
             "Parses an address from its string representation."
@@ -559,7 +566,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             vec![
                 ("bytes", Type::Bytes),
             ],
-            FunctionHandler::Sync(address_from_bytes),
+            unsafe { FunctionHandler::sync_unchecked(address_from_bytes) },
             75,
             Some(address_type.clone()),
             "Deserializes an address from bytes."
@@ -572,7 +579,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "to_bytes",
             Some(hash_type.clone()),
             vec![],
-            FunctionHandler::Sync(hash_to_bytes_fn),
+            unsafe { FunctionHandler::sync_unchecked(hash_to_bytes_fn) },
             5,
             Some(Type::Bytes),
             "Serializes the hash to bytes."
@@ -581,7 +588,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "to_array",
             Some(hash_type.clone()),
             vec![],
-            FunctionHandler::Sync(hash_to_array_fn),
+            unsafe { FunctionHandler::sync_unchecked(hash_to_array_fn) },
             5,
             Some(Type::Array(Box::new(Type::U8))),
             "Returns the hash bytes as a u8 array."
@@ -590,7 +597,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "to_u256",
             Some(hash_type.clone()),
             vec![],
-            FunctionHandler::Sync(hash_to_u256_fn),
+            unsafe { FunctionHandler::sync_unchecked(hash_to_u256_fn) },
             5,
             Some(Type::U256),
             "Interprets the hash as a u256 value."
@@ -599,7 +606,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "to_hex",
             Some(hash_type.clone()),
             vec![],
-            FunctionHandler::Sync(hash_to_hex_fn),
+            unsafe { FunctionHandler::sync_unchecked(hash_to_hex_fn) },
             20,
             Some(Type::String),
             "Encodes the hash as a hexadecimal string."
@@ -608,7 +615,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "from_bytes",
             hash_type.clone(),
             vec![("bytes", Type::Bytes)],
-            FunctionHandler::Sync(hash_from_bytes_fn),
+            unsafe { FunctionHandler::sync_unchecked(hash_from_bytes_fn) },
             75,
             Some(hash_type.clone()),
             "Creates a hash from bytes."
@@ -617,7 +624,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "from_array",
             hash_type.clone(),
             vec![("bytes", Type::Array(Box::new(Type::U8)))],
-            FunctionHandler::Sync(hash_from_array_fn),
+            unsafe { FunctionHandler::sync_unchecked(hash_from_array_fn) },
             75,
             Some(hash_type.clone()),
             "Creates a hash from a u8 array."
@@ -626,7 +633,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "from_u256",
             hash_type.clone(),
             vec![("value", Type::U256)],
-            FunctionHandler::Sync(hash_from_u256_fn),
+            unsafe { FunctionHandler::sync_unchecked(hash_from_u256_fn) },
             75,
             Some(hash_type.clone()),
             "Creates a hash from a u256 value."
@@ -635,7 +642,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "from_hex",
             hash_type.clone(),
             vec![("hex", Type::String)],
-            FunctionHandler::Sync(hash_from_hex_fn),
+            unsafe { FunctionHandler::sync_unchecked(hash_from_hex_fn) },
             75,
             Some(hash_type.clone()),
             "Parses a hash from a hexadecimal string."
@@ -644,7 +651,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "blake3",
             hash_type.clone(),
             vec![("input", Type::Bytes)],
-            FunctionHandler::Sync(blake3_fn),
+            unsafe { FunctionHandler::sync_unchecked(blake3_fn) },
             3000,
             Some(hash_type.clone()),
             "Computes the BLAKE3 hash of the input bytes."
@@ -653,7 +660,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "sha3",
             hash_type.clone(),
             vec![("input", Type::Bytes)],
-            FunctionHandler::Sync(sha3_fn),
+            unsafe { FunctionHandler::sync_unchecked(sha3_fn) },
             7500,
             Some(hash_type.clone()),
             "Computes the SHA3 hash of the input bytes."
@@ -662,7 +669,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "zero",
             hash_type.clone(),
             vec![],
-            FunctionHandler::Sync(hash_zero_fn),
+            unsafe { FunctionHandler::sync_unchecked(hash_zero_fn) },
             1,
             Some(hash_type.clone()),
             "Returns the all-zero hash."
@@ -671,7 +678,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "max",
             hash_type.clone(),
             vec![],
-            FunctionHandler::Sync(hash_max_fn),
+            unsafe { FunctionHandler::sync_unchecked(hash_max_fn) },
             1,
             Some(hash_type.clone()),
             "Returns the maximum hash value."
@@ -685,7 +692,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "new",
             random_type.clone(),
             vec![],
-            FunctionHandler::Sync(random_fn),
+            unsafe { FunctionHandler::sync_unchecked(random_fn) },
             5,
             Some(random_type.clone()),
             "Creates a deterministic random generator for this execution."
@@ -694,7 +701,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "next_u8",
             Some(random_type.clone()),
             vec![],
-            FunctionHandler::Sync(random_u8),
+            unsafe { FunctionHandler::sync_unchecked(random_u8) },
             5,
             Some(Type::U8),
             "Generates the next deterministic random u8."
@@ -703,7 +710,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "next_u16",
             Some(random_type.clone()),
             vec![],
-            FunctionHandler::Sync(random_u16),
+            unsafe { FunctionHandler::sync_unchecked(random_u16) },
             5,
             Some(Type::U16),
             "Generates the next deterministic random u16."
@@ -712,7 +719,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "next_u32",
             Some(random_type.clone()),
             vec![],
-            FunctionHandler::Sync(random_u32),
+            unsafe { FunctionHandler::sync_unchecked(random_u32) },
             5,
             Some(Type::U32),
             "Generates the next deterministic random u32."
@@ -721,7 +728,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "next_u64",
             Some(random_type.clone()),
             vec![],
-            FunctionHandler::Sync(random_u64),
+            unsafe { FunctionHandler::sync_unchecked(random_u64) },
             5,
             Some(Type::U64),
             "Generates the next deterministic random u64."
@@ -730,7 +737,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "next_u128",
             Some(random_type.clone()),
             vec![],
-            FunctionHandler::Sync(random_u128),
+            unsafe { FunctionHandler::sync_unchecked(random_u128) },
             5,
             Some(Type::U128),
             "Generates the next deterministic random u128."
@@ -739,7 +746,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "next_u256",
             Some(random_type.clone()),
             vec![],
-            FunctionHandler::Sync(random_u256),
+            unsafe { FunctionHandler::sync_unchecked(random_u256) },
             5,
             Some(Type::U256),
             "Generates the next deterministic random u256."
@@ -748,7 +755,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "next_bool",
             Some(random_type.clone()),
             vec![],
-            FunctionHandler::Sync(random_bool),
+            unsafe { FunctionHandler::sync_unchecked(random_bool) },
             5,
             Some(Type::Bool),
             "Generates the next deterministic random boolean."
@@ -761,7 +768,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "get_by_id",
             asset_type.clone(),
             vec![("id", Type::U64)],
-            FunctionHandler::Async(async_handler!(asset_get_by_id::<P>)),
+            unsafe { FunctionHandler::async_unchecked(async_handler!(asset_get_by_id::<P>)) },
             1000,
             Some(Type::Optional(Box::new(asset_type.clone()))),
             "Returns an asset by local id, if it exists."
@@ -776,7 +783,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("decimals", Type::U8),
                 ("max_supply", max_supply_type.clone()),
             ],
-            FunctionHandler::Async(async_handler!(asset_create::<P>)),
+            unsafe { FunctionHandler::async_unchecked(async_handler!(asset_create::<P>)) },
             2500,
             Some(Type::Optional(Box::new(asset_type.clone()))),
             "Creates a new asset owned by the current contract."
@@ -785,7 +792,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "get_by_hash",
             asset_type.clone(),
             vec![("hash", hash_type.clone())],
-            FunctionHandler::Async(async_handler!(asset_get_by_hash::<P>)),
+            unsafe { FunctionHandler::async_unchecked(async_handler!(asset_get_by_hash::<P>)) },
             500,
             Some(Type::Optional(Box::new(asset_type.clone()))),
             "Returns an asset by hash, if it exists."
@@ -794,7 +801,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "get_max_supply",
             Some(asset_type.clone()),
             vec![],
-            FunctionHandler::Sync(asset_get_max_supply),
+            unsafe { FunctionHandler::sync_unchecked(asset_get_max_supply) },
             5,
             Some(Type::Optional(Box::new(Type::U64))),
             "Returns the configured maximum supply for the asset, if any."
@@ -803,7 +810,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "get_supply",
             Some(asset_type.clone()),
             vec![],
-            FunctionHandler::Async(async_handler!(asset_get_supply::<P>)),
+            unsafe { FunctionHandler::async_unchecked(async_handler!(asset_get_supply::<P>)) },
             15,
             Some(Type::U64),
             "Returns the current circulating supply for the asset."
@@ -812,7 +819,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "get_name",
             Some(asset_type.clone()),
             vec![],
-            FunctionHandler::Sync(asset_get_name),
+            unsafe { FunctionHandler::sync_unchecked(asset_get_name) },
             5,
             Some(Type::String),
             "Returns the self-declared asset name."
@@ -821,7 +828,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "get_ticker",
             Some(asset_type.clone()),
             vec![],
-            FunctionHandler::Sync(asset_get_ticker),
+            unsafe { FunctionHandler::sync_unchecked(asset_get_ticker) },
             5,
             Some(Type::String),
             "Returns the asset ticker."
@@ -830,7 +837,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "get_hash",
             Some(asset_type.clone()),
             vec![],
-            FunctionHandler::Sync(asset_get_hash),
+            unsafe { FunctionHandler::sync_unchecked(asset_get_hash) },
             5,
             Some(hash_type.clone()),
             "Returns the asset hash."
@@ -839,7 +846,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "get_owner",
             Some(asset_type.clone()),
             vec![],
-            FunctionHandler::Sync(asset_get_owner),
+            unsafe { FunctionHandler::sync_unchecked(asset_get_owner) },
             5,
             Some(Type::Optional(Box::new(hash_type.clone()))),
             "Returns the current owner contract hash for the asset, if any."
@@ -848,7 +855,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "get_creator_id",
             Some(asset_type.clone()),
             vec![],
-            FunctionHandler::Sync(asset_get_creator_id),
+            unsafe { FunctionHandler::sync_unchecked(asset_get_creator_id) },
             5,
             Some(Type::Optional(Box::new(Type::U64))),
             "Returns the creator contract id for the asset, if any."
@@ -857,7 +864,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "get_creator",
             Some(asset_type.clone()),
             vec![],
-            FunctionHandler::Sync(asset_get_creator),
+            unsafe { FunctionHandler::sync_unchecked(asset_get_creator) },
             5,
             Some(Type::Optional(Box::new(hash_type.clone()))),
             "Returns the creator contract hash for the asset, if any."
@@ -866,7 +873,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "mint",
             Some(asset_type.clone()),
             vec![("amount", Type::U64)],
-            FunctionHandler::Async(async_handler!(asset_mint::<P>)),
+            unsafe { FunctionHandler::async_unchecked(async_handler!(asset_mint::<P>)) },
             500,
             Some(Type::Bool),
             "Mints new supply to the current contract when the asset permits it."
@@ -875,7 +882,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "is_read_only",
             Some(asset_type.clone()),
             vec![],
-            FunctionHandler::Sync(asset_is_read_only),
+            unsafe { FunctionHandler::sync_unchecked(asset_is_read_only) },
             5,
             Some(Type::Bool),
             "Returns whether the current contract can only read this asset."
@@ -884,7 +891,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "is_mintable",
             Some(asset_type.clone()),
             vec![],
-            FunctionHandler::Sync(asset_is_mintable),
+            unsafe { FunctionHandler::sync_unchecked(asset_is_mintable) },
             5,
             Some(Type::Bool),
             "Returns whether the asset supply can still be minted."
@@ -893,7 +900,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "get_contract_hash",
             Some(asset_type.clone()),
             vec![],
-            FunctionHandler::Sync(asset_get_contract_hash),
+            unsafe { FunctionHandler::sync_unchecked(asset_get_contract_hash) },
             5,
             Some(Type::Optional(Box::new(hash_type.clone()))),
             "Returns the contract hash that owns the asset, if any."
@@ -902,7 +909,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "get_id",
             Some(asset_type.clone()),
             vec![],
-            FunctionHandler::Sync(asset_get_contract_id),
+            unsafe { FunctionHandler::sync_unchecked(asset_get_contract_id) },
             5,
             Some(Type::Optional(Box::new(Type::U64))),
             "Returns the contract id that owns the asset, if any."
@@ -911,7 +918,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "transfer_ownership",
             Some(asset_type.clone()),
             vec![("contract", hash_type.clone())],
-            FunctionHandler::Async(async_handler!(asset_transfer_ownership::<P>)),
+            unsafe { FunctionHandler::async_unchecked(async_handler!(asset_transfer_ownership::<P>)) },
             250,
             Some(Type::Bool),
             "Transfers asset ownership to another contract when allowed."
@@ -924,7 +931,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "get_max_supply",
             Some(max_supply_type.clone()),
             vec![],
-            FunctionHandler::Sync(max_supply_mode_get_max_supply),
+            unsafe { FunctionHandler::sync_unchecked(max_supply_mode_get_max_supply) },
             5,
             Some(Type::Optional(Box::new(Type::U64))),
             "Returns the maximum supply encoded in this mode, if any."
@@ -934,7 +941,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "is_mintable",
             Some(max_supply_type.clone()),
             vec![],
-            FunctionHandler::Sync(max_supply_mode_is_mintable),
+            unsafe { FunctionHandler::sync_unchecked(max_supply_mode_is_mintable) },
             5,
             Some(Type::Bool),
             "Returns whether this max supply mode allows minting."
@@ -950,7 +957,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("data", Type::Bytes),
                 ("point", ristretto_type.clone()),
             ],
-            FunctionHandler::Sync(signature_verify_fn),
+            unsafe { FunctionHandler::sync_unchecked(signature_verify_fn) },
             500,
             Some(Type::Bool),
             "Verifies the signature against the data and public key point."
@@ -959,7 +966,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "from_bytes",
             signature_type.clone(),
             vec![("bytes", Type::Bytes)],
-            FunctionHandler::Sync(signature_from_bytes_fn),
+            unsafe { FunctionHandler::sync_unchecked(signature_from_bytes_fn) },
             75,
             Some(signature_type.clone()),
             "Deserializes a signature from bytes."
@@ -974,7 +981,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             vec![
                 ("value", Type::U64)
             ],
-            FunctionHandler::Sync(ciphertext_add_plaintext),
+            unsafe { FunctionHandler::sync_unchecked(ciphertext_add_plaintext) },
             1500,
             None,
             "Adds a plaintext value to the ciphertext in place."
@@ -985,7 +992,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             vec![
                 ("value", Type::U64)
             ],
-            FunctionHandler::Sync(ciphertext_sub_plaintext),
+            unsafe { FunctionHandler::sync_unchecked(ciphertext_sub_plaintext) },
             1500,
             None,
             "Subtracts a plaintext value from the ciphertext in place."
@@ -996,7 +1003,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             vec![
                 ("value", Type::U64)
             ],
-            FunctionHandler::Sync(ciphertext_mul_plaintext),
+            unsafe { FunctionHandler::sync_unchecked(ciphertext_mul_plaintext) },
             2000,
             None,
             "Multiplies the ciphertext by a plaintext value in place."
@@ -1007,7 +1014,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             vec![
                 ("value", Type::U64)
             ],
-            FunctionHandler::Sync(ciphertext_div_plaintext),
+            unsafe { FunctionHandler::sync_unchecked(ciphertext_div_plaintext) },
             7500,
             None,
             "Divides the ciphertext by a plaintext value in place."
@@ -1019,7 +1026,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("address", address_type.clone()),
                 ("amount", Type::U64)
             ],
-            FunctionHandler::Sync(ciphertext_generate),
+            unsafe { FunctionHandler::sync_unchecked(ciphertext_generate) },
             2500,
             Some(ciphertext_type.clone()),
             "Generates a ciphertext for an address and plaintext amount."
@@ -1030,7 +1037,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "commitment",
             Some(ciphertext_type.clone()),
             vec![],
-            FunctionHandler::Sync(ciphertext_commitment),
+            unsafe { FunctionHandler::sync_unchecked(ciphertext_commitment) },
             5,
             Some(ristretto_type.clone()),
             "Returns the ciphertext commitment point."
@@ -1041,7 +1048,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "handle",
             Some(ciphertext_type.clone()),
             vec![],
-            FunctionHandler::Sync(ciphertext_handle),
+            unsafe { FunctionHandler::sync_unchecked(ciphertext_handle) },
             5,
             Some(ristretto_type.clone()),
             "Returns the ciphertext handle point."
@@ -1052,7 +1059,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "zero",
             ciphertext_type.clone(),
             vec![],
-            FunctionHandler::Sync(ciphertext_zero),
+            unsafe { FunctionHandler::sync_unchecked(ciphertext_zero) },
             10,
             Some(ciphertext_type.clone()),
             "Returns a zero ciphertext."
@@ -1069,7 +1076,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "is_identity",
             Some(ristretto_type.clone()),
             vec![],
-            FunctionHandler::Sync(ristretto_is_identity),
+            unsafe { FunctionHandler::sync_unchecked(ristretto_is_identity) },
             5,
             Some(Type::Bool),
             "Returns whether the point is the identity."
@@ -1080,7 +1087,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "identity",
             ristretto_type.clone(),
             vec![],
-            FunctionHandler::Sync(ristretto_identity),
+            unsafe { FunctionHandler::sync_unchecked(ristretto_identity) },
             50,
             Some(ristretto_type.clone()),
             "Returns the identity Ristretto point."
@@ -1093,7 +1100,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             vec![
                 ("value", scalar_type.clone())
             ],
-            FunctionHandler::Sync(ristretto_add_scalar),
+            unsafe { FunctionHandler::sync_unchecked(ristretto_add_scalar) },
             14_000,
             Some(ristretto_type.clone()),
             "Returns this point plus the scalar multiplied by the base point."
@@ -1105,7 +1112,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             vec![
                 ("value", scalar_type.clone())
             ],
-            FunctionHandler::Sync(ristretto_sub_scalar),
+            unsafe { FunctionHandler::sync_unchecked(ristretto_sub_scalar) },
             14_000,
             Some(ristretto_type.clone()),
             "Returns this point minus the scalar multiplied by the base point."
@@ -1117,7 +1124,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             vec![
                 ("value", ristretto_type.clone())
             ],
-            FunctionHandler::Sync(ristretto_add),
+            unsafe { FunctionHandler::sync_unchecked(ristretto_add) },
             5000,
             Some(ristretto_type.clone()),
             "Returns the sum of this point and another point."
@@ -1129,7 +1136,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             vec![
                 ("value", ristretto_type.clone())
             ],
-            FunctionHandler::Sync(ristretto_sub),
+            unsafe { FunctionHandler::sync_unchecked(ristretto_sub) },
             6000,
             Some(ristretto_type.clone()),
             "Returns this point minus another point."
@@ -1141,7 +1148,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             vec![
                 ("value", scalar_type.clone())
             ],
-            FunctionHandler::Sync(ristretto_mul_scalar),
+            unsafe { FunctionHandler::sync_unchecked(ristretto_mul_scalar) },
             20_000,
             Some(ristretto_type.clone()),
             "Returns this point multiplied by a scalar."
@@ -1153,7 +1160,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             vec![
                 ("value", scalar_type.clone())
             ],
-            FunctionHandler::Sync(ristretto_div_scalar),
+            unsafe { FunctionHandler::sync_unchecked(ristretto_div_scalar) },
             23_000,
             Some(ristretto_type.clone()),
             "Returns this point divided by a non-zero scalar."
@@ -1163,7 +1170,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "from_bytes",
             ristretto_type.clone(),
             vec![("bytes", Type::Bytes)],
-            FunctionHandler::Sync(ristretto_from_bytes),
+            unsafe { FunctionHandler::sync_unchecked(ristretto_from_bytes) },
             1500,
             Some(ristretto_type.clone()),
             "Deserializes a Ristretto point from bytes."
@@ -1173,7 +1180,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "to_bytes",
             Some(ristretto_type.clone()),
             vec![],
-            FunctionHandler::Sync(ristretto_to_bytes),
+            unsafe { FunctionHandler::sync_unchecked(ristretto_to_bytes) },
             1500,
             Some(Type::Bytes),
             "Serializes the Ristretto point to bytes."
@@ -1190,7 +1197,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "from_u64",
             scalar_type.clone(),
             vec![("value", Type::U64)],
-            FunctionHandler::Sync(scalar_from_u64),
+            unsafe { FunctionHandler::sync_unchecked(scalar_from_u64) },
             25,
             Some(scalar_type.clone()),
             "Creates a scalar from a u64 value."
@@ -1201,7 +1208,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "invert",
             Some(scalar_type.clone()),
             vec![],
-            FunctionHandler::Sync(scalar_invert),
+            unsafe { FunctionHandler::sync_unchecked(scalar_invert) },
             2500,
             Some(scalar_type.clone()),
             "Returns the multiplicative inverse of the scalar."
@@ -1212,7 +1219,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "is_zero",
             Some(scalar_type.clone()),
             vec![],
-            FunctionHandler::Sync(scalar_is_zero),
+            unsafe { FunctionHandler::sync_unchecked(scalar_is_zero) },
             1,
             Some(Type::Bool),
             "Returns whether the scalar is zero."
@@ -1223,7 +1230,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "mul_base",
             Some(scalar_type.clone()),
             vec![],
-            FunctionHandler::Sync(scalar_mul_base),
+            unsafe { FunctionHandler::sync_unchecked(scalar_mul_base) },
             2500,
             Some(ristretto_type.clone()),
             "Returns the scalar multiplied by the base point."
@@ -1235,7 +1242,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             vec![
                 ("value", scalar_type.clone())
             ],
-            FunctionHandler::Sync(scalar_add),
+            unsafe { FunctionHandler::sync_unchecked(scalar_add) },
             2000,
             Some(scalar_type.clone()),
             "Returns the sum of this scalar and another scalar."
@@ -1247,7 +1254,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             vec![
                 ("value", scalar_type.clone())
             ],
-            FunctionHandler::Sync(scalar_sub),
+            unsafe { FunctionHandler::sync_unchecked(scalar_sub) },
             2000,
             Some(scalar_type.clone()),
             "Returns this scalar minus another scalar."
@@ -1259,7 +1266,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             vec![
                 ("value", scalar_type.clone())
             ],
-            FunctionHandler::Sync(scalar_mul),
+            unsafe { FunctionHandler::sync_unchecked(scalar_mul) },
             4000,
             Some(scalar_type.clone()),
             "Returns this scalar multiplied by another scalar."
@@ -1271,7 +1278,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             vec![
                 ("value", scalar_type.clone())
             ],
-            FunctionHandler::Sync(scalar_div),
+            unsafe { FunctionHandler::sync_unchecked(scalar_div) },
             6000,
             Some(scalar_type.clone()),
             "Returns this scalar divided by a non-zero scalar."
@@ -1281,7 +1288,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "from_bytes",
             scalar_type.clone(),
             vec![("bytes", Type::Bytes)],
-            FunctionHandler::Sync(scalar_from_bytes),
+            unsafe { FunctionHandler::sync_unchecked(scalar_from_bytes) },
             150,
             Some(Type::Optional(Box::new(scalar_type.clone()))),
             "Deserializes a scalar from bytes, if valid."
@@ -1291,7 +1298,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "to_bytes",
             Some(scalar_type.clone()),
             vec![],
-            FunctionHandler::Sync(scalar_to_bytes),
+            unsafe { FunctionHandler::sync_unchecked(scalar_to_bytes) },
             50,
             Some(Type::Bytes),
             "Serializes the scalar to bytes."
@@ -1305,7 +1312,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "new",
             transcript_type.clone(),
             vec![("label", Type::Bytes)],
-            FunctionHandler::Sync(transcript_new),
+            unsafe { FunctionHandler::sync_unchecked(transcript_new) },
             500,
             Some(transcript_type.clone()),
             "Creates a transcript with the given label."
@@ -1316,7 +1323,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "challenge_scalar",
             Some(transcript_type.clone()),
             vec![("label", Type::Bytes)],
-            FunctionHandler::Sync(transcript_challenge_scalar),
+            unsafe { FunctionHandler::sync_unchecked(transcript_challenge_scalar) },
             750,
             Some(scalar_type.clone()),
             "Derives a challenge scalar from the transcript with the given label."
@@ -1330,7 +1337,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("label", Type::Bytes),
                 ("n", Type::U32),
             ],
-            FunctionHandler::Sync(transcript_challenge_bytes),
+            unsafe { FunctionHandler::sync_unchecked(transcript_challenge_bytes) },
             700,
             Some(Type::Bytes),
             "Derives challenge bytes from the transcript with the given label and length."
@@ -1344,7 +1351,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("label", Type::Bytes),
                 ("message", Type::Bytes),
             ],
-            FunctionHandler::Sync(transcript_append_message),
+            unsafe { FunctionHandler::sync_unchecked(transcript_append_message) },
             500,
             None,
             "Appends labeled bytes to the transcript."
@@ -1358,7 +1365,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("label", Type::Bytes),
                 ("point", ristretto_type.clone()),
             ],
-            FunctionHandler::Sync(transcript_append_point),
+            unsafe { FunctionHandler::sync_unchecked(transcript_append_point) },
             250,
             None,
             "Appends a labeled Ristretto point to the transcript."
@@ -1371,7 +1378,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("label", Type::Bytes),
                 ("point", ristretto_type.clone()),
             ],
-            FunctionHandler::Sync(transcript_validate_and_append_point),
+            unsafe { FunctionHandler::sync_unchecked(transcript_validate_and_append_point) },
             250,
             None,
             "Validates and appends a labeled Ristretto point to the transcript."
@@ -1385,7 +1392,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("label", Type::Bytes),
                 ("scalar", scalar_type.clone()),
             ],
-            FunctionHandler::Sync(transcript_append_scalar),
+            unsafe { FunctionHandler::sync_unchecked(transcript_append_scalar) },
             250,
             None,
             "Appends a labeled scalar to the transcript."
@@ -1406,7 +1413,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("source_handle", ristretto_type.clone()),
                 ("transcript", transcript_type.clone()),
             ],
-            FunctionHandler::Sync(ciphertext_validity_proof_verify),
+            unsafe { FunctionHandler::sync_unchecked(ciphertext_validity_proof_verify) },
             150_000,
             Some(Type::Bool),
             "Verifies that the ciphertext handles match the commitment and public keys. It is up to the caller to ensure all inputs are passed into the transcript."
@@ -1425,7 +1432,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("commitment", ristretto_type.clone()),
                 ("transcript", transcript_type.clone()),
             ],
-            FunctionHandler::Sync(commitment_eq_proof_verify),
+            unsafe { FunctionHandler::sync_unchecked(commitment_eq_proof_verify) },
             150_000,
             Some(Type::Bool),
             "Verifies equality between a ciphertext commitment and a plain commitment. It is up to the caller to ensure all inputs are passed into the transcript."
@@ -1444,7 +1451,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 // Proof bits
                 ("n", Type::U8),
             ],
-            FunctionHandler::Sync(range_proof_verify_single),
+            unsafe { FunctionHandler::sync_unchecked(range_proof_verify_single) },
             1_500_000,
             Some(Type::Bool),
             "Verifies a range proof for a single commitment. It is up to the caller to ensure all inputs are passed into the transcript."
@@ -1460,7 +1467,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 // Proof bits
                 ("n", Type::U8),
             ],
-            FunctionHandler::Sync(range_proof_verify_multiple),
+            unsafe { FunctionHandler::sync_unchecked(range_proof_verify_multiple) },
             1_515_000,
             Some(Type::Bool),
             "Verifies a range proof for multiple commitments. It is up to the caller to ensure all inputs are passed into the transcript."
@@ -1479,7 +1486,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("eq_commitment_proof", commitment_equality_proof_type.clone()),
                 ("range_proof", range_proof_type.clone()),
             ],
-            FunctionHandler::Sync(arbitrary_range_proof_new),
+            unsafe { FunctionHandler::sync_unchecked(arbitrary_range_proof_new) },
             500,
             Some(arbitrary_range_proof_type.clone()),
             "Creates an arbitrary range proof wrapper from its components."
@@ -1490,7 +1497,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "max_value",
             Some(arbitrary_range_proof_type.clone()),
             vec![],
-            FunctionHandler::Sync(arbitrary_range_proof_max_value),
+            unsafe { FunctionHandler::sync_unchecked(arbitrary_range_proof_max_value) },
             1,
             Some(Type::U64),
             "Returns the maximum value covered by the arbitrary range proof."
@@ -1501,7 +1508,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "delta_commitment",
             Some(arbitrary_range_proof_type.clone()),
             vec![],
-            FunctionHandler::Sync(arbitrary_range_proof_delta_commitment),
+            unsafe { FunctionHandler::sync_unchecked(arbitrary_range_proof_delta_commitment) },
             50,
             Some(ristretto_type.clone()),
             "Returns the delta commitment for the arbitrary range proof."
@@ -1512,7 +1519,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "commitment_eq_proof",
             Some(arbitrary_range_proof_type.clone()),
             vec![],
-            FunctionHandler::Sync(arbitrary_range_proof_commitment_eq_proof),
+            unsafe { FunctionHandler::sync_unchecked(arbitrary_range_proof_commitment_eq_proof) },
             250,
             Some(commitment_equality_proof_type.clone()),
             "Returns the commitment equality proof inside the arbitrary range proof."
@@ -1523,7 +1530,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "range_proof",
             Some(arbitrary_range_proof_type.clone()),
             vec![],
-            FunctionHandler::Sync(arbitrary_range_proof_range_proof),
+            unsafe { FunctionHandler::sync_unchecked(arbitrary_range_proof_range_proof) },
             250,
             Some(range_proof_type.clone()),
             "Returns the range proof inside the arbitrary range proof."
@@ -1538,7 +1545,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("source_ciphertext", ciphertext_type.clone()),
                 ("transcript", transcript_type.clone()),
             ],
-            FunctionHandler::Sync(arbitrary_range_proof_verify),
+            unsafe { FunctionHandler::sync_unchecked(arbitrary_range_proof_verify) },
             1_600_000,
             Some(Type::Bool),
             "Verifies the arbitrary range proof for the source ciphertext."
@@ -1557,7 +1564,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("eq_commitment_proof", commitment_equality_proof_type.clone()),
                 ("range_proof", range_proof_type.clone()),
             ],
-            FunctionHandler::Sync(ownership_proof_new),
+            unsafe { FunctionHandler::sync_unchecked(ownership_proof_new) },
             500,
             Some(ownership_proof_type.clone()),
             "Creates an ownership proof wrapper from its components."
@@ -1568,7 +1575,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "amount",
             Some(ownership_proof_type.clone()),
             vec![],
-            FunctionHandler::Sync(ownership_proof_amount),
+            unsafe { FunctionHandler::sync_unchecked(ownership_proof_amount) },
             1,
             Some(Type::U64),
             "Returns the amount claimed by the ownership proof."
@@ -1579,7 +1586,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "commitment",
             Some(ownership_proof_type.clone()),
             vec![],
-            FunctionHandler::Sync(ownership_proof_commitment),
+            unsafe { FunctionHandler::sync_unchecked(ownership_proof_commitment) },
             50,
             Some(ristretto_type.clone()),
             "Returns the commitment claimed by the ownership proof."
@@ -1590,7 +1597,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "commitment_eq_proof",
             Some(ownership_proof_type.clone()),
             vec![],
-            FunctionHandler::Sync(ownership_proof_commitment_eq_proof),
+            unsafe { FunctionHandler::sync_unchecked(ownership_proof_commitment_eq_proof) },
             250,
             Some(commitment_equality_proof_type.clone()),
             "Returns the commitment equality proof inside the ownership proof."
@@ -1601,7 +1608,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "range_proof",
             Some(ownership_proof_type.clone()),
             vec![],
-            FunctionHandler::Sync(ownership_proof_range_proof),
+            unsafe { FunctionHandler::sync_unchecked(ownership_proof_range_proof) },
             250,
             Some(range_proof_type.clone()),
             "Returns the range proof inside the ownership proof."
@@ -1616,7 +1623,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("source_ciphertext", ciphertext_type.clone()),
                 ("transcript", transcript_type.clone()),
             ],
-            FunctionHandler::Sync(ownership_proof_verify),
+            unsafe { FunctionHandler::sync_unchecked(ownership_proof_verify) },
             1_600_000,
             Some(Type::Bool),
             "Verifies the ownership proof for the source ciphertext."
@@ -1633,7 +1640,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("amount", Type::U64),
                 ("commitment_eq_proof", commitment_equality_proof_type.clone()),
             ],
-            FunctionHandler::Sync(balance_proof_new),
+            unsafe { FunctionHandler::sync_unchecked(balance_proof_new) },
             250,
             Some(balance_proof_type.clone()),
             "Creates a balance proof wrapper from its components."
@@ -1644,7 +1651,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "amount",
             Some(balance_proof_type.clone()),
             vec![],
-            FunctionHandler::Sync(balance_proof_amount),
+            unsafe { FunctionHandler::sync_unchecked(balance_proof_amount) },
             1,
             Some(Type::U64),
             "Returns the amount claimed by the balance proof."
@@ -1655,7 +1662,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "commitment_eq_proof",
             Some(balance_proof_type.clone()),
             vec![],
-            FunctionHandler::Sync(balance_proof_commitment_eq_proof),
+            unsafe { FunctionHandler::sync_unchecked(balance_proof_commitment_eq_proof) },
             250,
             Some(commitment_equality_proof_type.clone()),
             "Returns the commitment equality proof inside the balance proof."
@@ -1670,7 +1677,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("source_ciphertext", ciphertext_type.clone()),
                 ("transcript", transcript_type.clone()),
             ],
-            FunctionHandler::Sync(balance_proof_verify),
+            unsafe { FunctionHandler::sync_unchecked(balance_proof_verify) },
             1_600_000,
             Some(Type::Bool),
             "Verifies the balance proof for the source ciphertext."
@@ -1685,7 +1692,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             vec![
                 ("contract", hash_type.clone()),
             ],
-            FunctionHandler::Async(async_handler!(contract_new::<P>)),
+            unsafe { FunctionHandler::async_unchecked(async_handler!(contract_new::<P>)) },
             1500,
             Some(Type::Optional(Box::new(contract_type.clone()))),
             "Loads a contract handle by hash, if available."
@@ -1704,7 +1711,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 // Those funds are taken from the current contract
                 ("deposits", Type::Map(Box::new(hash_type.clone()), Box::new(Type::U64))),
             ],
-            FunctionHandler::Async(async_handler!(contract_call::<P>)),
+            unsafe { FunctionHandler::async_unchecked(async_handler!(contract_call::<P>)) },
             750,
             Some(Type::Voidable(Box::new(Type::Any))),
             "Calls a callable chunk on this contract and optionally deposits funds."
@@ -1719,7 +1726,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("chunk_id", Type::U16),
                 ("args", Type::Array(Box::new(Type::Any))),
             ],
-            FunctionHandler::Async(async_handler!(contract_delegate)),
+            unsafe { FunctionHandler::async_unchecked(async_handler!(contract_delegate)) },
             100,
             Some(Type::Voidable(Box::new(Type::Any))),
             "Delegates a call to this contract so it runs as the caller's contract."
@@ -1730,7 +1737,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "get_hash",
             Some(contract_type.clone()),
             vec![],
-            FunctionHandler::Sync(contract_get_hash),
+            unsafe { FunctionHandler::sync_unchecked(contract_get_hash) },
             5,
             Some(hash_type.clone()),
             "Returns this contract hash."
@@ -1750,7 +1757,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("use_contract_balance", Type::Bool),
                 ("topoheight", Type::U64),
             ],
-            FunctionHandler::Async(async_handler!(scheduled_execution_new_at_topoheight::<P>)),
+            unsafe { FunctionHandler::async_unchecked(async_handler!(scheduled_execution_new_at_topoheight::<P>)) },
             // Contains the hash computation cost
             3500,
             Some(Type::Optional(Box::new(scheduled_execution_type.clone()))),
@@ -1768,7 +1775,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("max_gas", Type::U64),
                 ("use_contract_balance", Type::Bool),
             ],
-            FunctionHandler::Async(async_handler!(scheduled_execution_new_at_block_end::<P>)),
+            unsafe { FunctionHandler::async_unchecked(async_handler!(scheduled_execution_new_at_block_end::<P>)) },
             // Contains the hash computation cost
             3500,
             Some(Type::Optional(Box::new(scheduled_execution_type.clone()))),
@@ -1780,7 +1787,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "get_hash",
             Some(scheduled_execution_type.clone()),
             vec![],
-            FunctionHandler::Sync(scheduled_execution_get_hash),
+            unsafe { FunctionHandler::sync_unchecked(scheduled_execution_get_hash) },
             5,
             Some(hash_type.clone()),
             "Returns the hash generated for the scheduled execution."
@@ -1791,7 +1798,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "get_topoheight",
             Some(scheduled_execution_type.clone()),
             vec![],
-            FunctionHandler::Sync(scheduled_execution_get_topoheight),
+            unsafe { FunctionHandler::sync_unchecked(scheduled_execution_get_topoheight) },
             5,
             Some(Type::Optional(Box::new(Type::U64))),
             "Returns the topoheight at which the execution is scheduled, if any."
@@ -1802,7 +1809,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "get_max_gas",
             Some(scheduled_execution_type.clone()),
             vec![],
-            FunctionHandler::Sync(scheduled_execution_get_max_gas),
+            unsafe { FunctionHandler::sync_unchecked(scheduled_execution_get_max_gas) },
             5,
             Some(Type::U64),
             "Returns the maximum gas allowed for the scheduled execution."
@@ -1814,7 +1821,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "get_pending",
             scheduled_execution_type.clone(),
             vec![("topoheight", Type::Optional(Box::new(Type::U64)))],
-            FunctionHandler::Sync(scheduled_execution_get_pending),
+            unsafe { FunctionHandler::sync_unchecked(scheduled_execution_get_pending) },
             1500,
             Some(Type::Optional(Box::new(scheduled_execution_type.clone()))),
             "Returns a pending scheduled execution for the topoheight, if any."
@@ -1831,7 +1838,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("amount", Type::U64),
                 ("use_contract_balance", Type::Bool)
             ],
-            FunctionHandler::Async(async_handler!(scheduled_execution_increase_max_gas::<P>)),
+            unsafe { FunctionHandler::async_unchecked(async_handler!(scheduled_execution_increase_max_gas::<P>)) },
             500,
             Some(Type::Bool),
             "Increases the max gas for a pending scheduled execution."
@@ -1845,7 +1852,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "get_contract_hash",
             None,
             vec![],
-            FunctionHandler::Sync(get_contract_hash),
+            unsafe { FunctionHandler::sync_unchecked(get_contract_hash) },
             5,
             Some(hash_type.clone()),
             "Returns the hash of the currently executing contract."
@@ -1856,7 +1863,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "get_contract_entry",
             None,
             vec![],
-            FunctionHandler::Sync(get_contract_entry),
+            unsafe { FunctionHandler::sync_unchecked(get_contract_entry) },
             5,
             Some(hash_type.clone()),
             "Returns the initial contract hash used as the entry point."
@@ -1868,7 +1875,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "get_contract_caller",
             None,
             vec![],
-            FunctionHandler::Sync(get_contract_caller),
+            unsafe { FunctionHandler::sync_unchecked(get_contract_caller) },
             5,
             Some(Type::Optional(Box::new(hash_type.clone()))),
             "Returns the calling contract hash, if any."
@@ -1879,7 +1886,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "get_deposit_for_asset",
             None,
             vec![("asset", hash_type.clone())],
-            FunctionHandler::Sync(get_deposit_for_asset),
+            unsafe { FunctionHandler::sync_unchecked(get_deposit_for_asset) },
             5,
             Some(Type::Optional(Box::new(Type::U64))),
             "Returns the public deposit amount for the given asset, if any."
@@ -1889,7 +1896,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "get_deposits",
             None,
             vec![],
-            FunctionHandler::Sync(get_deposits),
+            unsafe { FunctionHandler::sync_unchecked(get_deposits) },
             15,
             Some(Type::Map(Box::new(hash_type.clone()), Box::new(Type::U64))),
             "Returns all public deposits received by this invocation."
@@ -1900,7 +1907,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "get_balance_for_asset",
             None,
             vec![("asset", hash_type.clone())],
-            FunctionHandler::Async(async_handler!(get_balance_for_asset::<P>)),
+            unsafe { FunctionHandler::async_unchecked(async_handler!(get_balance_for_asset::<P>)) },
             25,
             Some(Type::Optional(Box::new(Type::U64))),
             "Returns the current contract balance for the given asset, if any."
@@ -1914,7 +1921,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("contract", hash_type.clone()),
                 ("asset", hash_type.clone())
             ],
-            FunctionHandler::Async(async_handler!(get_contract_balance_for_asset::<P>)),
+            unsafe { FunctionHandler::async_unchecked(async_handler!(get_contract_balance_for_asset::<P>)) },
             250,
             Some(Type::Optional(Box::new(Type::U64))),
             "Returns another contract's balance for the given asset, if any."
@@ -1929,7 +1936,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("amount", Type::U64),
                 ("asset", hash_type.clone()),
             ],
-            FunctionHandler::Async(async_handler!(transfer::<P>)),
+            unsafe { FunctionHandler::async_unchecked(async_handler!(transfer::<P>)) },
             500,
             Some(Type::Bool),
             "Transfers an asset from the current contract to an account."
@@ -1944,7 +1951,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("amount", Type::U64),
                 ("asset", hash_type.clone()),
             ],
-            FunctionHandler::Async(async_handler!(transfer_contract::<P>)),
+            unsafe { FunctionHandler::async_unchecked(async_handler!(transfer_contract::<P>)) },
             250,
             Some(Type::Bool),
             "Transfers an asset from the current contract to another contract."
@@ -1958,7 +1965,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("amount", Type::U64),
                 ("asset", hash_type.clone()),
             ],
-            FunctionHandler::Async(async_handler!(burn::<P>)),
+            unsafe { FunctionHandler::async_unchecked(async_handler!(burn::<P>)) },
             500,
             Some(Type::Bool),
             "Burns an asset amount from the current contract balance."
@@ -1974,7 +1981,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("id", Type::U64),
                 ("data", Type::Any)
             ],
-            FunctionHandler::Sync(rpc_event_fn),
+            unsafe { FunctionHandler::sync_unchecked(rpc_event_fn) },
             250,
             None,
             "Records an RPC event for off-chain applications."
@@ -1988,7 +1995,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("address", address_type.clone()),
                 ("asset", hash_type.clone())
             ],
-            FunctionHandler::Async(async_handler!(get_account_balance_for_asset::<P>)),
+            unsafe { FunctionHandler::async_unchecked(async_handler!(get_account_balance_for_asset::<P>)) },
             1000,
             Some(Type::Optional(Box::new(Type::Tuples(vec![Type::U64, ciphertext_type.clone()])))),
             "Returns an account balance ciphertext and fetched topoheight for the asset, if any."
@@ -1999,7 +2006,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "get_gas_usage",
             None,
             vec![],
-            FunctionHandler::Sync(get_gas_usage),
+            unsafe { FunctionHandler::sync_unchecked(get_gas_usage) },
             1,
             Some(Type::U64),
             "Returns the current gas used by the execution."
@@ -2010,7 +2017,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "get_gas_limit",
             None,
             vec![],
-            FunctionHandler::Sync(get_gas_limit),
+            unsafe { FunctionHandler::sync_unchecked(get_gas_limit) },
             1,
             Some(Type::U64),
             "Returns the current VM gas limit."
@@ -2022,7 +2029,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "increase_gas_limit",
             None,
             vec![("amount", Type::U64)],
-            FunctionHandler::Async(async_handler!(increase_gas_limit::<P>)),
+            unsafe { FunctionHandler::async_unchecked(async_handler!(increase_gas_limit::<P>)) },
             250,
             Some(Type::Bool),
             "Increases the VM gas limit using current contract funds."
@@ -2033,7 +2040,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "get_current_topoheight",
             None,
             vec![],
-            FunctionHandler::Sync(get_current_topoheight),
+            unsafe { FunctionHandler::sync_unchecked(get_current_topoheight) },
             1,
             Some(Type::U64),
             "Returns the current execution topoheight."
@@ -2045,7 +2052,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "get_caller",
             None,
             vec![],
-            FunctionHandler::Sync(get_caller),
+            unsafe { FunctionHandler::sync_unchecked(get_caller) },
             20,
             Some(Type::Optional(Box::new(address_type.clone()))),
             "Returns the caller account address, if any."
@@ -2057,7 +2064,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "get_cost_per_asset",
             None,
             vec![],
-            FunctionHandler::Sync(get_cost_per_asset),
+            unsafe { FunctionHandler::sync_unchecked(get_cost_per_asset) },
             1,
             Some(Type::U64),
             "Returns the asset creation cost in atomic units."
@@ -2069,7 +2076,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "get_cost_per_scheduled_execution",
             None,
             vec![],
-            FunctionHandler::Sync(get_cost_per_scheduled_execution),
+            unsafe { FunctionHandler::sync_unchecked(get_cost_per_scheduled_execution) },
             1,
             Some(Type::U64),
             "Returns the scheduled execution cost in atomic units."
@@ -2083,7 +2090,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("contract", hash_type.clone()),
                 ("chunk_id", Type::U16)
             ],
-            FunctionHandler::Sync(is_contract_callable),
+            unsafe { FunctionHandler::sync_unchecked(is_contract_callable) },
             75,
             Some(Type::Bool),
             "Returns whether a contract chunk is callable under current permissions."
@@ -2097,7 +2104,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("hash1", hash_type.clone()),
                 ("hash2", hash_type.clone())
             ],
-            FunctionHandler::Sync(xor_hashes),
+            unsafe { FunctionHandler::sync_unchecked(xor_hashes) },
             50,
             Some(hash_type.clone()),
             "Returns the bytewise XOR of two hashes."
@@ -2110,7 +2117,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "new",
             btree_store_type.clone(),
             vec![("namespace", Type::Bytes)],
-            FunctionHandler::Sync(btree_store_new),
+            unsafe { FunctionHandler::sync_unchecked(btree_store_new) },
             5,
             Some(btree_store_type.clone()),
             "Creates a BTree store for the given namespace."
@@ -2119,7 +2126,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "insert",
             Some(btree_store_type.clone()),
             vec![("key", Type::Bytes), ("value", Type::Any)],
-            FunctionHandler::Async(async_handler!(btree_store_insert::<P>)),
+            unsafe { FunctionHandler::async_unchecked(async_handler!(btree_store_insert::<P>)) },
             100,
             None,
             "Inserts a key and value into the BTree store."
@@ -2131,7 +2138,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "get",
             Some(btree_store_type.clone()),
             vec![("key", Type::Bytes)],
-            FunctionHandler::Async(async_handler!(btree_store_get::<P>)),
+            unsafe { FunctionHandler::async_unchecked(async_handler!(btree_store_get::<P>)) },
             75,
             Some(Type::Optional(Box::new(Type::Any))),
             "Returns the value for a unique key in the BTree store, if any."
@@ -2143,7 +2150,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "delete",
             Some(btree_store_type.clone()),
             vec![("key", Type::Bytes)],
-            FunctionHandler::Async(async_handler!(btree_store_delete::<P>)),
+            unsafe { FunctionHandler::async_unchecked(async_handler!(btree_store_delete::<P>)) },
             75,
             Some(Type::Bool),
             "Deletes a unique key from the BTree store."
@@ -2156,7 +2163,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("bias", btree_seek_bias_type.clone()),
                 ("ascending", Type::Bool),
             ],
-            FunctionHandler::Async(async_handler!(btree_store_seek::<P>)),
+            unsafe { FunctionHandler::async_unchecked(async_handler!(btree_store_seek::<P>)) },
             100,
             Some(Type::Tuples(vec![
                 btree_cursor_type.clone(),
@@ -2168,7 +2175,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "len",
             Some(btree_store_type.clone()),
             vec![],
-            FunctionHandler::Async(async_handler!(btree_store_len::<P>)),
+            unsafe { FunctionHandler::async_unchecked(async_handler!(btree_store_len::<P>)) },
             25,
             Some(Type::U64),
             "Returns the number of entries in the BTree store."
@@ -2181,7 +2188,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "next",
             Some(btree_cursor_type.clone()),
             vec![],
-            FunctionHandler::Async(async_handler!(btree_cursor_next::<P>)),
+            unsafe { FunctionHandler::async_unchecked(async_handler!(btree_cursor_next::<P>)) },
             15,
             Some(Type::Optional(Box::new(entry_type.clone()))),
             "Returns the next cursor entry, if any."
@@ -2190,7 +2197,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "delete",
             Some(btree_cursor_type.clone()),
             vec![],
-            FunctionHandler::Async(async_handler!(btree_cursor_delete::<P>)),
+            unsafe { FunctionHandler::async_unchecked(async_handler!(btree_cursor_delete::<P>)) },
             20,
             Some(Type::Bool),
             "Deletes the current cursor entry."
@@ -2208,7 +2215,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("asset", hash_type.clone()),
                 ("payload", Type::Any),
             ],
-            FunctionHandler::Async(async_handler!(transfer_payload::<P>)),
+            unsafe { FunctionHandler::async_unchecked(async_handler!(transfer_payload::<P>)) },
             550,
             Some(Type::Bool),
             "Transfers an asset to an account with an attached payload."
@@ -2219,7 +2226,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "get_decimals",
             Some(asset_type.clone()),
             vec![],
-            FunctionHandler::Sync(asset_get_decimals),
+            unsafe { FunctionHandler::sync_unchecked(asset_get_decimals) },
             3,
             Some(Type::U8),
             "Returns the decimal precision for the asset."
@@ -2235,7 +2242,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 // parameters to give with this event
                 ("args", Type::Array(Box::new(Type::Any))),
             ],
-            FunctionHandler::Sync(emit_event_fn),
+            unsafe { FunctionHandler::sync_unchecked(emit_event_fn) },
             1000,
             None,
             "Emits a contract event with arguments for listeners."
@@ -2252,7 +2259,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 // max gas to use when calling the event listener
                 ("max_gas", Type::U64),
             ],
-            FunctionHandler::Async(async_handler!(listen_event_fn::<P>)),
+            unsafe { FunctionHandler::async_unchecked(async_handler!(listen_event_fn::<P>)) },
             5000,
             Some(Type::Bool),
             "Registers the current contract as a listener for this contract's event."
@@ -2263,7 +2270,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             "get_xelis_asset",
             None,
             vec![],
-            FunctionHandler::Sync(get_xelis_asset),
+            unsafe { FunctionHandler::sync_unchecked(get_xelis_asset) },
             1,
             Some(hash_type.clone()),
             "Returns the native XELIS asset hash."
@@ -2279,7 +2286,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("commitment", ristretto_type.clone()),
                 ("handle", ristretto_type.clone()),
             ],
-            FunctionHandler::Sync(ciphertext_from),
+            unsafe { FunctionHandler::sync_unchecked(ciphertext_from) },
             50,
             Some(ciphertext_type.clone()),
             "Creates a ciphertext from commitment and handle points."
@@ -2292,7 +2299,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             vec![
                 ("other", ciphertext_type.clone()),
             ],
-            FunctionHandler::Sync(ciphertext_add_ct),
+            unsafe { FunctionHandler::sync_unchecked(ciphertext_add_ct) },
             9000,
             None,
             "Adds another ciphertext to this ciphertext in place."
@@ -2304,7 +2311,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             vec![
                 ("other", ciphertext_type.clone()),
             ],
-            FunctionHandler::Sync(ciphertext_sub_ct),
+            unsafe { FunctionHandler::sync_unchecked(ciphertext_sub_ct) },
             9000,
             None,
             "Subtracts another ciphertext from this ciphertext in place."
@@ -2316,7 +2323,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             vec![
                 ("scalar", scalar_type.clone()),
             ],
-            FunctionHandler::Sync(ciphertext_add_scalar),
+            unsafe { FunctionHandler::sync_unchecked(ciphertext_add_scalar) },
             14_000,
             None,
             "Adds a scalar to this ciphertext in place."
@@ -2328,7 +2335,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             vec![
                 ("scalar", scalar_type.clone()),
             ],
-            FunctionHandler::Sync(ciphertext_sub_scalar),
+            unsafe { FunctionHandler::sync_unchecked(ciphertext_sub_scalar) },
             14_000,
             None,
             "Subtracts a scalar from this ciphertext in place."
@@ -2343,7 +2350,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             vec![
                 ("bytes", Type::Bytes)
             ],
-            FunctionHandler::Sync(scalar_hash_from_bytes),
+            unsafe { FunctionHandler::sync_unchecked(scalar_hash_from_bytes) },
             10000,
             Some(scalar_type.clone()),
             "Hashes bytes into a scalar."
@@ -2527,7 +2534,7 @@ pub async fn record_account_balance_credit<'a, 'b>(
     address: Address,
     asset: Hash,
     amount: u64,
-    payload: Option<ValueCell>,
+    payload: Option<OwnedValue>,
 ) -> Result<(), Error> {
     log!(state.log_level, "Transferring {} of asset {} from contract {} to {}{}", amount, asset, from_contract, address, if payload.is_some() { " with payload" } else { "" });
     let key = address.to_public_key();
@@ -2628,16 +2635,16 @@ pub async fn get_asset_from_provider<'ty, P: ContractProvider<'ty>>(provider: &P
     }
 }
 
-fn rpc_event_fn(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+fn rpc_event_fn(_: FnInstance, params: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let data = params.remove(1);
     let id = params.remove(0)
-        .as_u64()?;
+        .as_u64(heap)?;
 
     let state: &ChainState = context.get()
         .context("Chain state not found")?;
     log!(state.log_level, "Contract {} registering RPC event {}", metadata.metadata.contract_executor, id);
 
-    let constant = data.into_owned();
+    let constant = heap.export(data)?;
 
     let size = constant.size();
     let cost = FEE_PER_BYTE_OF_EVENT_DATA * size as u64;
@@ -2658,16 +2665,11 @@ fn rpc_event_fn(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'
     Ok(SysCallResult::None)
 }
 
-fn emit_event_fn(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
-    let args: Vec<ValueCell> = params.remove(1)
-        .into_owned()
-        .to_vec()?
-        .into_iter()
-        .map(|v| v.into_owned())
-        .collect();
+fn emit_event_fn(_: FnInstance, params: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    let args = heap.export(params.remove(1))?.into_vec()?;
 
     let id = params.remove(0)
-        .as_u64()?;
+        .as_u64(heap)?;
 
     let state = state_from_context(context)?;
 
@@ -2698,14 +2700,14 @@ fn emit_event_fn(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<
 // Listen to an event from a contract
 // Once triggered, it will call the given chunk_id with the event parameters
 // with allocated gas and will be removed from the listeners after being called
-async fn listen_event_fn<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+async fn listen_event_fn<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance<'a>, params: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let contract = zelf?
-        .as_opaque_type::<OpaqueContract>()?
+        .as_opaque_type::<OpaqueContract>(heap)?
         .hash
         .clone();
 
     let max_gas = params.remove(2)
-        .as_u64()?;
+        .as_u64(heap)?;
 
     if max_gas == 0 {
         return Err(EnvironmentError::Static("max_gas must be greater than zero"))
@@ -2716,7 +2718,7 @@ async fn listen_event_fn<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance
     }
 
     let chunk_id = params.remove(1)
-        .as_u16()?;
+        .as_u16(heap)?;
 
     // Check if the chunk_id is valid and callable
     if !metadata.module.is_callable_chunk(chunk_id as usize) {
@@ -2724,7 +2726,7 @@ async fn listen_event_fn<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance
     }
 
     let event_id = params.remove(0)
-        .as_u64()?;
+        .as_u64(heap)?;
 
     let (provider, state) = from_context::<P>(context)?;
     let log_level = state.log_level;
@@ -2809,37 +2811,37 @@ async fn listen_event_fn<'a, 'ty, 'r, P: ContractProvider<'ty>>(zelf: FnInstance
     Ok(Primitive::Boolean(true).into())
 }
 
-fn get_xelis_asset(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
-    Ok(SysCallResult::Return(ValueCell::Opaque(OpaqueWrapper::new(XELIS_ASSET.clone())).into()))
+fn get_xelis_asset(_: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, _heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    Ok(SysCallResult::Return(RuntimeValue::Opaque(XELIS_ASSET.clone().into()).into()))
 }
 
-fn println_fn(_: FnInstance, params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+fn println_fn(_: FnInstance, params: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let state = state_from_context(context)?;
-    log!(state.log_level, "[{}#{}]: {}", state.entry_contract, metadata.metadata.contract_executor, params[0].as_ref());
+    log!(state.log_level, "[{}#{}]: {}", state.entry_contract, metadata.metadata.contract_executor, params[0].as_ref(heap).display(heap));
 
     Ok(SysCallResult::None)
 }
 
-fn debug_fn(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+fn debug_fn(_: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, context: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let state = state_from_context(context)?;
-    log!(state.log_level, "{:?}", params[0].as_ref());
+    log!(state.log_level, "{}", params[0].as_ref(heap).display(heap));
 
     Ok(SysCallResult::None)
 }
 
-fn get_contract_hash(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
-    Ok(SysCallResult::Return(ValueCell::Opaque(OpaqueWrapper::new(metadata.metadata.contract_executor.clone())).into()))
+fn get_contract_hash(_: FnInstance, _: FnParams<'_>, metadata: &ModuleMetadata<'_>, _: &mut VMContext, _heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    Ok(SysCallResult::Return(RuntimeValue::Opaque(metadata.metadata.contract_executor.clone().into()).into()))
 }
 
-fn get_contract_entry(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+fn get_contract_entry(_: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, context: &mut VMContext, _heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let state = state_from_context(context)?;
-    Ok(SysCallResult::Return(ValueCell::Opaque(OpaqueWrapper::new(state.entry_contract.as_ref().clone())).into()))
+    Ok(SysCallResult::Return(RuntimeValue::Opaque(state.entry_contract.as_ref().clone().into()).into()))
 }
 
-fn get_contract_caller(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+fn get_contract_caller(_: FnInstance, _: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext, _heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     // For inter-contract calls (contract A calls contract B), metadata carries the direct caller.
     if let Some(caller) = metadata.metadata.contract_caller.as_ref() {
-        return Ok(SysCallResult::Return(ValueCell::Opaque(OpaqueWrapper::new(caller.clone())).into()));
+        return Ok(SysCallResult::Return(RuntimeValue::Opaque(caller.clone().into()).into()));
     }
 
     // For event callbacks, the emitting contract acts as the logical caller.
@@ -2847,51 +2849,50 @@ fn get_contract_caller(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>
     // that would return the TX hash rather than the contract that emitted the event.
     let state = state_from_context(context)?;
     if let ContractCaller::EventCallback(_, emitting_contract) = &state.caller {
-        return Ok(SysCallResult::Return(ValueCell::Opaque(OpaqueWrapper::new(emitting_contract.as_ref().clone())).into()));
+        return Ok(SysCallResult::Return(RuntimeValue::Opaque(emitting_contract.as_ref().clone().into()).into()));
     }
 
-    Ok(SysCallResult::Return(ValueCell::default().into()))
+    Ok(SysCallResult::Return(RuntimeValue::default().into()))
 }
 
-fn get_deposit_for_asset(_: FnInstance, params: FnParams, metadata: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
-    let param = params[0].as_ref();
+fn get_deposit_for_asset(_: FnInstance, params: FnParams<'_>, metadata: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    let param = params[0].as_ref(heap);
     let asset: &Hash = param
         .as_opaque_type()
         .context("invalid asset")?;
 
     let value = match metadata.metadata.deposits.get(asset) {
         Some(ContractDeposit::Public(amount)) => Primitive::Integer(PrimitiveInteger::U64(*amount)).into(),
-        _ => ValueCell::default()
+        _ => RuntimeValue::default()
     };
 
     Ok(SysCallResult::Return(value.into()))
 }
 
-fn get_deposits(_: FnInstance, _: FnParams, metadata: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+fn get_deposits(_: FnInstance, _: FnParams<'_>, metadata: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let mut map = IndexMap::new();
 
     for (asset, deposit) in metadata.metadata.deposits.iter() {
         if let ContractDeposit::Public(amount) = deposit {
-            let key = ValueCell::Opaque(asset.clone().into()).into();
-            let value = Primitive::Integer(PrimitiveInteger::U64(*amount)).into();
+            let key = OwnedValue::Opaque(asset.clone().into()).into();
+            let value = heap.insert(Primitive::Integer(PrimitiveInteger::U64(*amount)).into());
             map.insert(key, value);
         }
     }
 
-    Ok(SysCallResult::Return(ValueCell::Map(Box::new(map)).into()))
+    Ok(SysCallResult::Return(RuntimeValue::Map(Box::new(map)).into()))
 }
 
 // Get the current contract balance for the given asset
-async fn get_balance_for_asset<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+async fn get_balance_for_asset<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, params: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
-    let asset: Hash = params.remove(0)
-        .into_owned()
+    let asset: Hash = params.remove(0).into_owned(heap)?
         .into_opaque_type()?;
 
     log!(state.log_level, "Contract {} reading its balance for asset {}", metadata.metadata.contract_executor, asset);
 
-    let balance: ValueCell = get_balance_from_cache(provider, state, metadata.metadata.contract_executor.clone(), asset).await?
+    let balance: RuntimeValue = get_balance_from_cache(provider, state, metadata.metadata.contract_executor.clone(), asset).await?
         .map(|(_, v)| Primitive::Integer(PrimitiveInteger::U64(v)).into())
         .unwrap_or_default();
 
@@ -2899,34 +2900,31 @@ async fn get_balance_for_asset<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInsta
 }
 
 // Get the balance for the given contract and asset
-async fn get_contract_balance_for_asset<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+async fn get_contract_balance_for_asset<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, params: FnParams<'_>, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
-    let asset: Hash = params.remove(1)
-        .into_owned()
+    let asset: Hash = params.remove(1).into_owned(heap)?
         .into_opaque_type()?;
 
-    let contract: Hash = params.remove(0)
-        .into_owned()
+    let contract: Hash = params.remove(0).into_owned(heap)?
         .into_opaque_type()?;
 
     log!(state.log_level, "Reading balance for contract {} and asset {}", contract, asset);
 
-    let balance: ValueCell = get_balance_from_cache(provider, state, contract, asset).await?
+    let balance: RuntimeValue = get_balance_from_cache(provider, state, contract, asset).await?
         .map(|(_, v)| Primitive::Integer(PrimitiveInteger::U64(v)).into())
         .unwrap_or_default();
 
     Ok(SysCallResult::Return(balance.into()))
 }
 
-async fn transfer_internal<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>, payload: bool) -> Result<bool, EnvironmentError> {
+async fn transfer_internal<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, params: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>, payload: bool, heap: &mut Heap) -> Result<bool, EnvironmentError> {
     let state = state_from_context(context)?;
     let log_level = state.log_level;
     log!(log_level, "Contract {} transfer called (payload: {})", metadata.metadata.contract_executor, payload);
 
     let payload = if payload {
-        let payload = params.remove(3)
-            .into_owned();
+        let payload = heap.export(params.remove(3))?;
 
         if !payload.is_json_serializable() || !payload.is_serializable() {
             log!(log_level, "Payload is not serializable");
@@ -2946,16 +2944,13 @@ async fn transfer_internal<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<
         None
     };
 
-    let asset: Hash = params.remove(2)
-        .into_owned()
+    let asset: Hash = params.remove(2).into_owned(heap)?
         .into_opaque_type()?;
 
-    let amount = params.remove(1)
-        .into_owned()
+    let amount = heap.export(params.remove(1))?
         .to_u64()?;
 
-    let destination: Address = params.remove(0)
-        .into_owned()
+    let destination: Address = params.remove(0).into_owned(heap)?
         .into_opaque_type()?;
 
     log!(log_level, "Contract {} transferring {} of asset {} to {}", metadata.metadata.contract_executor, amount, asset, destination);
@@ -2998,31 +2993,28 @@ async fn transfer_internal<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<
     Ok(true)
 }
 
-async fn transfer<'a, 'ty, 'r, P: ContractProvider<'ty>>(instance: FnInstance<'a>, params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
-    transfer_internal::<P>(instance, params, metadata, context, false).await
+async fn transfer<'a, 'ty, 'r, P: ContractProvider<'ty>>(instance: FnInstance<'a>, params: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    transfer_internal::<P>(instance, params, metadata, context, false, heap).await
         .map(|v| SysCallResult::Return(Primitive::Boolean(v).into()))
 }
 
-async fn transfer_payload<'a, 'ty, 'r, P: ContractProvider<'ty>>(instance: FnInstance<'a>, params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
-    transfer_internal::<P>(instance, params, metadata, context, true).await
+async fn transfer_payload<'a, 'ty, 'r, P: ContractProvider<'ty>>(instance: FnInstance<'a>, params: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    transfer_internal::<P>(instance, params, metadata, context, true, heap).await
         .map(|v| SysCallResult::Return(Primitive::Boolean(v).into()))
 }
 
-async fn transfer_contract<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+async fn transfer_contract<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, params: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let state = state_from_context(context)?;
     let log_level = state.log_level;
     log!(log_level, "Contract {} transfer_contract called", metadata.metadata.contract_executor);
 
-    let asset: Hash = params.remove(2)
-        .into_owned()
+    let asset: Hash = params.remove(2).into_owned(heap)?
         .into_opaque_type()?;
 
-    let amount = params.remove(1)
-        .into_owned()
+    let amount = heap.export(params.remove(1))?
         .to_u64()?;
 
-    let destination: Hash = params.remove(0)
-        .into_owned()
+    let destination: Hash = params.remove(0).into_owned(heap)?
         .into_opaque_type()?;
     log!(log_level, "Contract {} transferring {} of asset {} to contract {}", metadata.metadata.contract_executor, amount, asset, destination);
     {
@@ -3057,15 +3049,13 @@ async fn transfer_contract<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<
     Ok(SysCallResult::Return(Primitive::Boolean(true).into()))
 }
 
-async fn burn<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+async fn burn<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, params: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let (provider, state) = from_context::<P>(context)?;
     let log_level = state.log_level;
 
-    let asset: Hash = params.remove(1)
-        .into_owned()
+    let asset: Hash = params.remove(1).into_owned(heap)?
         .into_opaque_type()?;
-    let amount = params.remove(0)
-        .into_owned()
+    let amount = heap.export(params.remove(0))?
         .to_u64()?;
 
     log!(log_level, "Contract {} burning {} of asset {}", metadata.metadata.contract_executor, amount, asset);
@@ -3092,42 +3082,40 @@ async fn burn<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, mut para
     Ok(SysCallResult::Return(Primitive::Boolean(true).into()))
 }
 
-async fn get_account_balance_for_asset<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+async fn get_account_balance_for_asset<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, params: FnParams<'_>, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let (provider, state) = from_context::<P>(context)?;
 
-    let asset: Hash = params.remove(1)
-        .into_owned()
+    let asset: Hash = params.remove(1).into_owned(heap)?
         .into_opaque_type()?;
 
-    let address: Address = params.remove(0)
-        .into_owned()
+    let address: Address = params.remove(0).into_owned(heap)?
         .into_opaque_type()?;
 
     log!(state.log_level, "Reading account {} balance for asset {}", address, asset);
 
     let balance = provider.get_account_balance_for_asset(address.get_public_key(), &asset, state.topoheight).await?
-        .map(|(topoheight, ciphertext)| ValueCell::Object(vec![
-            Primitive::Integer(PrimitiveInteger::U64(topoheight)).into(),
-            ValueCell::Opaque(ciphertext.into()).into()
+        .map(|(topoheight, ciphertext)| RuntimeValue::Object(vec![
+            heap.insert(Primitive::Integer(PrimitiveInteger::U64(topoheight)).into()),
+            heap.insert(ciphertext.into())
         ]))
         .unwrap_or_default();
 
     Ok(SysCallResult::Return(balance.into()))
 }
 
-fn get_gas_usage(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+fn get_gas_usage(_: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, context: &mut VMContext, _heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let gas = context.current_gas_usage();
     Ok(SysCallResult::Return(Primitive::Integer(PrimitiveInteger::U64(gas)).into()))
 }
 
-fn get_gas_limit(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+fn get_gas_limit(_: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, context: &mut VMContext, _heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let gas = context.get_gas_limit();
     Ok(SysCallResult::Return(Primitive::Integer(PrimitiveInteger::U64(gas)).into()))
 }
 
 // Increase the gas limit using contract balance
-async fn increase_gas_limit<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
-    let amount = params[0].as_u64()?;
+async fn increase_gas_limit<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, params: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    let amount = params[0].as_u64(heap)?;
     let log_level = context.get::<ChainState>()
         .map(|state| state.log_level)
         .context("ChainState not present in Context")?;
@@ -3205,7 +3193,7 @@ async fn increase_gas_limit<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance
     Ok(SysCallResult::Return(Primitive::Boolean(true).into()))
 }
 
-fn get_current_topoheight(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+fn get_current_topoheight(_: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, context: &mut VMContext, _heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let state: &ChainState = context.get()
         .context("ChainState not present in Context")?;
 
@@ -3213,37 +3201,37 @@ fn get_current_topoheight(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, co
 }
 
 // Returns the address that called this contract if any
-fn get_caller(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+fn get_caller(_: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, context: &mut VMContext, _heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let state: &ChainState = context.get()
         .context("ChainState not present in Context")?;
 
     let mainnet = state.mainnet;
     if let Some(source) = state.caller.get_source() {
         let address = source.as_address(mainnet);
-        return Ok(SysCallResult::Return(ValueCell::Opaque(address.into()).into()));
+        return Ok(SysCallResult::Return(RuntimeValue::Opaque(address.into()).into()));
     }
 
     Ok(SysCallResult::Return(Primitive::Null.into()))
 }
 
-fn get_cost_per_asset(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+fn get_cost_per_asset(_: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, _heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     Ok(SysCallResult::Return(Primitive::Integer(PrimitiveInteger::U64(COST_PER_ASSET)).into()))
 }
 
-fn get_cost_per_scheduled_execution(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+fn get_cost_per_scheduled_execution(_: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, _heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     Ok(SysCallResult::Return(Primitive::Integer(PrimitiveInteger::U64(COST_PER_SCHEDULED_EXECUTION)).into()))
 }
 
-fn is_contract_callable<'a, 'ty, 'r>(_: FnInstance<'a>, params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+fn is_contract_callable<'a, 'ty, 'r>(_: FnInstance<'a>, params: FnParams<'_>, _: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let state: &ChainState = context.get()
         .context("chain state not found")?;
 
     let contract: &Hash = params[0]
-        .as_ref()
+        .as_ref(heap)
         .as_opaque_type()?;
 
     let chunk_id = params[1]
-        .as_ref()
+        .as_ref(heap)
         .to_u16()?;
 
     let callable = state.permission.allows(contract, chunk_id);
@@ -3251,13 +3239,13 @@ fn is_contract_callable<'a, 'ty, 'r>(_: FnInstance<'a>, params: FnParams, _: &Mo
     Ok(SysCallResult::Return(Primitive::Boolean(callable).into()))
 }
 
-fn xor_hashes<'a, 'ty, 'r>(_: FnInstance<'a>, params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext<'ty, 'r>) -> FnReturnType<ContractMetadata> {
+fn xor_hashes<'a, 'ty, 'r>(_: FnInstance<'a>, params: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let hash1: &Hash = params[0]
-        .as_ref()
+        .as_ref(heap)
         .as_opaque_type()?;
 
     let hash2: &Hash = params[1]
-        .as_ref()
+        .as_ref(heap)
         .as_opaque_type()?;
 
     let mut bytes = [0u8; 32];
@@ -3265,5 +3253,40 @@ fn xor_hashes<'a, 'ty, 'r>(_: FnInstance<'a>, params: FnParams, _: &ModuleMetada
         *out = a ^ b;
     }
 
-    Ok(SysCallResult::Return(ValueCell::Opaque(Hash::new(bytes).into()).into()))
+    Ok(SysCallResult::Return(RuntimeValue::Opaque(Hash::new(bytes).into()).into()))
+}
+
+pub trait OwnedValueCapabilities {
+    fn is_serializable(&self) -> bool;
+    fn is_json_serializable(&self) -> bool;
+}
+
+impl OwnedValueCapabilities for OwnedValue {
+    fn is_serializable(&self) -> bool {
+        owned_value_capability(self, false)
+    }
+
+    fn is_json_serializable(&self) -> bool {
+        owned_value_capability(self, true)
+    }
+}
+
+fn owned_value_capability(value: &OwnedValue, json: bool) -> bool {
+    let mut stack = vec![OpaqueChild::Owned(value)];
+    while let Some(child) = stack.pop() {
+        match child {
+            OpaqueChild::Owned(OwnedValue::Opaque(value)) => stack.push(OpaqueChild::Opaque(value.inner())),
+            OpaqueChild::Owned(OwnedValue::Object(values)) => stack.extend(values.iter().map(OpaqueChild::Owned)),
+            OpaqueChild::Owned(OwnedValue::Map(values)) => stack.extend(values.iter().flat_map(|(k, v)| [OpaqueChild::Owned(k), OpaqueChild::Owned(v)])),
+            OpaqueChild::Owned(_) => {},
+            OpaqueChild::Opaque(value) => {
+                if if json { !value.is_json_supported() } else { value.as_serializable().is_none() } {
+                    return false;
+                }
+                value.visit_children(&mut |child| stack.push(child));
+            },
+            OpaqueChild::Value(_) | OpaqueChild::Pointer(_) => return false,
+        }
+    }
+    true
 }

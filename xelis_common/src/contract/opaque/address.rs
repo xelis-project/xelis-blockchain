@@ -1,13 +1,13 @@
 use xelis_vm::{
+    RuntimeValue,
+    Heap,
     VMContext,
     EnvironmentError,
     FnInstance,
     FnParams,
     FnReturnType,
-    OpaqueWrapper,
     Primitive,
     SysCallResult,
-    ValueCell,
     traits::DynSerializable
 };
 use crate::{
@@ -32,37 +32,44 @@ impl DynSerializable for Address {
     }
 }
 
-pub fn address_is_mainnet(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn address_is_mainnet(zelf: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let address: &Address = zelf.as_opaque_type()?;
-    Ok(SysCallResult::Return(Primitive::Boolean(address.is_mainnet()).into()))
+    heap.with_value(zelf, |zelf, _heap| {
+        let address: &Address = zelf.as_opaque_type()?;
+        Ok(SysCallResult::Return(Primitive::Boolean(address.is_mainnet()).into()))
+    })
 }
 
-pub fn address_to_bytes(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn address_to_bytes(zelf: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let address: &Address = zelf.as_opaque_type()?;
-    Ok(SysCallResult::Return(ValueCell::Bytes(address.to_bytes()?).into()))
+    heap.with_value(zelf, |zelf, _heap| {
+        let address: &Address = zelf.as_opaque_type()?;
+        Ok(SysCallResult::Return(RuntimeValue::Bytes(address.to_bytes()?).into()))
+    })
 }
 
-pub fn address_to_point(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn address_to_point(zelf: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let address: &Address = zelf.as_opaque_type()?;
-    let point = address.get_public_key()
-        .as_point()
-        .clone();
+    heap.with_value(zelf, |zelf, _heap| {
+        let address: &Address = zelf.as_opaque_type()?;
+        let point = address.get_public_key()
+            .as_point()
+            .clone();
 
-    Ok(SysCallResult::Return(OpaqueRistrettoPoint::Compressed(point).into()))
+        Ok(SysCallResult::Return(OpaqueRistrettoPoint::Compressed(point).into()))
+    })
 }
 
-pub fn address_to_string(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn address_to_string(zelf: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let address: &Address = zelf.as_opaque_type()?;
-    Ok(SysCallResult::Return(Primitive::String(address.to_string()).into()))
+    heap.with_value(zelf, |zelf, _heap| {
+        let address: &Address = zelf.as_opaque_type()?;
+        Ok(SysCallResult::Return(Primitive::String(address.to_string()).into()))
+    })
 }
 
-pub fn address_from_string(_: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
-    let param = params.remove(0)
-        .into_owned();
+pub fn address_from_string(_: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    let param = params.remove(0).into_owned(heap)?;
     let string = param.as_string()?;
 
     if string.len() > NORMAL_ADDRESS_LEN {
@@ -72,16 +79,16 @@ pub fn address_from_string(_: FnInstance, mut params: FnParams, _: &ModuleMetada
     let address = Address::from_string(string)
         .map_err(|_| EnvironmentError::InvalidParameter)?;
 
-    Ok(SysCallResult::Return(ValueCell::Opaque(OpaqueWrapper::new(address)).into()))
+    Ok(SysCallResult::Return(RuntimeValue::Opaque(address.into()).into()))
 }
 
-pub fn address_from_bytes(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn address_from_bytes(_: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let bytes = params[0]
-        .as_ref()
+        .as_ref(heap)
         .as_bytes()?;
 
     let address = Address::from_bytes(&bytes)
         .map_err(|_| EnvironmentError::InvalidParameter)?;
 
-    Ok(SysCallResult::Return(ValueCell::Opaque(OpaqueWrapper::new(address)).into()))
+    Ok(SysCallResult::Return(RuntimeValue::Opaque(address.into()).into()))
 }

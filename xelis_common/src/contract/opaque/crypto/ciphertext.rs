@@ -3,7 +3,8 @@ use std::hash::Hasher;
 use matriochka::{OptionExt, ResultExt};
 use curve25519_dalek::Scalar;
 use xelis_vm::{
-    ValueCell,
+    RuntimeValue,
+    Heap,
     traits::{DynHash, DynSerializable},
     VMContext,
     FnInstance,
@@ -52,72 +53,78 @@ impl DynHash for CiphertextCache {
     }
 }
 
-pub fn ciphertext_mul_plaintext(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
-    let mut zelf = zelf?;
-    let zelf: &mut CiphertextCache = zelf.as_opaque_type_mut()?;
-    let value = params.remove(0)
-        .as_u64()?;
+pub fn ciphertext_mul_plaintext(zelf: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    let zelf = zelf?;
+    heap.with_value(zelf, |zelf, heap| {
+        let zelf: &mut CiphertextCache = zelf.as_opaque_type_mut()?;
+        let value = params.remove(0)
+            .as_u64(heap)?;
 
-    let computable = zelf.computable()
-        .context("Ciphertext not computable")?;
+        let computable = zelf.computable()
+            .context("Ciphertext not computable")?;
 
-    *computable = &*computable * Scalar::from(value);
+        *computable = &*computable * Scalar::from(value);
 
-    Ok(SysCallResult::None)
+        Ok(SysCallResult::None)
+    })
 }
 
-pub fn ciphertext_div_plaintext(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
-    let mut zelf = zelf?;
-    let zelf: &mut CiphertextCache = zelf.as_opaque_type_mut()?;
-    let value = params.remove(0)
-        .as_u64()?;
+pub fn ciphertext_div_plaintext(zelf: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    let zelf = zelf?;
+    heap.with_value(zelf, |zelf, heap| {
+        let zelf: &mut CiphertextCache = zelf.as_opaque_type_mut()?;
+        let value = params.remove(0)
+            .as_u64(heap)?;
 
-    if value == 0 {
-        return Err(EnvironmentError::DivisionByZero);
-    }
+        if value == 0 {
+            return Err(EnvironmentError::DivisionByZero);
+        }
 
-    let computable = zelf.computable()
-        .context("Ciphertext not computable")?;
+        let computable = zelf.computable()
+            .context("Ciphertext not computable")?;
 
-    *computable = &*computable * Scalar::from(value).invert();
+        *computable = &*computable * Scalar::from(value).invert();
 
-    Ok(SysCallResult::None)
+        Ok(SysCallResult::None)
+    })
 }
 
-pub fn ciphertext_add_plaintext(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
-    let mut zelf = zelf?;
-    let zelf: &mut CiphertextCache = zelf.as_opaque_type_mut()?;
-    let value = params.remove(0)
-        .as_u64()?;
+pub fn ciphertext_add_plaintext(zelf: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    let zelf = zelf?;
+    heap.with_value(zelf, |zelf, heap| {
+        let zelf: &mut CiphertextCache = zelf.as_opaque_type_mut()?;
+        let value = params.remove(0)
+            .as_u64(heap)?;
 
-    let mut computable = zelf.computable()
-        .context("Ciphertext not computable")?;
+        let mut computable = zelf.computable()
+            .context("Ciphertext not computable")?;
 
-    computable += Scalar::from(value);
+        computable += Scalar::from(value);
 
-    Ok(SysCallResult::None)
+        Ok(SysCallResult::None)
+    })
 }
 
-pub fn ciphertext_sub_plaintext(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
-    let mut zelf = zelf?;
-    let zelf: &mut CiphertextCache = zelf.as_opaque_type_mut()?;
-    let value = params.remove(0)
-        .as_u64()?;
+pub fn ciphertext_sub_plaintext(zelf: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    let zelf = zelf?;
+    heap.with_value(zelf, |zelf, heap| {
+        let zelf: &mut CiphertextCache = zelf.as_opaque_type_mut()?;
+        let value = params.remove(0)
+            .as_u64(heap)?;
 
-    let mut computable = zelf.computable()
-        .context("Ciphertext not computable")?;
+        let mut computable = zelf.computable()
+            .context("Ciphertext not computable")?;
 
-    computable -= Scalar::from(value);
+        computable -= Scalar::from(value);
 
-    Ok(SysCallResult::None)
+        Ok(SysCallResult::None)
+    })
 }
 
-pub fn ciphertext_generate(_: FnInstance, mut params: FnParams, metadata: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
-    let amount = params.remove(1)
-        .into_owned()
+pub fn ciphertext_generate(_: FnInstance, params: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    let amount = params.remove(1).into_owned(heap)?
         .as_u64()?;
-    let address: Address = params.remove(0)
-        .into_owned()
+    let address: Address = params.remove(0).into_owned(heap)?
         .into_opaque_type()?;
 
     let key = address.get_public_key()
@@ -141,15 +148,13 @@ pub fn ciphertext_generate(_: FnInstance, mut params: FnParams, metadata: &Modul
     let opening = PedersenOpening::from_scalar(scalar);
 
     let ciphertext = CiphertextCache::Decompressed(None, key.encrypt_with_opening(amount, &opening));
-    Ok(SysCallResult::Return(ValueCell::Opaque(ciphertext.into()).into()))
+    Ok(SysCallResult::Return(RuntimeValue::Opaque(ciphertext.into()).into()))
 }
 
-pub fn ciphertext_from(_: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
-    let handle: OpaqueRistrettoPoint = params.remove(1)
-        .into_owned()
+pub fn ciphertext_from(_: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    let handle: OpaqueRistrettoPoint = params.remove(1).into_owned(heap)?
         .into_opaque_type()?;
-    let commitment: OpaqueRistrettoPoint = params.remove(0)
-        .into_owned()
+    let commitment: OpaqueRistrettoPoint = params.remove(0).into_owned(heap)?
         .into_opaque_type()?;
 
     let ciphertext = match (handle, commitment) {
@@ -174,108 +179,112 @@ pub fn ciphertext_from(_: FnInstance, mut params: FnParams, _: &ModuleMetadata<'
         }
     };
 
-    Ok(SysCallResult::Return(ValueCell::Opaque(ciphertext.into()).into()))
+    Ok(SysCallResult::Return(RuntimeValue::Opaque(ciphertext.into()).into()))
 }
 
-pub fn ciphertext_add_ct(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
-    let mut zelf = zelf?;
+pub fn ciphertext_add_ct(zelf: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    let zelf = zelf?;
+    heap.with_value(zelf, |zelf, heap| {
+        let other: CiphertextCache = params.remove(0).into_owned(heap)?
+            .into_opaque_type()?;
 
-    let other: CiphertextCache = params.remove(0)
-        .into_owned()
-        .into_opaque_type()?;
+        let ct: &mut CiphertextCache = zelf.as_opaque_type_mut()?;
 
-    let ct: &mut CiphertextCache = zelf.as_opaque_type_mut()?;
+        let ct_computable = ct.computable()
+            .context("Self not computable")?;
+        let other_computable = other.take_ciphertext()
+            .context("Ciphertext not computable")?;
 
-    let ct_computable = ct.computable()
-        .context("Self not computable")?;
-    let other_computable = other.take_ciphertext()
-        .context("Ciphertext not computable")?;
+        *ct_computable += other_computable;
 
-    *ct_computable += other_computable;
-
-    Ok(SysCallResult::None)
+        Ok(SysCallResult::None)
+    })
 }
 
-pub fn ciphertext_sub_ct(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
-    let mut zelf = zelf?;
+pub fn ciphertext_sub_ct(zelf: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    let zelf = zelf?;
+    heap.with_value(zelf, |zelf, heap| {
+        let other: CiphertextCache = params.remove(0).into_owned(heap)?
+            .into_opaque_type()?;
 
-    let other: CiphertextCache = params.remove(0)
-        .into_owned()
-        .into_opaque_type()?;
+        let ct: &mut CiphertextCache = zelf.as_opaque_type_mut()?;
 
-    let ct: &mut CiphertextCache = zelf.as_opaque_type_mut()?;
+        let ct_computable = ct.computable()
+            .context("Self not computable")?;
+        let other_computable = other.take_ciphertext()
+            .context("Ciphertext not computable")?;
 
-    let ct_computable = ct.computable()
-        .context("Self not computable")?;
-    let other_computable = other.take_ciphertext()
-        .context("Ciphertext not computable")?;
+        *ct_computable -= other_computable;
 
-    *ct_computable -= other_computable;
-
-    Ok(SysCallResult::None)
+        Ok(SysCallResult::None)
+    })
 }
 
-pub fn ciphertext_add_scalar(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
-    let mut zelf = zelf?;
+pub fn ciphertext_add_scalar(zelf: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    let zelf = zelf?;
+    heap.with_value(zelf, |zelf, heap| {
+        let scalar: OpaqueScalar = params.remove(0).into_owned(heap)?
+            .into_opaque_type()?;
 
-    let scalar: OpaqueScalar = params.remove(0)
-        .into_owned()
-        .into_opaque_type()?;
+        let ct: &mut CiphertextCache = zelf.as_opaque_type_mut()?;
 
-    let ct: &mut CiphertextCache = zelf.as_opaque_type_mut()?;
+        let ct_computable = ct.computable()
+            .context("Self not computable")?;
 
-    let ct_computable = ct.computable()
-        .context("Self not computable")?;
+        *ct_computable += scalar.0;
 
-    *ct_computable += scalar.0;
-
-    Ok(SysCallResult::None)
+        Ok(SysCallResult::None)
+    })
 }
 
-pub fn ciphertext_sub_scalar(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
-    let mut zelf = zelf?;
+pub fn ciphertext_sub_scalar(zelf: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    let zelf = zelf?;
+    heap.with_value(zelf, |zelf, heap| {
+        let scalar: OpaqueScalar = params.remove(0).into_owned(heap)?
+            .into_opaque_type()?;
 
-    let scalar: OpaqueScalar = params.remove(0)
-        .into_owned()
-        .into_opaque_type()?;
+        let ct: &mut CiphertextCache = zelf.as_opaque_type_mut()?;
 
-    let ct: &mut CiphertextCache = zelf.as_opaque_type_mut()?;
+        let ct_computable = ct.computable()
+            .context("Self not computable")?;
 
-    let ct_computable = ct.computable()
-        .context("Self not computable")?;
+        *ct_computable -= scalar.0;
 
-    *ct_computable -= scalar.0;
-
-    Ok(SysCallResult::None)
+        Ok(SysCallResult::None)
+    })
 }
 
-pub fn ciphertext_zero(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn ciphertext_zero(_: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, _heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let ciphertext = CiphertextCache::Decompressed(Some(CompressedCiphertext::zero()), Ciphertext::zero());
-    Ok(SysCallResult::Return(ValueCell::Opaque(ciphertext.into()).into()))
+    Ok(SysCallResult::Return(RuntimeValue::Opaque(ciphertext.into()).into()))
 }
 
-pub fn ciphertext_commitment(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
-    let mut zelf = zelf?;
-    let zelf: &mut CiphertextCache = zelf.as_opaque_type_mut()?;
-    let commitment = zelf.decompressed()
-        .context("Ciphertext not decompressed")?
-        .commitment()
-        .as_point()
-        .clone();
+pub fn ciphertext_commitment(zelf: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    let zelf = zelf?;
+    heap.with_value(zelf, |zelf, _heap| {
+        let zelf: &mut CiphertextCache = zelf.as_opaque_type_mut()?;
+        let commitment = zelf.decompressed()
+            .context("Ciphertext not decompressed")?
+            .commitment()
+            .as_point()
+            .clone();
 
-    Ok(SysCallResult::Return(OpaqueRistrettoPoint::Decompressed(None, commitment).into()))
+        Ok(SysCallResult::Return(OpaqueRistrettoPoint::Decompressed(None, commitment).into()))
+    })
 }
 
-pub fn ciphertext_handle(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
-    let mut zelf = zelf?;
-    let zelf: &mut CiphertextCache = zelf.as_opaque_type_mut()?;
-    let handle = zelf.decompressed()
-        .context("Ciphertext not decompressed")?
-        .handle()
-        .as_point()
-        .clone();
+pub fn ciphertext_handle(zelf: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    let zelf = zelf?;
+    heap.with_value(zelf, |zelf, _heap| {
+        let zelf: &mut CiphertextCache = zelf.as_opaque_type_mut()?;
+        let handle = zelf.decompressed()
+            .context("Ciphertext not decompressed")?
+            .handle()
+            .as_point()
+            .clone();
 
-    Ok(SysCallResult::Return(OpaqueRistrettoPoint::Decompressed(None, handle).into()))
+        Ok(SysCallResult::Return(OpaqueRistrettoPoint::Decompressed(None, handle).into()))
+    })
 }
 
 #[cfg(test)]

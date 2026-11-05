@@ -1,14 +1,14 @@
 use matriochka::OptionExt;
 use std::sync::Arc;
 use xelis_vm::{
-    ValueCell,
+    RuntimeValue,
+    Heap,
     PrimitiveInteger,
     Opaque,
     VMContext,
     FnInstance,
     FnParams,
     FnReturnType,
-    OpaqueWrapper,
     Primitive,
     SysCallResult
 };
@@ -45,7 +45,7 @@ impl std::hash::Hash for OpaqueTransaction {
     }
 }
 
-pub fn transaction(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn transaction(_: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, context: &mut VMContext, _heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let state: &ChainState = context.get()
         .context("chain state not found")?;
     if let ContractCaller::Transaction(hash, tx) = &state.caller {
@@ -58,37 +58,47 @@ pub fn transaction(_: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: 
     Ok(SysCallResult::Return(Primitive::Null.into()))
 }
 
-pub fn transaction_nonce(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn transaction_nonce(zelf: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let tx: &OpaqueTransaction = zelf.as_opaque_type()?;
-    Ok(SysCallResult::Return(Primitive::Integer(PrimitiveInteger::U64(tx.inner.get_nonce())).into()))
+    heap.with_value(zelf, |zelf, _heap| {
+        let tx: &OpaqueTransaction = zelf.as_opaque_type()?;
+        Ok(SysCallResult::Return(Primitive::Integer(PrimitiveInteger::U64(tx.inner.get_nonce())).into()))
+    })
 }
 
-pub fn transaction_hash(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn transaction_hash(zelf: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let tx: &OpaqueTransaction = zelf.as_opaque_type()?;
-    Ok(SysCallResult::Return(ValueCell::Opaque(OpaqueWrapper::new(tx.hash.clone())).into()))
+    heap.with_value(zelf, |zelf, _heap| {
+        let tx: &OpaqueTransaction = zelf.as_opaque_type()?;
+        Ok(SysCallResult::Return(RuntimeValue::Opaque(tx.hash.clone().into()).into()))
+    })
 }
 
-pub fn transaction_source(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn transaction_source(zelf: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, context: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let tx: &OpaqueTransaction = zelf.as_opaque_type()?;
-    let state = state_from_context(context)?;
+    heap.with_value(zelf, |zelf, _heap| {
+        let tx: &OpaqueTransaction = zelf.as_opaque_type()?;
+        let state = state_from_context(context)?;
 
-    let address = tx.inner.get_source()
-        .as_address(state.mainnet);
+        let address = tx.inner.get_source()
+            .as_address(state.mainnet);
 
-    Ok(SysCallResult::Return(ValueCell::Opaque(OpaqueWrapper::new(address)).into()))
+        Ok(SysCallResult::Return(RuntimeValue::Opaque(address.into()).into()))
+    })
 }
 
-pub fn transaction_fee(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn transaction_fee(zelf: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let tx: &OpaqueTransaction = zelf.as_opaque_type()?;
-    Ok(SysCallResult::Return(Primitive::Integer(PrimitiveInteger::U64(tx.inner.get_fee())).into()))
+    heap.with_value(zelf, |zelf, _heap| {
+        let tx: &OpaqueTransaction = zelf.as_opaque_type()?;
+        Ok(SysCallResult::Return(Primitive::Integer(PrimitiveInteger::U64(tx.inner.get_fee())).into()))
+    })
 }
 
-pub fn transaction_signature(zelf: FnInstance, _: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn transaction_signature(zelf: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let tx: &OpaqueTransaction = zelf.as_opaque_type()?;
-    Ok(SysCallResult::Return(ValueCell::Opaque(OpaqueWrapper::new(tx.inner.get_signature().clone())).into()))
+    heap.with_value(zelf, |zelf, _heap| {
+        let tx: &OpaqueTransaction = zelf.as_opaque_type()?;
+        Ok(SysCallResult::Return(RuntimeValue::Opaque(tx.inner.get_signature().clone().into()).into()))
+    })
 }

@@ -15,7 +15,7 @@ use std::fmt::{Formatter, Result as FmtResult};
 use serde_json::Value;
 use matriochka::ResultExt;
 use silex_types::register_opaque_json;
-use xelis_vm::{Opaque, OpaqueWrapper, ValueError, tid, traits::{DynEq, DynHash, DynSerializable, JSONHelper, JSON_REGISTRY}};
+use xelis_vm::{Opaque, OpaqueValue, OpaqueWrapper, ValueError, tid, traits::{DynEq, DynHash, DynSerializable, JSONHelper, JSON_REGISTRY}};
 use crate::{
     account::CiphertextCache,
     block::Block,
@@ -59,6 +59,9 @@ impl Opaque for Address {
         Box::new(self.clone())
     }
 
+}
+
+impl OpaqueValue for Address {
     fn as_serializable(&self) -> Option<&dyn DynSerializable> {
         Some(self)
     }

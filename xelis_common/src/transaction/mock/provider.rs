@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use async_trait::async_trait;
 use matriochka::Error;
-use xelis_vm::{ValueCell, tid};
+use xelis_vm::{OwnedValue, tid};
 
 use crate::{
     account::CiphertextCache,
@@ -18,7 +18,7 @@ use crate::{
 
 #[derive(Debug, Default, Clone)]
 pub struct MockStorageProvider {
-    pub contracts: HashMap<Hash, HashMap<ValueCell, (TopoHeight, Option<ValueCell>)>>,
+    pub contracts: HashMap<Hash, HashMap<OwnedValue, (TopoHeight, Option<OwnedValue>)>>,
 }
 
 tid!(MockStorageProvider);
@@ -28,16 +28,16 @@ impl ContractStorage for MockStorageProvider {
     async fn load_data(
         &self,
         contract: &Hash,
-        key: &ValueCell,
+        key: &OwnedValue,
         _: TopoHeight,
-    ) -> Result<Option<(TopoHeight, Option<ValueCell>)>, Error> {
+    ) -> Result<Option<(TopoHeight, Option<OwnedValue>)>, Error> {
         Ok(self.contracts.get(contract).and_then(|c| c.get(key).cloned()))
     }
 
     async fn load_data_latest_topoheight(
         &self,
         contract: &Hash,
-        key: &ValueCell,
+        key: &OwnedValue,
         _: TopoHeight,
     ) -> Result<Option<TopoHeight>, Error> {
         Ok(self

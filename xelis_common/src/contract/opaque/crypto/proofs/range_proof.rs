@@ -2,6 +2,7 @@
 use bulletproofs::RangeProof;
 use serde::{Deserialize, Serialize};
 use xelis_vm::{
+    Heap,
     Opaque,
     traits::DynSerializable,
     VMContext,
@@ -42,77 +43,81 @@ impl DynSerializable for RangeProofWrapper {
     }
 }
 
-pub fn range_proof_verify_single(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {    
-    let proof_size = params[2].as_ref()
-        .as_u8()?;
-
-    if proof_size == 0 || proof_size > 64 {
-        return Err(EnvironmentError::Static("proof size must be between 1 and 64"));
-    }
-
-    // support pre-1.86 rustc, which doesn't support get_disjoint_mut([0, 1])
-    let (left, right) = {
-        let (left, right) = params.split_at_mut(1);
-        (&mut left[0], &mut right[0])
-    };
-
-    let commitment = {
-            let commitment: &mut OpaqueRistrettoPoint = left
-                .as_mut()
-                .as_opaque_type_mut()?;
-
-            let (compressed, decompressed) = commitment.both()?;
-            (decompressed.clone(), compressed.clone())
-    };
-
-    let transcript: &mut OpaqueTranscript = right
-        .as_mut()
-        .as_opaque_type_mut()?;
-
+pub fn range_proof_verify_single(zelf: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let zelf: &RangeProofWrapper = zelf.as_opaque_type()?;
+    heap.with_value(zelf, |zelf, heap| {
+        
+        let proof_size = params[2].as_ref(heap)
+            .as_u8()?;
 
-    let valid = zelf.0.verify_single(&BP_GENS, &PC_GENS, &mut transcript.0, &commitment, proof_size as usize)
-        .is_ok();
+        if proof_size == 0 || proof_size > 64 {
+            return Err(EnvironmentError::Static("proof size must be between 1 and 64"));
+        }
 
-    Ok(SysCallResult::Return(Primitive::Boolean(valid).into()))
+        // support pre-1.86 rustc, which doesn't support get_disjoint_mut([0, 1])
+        let (left, right) = {
+            let (left, right) = params.split_at_mut(1);
+            (&mut left[0], &mut right[0])
+        };
+
+        let commitment = {
+                let commitment: &mut OpaqueRistrettoPoint = left
+                    .as_mut(heap)
+                    .as_opaque_type_mut()?;
+
+                let (compressed, decompressed) = commitment.both()?;
+                (decompressed.clone(), compressed.clone())
+        };
+
+        let transcript: &mut OpaqueTranscript = right
+            .as_mut(heap)
+            .as_opaque_type_mut()?;
+
+        let zelf: &RangeProofWrapper = zelf.as_opaque_type()?;
+
+        let valid = zelf.0.verify_single(&BP_GENS, &PC_GENS, &mut transcript.0, &commitment, proof_size as usize)
+            .is_ok();
+
+        Ok(SysCallResult::Return(Primitive::Boolean(valid).into()))
+    })
 }
 
-pub fn range_proof_verify_multiple(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
-    // SAFETY: no other reference is made to it
-    let tmp = params[0]
-        .as_mut()
-        .as_mut_vec()?;
-
-    context.increase_gas_usage((tmp.len() * 5000) as u64)?;
-
-    let commitments = unsafe {
-        tmp.iter_mut()
-        .map(|p| {
-            let opaque: &mut OpaqueRistrettoPoint = p.as_mut()
-                .as_opaque_type_mut()?;
-            let (compressed, point) = opaque.both()?;
-            Ok((point.clone(), compressed.clone()))
-        })
-        .collect::<Result<Vec<_>, EnvironmentError>>()?
-    };
-
-    let proof_size = params[2].as_ref()
-        .as_u8()?;
-
-    if proof_size == 0 || proof_size > 64 {
-        return Err(EnvironmentError::Static("proof size must be between 1 and 64"));
-    }
-
-    let transcript: &mut OpaqueTranscript = params[1]
-        .as_mut()
-        .as_opaque_type_mut()?;
-
+pub fn range_proof_verify_multiple(zelf: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, context: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let zelf: &RangeProofWrapper = zelf.as_opaque_type()?;
+    heap.with_value(zelf, |zelf, heap| {
+        let mut tmp = params[0]
+            .as_mut(heap)
+            .as_mut_vec()?.clone();
 
-    let valid = zelf.0.verify_multiple(&BP_GENS, &PC_GENS, &mut transcript.0, &commitments, proof_size as usize)
-        .is_ok();
+        context.increase_gas_usage((tmp.len() * 5000) as u64)?;
 
-    Ok(SysCallResult::Return(Primitive::Boolean(valid).into()))
+        let commitments = {
+            tmp.iter_mut()
+            .map(|p| {
+                let opaque: &mut OpaqueRistrettoPoint = p.as_mut(heap)
+                    .as_opaque_type_mut()?;
+                let (compressed, point) = opaque.both()?;
+                Ok((point.clone(), compressed.clone()))
+            })
+            .collect::<Result<Vec<_>, EnvironmentError>>()?
+        };
+
+        let proof_size = params[2].as_ref(heap)
+            .as_u8()?;
+
+        if proof_size == 0 || proof_size > 64 {
+            return Err(EnvironmentError::Static("proof size must be between 1 and 64"));
+        }
+
+        let transcript: &mut OpaqueTranscript = params[1]
+            .as_mut(heap)
+            .as_opaque_type_mut()?;
+
+        let zelf: &RangeProofWrapper = zelf.as_opaque_type()?;
+
+        let valid = zelf.0.verify_multiple(&BP_GENS, &PC_GENS, &mut transcript.0, &commitments, proof_size as usize)
+            .is_ok();
+
+        Ok(SysCallResult::Return(Primitive::Boolean(valid).into()))
+    })
 }

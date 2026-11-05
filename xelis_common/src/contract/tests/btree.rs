@@ -30,8 +30,8 @@ async fn test_btree_insert_and_get() {
         &contract_hash,
         InvokeContract::Entry(0),
         vec![
-            ValueCell::Bytes("test_key".as_bytes().to_vec()),
-            ValueCell::Bytes("test_value".as_bytes().to_vec()),
+            OwnedValue::Bytes("test_key".as_bytes().to_vec()),
+            OwnedValue::Bytes("test_value".as_bytes().to_vec()),
         ],
     )
     .await
@@ -49,18 +49,18 @@ async fn test_btree_insert_and_get() {
         &mut chain_state,
         &contract_hash,
         InvokeContract::Entry(1),
-        vec![ValueCell::Bytes("test_key".as_bytes().to_vec())],
+        vec![OwnedValue::Bytes("test_key".as_bytes().to_vec())],
     )
     .await
     .expect("get value");
 
     assert!(result.is_success(), "get should succeed: {:?}", result);
 
-    let ExitValue::Payload(ValueCell::Bytes(payload)) = result.exit_value else {
+    let ExitValue::Payload(OwnedValue::Bytes(ref payload)) = result.exit_value else {
         panic!("invalid exit value");
     };
 
-    assert!(payload == b"test_value".to_vec());
+    assert!(*payload == b"test_value".to_vec());
 }
 
 /// Test BTree delete operations
@@ -96,8 +96,8 @@ async fn test_btree_delete() {
         &contract_hash,
         InvokeContract::Entry(0),
         vec![
-            ValueCell::Bytes("key1".as_bytes().to_vec()),
-            ValueCell::Bytes("value1".as_bytes().to_vec()),
+            OwnedValue::Bytes("key1".as_bytes().to_vec()),
+            OwnedValue::Bytes("value1".as_bytes().to_vec()),
         ],
     )
     .await
@@ -108,7 +108,7 @@ async fn test_btree_delete() {
         &mut chain_state,
         &contract_hash,
         InvokeContract::Entry(1),
-        vec![ValueCell::Bytes("key1".as_bytes().to_vec())],
+        vec![OwnedValue::Bytes("key1".as_bytes().to_vec())],
     )
     .await
     .expect("get present");
@@ -120,7 +120,7 @@ async fn test_btree_delete() {
         &mut chain_state,
         &contract_hash,
         InvokeContract::Entry(2),
-        vec![ValueCell::Bytes("key1".as_bytes().to_vec())],
+        vec![OwnedValue::Bytes("key1".as_bytes().to_vec())],
     )
     .await
     .expect("delete");
@@ -132,7 +132,7 @@ async fn test_btree_delete() {
         &mut chain_state,
         &contract_hash,
         InvokeContract::Entry(1),
-        vec![ValueCell::Bytes("key1".as_bytes().to_vec())],
+        vec![OwnedValue::Bytes("key1".as_bytes().to_vec())],
     )
     .await
     .expect("get deleted");
@@ -176,10 +176,10 @@ async fn test_btree_duplicate_keys() {
         &contract_hash,
         InvokeContract::Entry(0),
         vec![
-            ValueCell::Bytes("mykey".as_bytes().to_vec()),
-            ValueCell::Bytes("value1".as_bytes().to_vec()),
-            ValueCell::Bytes("value2".as_bytes().to_vec()),
-            ValueCell::Bytes("value3".as_bytes().to_vec()),
+            OwnedValue::Bytes("mykey".as_bytes().to_vec()),
+            OwnedValue::Bytes("value1".as_bytes().to_vec()),
+            OwnedValue::Bytes("value2".as_bytes().to_vec()),
+            OwnedValue::Bytes("value3".as_bytes().to_vec()),
         ],
     )
     .await
@@ -190,35 +190,35 @@ async fn test_btree_duplicate_keys() {
         &mut chain_state,
         &contract_hash,
         InvokeContract::Entry(1),
-        vec![ValueCell::Bytes("mykey".as_bytes().to_vec())],
+        vec![OwnedValue::Bytes("mykey".as_bytes().to_vec())],
     )
     .await
     .expect("get first");
 
     assert!(result.is_success(), "get first should succeed: {:?}", result);
 
-    let ExitValue::Payload(ValueCell::Bytes(payload)) = result.exit_value else {
+    let ExitValue::Payload(OwnedValue::Bytes(ref payload)) = result.exit_value else {
         panic!("invalid exit value");
     };
-    assert!(payload == b"value1".to_vec(), "first value should be value1");
+    assert!(*payload == b"value1".to_vec(), "first value should be value1");
 
     // Delete first and get next value
     let result = invoke_contract(
         &mut chain_state,
         &contract_hash,
         InvokeContract::Entry(2),
-        vec![ValueCell::Bytes("mykey".as_bytes().to_vec())],
+        vec![OwnedValue::Bytes("mykey".as_bytes().to_vec())],
     )
     .await
     .expect("delete and get next");
 
     assert!(result.is_success(), "delete and get next should succeed: {:?}", result);
 
-    let ExitValue::Payload(ValueCell::Bytes(payload)) = result.exit_value else {
+    let ExitValue::Payload(OwnedValue::Bytes(ref payload)) = result.exit_value else {
         panic!("invalid exit value");
     };
 
-    assert!(payload == b"value2".to_vec(), "next value should be value2");
+    assert!(*payload == b"value2".to_vec(), "next value should be value2");
 }
 
 /// Test internal mutability: modifying a value after retrieval should NOT affect storage
@@ -292,7 +292,7 @@ async fn test_btree_different_namespaces() {
             &mut chain_state,
             &contract_hash,
             InvokeContract::Entry(0),
-            vec![ValueCell::Bytes(ns.as_bytes().to_vec())],
+            vec![OwnedValue::Bytes(ns.as_bytes().to_vec())],
         )
         .await
         .expect("insert to store");

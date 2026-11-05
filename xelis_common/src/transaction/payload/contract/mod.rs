@@ -16,8 +16,7 @@ use xelis_vm::{
     Primitive,
     PrimitiveRange,
     TypePacked,
-    ValueCell,
-    ValuePointer,
+    OwnedValue,
     U256,
 };
 use crate::{
@@ -228,41 +227,41 @@ fn read_primitive<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>, tag: u8
     })
 }
 
-impl Serializer for ValueCell {
+impl Serializer for OwnedValue {
     // Serialize a value cell
-    // ValueCell with more than one value are serialized in reverse order
+    // OwnedValue with more than one value are serialized in reverse order
     // This help us to save a reverse operation when deserializing
     fn write<'ty, 'r, W: Writable>(&self, writer: &mut Writer<'ty, 'r, W>) -> Result<(), SerializationError> {
         writer.write_with_context::<Self>(|writer| {
             let mut stack = vec![self];
             while let Some(cell) = stack.pop() {
                 match cell {
-                    ValueCell::Primitive(value) => {
+                    OwnedValue::Primitive(value) => {
                         0u8.write(writer)?;
                         value.write(writer)?;
                     },
-                    ValueCell::Opaque(opaque) => {
+                    OwnedValue::Opaque(opaque) => {
                         0u8.write(writer)?;
                         10u8.write(writer)?;
                         opaque.write(writer)?;
                     },
-                    ValueCell::Bytes(bytes) => {
+                    OwnedValue::Bytes(bytes) => {
                         1u8.write(writer)?;
                         DynamicLen(bytes.len()).write(writer)?;
                         writer.extend_bytes(bytes)?;
                     }
-                    ValueCell::Object(values) => {
+                    OwnedValue::Object(values) => {
                         2u8.write(writer)?;
                         DynamicLen(values.len()).write(writer)?;
                         for value in values.iter().rev() {
-                            stack.push(value.as_ref());
+                            stack.push(value);
                         }
                     },
-                    ValueCell::Map(map) => {
+                    OwnedValue::Map(map) => {
                         3u8.write(writer)?;
                         DynamicLen(map.len()).write(writer)?;
                         for (key, value) in map.iter().rev() {
-                            stack.push(value.as_ref());
+                            stack.push(value);
                             stack.push(key);
                         }
                     }
@@ -273,19 +272,19 @@ impl Serializer for ValueCell {
     }
 
     // No deserialization can occurs here as we're missing context
-    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<ValueCell, ReaderError> {
+    fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<OwnedValue, ReaderError> {
         reader.read_with_context(|reader| {
             // Iterative approach to prevent stack overflow attacks
             // Maximum nesting depth allowed
             const MAX_DEPTH: usize = 16;
 
             enum Pending {
-                Object { remaining: usize, values: Vec<ValuePointer> },
-                Map { remaining: usize, map: IndexMap<ValueCell, ValuePointer>, pending_key: Option<ValueCell> },
+                Object { remaining: usize, values: Vec<OwnedValue> },
+                Map { remaining: usize, map: IndexMap<OwnedValue, OwnedValue>, pending_key: Option<OwnedValue> },
             }
 
             let mut stack: Vec<Pending> = Vec::new();
-            let mut result: Option<ValueCell> = None;
+            let mut result: Option<OwnedValue> = None;
 
             loop {
                 // If we have a result, process it
@@ -320,8 +319,8 @@ impl Serializer for ValueCell {
                         if is_complete {
                             let completed = stack.pop().unwrap();
                             result = Some(match completed {
-                                Pending::Object { values, .. } => ValueCell::Object(values),
-                                Pending::Map { map, .. } => ValueCell::Map(Box::new(map)),
+                                Pending::Object { values, .. } => OwnedValue::Object(values),
+                                Pending::Map { map, .. } => OwnedValue::Map(map),
                             });
                         } else {
                             break;
@@ -338,19 +337,19 @@ impl Serializer for ValueCell {
                     0 => {
                         let tag = u8::read(reader)?;
                         result = Some(if tag == 10 {
-                            ValueCell::Opaque(OpaqueWrapper::read(reader)?)
+                            OwnedValue::Opaque(OpaqueWrapper::read(reader)?)
                         } else {
-                            ValueCell::Primitive(read_primitive(reader, tag)?)
+                            OwnedValue::Primitive(read_primitive(reader, tag)?)
                         });
                     },
                     1 => {
                         let len = DynamicLen::read(reader)?.0;
-                        result = Some(ValueCell::Bytes(reader.read_vec(len)?));
+                        result = Some(OwnedValue::Bytes(reader.read_vec(len)?));
                     }
                     2 => {
                         let len = DynamicLen::read(reader)?.0;
                         if len == 0 {
-                            result = Some(ValueCell::Object(Vec::new()));
+                            result = Some(OwnedValue::Object(Vec::new()));
                         } else {
                             if stack.len() >= MAX_DEPTH {
                                 return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("value cell object nesting exceeds the maximum depth of {MAX_DEPTH}")));
@@ -361,7 +360,7 @@ impl Serializer for ValueCell {
                     3 => {
                         let len = DynamicLen::read(reader)?.0;
                         if len == 0 {
-                            result = Some(ValueCell::Map(Box::new(IndexMap::new())));
+                            result = Some(OwnedValue::Map(IndexMap::new()));
                         } else {
                             if stack.len() >= MAX_DEPTH {
                                 return Err(SerializationError::new(DecodeError::InvalidValue).context(format!("value cell map nesting exceeds the maximum depth of {MAX_DEPTH}")));
@@ -383,25 +382,25 @@ impl Serializer for ValueCell {
             // variant id
             total += 1;
             match cell {
-                ValueCell::Primitive(value) => total += value.size(),
-                ValueCell::Opaque(opaque) => total += 1 + opaque.size(),
-                ValueCell::Bytes(bytes) => {
+                OwnedValue::Primitive(value) => total += value.size(),
+                OwnedValue::Opaque(opaque) => total += 1 + opaque.size(),
+                OwnedValue::Bytes(bytes) => {
                     // u32 len
                     total += DynamicLen(bytes.len()).size();
                     total += bytes.len();
                 },
-                ValueCell::Object(values) => {
+                OwnedValue::Object(values) => {
                     // u32 len
                     total += DynamicLen(values.len()).size();
                     for value in values {
-                        stack.push(value.as_ref());
+                        stack.push(value);
                     }
                 },
-                ValueCell::Map(map) => {
+                OwnedValue::Map(map) => {
                     // u32 len
                     total += DynamicLen(map.len()).size();
                     for (key, value) in map.iter() {
-                        stack.push(value.as_ref());
+                        stack.push(value);
                         stack.push(key);
                     }
                 }
@@ -473,7 +472,7 @@ impl Serializer for Module {
             let mut constants = IndexSet::new();
 
             for _ in 0..constants_len {
-                let c = ValueCell::read(reader)?;
+                let c = OwnedValue::read(reader)?;
                 if !constants.insert(c) {
                     return Err(SerializationError::new(DecodeError::InvalidValue).context("duplicate constant in contract module"));
                 }
@@ -556,6 +555,7 @@ impl Serializer for Module {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+    use xelis_vm::NumberType;
 
     use crate::crypto::Hash;
     use super::*;
@@ -576,7 +576,7 @@ mod tests {
             TypePacked::Opaque(42),
             TypePacked::Tuples(vec![
                 TypePacked::String,
-                TypePacked::Optional(Box::new(TypePacked::Number(xelis_vm::NumberType::U64))),
+                TypePacked::Optional(Box::new(TypePacked::Number(NumberType::U64))),
             ]),
         ]));
 
@@ -589,32 +589,32 @@ mod tests {
     }
 
     #[track_caller]
-    fn test_serde_cell(cell: ValueCell) {
+    fn test_serde_cell(cell: OwnedValue) {
         let bytes = cell.to_bytes().unwrap();
-        let v = ValueCell::from_bytes(&bytes).unwrap();
+        let v = OwnedValue::from_bytes(&bytes).unwrap();
 
         assert_eq!(v, cell);
     }
 
     #[test]
     fn test_serde_primitive() {
-        test_serde_cell(ValueCell::Primitive(Primitive::Null));
-        test_serde_cell(ValueCell::Primitive(Primitive::Boolean(false)));
-        test_serde_cell(ValueCell::Primitive(Primitive::Integer(PrimitiveInteger::U8(42))));
-        test_serde_cell(ValueCell::Primitive(Primitive::Integer(PrimitiveInteger::U32(42))));
-        test_serde_cell(ValueCell::Primitive(Primitive::Integer(PrimitiveInteger::U64(42))));
-        test_serde_cell(ValueCell::Primitive(Primitive::Integer(PrimitiveInteger::U128(42))));
-        test_serde_cell(ValueCell::Primitive(Primitive::Integer(PrimitiveInteger::U256(42u64.into()))));
-        test_serde_cell(ValueCell::Primitive(Primitive::Range(Box::new(PrimitiveRange::U128(42..420)))));
-        test_serde_cell(ValueCell::Primitive(Primitive::String("hello world!!!".to_owned())));
+        test_serde_cell(OwnedValue::Primitive(Primitive::Null));
+        test_serde_cell(OwnedValue::Primitive(Primitive::Boolean(false)));
+        test_serde_cell(OwnedValue::Primitive(Primitive::Integer(PrimitiveInteger::U8(42))));
+        test_serde_cell(OwnedValue::Primitive(Primitive::Integer(PrimitiveInteger::U32(42))));
+        test_serde_cell(OwnedValue::Primitive(Primitive::Integer(PrimitiveInteger::U64(42))));
+        test_serde_cell(OwnedValue::Primitive(Primitive::Integer(PrimitiveInteger::U128(42))));
+        test_serde_cell(OwnedValue::Primitive(Primitive::Integer(PrimitiveInteger::U256(42u64.into()))));
+        test_serde_cell(OwnedValue::Primitive(Primitive::Range(Box::new(PrimitiveRange::U128(42..420)))));
+        test_serde_cell(OwnedValue::Primitive(Primitive::String("hello world!!!".to_owned())));
 
-        test_serde_cell(ValueCell::Opaque(OpaqueWrapper::new(Hash::zero())));
+        test_serde_cell(OwnedValue::Opaque(OpaqueWrapper::new(Hash::zero())));
     }
 
     #[test]
     fn test_serde_nested_range_is_rejected() {
         let bytes: [u8; 9] = [
-            0, // ValueCell::Primitive
+            0, // OwnedValue::Primitive
             9, // Primitive::Range
             9, // invalid nested Primitive::Range as left boundary
             1, 0,
@@ -622,55 +622,55 @@ mod tests {
             1, 2,
         ];
 
-        assert!(ValueCell::from_bytes(&bytes).is_err());
+        assert!(OwnedValue::from_bytes(&bytes).is_err());
     }
 
     #[test]
     fn test_serde_value_cell() {
-        test_serde_cell(ValueCell::Bytes(vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]));
-        test_serde_cell(ValueCell::Bytes(vec![0; u16::MAX as usize + 10]));
-        test_serde_cell(ValueCell::Object(vec![
+        test_serde_cell(OwnedValue::Bytes(vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]));
+        test_serde_cell(OwnedValue::Bytes(vec![0; u16::MAX as usize + 10]));
+        test_serde_cell(OwnedValue::Object(vec![
             Primitive::Integer(PrimitiveInteger::U64(42)).into(),
             Primitive::Integer(PrimitiveInteger::U64(23)).into(),
             Primitive::Integer(PrimitiveInteger::U64(42)).into(),
             Primitive::Integer(PrimitiveInteger::U64(57)).into(),
             Primitive::Integer(PrimitiveInteger::U64(10)).into()
         ]));
-        test_serde_cell(ValueCell::Map(Box::new([
+        test_serde_cell(OwnedValue::Map([
             (Primitive::Integer(PrimitiveInteger::U64(42)).into(), Primitive::String("Hello World!".to_owned()).into())
-        ].into_iter().collect())));
+        ].into_iter().collect()));
     }
 
     #[test]
     fn test_serde_empty_containers() {
         // Empty object
-        test_serde_cell(ValueCell::Object(vec![]));
+        test_serde_cell(OwnedValue::Object(vec![]));
         // Empty map
-        test_serde_cell(ValueCell::Map(Box::new(IndexMap::new())));
+        test_serde_cell(OwnedValue::Map(IndexMap::new()));
         // Empty bytes
-        test_serde_cell(ValueCell::Bytes(vec![]));
+        test_serde_cell(OwnedValue::Bytes(vec![]));
         // Empty string
-        test_serde_cell(ValueCell::Primitive(Primitive::String(String::new())));
+        test_serde_cell(OwnedValue::Primitive(Primitive::String(String::new())));
     }
 
     #[test]
     fn test_serde_nested_objects() {
         // Object containing objects
-        test_serde_cell(ValueCell::Object(vec![
-            ValueCell::Object(vec![
+        test_serde_cell(OwnedValue::Object(vec![
+            OwnedValue::Object(vec![
                 Primitive::Integer(PrimitiveInteger::U64(1)).into(),
                 Primitive::Integer(PrimitiveInteger::U64(2)).into(),
             ]).into(),
-            ValueCell::Object(vec![
+            OwnedValue::Object(vec![
                 Primitive::Integer(PrimitiveInteger::U64(3)).into(),
                 Primitive::Integer(PrimitiveInteger::U64(4)).into(),
             ]).into(),
         ]));
 
         // Deeply nested object (3 levels)
-        test_serde_cell(ValueCell::Object(vec![
-            ValueCell::Object(vec![
-                ValueCell::Object(vec![
+        test_serde_cell(OwnedValue::Object(vec![
+            OwnedValue::Object(vec![
+                OwnedValue::Object(vec![
                     Primitive::String("deep".to_owned()).into(),
                 ]).into(),
             ]).into(),
@@ -680,32 +680,32 @@ mod tests {
     #[test]
     fn test_serde_nested_maps() {
         // Map containing maps
-        let inner_map: IndexMap<ValueCell, ValuePointer> = [
-            (Primitive::Integer(PrimitiveInteger::U64(1)).into(), ValueCell::Primitive(Primitive::String("one".to_owned())).into()),
-            (Primitive::Integer(PrimitiveInteger::U64(2)).into(), ValueCell::Primitive(Primitive::String("two".to_owned())).into()),
+        let inner_map: IndexMap<OwnedValue, OwnedValue> = [
+            (Primitive::Integer(PrimitiveInteger::U64(1)).into(), OwnedValue::Primitive(Primitive::String("one".to_owned())).into()),
+            (Primitive::Integer(PrimitiveInteger::U64(2)).into(), OwnedValue::Primitive(Primitive::String("two".to_owned())).into()),
         ].into_iter().collect();
 
-        let outer_map: IndexMap<ValueCell, ValuePointer> = [
-            (Primitive::String("inner".to_owned()).into(), ValueCell::Map(Box::new(inner_map)).into()),
+        let outer_map: IndexMap<OwnedValue, OwnedValue> = [
+            (Primitive::String("inner".to_owned()).into(), OwnedValue::Map(inner_map).into()),
         ].into_iter().collect();
 
-        test_serde_cell(ValueCell::Map(Box::new(outer_map)));
+        test_serde_cell(OwnedValue::Map(outer_map));
     }
 
     #[test]
     fn test_serde_mixed_nested() {
         // Object containing map containing object
-        let inner_obj = ValueCell::Object(vec![
+        let inner_obj = OwnedValue::Object(vec![
             Primitive::Integer(PrimitiveInteger::U64(42)).into(),
             Primitive::Boolean(true).into(),
         ]);
 
-        let map: IndexMap<ValueCell, ValuePointer> = [
+        let map: IndexMap<OwnedValue, OwnedValue> = [
             (Primitive::String("data".to_owned()).into(), inner_obj.into()),
         ].into_iter().collect();
 
-        test_serde_cell(ValueCell::Object(vec![
-            ValueCell::Map(Box::new(map)).into(),
+        test_serde_cell(OwnedValue::Object(vec![
+            OwnedValue::Map(map).into(),
             Primitive::Integer(PrimitiveInteger::U64(100)).into(),
         ]));
     }
@@ -713,42 +713,42 @@ mod tests {
     #[test]
     fn test_serde_map_with_complex_keys() {
         // Map with object as key
-        let key_obj = ValueCell::Object(vec![
+        let key_obj = OwnedValue::Object(vec![
             Primitive::Integer(PrimitiveInteger::U64(1)).into(),
             Primitive::Integer(PrimitiveInteger::U64(2)).into(),
         ]);
 
-        let map: IndexMap<ValueCell, ValuePointer> = [
-            (key_obj, ValueCell::Primitive(Primitive::String("value".to_owned())).into()),
+        let map: IndexMap<OwnedValue, OwnedValue> = [
+            (key_obj, OwnedValue::Primitive(Primitive::String("value".to_owned())).into()),
         ].into_iter().collect();
 
-        test_serde_cell(ValueCell::Map(Box::new(map)));
+        test_serde_cell(OwnedValue::Map(map));
     }
 
     #[test]
     fn test_serde_large_flat_object() {
         // Object with many elements
-        let values: Vec<ValuePointer> = (0..1000)
+        let values: Vec<OwnedValue> = (0..1000)
             .map(|i| Primitive::Integer(PrimitiveInteger::U64(i)).into())
             .collect();
-        test_serde_cell(ValueCell::Object(values));
+        test_serde_cell(OwnedValue::Object(values));
     }
 
     #[test]
     fn test_serde_large_flat_map() {
         // Map with many entries
-        let map: IndexMap<ValueCell, ValuePointer> = (0..500)
-            .map(|i| (Primitive::Integer(PrimitiveInteger::U64(i)).into(), ValueCell::Primitive(Primitive::String(format!("value_{}", i))).into()))
+        let map: IndexMap<OwnedValue, OwnedValue> = (0..500)
+            .map(|i| (Primitive::Integer(PrimitiveInteger::U64(i)).into(), OwnedValue::Primitive(Primitive::String(format!("value_{}", i))).into()))
             .collect();
-        test_serde_cell(ValueCell::Map(Box::new(map)));
+        test_serde_cell(OwnedValue::Map(map));
     }
 
     #[test]
     fn test_serde_deep_nesting() {
         // Create a deeply nested structure (within 16 depth limit)
-        let mut cell = ValueCell::Primitive(Primitive::Integer(PrimitiveInteger::U64(42)));
+        let mut cell = OwnedValue::Primitive(Primitive::Integer(PrimitiveInteger::U64(42)));
         for _ in 0..16 {
-            cell = ValueCell::Object(vec![cell.into()]);
+            cell = OwnedValue::Object(vec![cell.into()]);
         }
         test_serde_cell(cell);
     }
@@ -756,23 +756,23 @@ mod tests {
     #[test]
     fn test_serde_deep_nesting_exceeds_limit() {
         // Create a structure that exceeds the 16 depth limit
-        let mut cell = ValueCell::Primitive(Primitive::Integer(PrimitiveInteger::U64(42)));
+        let mut cell = OwnedValue::Primitive(Primitive::Integer(PrimitiveInteger::U64(42)));
         for _ in 0..17 {
-            cell = ValueCell::Object(vec![cell.into()]);
+            cell = OwnedValue::Object(vec![cell.into()]);
         }
         let bytes = cell.to_bytes().unwrap();
-        assert!(ValueCell::from_bytes(&bytes).is_err());
+        assert!(OwnedValue::from_bytes(&bytes).is_err());
     }
 
     #[test]
     fn test_serde_deep_map_nesting() {
         // Deeply nested maps (within 16 depth limit)
-        let mut cell = ValueCell::Primitive(Primitive::String("innermost".to_owned()));
+        let mut cell = OwnedValue::Primitive(Primitive::String("innermost".to_owned()));
         for i in 0..16 {
-            let map: IndexMap<ValueCell, ValuePointer> = [
+            let map: IndexMap<OwnedValue, OwnedValue> = [
                 (Primitive::Integer(PrimitiveInteger::U64(i)).into(), cell.into()),
             ].into_iter().collect();
-            cell = ValueCell::Map(Box::new(map));
+            cell = OwnedValue::Map(map);
         }
         test_serde_cell(cell);
     }
@@ -780,40 +780,40 @@ mod tests {
     #[test]
     fn test_serde_deep_map_nesting_exceeds_limit() {
         // Deeply nested maps that exceed the 16 depth limit
-        let mut cell = ValueCell::Primitive(Primitive::String("innermost".to_owned()));
+        let mut cell = OwnedValue::Primitive(Primitive::String("innermost".to_owned()));
         for i in 0..17 {
-            let map: IndexMap<ValueCell, ValuePointer> = [
+            let map: IndexMap<OwnedValue, OwnedValue> = [
                 (Primitive::Integer(PrimitiveInteger::U64(i)).into(), cell.into()),
             ].into_iter().collect();
-            cell = ValueCell::Map(Box::new(map));
+            cell = OwnedValue::Map(map);
         }
         let bytes = cell.to_bytes().unwrap();
-        assert!(ValueCell::from_bytes(&bytes).is_err());
+        assert!(OwnedValue::from_bytes(&bytes).is_err());
     }
 
     #[test]
     fn test_serde_alternating_object_map() {
         // Alternating between objects and maps in nesting
-        let inner = ValueCell::Primitive(Primitive::Integer(PrimitiveInteger::U64(999)));
+        let inner = OwnedValue::Primitive(Primitive::Integer(PrimitiveInteger::U64(999)));
         
-        let map: IndexMap<ValueCell, ValuePointer> = [
+        let map: IndexMap<OwnedValue, OwnedValue> = [
             (Primitive::Integer(PrimitiveInteger::U64(0)).into(), inner.into()),
         ].into_iter().collect();
         
-        let obj = ValueCell::Object(vec![ValueCell::Map(Box::new(map)).into()]);
+        let obj = OwnedValue::Object(vec![OwnedValue::Map(map).into()]);
         
-        let outer_map: IndexMap<ValueCell, ValuePointer> = [
+        let outer_map: IndexMap<OwnedValue, OwnedValue> = [
             (Primitive::String("nested".to_owned()).into(), obj.into()),
         ].into_iter().collect();
         
-        test_serde_cell(ValueCell::Object(vec![
-            ValueCell::Map(Box::new(outer_map)).into(),
+        test_serde_cell(OwnedValue::Object(vec![
+            OwnedValue::Map(outer_map).into(),
         ]));
     }
 
     #[test]
     fn test_serde_object_with_all_primitive_types() {
-        test_serde_cell(ValueCell::Object(vec![
+        test_serde_cell(OwnedValue::Object(vec![
             Primitive::Null.into(),
             Primitive::Boolean(true).into(),
             Primitive::Boolean(false).into(),
@@ -825,35 +825,35 @@ mod tests {
             Primitive::Integer(PrimitiveInteger::U256(U256::MAX)).into(),
             Primitive::String("test string".to_owned()).into(),
             Primitive::Range(Box::new(PrimitiveRange::U64(0..100))).into(),
-            ValueCell::Opaque(OpaqueWrapper::new(Hash::zero())).into(),
+            OwnedValue::Opaque(OpaqueWrapper::new(Hash::zero())).into(),
         ]));
     }
 
     #[test]
     fn test_serde_map_multiple_entries() {
         // Map with multiple entries of different types
-        let map: IndexMap<ValueCell, ValuePointer> = [
-            (Primitive::Integer(PrimitiveInteger::U64(1)).into(), ValueCell::Primitive(Primitive::String("one".to_owned())).into()),
-            (Primitive::Integer(PrimitiveInteger::U64(2)).into(), ValueCell::Primitive(Primitive::Boolean(true)).into()),
-            (Primitive::Integer(PrimitiveInteger::U64(3)).into(), ValueCell::Bytes(vec![1, 2, 3]).into()),
-            (Primitive::String("key".to_owned()).into(), ValueCell::Primitive(Primitive::Integer(PrimitiveInteger::U128(12345))).into()),
+        let map: IndexMap<OwnedValue, OwnedValue> = [
+            (Primitive::Integer(PrimitiveInteger::U64(1)).into(), OwnedValue::Primitive(Primitive::String("one".to_owned())).into()),
+            (Primitive::Integer(PrimitiveInteger::U64(2)).into(), OwnedValue::Primitive(Primitive::Boolean(true)).into()),
+            (Primitive::Integer(PrimitiveInteger::U64(3)).into(), OwnedValue::Bytes(vec![1, 2, 3]).into()),
+            (Primitive::String("key".to_owned()).into(), OwnedValue::Primitive(Primitive::Integer(PrimitiveInteger::U128(12345))).into()),
         ].into_iter().collect();
-        test_serde_cell(ValueCell::Map(Box::new(map)));
+        test_serde_cell(OwnedValue::Map(map));
     }
 
     #[test]
     fn test_serde_bytes_in_containers() {
         // Bytes inside object
-        test_serde_cell(ValueCell::Object(vec![
-            ValueCell::Bytes(vec![1, 2, 3, 4, 5]).into(),
-            ValueCell::Bytes(vec![]).into(),
-            ValueCell::Bytes(vec![255; 100]).into(),
+        test_serde_cell(OwnedValue::Object(vec![
+            OwnedValue::Bytes(vec![1, 2, 3, 4, 5]).into(),
+            OwnedValue::Bytes(vec![]).into(),
+            OwnedValue::Bytes(vec![255; 100]).into(),
         ]));
 
         // Bytes as map value
-        let map: IndexMap<ValueCell, ValuePointer> = [
-            (Primitive::String("data".to_owned()).into(), ValueCell::Bytes(vec![0xDE, 0xAD, 0xBE, 0xEF]).into()),
+        let map: IndexMap<OwnedValue, OwnedValue> = [
+            (Primitive::String("data".to_owned()).into(), OwnedValue::Bytes(vec![0xDE, 0xAD, 0xBE, 0xEF]).into()),
         ].into_iter().collect();
-        test_serde_cell(ValueCell::Map(Box::new(map)));
+        test_serde_cell(OwnedValue::Map(map));
     }
 }

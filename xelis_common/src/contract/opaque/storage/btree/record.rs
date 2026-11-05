@@ -8,14 +8,14 @@ use crate::serializer::{
     Writable,
     Writer,
 };
-use xelis_vm::ValueCell;
+use xelis_vm::OwnedValue;
 
 use super::{Node, NodeHeader};
 
 #[derive(Debug, Clone)]
 pub struct NodeRecord {
     pub key: Vec<u8>,
-    pub value: ValueCell,
+    pub value: OwnedValue,
     pub parent: Option<u64>,
     pub left: Option<u64>,
     pub right: Option<u64>,
@@ -50,7 +50,7 @@ impl Serializer for NodeRecord {
     fn read<'ty, 'r, R: Readable>(reader: &mut Reader<'ty, 'r, R>) -> Result<Self, ReaderError> {
         reader.read_with_context(|reader| {
             let (parent, left, right, key) = read_node_header_parts(reader)?;
-            let value = ValueCell::read(reader)?;
+            let value = OwnedValue::read(reader)?;
             Ok(Self { key, value, parent, left, right })
         })
     }

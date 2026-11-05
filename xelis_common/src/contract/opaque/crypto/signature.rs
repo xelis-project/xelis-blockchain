@@ -1,6 +1,7 @@
 use matriochka::ResultExt;
 use xelis_vm::{
-    ValueCell,
+    RuntimeValue,
+    Heap,
     traits::DynSerializable,
     VMContext,
     EnvironmentError,
@@ -31,9 +32,9 @@ impl DynSerializable for Signature {
     }
 }
 
-pub fn signature_from_bytes_fn(_: FnInstance, params: FnParams, _: &ModuleMetadata<'_>, _: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn signature_from_bytes_fn(_: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let bytes = params[0]
-        .as_ref()
+        .as_ref(heap)
         .as_bytes()?;
 
     if bytes.len() != SIGNATURE_SIZE {
@@ -42,25 +43,26 @@ pub fn signature_from_bytes_fn(_: FnInstance, params: FnParams, _: &ModuleMetada
 
     let signature = Signature::from_bytes(&bytes)
         .context("signature from bytes")?;
-    Ok(SysCallResult::Return(ValueCell::Opaque(signature.into()).into()))
+    Ok(SysCallResult::Return(RuntimeValue::Opaque(signature.into()).into()))
 }
 
-pub fn signature_verify_fn(zelf: FnInstance, mut params: FnParams, _: &ModuleMetadata<'_>, context: &mut VMContext) -> FnReturnType<ContractMetadata> {
+pub fn signature_verify_fn(zelf: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, context: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
-    let signature: &Signature = zelf.as_opaque_type()?;
+    heap.with_value(zelf, |zelf, heap| {
+        let signature: &Signature = zelf.as_opaque_type()?;
 
-    let mut point: OpaqueRistrettoPoint = params.remove(1)
-        .into_owned()
-        .into_opaque_type()?;
+        let mut point: OpaqueRistrettoPoint = params.remove(1).into_owned(heap)?
+            .into_opaque_type()?;
 
-    let data = params[0]
-        .as_ref()
-        .as_bytes()?;
+        let data = params[0]
+            .as_ref(heap)
+            .as_bytes()?;
 
-    context.increase_gas_usage(data.len() as u64 * 2)?;
+        context.increase_gas_usage(data.len() as u64 * 2)?;
 
-    let (compressed, key) = point.both()?;
-    Ok(SysCallResult::Return(Primitive::Boolean(signature.verify_internal(&data, &key, compressed)).into()))
+        let (compressed, key) = point.both()?;
+        Ok(SysCallResult::Return(Primitive::Boolean(signature.verify_internal(&data, &key, compressed)).into()))
+    })
 }
 
 #[cfg(test)]
