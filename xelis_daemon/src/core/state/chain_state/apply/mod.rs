@@ -51,7 +51,7 @@ use xelis_common::{
     utils::format_xelis,
     versioned::VersionedState
 };
-use xelis_vm::{Environment, ValueCell};
+use xelis_vm::{Environment, Module, OwnedValue};
 use crate::core::{
     blockchain::{ContractEnvironments, tx_kb_size_rounded},
     state::verify_fee,
@@ -229,7 +229,7 @@ impl<'s, 'b, P: ApplicableChainStateProvider> BlockchainVerificationState<'b, Bl
     async fn get_contract_module_with_environment(
         &self,
         hash: &'b Hash
-    ) -> Result<(&xelis_vm::Module, &Environment<ContractMetadata>), BlockchainError> {
+    ) -> Result<(&Module, &Environment<ContractMetadata>), BlockchainError> {
         self.inner.get_contract_module_with_environment(hash).await
     }
 }
@@ -736,7 +736,7 @@ impl<'s, 'b, P: ApplicableChainStateProvider> ApplicableChainState<'s, 'b, P> {
                     callback.gas_sources,
                     callback.max_gas,
                     callback.chunk_id,
-                    event.params.iter().map(|v| v.deep_clone()),
+                    event.params.iter().map(|v| v.clone()),
                     // disable the post hook execution to prevent stack overflow
                     false,
                 ).await?;
@@ -870,7 +870,7 @@ impl<'s, 'b, P: ApplicableChainStateProvider> ApplicableChainState<'s, 'b, P> {
         gas_sources: IndexMap<Source, u64>,
         max_gas: u64,
         chunk_id: u16,
-        params: impl DoubleEndedIterator<Item = ValueCell> + ExactSizeIterator,
+        params: impl DoubleEndedIterator<Item = OwnedValue> + ExactSizeIterator,
         post_hook: bool,
     ) -> Result<(), BlockchainError> {
         debug!("processing scheduled execution of contract {} with caller {}", contract, caller.get_hash());

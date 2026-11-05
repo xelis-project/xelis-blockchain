@@ -6,7 +6,7 @@ use xelis_common::{
     crypto::Hash,
     serializer::Serializer,
 };
-use xelis_vm::ValueCell;
+use xelis_vm::OwnedValue;
 use crate::core::{
     error::{BlockchainError, DiskContext},
     storage::{ContractDataProvider, SledStorage, VersionedContractData, types::{Key, VersionedKey}}
@@ -14,7 +14,7 @@ use crate::core::{
 
 #[async_trait]
 impl ContractDataProvider for SledStorage {
-    async fn set_last_contract_data_to(&mut self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight, data: &VersionedContractData) -> Result<(), BlockchainError> {
+    async fn set_last_contract_data_to(&mut self, contract: &Hash, key: &OwnedValue, topoheight: TopoHeight, data: &VersionedContractData) -> Result<(), BlockchainError> {
         trace!("set last contract data to topoheight {}", topoheight);
         let versioned_key = self.get_versioned_contract_data_key(contract, key, topoheight);
         Self::insert_into_disk(self.snapshot.as_mut(), &self.versioned_contracts_data, &versioned_key, data.to_bytes()?)?;
@@ -25,18 +25,18 @@ impl ContractDataProvider for SledStorage {
         Ok(())
     }
 
-    async fn get_last_topoheight_for_contract_data(&self, contract: &Hash, key: &ValueCell) -> Result<Option<TopoHeight>, BlockchainError> {
+    async fn get_last_topoheight_for_contract_data(&self, contract: &Hash, key: &OwnedValue) -> Result<Option<TopoHeight>, BlockchainError> {
         trace!("get last topoheight for contract data");
         let key = self.get_contract_data_key(contract, key);
         self.load_optional_from_disk(&self.contracts_data, &key)
     }
 
-    async fn get_contract_data_at_exact_topoheight_for<'a>(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<VersionedContractData, BlockchainError> {
+    async fn get_contract_data_at_exact_topoheight_for<'a>(&self, contract: &Hash, key: &OwnedValue, topoheight: TopoHeight) -> Result<VersionedContractData, BlockchainError> {
         trace!("get contract data at topoheight {}", topoheight);
         self.load_from_disk(&self.versioned_contracts_data, &self.get_versioned_contract_data_key(contract, key, topoheight), DiskContext::ContractData)
     }
 
-    async fn get_contract_data_at_maximum_topoheight_for<'a>(&self, contract: &Hash, key: &ValueCell, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedContractData)>, BlockchainError> {
+    async fn get_contract_data_at_maximum_topoheight_for<'a>(&self, contract: &Hash, key: &OwnedValue, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedContractData)>, BlockchainError> {
         trace!("get contract data at maximum topoheight {}", maximum_topoheight);
         match self.get_contract_data_topoheight_at_maximum_topoheight_for(contract, key, maximum_topoheight).await? {
             Some(topoheight) => {
@@ -47,7 +47,7 @@ impl ContractDataProvider for SledStorage {
         }
     }
 
-    async fn get_contract_data_topoheight_at_maximum_topoheight_for<'a>(&self, contract: &Hash, key: &ValueCell, maximum_topoheight: TopoHeight) -> Result<Option<TopoHeight>, BlockchainError> {
+    async fn get_contract_data_topoheight_at_maximum_topoheight_for<'a>(&self, contract: &Hash, key: &OwnedValue, maximum_topoheight: TopoHeight) -> Result<Option<TopoHeight>, BlockchainError> {
         trace!("get contract data topoheight at maximum topoheight {}", maximum_topoheight);
         let Some(pointer) = self.get_last_topoheight_for_contract_data(contract, key).await? else {
             return Ok(None)
@@ -76,13 +76,13 @@ impl ContractDataProvider for SledStorage {
         Ok(None)
     }
 
-    async fn has_contract_data_at_exact_topoheight(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
+    async fn has_contract_data_at_exact_topoheight(&self, contract: &Hash, key: &OwnedValue, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
         trace!("has contract data at exact topoheight {} for {} with key {}", topoheight, contract, key);
         self.contains_data(&self.versioned_contracts_data, self.get_versioned_contract_data_key(contract, key, topoheight))
     }
 
-    async fn get_contract_data_entries_at_maximum_topoheight<'a>(&'a self, contract: &'a Hash, topoheight: TopoHeight) -> Result<impl Stream<Item = Result<(ValueCell, Option<ValueCell>), BlockchainError>> + Send + 'a, BlockchainError> {
-        Ok(stream::iter(Self::scan_prefix_keys::<(Hash, ValueCell)>(self.snapshot.as_ref(), &self.contracts_data, contract.as_bytes()))
+    async fn get_contract_data_entries_at_maximum_topoheight<'a>(&'a self, contract: &'a Hash, topoheight: TopoHeight) -> Result<impl Stream<Item = Result<(OwnedValue, Option<OwnedValue>), BlockchainError>> + Send + 'a, BlockchainError> {
+        Ok(stream::iter(Self::scan_prefix_keys::<(Hash, OwnedValue)>(self.snapshot.as_ref(), &self.contracts_data, contract.as_bytes()))
             .map(move |res| async move {
                 let (_, key) = res?;
                 let value = self.get_contract_data_at_maximum_topoheight_for(contract, &key, topoheight).await?;
@@ -95,13 +95,13 @@ impl ContractDataProvider for SledStorage {
 }
 
 impl SledStorage {
-    pub fn get_versioned_contract_data_key(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> VersionedKey {
+    pub fn get_versioned_contract_data_key(&self, contract: &Hash, key: &OwnedValue, topoheight: TopoHeight) -> VersionedKey {
         let mut buffer = VersionedKey::new(topoheight);
         buffer.extend_with(self.get_contract_data_key(contract, key));
         buffer
     }
 
-    pub fn get_contract_data_key(&self, contract: &Hash, key: &ValueCell) -> Key {
+    pub fn get_contract_data_key(&self, contract: &Hash, key: &OwnedValue) -> Key {
         let mut buffer = Key::new();
         buffer.extend_with(contract.as_bytes());
         buffer.extend_with(&key.to_bytes().expect("contract key serialization failed"));

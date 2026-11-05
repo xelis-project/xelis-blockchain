@@ -7,7 +7,7 @@ use xelis_common::{
     crypto::Hash,
 };
 use crate::core::storage::VersionedContractData;
-use xelis_vm::ValueCell;
+use xelis_vm::OwnedValue;
 use futures::Stream;
 use crate::core::{
     error::BlockchainError,
@@ -17,7 +17,7 @@ use super::super::super::MemoryStorage;
 
 #[async_trait]
 impl ContractDataProvider for MemoryStorage {
-    async fn set_last_contract_data_to(&mut self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight, version: &VersionedContractData) -> Result<(), BlockchainError> {
+    async fn set_last_contract_data_to(&mut self, contract: &Hash, key: &OwnedValue, topoheight: TopoHeight, version: &VersionedContractData) -> Result<(), BlockchainError> {
         let shared = PooledArc::from_ref(contract);
         self.contracts.entry(shared)
             .or_default()
@@ -29,14 +29,14 @@ impl ContractDataProvider for MemoryStorage {
         Ok(())
     }
 
-    async fn get_last_topoheight_for_contract_data(&self, contract: &Hash, key: &ValueCell) -> Result<Option<TopoHeight>, BlockchainError> {
+    async fn get_last_topoheight_for_contract_data(&self, contract: &Hash, key: &OwnedValue) -> Result<Option<TopoHeight>, BlockchainError> {
         Ok(self.contracts.get(contract)
             .and_then(|entry| entry.data.get(key))
             .and_then(|data_map| data_map.keys().max().copied())
         )
     }
 
-    async fn get_contract_data_at_exact_topoheight_for<'a>(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<VersionedContractData, BlockchainError> {
+    async fn get_contract_data_at_exact_topoheight_for<'a>(&self, contract: &Hash, key: &OwnedValue, topoheight: TopoHeight) -> Result<VersionedContractData, BlockchainError> {
         self.contracts.get(contract)
             .and_then(|entry| entry.data.get(key))
             .and_then(|data_map| data_map.get(&topoheight))
@@ -45,7 +45,7 @@ impl ContractDataProvider for MemoryStorage {
             .map_err(|e| e.into())
     }
 
-    async fn get_contract_data_at_maximum_topoheight_for<'a>(&self, contract: &Hash, key: &ValueCell, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedContractData)>, BlockchainError> {
+    async fn get_contract_data_at_maximum_topoheight_for<'a>(&self, contract: &Hash, key: &OwnedValue, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedContractData)>, BlockchainError> {
         Ok(self.contracts.get(contract)
             .and_then(|entry| entry.data.get(key))
             .and_then(|data| data.range(..=maximum_topoheight).next_back())
@@ -53,7 +53,7 @@ impl ContractDataProvider for MemoryStorage {
         )
     }
 
-    async fn get_contract_data_topoheight_at_maximum_topoheight_for<'a>(&self, contract: &Hash, key: &ValueCell, maximum_topoheight: TopoHeight) -> Result<Option<TopoHeight>, BlockchainError> {
+    async fn get_contract_data_topoheight_at_maximum_topoheight_for<'a>(&self, contract: &Hash, key: &OwnedValue, maximum_topoheight: TopoHeight) -> Result<Option<TopoHeight>, BlockchainError> {
         Ok(self.contracts.get(contract)
             .and_then(|entry| entry.data.get(key))
             .and_then(|data| data.range(..=maximum_topoheight).next_back())
@@ -61,14 +61,14 @@ impl ContractDataProvider for MemoryStorage {
         )
     }
 
-    async fn has_contract_data_at_exact_topoheight(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
+    async fn has_contract_data_at_exact_topoheight(&self, contract: &Hash, key: &OwnedValue, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
         Ok(self.contracts.get(contract)
             .and_then(|entry| entry.data.get(key))
             .map_or(false, |data_map| data_map.contains_key(&topoheight))
         )
     }
 
-    async fn get_contract_data_entries_at_maximum_topoheight<'a>(&'a self, contract: &'a Hash, topoheight: TopoHeight) -> Result<impl Stream<Item = Result<(ValueCell, Option<ValueCell>), BlockchainError>> + Send + 'a, BlockchainError> {
+    async fn get_contract_data_entries_at_maximum_topoheight<'a>(&'a self, contract: &'a Hash, topoheight: TopoHeight) -> Result<impl Stream<Item = Result<(OwnedValue, Option<OwnedValue>), BlockchainError>> + Send + 'a, BlockchainError> {
         let entries = self.contracts.get(contract)
             .with_context(|| format!("Contract data entries not found for contract {:?}, topoheight {}", contract, topoheight))?
             .data

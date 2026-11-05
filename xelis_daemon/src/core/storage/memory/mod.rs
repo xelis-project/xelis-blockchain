@@ -20,7 +20,7 @@ use xelis_common::{
     transaction::Transaction,
     varuint::VarUint,
 };
-use xelis_vm::{ValueCell, tid};
+use xelis_vm::{OwnedValue, tid};
 
 use crate::core::{
     error::BlockchainError,
@@ -76,7 +76,7 @@ pub(crate) struct AssetEntry {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ContractEntry {
     modules: BTreeMap<TopoHeight, VersionedContractModule<'static>>,
-    data: HashMap<ValueCell, BTreeMap<TopoHeight, VersionedContractData>>,
+    data: HashMap<OwnedValue, BTreeMap<TopoHeight, VersionedContractData>>,
     transactions: LinkedHashSet<PooledArc<Hash>>,
     balances: HashMap<PooledArc<Hash>, BTreeMap<TopoHeight, VersionedContractBalance>>,
     // Scheduled executions registered at said topoheight -> execution topoheight -> execution

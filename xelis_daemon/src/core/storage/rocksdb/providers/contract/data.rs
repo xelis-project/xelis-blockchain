@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use futures::{stream, Stream, StreamExt};
 use log::trace;
-use xelis_vm::ValueCell;
+use xelis_vm::OwnedValue;
 use xelis_common::{
     block::TopoHeight,
     crypto::Hash,
@@ -21,7 +21,7 @@ use crate::core::{
 #[async_trait]
 impl ContractDataProvider for RocksStorage {
     // Set a contract data
-    async fn set_last_contract_data_to(&mut self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight, version: &VersionedContractData) -> Result<(), BlockchainError> {
+    async fn set_last_contract_data_to(&mut self, contract: &Hash, key: &OwnedValue, topoheight: TopoHeight, version: &VersionedContractData) -> Result<(), BlockchainError> {
         trace!("set last contract {} data {} to {}", contract, key, topoheight);
 
         let contract_id = self.get_contract_id(contract)?;
@@ -33,7 +33,7 @@ impl ContractDataProvider for RocksStorage {
     }
 
     // Retrieve the last topoheight for a given contract data
-    async fn get_last_topoheight_for_contract_data(&self, contract: &Hash, key: &ValueCell) -> Result<Option<TopoHeight>, BlockchainError> {
+    async fn get_last_topoheight_for_contract_data(&self, contract: &Hash, key: &OwnedValue) -> Result<Option<TopoHeight>, BlockchainError> {
         trace!("get last topoheight for contract {} data {}", contract, key);
         let Some(contract_id) = self.get_optional_contract_id(contract)? else {
             return Ok(None)
@@ -47,7 +47,7 @@ impl ContractDataProvider for RocksStorage {
     }
 
     // Retrieve a contract data at a given topoheight
-    async fn get_contract_data_at_exact_topoheight_for<'a>(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<VersionedContractData, BlockchainError> {
+    async fn get_contract_data_at_exact_topoheight_for<'a>(&self, contract: &Hash, key: &OwnedValue, topoheight: TopoHeight) -> Result<VersionedContractData, BlockchainError> {
         trace!("get contract {} data {}  at exact topoheight {}", contract, key, topoheight);
         let contract_id = self.get_contract_id(contract)?;
         let contract_data_id = self.get_contract_data_id(key)?;
@@ -56,7 +56,7 @@ impl ContractDataProvider for RocksStorage {
     }
 
     // Retrieve a contract data at maximum topoheight
-    async fn get_contract_data_at_maximum_topoheight_for<'a>(&self, contract: &Hash, key: &ValueCell, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedContractData)>, BlockchainError> {
+    async fn get_contract_data_at_maximum_topoheight_for<'a>(&self, contract: &Hash, key: &OwnedValue, maximum_topoheight: TopoHeight) -> Result<Option<(TopoHeight, VersionedContractData)>, BlockchainError> {
         trace!("get contract {} data {} at maximum topoheight {}", contract, key, maximum_topoheight);
         let Some(contract_id) = self.get_optional_contract_id(contract)? else {
             return Ok(None)
@@ -76,7 +76,7 @@ impl ContractDataProvider for RocksStorage {
     }
 
     // Retrieve the topoheight of a contract data at maximum topoheight
-    async fn get_contract_data_topoheight_at_maximum_topoheight_for<'a>(&self, contract: &Hash, key: &ValueCell, maximum_topoheight: TopoHeight) -> Result<Option<TopoHeight>, BlockchainError> {
+    async fn get_contract_data_topoheight_at_maximum_topoheight_for<'a>(&self, contract: &Hash, key: &OwnedValue, maximum_topoheight: TopoHeight) -> Result<Option<TopoHeight>, BlockchainError> {
         trace!("get contract {} data {} topoheight at maximum topoheight {}", contract, key, maximum_topoheight);
         let Some(contract_id) = self.get_optional_contract_id(contract)? else {
             return Ok(None)
@@ -91,7 +91,7 @@ impl ContractDataProvider for RocksStorage {
 
     // Check if we have a contract data version at a given topoheight
     // It only checks if the topoheight exists
-    async fn has_contract_data_at_exact_topoheight(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
+    async fn has_contract_data_at_exact_topoheight(&self, contract: &Hash, key: &OwnedValue, topoheight: TopoHeight) -> Result<bool, BlockchainError> {
         trace!("has contract {} data {} at exact topoheight {}", contract, key, topoheight);
         let Some(contract_id) = self.get_optional_contract_id(contract)? else {
             return Ok(false)
@@ -103,7 +103,7 @@ impl ContractDataProvider for RocksStorage {
         self.contains_data(Column::VersionedContractsData, &key)
     }
 
-    async fn get_contract_data_entries_at_maximum_topoheight<'a>(&'a self, contract: &'a Hash, topoheight: TopoHeight) -> Result<impl Stream<Item = Result<(ValueCell, Option<ValueCell>), BlockchainError>> + Send + 'a, BlockchainError> {
+    async fn get_contract_data_entries_at_maximum_topoheight<'a>(&'a self, contract: &'a Hash, topoheight: TopoHeight) -> Result<impl Stream<Item = Result<(OwnedValue, Option<OwnedValue>), BlockchainError>> + Send + 'a, BlockchainError> {
         trace!("get contract {} data entries at maximum topoheight {}", contract, topoheight);
         let contract_id = self.get_contract_id(contract)?;
         let iterator = self.iter_keys::<(u64, u64)>(Column::ContractsData, IteratorMode::WithPrefix(&contract_id.to_be_bytes(), Direction::Forward))?;
@@ -170,15 +170,15 @@ impl RocksStorage {
         Ok(id)
     }
 
-    fn get_contract_data_id(&self, key: &ValueCell) -> Result<ContractDataId, BlockchainError> {
+    fn get_contract_data_id(&self, key: &OwnedValue) -> Result<ContractDataId, BlockchainError> {
         self.load_from_disk(Column::ContractDataTable, &key.to_bytes()?)
     }
 
-    fn get_optional_contract_data_id(&self, key: &ValueCell) -> Result<Option<ContractDataId>, BlockchainError> {
+    fn get_optional_contract_data_id(&self, key: &OwnedValue) -> Result<Option<ContractDataId>, BlockchainError> {
         self.load_optional_from_disk(Column::ContractDataTable, &key.to_bytes()?)
     }
 
-    fn get_or_create_contract_data_id(&mut self, key: &ValueCell) -> Result<ContractDataId, BlockchainError> {
+    fn get_or_create_contract_data_id(&mut self, key: &OwnedValue) -> Result<ContractDataId, BlockchainError> {
         trace!("get or create contract data id {}", key);
         let bytes = key.to_bytes()?;
         match self.get_optional_contract_data_id(key)? {

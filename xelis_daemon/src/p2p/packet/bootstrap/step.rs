@@ -23,7 +23,7 @@ use xelis_common::{
     transaction::MultiSigPayload,
     versioned::State
 };
-use xelis_vm::ValueCell;
+use xelis_vm::OwnedValue;
 use crate::{
     config::{CHAIN_SYNC_REQUEST_MAX_BLOCKS, PRUNE_SAFETY_LIMIT},
     p2p::packet::{
@@ -488,7 +488,7 @@ pub enum StepResponse {
     ContractBalances(IndexMap<Hash, u64>, Option<u64>),
     // Contract stores
     // entries, next skip count (0 if no more data)
-    ContractStores(IndexMap<ValueCell, Option<ValueCell>>, u64),
+    ContractStores(IndexMap<OwnedValue, Option<OwnedValue>>, u64),
     // Contract executions
     ContractsExecutions(IndexSet<ScheduledExecutionMetadata>, Option<u64>),
     // Contracts events registered for the requested
@@ -706,7 +706,7 @@ impl Serializer for StepResponse {
                     // No maximum limit validation since we're using dynamic sizing
                     let mut entries = IndexMap::with_capacity(len as usize);
                     for _ in 0..len {
-                        let key = ValueCell::read(reader)?;
+                        let key = OwnedValue::read(reader)?;
                         let value = Option::read(reader)?;
                         if entries.insert(key, value).is_some() {
                             debug!("Duplicated contract store in Step Response");

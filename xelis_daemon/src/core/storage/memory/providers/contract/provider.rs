@@ -1,5 +1,5 @@
 use itertools::Either;
-use xelis_vm::ValueCell;
+use xelis_vm::OwnedValue;
 use pooled_arc::PooledArc;
 use std::borrow::Cow;
 use async_trait::async_trait;
@@ -123,7 +123,7 @@ impl ContractProvider for MemoryStorage {
 
 #[async_trait]
 impl ContractStorage for MemoryStorage {
-    async fn load_data(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<Option<(TopoHeight, Option<ValueCell>)>, Error> {
+    async fn load_data(&self, contract: &Hash, key: &OwnedValue, topoheight: TopoHeight) -> Result<Option<(TopoHeight, Option<OwnedValue>)>, Error> {
         let res = self.get_contract_data_at_maximum_topoheight_for(contract, &key, topoheight).await.map_err(Error::new)?;
 
         match res {
@@ -135,7 +135,7 @@ impl ContractStorage for MemoryStorage {
         }
     }
 
-    async fn load_data_latest_topoheight(&self, contract: &Hash, key: &ValueCell, topoheight: TopoHeight) -> Result<Option<TopoHeight>, Error> {
+    async fn load_data_latest_topoheight(&self, contract: &Hash, key: &OwnedValue, topoheight: TopoHeight) -> Result<Option<TopoHeight>, Error> {
         self.get_contract_data_topoheight_at_maximum_topoheight_for(contract, &key, topoheight).await.map_err(Error::new)
     }
 

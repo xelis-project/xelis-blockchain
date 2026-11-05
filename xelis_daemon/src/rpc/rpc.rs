@@ -76,7 +76,7 @@ use xelis_common::{
     utils::format_hashrate,
     versioned::Versioned
 };
-use xelis_vm::ValueCell;
+use xelis_vm::{Module, OwnedValue};
 use futures::{stream, StreamExt, TryStreamExt};
 use anyhow::Context as AnyContext;
 use human_bytes::human_bytes;
@@ -432,7 +432,7 @@ pub fn register_methods<T: ShareableTid<'static>, S: Storage>(handler: &mut RPCH
     handler.register_method_with_params(("get_contract_scheduled_execution", "Retrieve the scheduled contract execution."), async_handler!(get_contract_scheduled_execution::<S>));
 
     handler.register_method_with_params(("get_contracts_outputs", "Retrieve contract transfers made to an address at a specific topoheight."), async_handler!(get_contracts_outputs::<S>));
-    handler.register_method_with_params_and_return_schema::<_, RPCVersioned<Versioned<Option<Cow<xelis_vm::Module>>>>>(("get_contract_module", "Retrieve the contract module (compiled code) for a specific contract."), async_handler!(get_contract_module::<S>));
+    handler.register_method_with_params_and_return_schema::<_, RPCVersioned<Versioned<Option<Cow<Module>>>>>(("get_contract_module", "Retrieve the contract module (compiled code) for a specific contract."), async_handler!(get_contract_module::<S>));
     handler.register_method_with_params(("get_contract_data", "Retrieve the contract data with the requested key."), async_handler!(get_contract_data::<S>));
     handler.register_method_with_params(("has_contract_data", "Verify if contract data exists for the requested key."), async_handler!(has_contract_data::<S>));
     handler.register_method_with_params(("get_contract_data_at_topoheight", "Retrieve the contract data with the requested key at a specific topoheight."), async_handler!(get_contract_data_at_topoheight::<S>));
@@ -2168,7 +2168,7 @@ async fn get_contract_module<S: Storage>(context: &Context<'_, '_>, params: GetC
     }))
 }
 
-async fn get_contract_data<S: Storage>(context: &Context<'_, '_>, params: GetContractDataParams<'_>) -> Result<RPCVersioned<Versioned<Option<ValueCell>>>, InternalRpcError> {
+async fn get_contract_data<S: Storage>(context: &Context<'_, '_>, params: GetContractDataParams<'_>) -> Result<RPCVersioned<Versioned<Option<OwnedValue>>>, InternalRpcError> {
     let blockchain = chain_from_context::<S>(context)?;
     let storage = blockchain.get_storage().read().await;
 
@@ -2191,7 +2191,7 @@ async fn has_contract_data<S: Storage>(context: &Context<'_, '_>, params: HasCon
 }
 
 
-async fn get_contract_data_at_topoheight<S: Storage>(context: &Context<'_, '_>, params: GetContractDataAtTopoHeightParams<'_>) -> Result<Versioned<Option<ValueCell>>, InternalRpcError> {
+async fn get_contract_data_at_topoheight<S: Storage>(context: &Context<'_, '_>, params: GetContractDataAtTopoHeightParams<'_>) -> Result<Versioned<Option<OwnedValue>>, InternalRpcError> {
     let blockchain = chain_from_context::<S>(context)?;
     let storage = blockchain.get_storage().read().await;
 
