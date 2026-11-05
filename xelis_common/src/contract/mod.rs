@@ -30,7 +30,6 @@ use log::{debug, log};
 use silex_builder::{EnvironmentBuilder, xstd::*};
 use xelis_vm::{
     RuntimeValue,
-    OpaqueChild,
     Heap,
     PrimitiveInteger,
     VMContext,
@@ -3254,39 +3253,4 @@ fn xor_hashes<'a, 'ty, 'r>(_: FnInstance<'a>, params: FnParams<'_>, _: &ModuleMe
     }
 
     Ok(SysCallResult::Return(RuntimeValue::Opaque(Hash::new(bytes).into()).into()))
-}
-
-pub trait OwnedValueCapabilities {
-    fn is_serializable(&self) -> bool;
-    fn is_json_serializable(&self) -> bool;
-}
-
-impl OwnedValueCapabilities for OwnedValue {
-    fn is_serializable(&self) -> bool {
-        owned_value_capability(self, false)
-    }
-
-    fn is_json_serializable(&self) -> bool {
-        owned_value_capability(self, true)
-    }
-}
-
-fn owned_value_capability(value: &OwnedValue, json: bool) -> bool {
-    let mut stack = vec![OpaqueChild::Owned(value)];
-    while let Some(child) = stack.pop() {
-        match child {
-            OpaqueChild::Owned(OwnedValue::Opaque(value)) => stack.push(OpaqueChild::Opaque(value.inner())),
-            OpaqueChild::Owned(OwnedValue::Object(values)) => stack.extend(values.iter().map(OpaqueChild::Owned)),
-            OpaqueChild::Owned(OwnedValue::Map(values)) => stack.extend(values.iter().flat_map(|(k, v)| [OpaqueChild::Owned(k), OpaqueChild::Owned(v)])),
-            OpaqueChild::Owned(_) => {},
-            OpaqueChild::Opaque(value) => {
-                if if json { !value.is_json_supported() } else { value.as_serializable().is_none() } {
-                    return false;
-                }
-                value.visit_children(&mut |child| stack.push(child));
-            },
-            OpaqueChild::Value(_) | OpaqueChild::Pointer(_) => return false,
-        }
-    }
-    true
 }

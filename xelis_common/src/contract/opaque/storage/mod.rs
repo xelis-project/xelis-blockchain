@@ -1,4 +1,3 @@
-use crate::contract::OwnedValueCapabilities;
 mod btree;
 mod read_only;
 

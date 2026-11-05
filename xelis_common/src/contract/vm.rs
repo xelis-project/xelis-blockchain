@@ -1,4 +1,3 @@
-use crate::contract::OwnedValueCapabilities;
 use std::{
     borrow::Cow,
     collections::HashMap,

@@ -1,4 +1,3 @@
-use crate::contract::OwnedValueCapabilities;
 use std::{
     cmp::Ordering,
     collections::hash_map::Entry,
