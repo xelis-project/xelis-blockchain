@@ -1,5 +1,6 @@
 use matriochka::ResultExt;
 use sha3::{Digest, Sha3_256};
+use sha2::Sha256;
 use xelis_vm::{
     RuntimeValue,
     Heap,
@@ -156,10 +157,25 @@ pub fn sha3_fn(_: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, cont
         .as_ref(heap)
         .as_bytes()?;
 
-    // SHA256 is more expensive
+    // Gas cost for SHA hashing
     // Gas cost is proportional to input size
     context.increase_gas_usage((input.len() as u64) * 4)?;
 
     let hash = Hash::new(Sha3_256::digest(&input).into());
+    Ok(SysCallResult::Return(RuntimeValue::Opaque(hash.into()).into()))
+}
+
+pub fn sha256_fn(_: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, context: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+    let input = params[0]
+        .as_ref(heap)
+        .as_bytes()?;
+
+    // Gas cost for SHA hashing
+    // Gas cost is proportional to input size
+    context.increase_gas_usage((input.len() as u64) * 4)?;
+
+    // Bitcoin OP_SHA256 hashes the raw bytes once, with no byte reversal.
+    // Preserve the original SHA3 output only for historical block replay.
+    let hash = Hash::new(Sha256::digest(&input).into());
     Ok(SysCallResult::Return(RuntimeValue::Opaque(hash.into()).into()))
 }

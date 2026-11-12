@@ -1149,7 +1149,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("value", scalar_type.clone())
             ],
             unsafe { FunctionHandler::sync_unchecked(ristretto_mul_scalar) },
-            20_000,
+            40_000,
             Some(ristretto_type.clone()),
             "Returns this point multiplied by a scalar."
         );
@@ -1231,7 +1231,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             Some(scalar_type.clone()),
             vec![],
             unsafe { FunctionHandler::sync_unchecked(scalar_mul_base) },
-            2500,
+            40_000,
             Some(ristretto_type.clone()),
             "Returns the scalar multiplied by the base point."
         );
@@ -1379,7 +1379,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("point", ristretto_type.clone()),
             ],
             unsafe { FunctionHandler::sync_unchecked(transcript_validate_and_append_point) },
-            250,
+            275,
             None,
             "Validates and appends a labeled Ristretto point to the transcript."
         );
@@ -2354,6 +2354,16 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             10000,
             Some(scalar_type.clone()),
             "Hashes bytes into a scalar."
+        );
+
+        env.register_static_function_with_comment(
+            "sha256",
+            hash_type.clone(),
+            vec![("input", Type::Bytes)],
+            unsafe { FunctionHandler::sync_unchecked(sha256_fn) },
+            15_000,
+            Some(hash_type.clone()),
+            "Computes SHA-256 of the raw input bytes"
         );
     }
 

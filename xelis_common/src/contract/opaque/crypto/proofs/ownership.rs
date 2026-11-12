@@ -47,12 +47,15 @@ pub fn ownership_proof_new(_: FnInstance, params: FnParams<'_>, _: &ModuleMetada
     let amount = params[0]
         .as_u64(heap)
         .context("Failed to get amount parameter")?;
-    let delta_commitment = CompressedCommitment::new(*params[1]
-            .as_ref(heap)
-            .as_opaque_type::<OpaqueRistrettoPoint>()?
-            .compressed()
-            
+
+    let delta_commitment = CompressedCommitment::new(
+        params[1]
+                .as_mut(heap)
+                .as_opaque_type_mut::<OpaqueRistrettoPoint>()?
+                .compressed_mut()
+                .clone()
         );
+
     let commitment_eq_proof = params[2]
         .as_ref(heap)
         .as_opaque_type::<CommitmentEqProof>()?

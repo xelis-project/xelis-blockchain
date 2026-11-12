@@ -66,6 +66,20 @@ impl OpaqueRistrettoPoint {
         }
     }
 
+    pub fn compressed_mut(&mut self) -> &mut CompressedRistretto {
+        match self {
+            OpaqueRistrettoPoint::Compressed(c) => c,
+            OpaqueRistrettoPoint::Decompressed(c, point) => {
+                if let Some(c) = c {
+                    c
+                } else {
+                    let compressed = point.compress();
+                    c.insert(compressed)
+                }
+            },
+        }
+    }
+
     pub fn is_identity(&self) -> bool {
         match self {
             OpaqueRistrettoPoint::Compressed(c) => c.is_identity(),

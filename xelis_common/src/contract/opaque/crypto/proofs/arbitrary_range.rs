@@ -47,11 +47,11 @@ pub fn arbitrary_range_proof_new(_: FnInstance, params: FnParams<'_>, _: &Module
     let max_value = params[0]
         .as_u64(heap)
         .context("Failed to get max value parameter")?;
+
     let delta_commitment = CompressedCommitment::new(*params[1]
-            .as_ref(heap)
-            .as_opaque_type::<OpaqueRistrettoPoint>()?
-            .compressed()
-            
+            .as_mut(heap)
+            .as_opaque_type_mut::<OpaqueRistrettoPoint>()?
+            .compressed_mut()
         );
     let commitment_eq_proof = params[2]
         .as_ref(heap)

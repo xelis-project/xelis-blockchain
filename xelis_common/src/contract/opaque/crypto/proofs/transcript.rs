@@ -124,11 +124,18 @@ pub fn transcript_append_point(zelf: FnInstance, params: FnParams<'_>, _: &Modul
 
         context.increase_gas_usage(label.len() as u64 * 2)?;
 
-        let point: &OpaqueRistrettoPoint = params[1]
-            .as_ref(heap)
-            .as_opaque_type()?;
+        // clone for borrow checker, as we need to borrow the point mutably later
+        let label = label.clone();
 
-        zelf.0.append_point(&label, &point.compressed());
+        let point: &mut OpaqueRistrettoPoint = params[1]
+            .as_mut(heap)
+            .as_opaque_type_mut()?;
+
+        if matches!(point, OpaqueRistrettoPoint::Decompressed(None, _)) {
+            context.increase_gas_usage(8000)?;
+        }
+
+        zelf.0.append_point(&label, point.compressed_mut());
 
         Ok(SysCallResult::None)
     })
@@ -139,17 +146,25 @@ pub fn transcript_validate_and_append_point(zelf: FnInstance, params: FnParams<'
     heap.with_value(zelf, |zelf, heap| {
         let zelf: &mut OpaqueTranscript = zelf.as_opaque_type_mut()?;
 
-        let label = params[0]
+        let [label, point] = params.get_disjoint_mut([0, 1])
+            .context(EnvironmentError::Static("Invalid parameters for transcript_validate_and_append_point"))?;
+
+        let label = label
             .as_ref(heap)
             .as_bytes()?;
 
         context.increase_gas_usage(label.len() as u64 * 2)?;
 
-        let point: &OpaqueRistrettoPoint = params[1]
-            .as_ref(heap)
-            .as_opaque_type()?;
+        let label = label.clone();
+        let point: &mut OpaqueRistrettoPoint = point
+            .as_mut(heap)
+            .as_opaque_type_mut()?;
 
-        zelf.0.validate_and_append_point(&label, &point.compressed())
+        if matches!(point, OpaqueRistrettoPoint::Decompressed(None, _)) {
+            context.increase_gas_usage(8000)?;
+        }
+
+        zelf.0.validate_and_append_point(&label, point.compressed_mut())
             .context("Failed to validate and append point to transcript")?;
 
         Ok(SysCallResult::None)

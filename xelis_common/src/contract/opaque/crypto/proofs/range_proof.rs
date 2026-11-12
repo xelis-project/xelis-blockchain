@@ -22,6 +22,7 @@ use crate::{
         OpaqueTranscript
     },
     crypto::proofs::{BP_GENS, PC_GENS},
+    transaction::MAX_TRANSFER_COUNT,
     serializer::{Error as SerializationError, *},
 };
 
@@ -89,7 +90,22 @@ pub fn range_proof_verify_multiple(zelf: FnInstance, params: FnParams<'_>, _: &M
             .as_mut(heap)
             .as_mut_vec()?.clone();
 
-        context.increase_gas_usage((tmp.len() * 5000) as u64)?;
+        let count = tmp.len();
+        let bits = params[2].as_ref(heap).as_u8()?;
+        // Validate dimensions before touching the generators or decompressing
+        // commitments. The generator set supports at most 512 parties.
+        if !count.is_power_of_two() || count > MAX_TRANSFER_COUNT * 2 + 2 {
+            return Err(EnvironmentError::Static("commitment count must be a nonzero power of two within generator capacity"));
+        }
+
+        if !matches!(bits, 8 | 16 | 32 | 64) {
+            return Err(EnvironmentError::Static("proof size must be 8, 16, 32 or 64"));
+        }
+
+        let gas = (count as u64).checked_mul(1_500_000)
+            .ok_or(EnvironmentError::GasOverflow)?;
+
+        context.increase_gas_usage(gas)?;
 
         let commitments = {
             tmp.iter_mut()
