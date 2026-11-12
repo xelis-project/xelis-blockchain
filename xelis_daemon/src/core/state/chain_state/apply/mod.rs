@@ -445,6 +445,19 @@ impl<'s, 'b, 'ty, P: ApplicableChainStateProvider> BlockchainContractState<'b, '
         Ok(())
     }
 
+    async fn merge_contract_storage(&mut self, caches: HashMap<Hash, ContractCache>) -> Result<(), BlockchainError> {
+        for (contract, changes) in caches {
+            if let Some(cache) = self.contract_manager.caches.get_mut(&contract) {
+                for (key, entry) in changes.storage {
+                    if let (Some((_, value)), Some(Some((_, current)))) = (entry, cache.storage.get_mut(&key)) {
+                        *current = value;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     async fn merge_contract_changes(
         &mut self,
         changes: ChainStateChanges,
