@@ -293,18 +293,23 @@ pub(crate) async fn run_virtual_machine<'a, 'ty, P: for<'x> ContractProvider<'x>
                     if contract_environment.version >= ContractVersion::V1 {
                         // We must verify that it is serializable (json & binary)
                         // and not too big (> MAX_ENTRY_SIZE_BYTES)
-                        let bytes = data_size_in_bytes(&res);
-                        if !res.is_json_serializable() || !res.is_serializable() || bytes > CONTRACT_MAX_PAYLOAD_SIZE {
+                        if !res.is_json_serializable() || !res.is_serializable() {
                             log!(log_level, "Invoke contract {} returned a non serializable value: {:#}", contract, res);
                             ExitValue::Error(ExitError::InvalidEntryPayloadReturn)
                         } else {
-                            let cost = CONTRACT_PAYLOAD_FEE_PER_BYTE * bytes as u64;
-                            debug!("Invoke contract {} returned payload of size {} bytes, costing {} gas", contract, bytes, cost);
-                            match context.increase_gas_usage(cost) {
-                                Ok(()) => ExitValue::Payload(res),
-                                Err(e) => {
-                                    log!(log_level, "Invoke contract {} cannot pay payload gas cost: {:#}", contract, e);
-                                    ExitValue::Error(e.into())
+                            let bytes = data_size_in_bytes(&res);
+                            if bytes > CONTRACT_MAX_PAYLOAD_SIZE {
+                                log!(log_level, "Invoke contract {} returned a payload of size {} bytes, exceeding the maximum allowed size of {} bytes", contract, bytes, CONTRACT_MAX_PAYLOAD_SIZE);
+                                ExitValue::Error(ExitError::InvalidEntryPayloadReturn)
+                            } else {
+                                let cost = CONTRACT_PAYLOAD_FEE_PER_BYTE * bytes as u64;
+                                debug!("Invoke contract {} returned payload of size {} bytes, costing {} gas", contract, bytes, cost);
+                                match context.increase_gas_usage(cost) {
+                                    Ok(()) => ExitValue::Payload(res),
+                                    Err(e) => {
+                                        log!(log_level, "Invoke contract {} cannot pay payload gas cost: {:#}", contract, e);
+                                        ExitValue::Error(e.into())
+                                    }
                                 }
                             }
                         }
