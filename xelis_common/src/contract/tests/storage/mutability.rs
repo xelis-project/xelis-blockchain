@@ -174,15 +174,15 @@ async fn persistent_storage_v6_values_keys_and_previous_values_are_detached() {
         }
         entry attack(mode: u8) {
             let storage = Storage::new();
+            let cold_previous: Payload = storage.store(b"key", fresh()).unwrap();
+            verify(cold_previous);
+            mutate(cold_previous);
             let first: Payload = storage.load(b"key").unwrap();
             let second: Payload = storage.load(b"key").unwrap();
             mutate(first);
             verify(second);
             let previous: Payload = storage.store(b"key", second).unwrap();
             mutate(previous);
-            // delete returns the cached previous value; populate its read cache.
-            let before_delete: Payload = storage.load(b"other").unwrap();
-            verify(before_delete);
             let deleted: Payload = storage.delete(b"other").unwrap();
             storage.store(b"other", deleted);
             mutate(deleted);

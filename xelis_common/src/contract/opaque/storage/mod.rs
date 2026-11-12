@@ -205,10 +205,15 @@ pub async fn storage_store<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<
         },
         Some(None) => VersionedState::New,
         None => {
-            // We need to retrieve the latest topoheight version
-            storage.load_data_latest_topoheight(&metadata.metadata.contract_executor, &key, state.topoheight).await?
-                .map(|topoheight| VersionedState::Updated(topoheight))
-                .unwrap_or(VersionedState::New)
+            // Fetch the value with its version so uncached overwrites can
+            // return the previous value too.
+            match storage.load_data(&metadata.metadata.contract_executor, &key, state.topoheight).await? {
+                Some((topoheight, value)) => {
+                    cache.storage.insert(key.clone(), Some((VersionedState::FetchedAt(topoheight), value)));
+                    VersionedState::Updated(topoheight)
+                },
+                None => VersionedState::New,
+            }
         }
     };
 
@@ -247,9 +252,13 @@ pub async fn storage_delete<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance
         },
         Some(None) => return Ok(SysCallResult::Return(Default::default())),
         None => {
-            // We need to retrieve the latest topoheight version
-            match storage.load_data_latest_topoheight(&metadata.metadata.contract_executor, &key, state.topoheight).await? {
-                Some(topoheight) => VersionedState::Updated(topoheight),
+            // Keep the fetched value until the tombstone replaces it, so the
+            // delete result includes the previous value on a cache miss.
+            match storage.load_data(&metadata.metadata.contract_executor, &key, state.topoheight).await? {
+                Some((topoheight, value)) => {
+                    cache.storage.insert(key.clone(), Some((VersionedState::FetchedAt(topoheight), value)));
+                    VersionedState::Updated(topoheight)
+                },
                 None => return Ok(SysCallResult::Return(Default::default())),
             }
         }
