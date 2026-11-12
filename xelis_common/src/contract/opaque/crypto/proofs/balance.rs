@@ -29,8 +29,8 @@ use crate::{
 };
 
 impl DynSerializable for BalanceProof {
-    fn get_size(&self) -> usize {
-        self.size()
+    fn get_size(&self) -> Result<usize, SerializationError> {
+        Ok(self.size())
     }
 
     fn serialize(&self, buffer: &mut Vec<u8>) -> Result<usize, SerializationError> {

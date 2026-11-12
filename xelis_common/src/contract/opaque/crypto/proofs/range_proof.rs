@@ -30,8 +30,8 @@ use crate::{
 pub struct RangeProofWrapper(pub RangeProof);
 
 impl DynSerializable for RangeProofWrapper {
-    fn get_size(&self) -> usize {
-        self.0.size()
+    fn get_size(&self) -> Result<usize, SerializationError> {
+        Ok(self.0.size())
     }
 
     fn serialize(&self, buffer: &mut Vec<u8>) -> Result<usize, SerializationError> {

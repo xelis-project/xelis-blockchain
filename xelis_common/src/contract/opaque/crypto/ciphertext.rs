@@ -42,8 +42,8 @@ impl DynSerializable for CiphertextCache {
         Ok(buffer.len() - start)
     }
 
-    fn get_size(&self) -> usize {
-        RISTRETTO_COMPRESSED_SIZE + RISTRETTO_COMPRESSED_SIZE
+    fn get_size(&self) -> Result<usize, SerializationError> {
+        Ok(RISTRETTO_COMPRESSED_SIZE + RISTRETTO_COMPRESSED_SIZE)
     }
 }
 

@@ -19,8 +19,8 @@ use crate::{
 };
 
 impl DynSerializable for Signature {
-    fn get_size(&self) -> usize {
-        SIGNATURE_SIZE
+    fn get_size(&self) -> Result<usize, SerializationError> {
+        Ok(SIGNATURE_SIZE)
     }
 
     fn serialize(&self, buffer: &mut Vec<u8>) -> Result<usize, SerializationError> {

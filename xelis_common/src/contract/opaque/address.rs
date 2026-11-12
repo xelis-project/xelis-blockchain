@@ -27,8 +27,8 @@ impl DynSerializable for Address {
         Ok(buffer.len() - start)
     }
 
-    fn get_size(&self) -> usize {
-        1 + self.size()
+    fn get_size(&self) -> Result<usize, SerializationError> {
+        Ok(1 + self.size())
     }
 }
 

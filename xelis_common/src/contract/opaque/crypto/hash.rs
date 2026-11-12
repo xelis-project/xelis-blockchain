@@ -29,8 +29,8 @@ impl DynSerializable for Hash {
         Ok(buffer.len() - start)
     }
 
-    fn get_size(&self) -> usize {
-        HASH_SIZE
+    fn get_size(&self) -> Result<usize, SerializationError> {
+        Ok(HASH_SIZE)
     }
 }
 

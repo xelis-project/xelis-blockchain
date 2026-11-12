@@ -43,8 +43,8 @@ impl DynSerializable for OpaqueScalar {
         Ok(buffer.len() - start)
     }
 
-    fn get_size(&self) -> usize {
-        SCALAR_SIZE
+    fn get_size(&self) -> Result<usize, SerializationError> {
+        Ok(SCALAR_SIZE)
     }
 }
 
