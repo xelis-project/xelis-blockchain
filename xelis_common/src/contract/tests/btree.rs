@@ -235,7 +235,7 @@ async fn test_btree_internal_mutability() {
             let foo = Foo { data: [1, 2, 3] };
             let store = BTreeStore::new(b"ns");
             store.insert(b"key", foo);
-            foo.data[0] = 42; // Modify retrieved value
+            foo.data[0] = 42; // Modify the original input after insertion
 
             let tmp: Foo = store.get(b"key").unwrap();
             assert(tmp != foo);
@@ -249,7 +249,7 @@ async fn test_btree_internal_mutability() {
         }
     "#;
 
-    let mut chain_state = MockChainState::new();
+    let mut chain_state = MockChainState::with(BlockVersion::V6);
     let contract_hash = deploy_contract(&mut chain_state, code, ContractVersion::V1)
         .await
         .expect("deploy contract")

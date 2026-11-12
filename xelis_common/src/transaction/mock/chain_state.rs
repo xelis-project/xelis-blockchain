@@ -493,6 +493,19 @@ impl<'a, 'ty> BlockchainContractState<'a, 'ty, MockStorageProvider, anyhow::Erro
         Ok(())
     }
 
+    async fn merge_contract_storage(&mut self, caches: HashMap<Hash, ContractCache>) -> Result<(), anyhow::Error> {
+        for (contract, changes) in caches {
+            if let Some(cache) = self.contract_caches.get_mut(&contract) {
+                for (key, entry) in changes.storage {
+                    if let (Some((_, value)), Some(Some((_, current)))) = (entry, cache.storage.get_mut(&key)) {
+                        *current = value;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     async fn merge_contract_changes(
         &mut self,
         changes: ChainStateChanges,

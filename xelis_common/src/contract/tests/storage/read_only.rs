@@ -2,7 +2,7 @@ use xelis_vm::OwnedValue;
 use super::*;
 
 #[tokio::test]
-async fn test_read_only_storage_can_read_other_contract_without_mutating_it() {
+async fn test_read_only_storage_reads_other_contract_scalars() {
     let writer_code = r#"
         entry write() {
             let storage = Storage::new();

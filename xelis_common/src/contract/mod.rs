@@ -12,6 +12,7 @@ mod error;
 mod event_callback;
 mod version;
 mod chain_state;
+mod legacy_storage;
 
 #[cfg(test)]
 pub mod tests;

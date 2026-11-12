@@ -1304,13 +1304,13 @@ fn is_reserved_storage_key_bytes(bytes: &[u8]) -> bool {
 }
 
 fn ensure_value_constraints(value: &OwnedValue) -> Result<(), EnvironmentError> {
+    if !value.is_serializable() {
+        return Err(EnvironmentError::Static("value is not serializable"));
+    }
+
     let size = data_size_in_bytes(value);
     if size > MAX_VALUE_SIZE {
         return Err(EnvironmentError::Static("value is too large"));
-    }
-
-    if !value.is_serializable() {
-        return Err(EnvironmentError::Static("value is not serializable"));
     }
 
     Ok(())

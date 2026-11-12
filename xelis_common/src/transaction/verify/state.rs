@@ -16,7 +16,8 @@ use crate::{
         InterContractPermission,
         ContractMetadata,
         ContractModule,
-        ContractVersion
+        ContractVersion,
+        ContractCache
     },
     crypto::{
         elgamal::{
@@ -188,6 +189,10 @@ pub trait BlockchainContractState<'a, 'ty, P: ContractProvider<'ty>, E> {
         changes: ChainStateChanges,
         executions_changes: ExecutionsChanges,
     ) -> Result<(), E>;
+
+    /// Apply only retained child mutations from a failed legacy execution.
+    /// Entries already exist; their version metadata and other cache fields stay unchanged.
+    async fn merge_contract_storage(&mut self, caches: HashMap<Hash, ContractCache>) -> Result<(), E>;
 
     /// Retrieve the contract balance used to pay gas
     async fn get_contract_balance_for_gas<'b>(

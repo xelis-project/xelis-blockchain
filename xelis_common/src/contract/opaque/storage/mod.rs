@@ -24,6 +24,7 @@ use crate::{
     config::FEE_PER_BYTE_STORED_CONTRACT,
     contract::{
         from_context,
+        legacy_storage::{LegacyStorage, storage_value, replace_storage_value},
         get_cache_for_contract,
         ContractProvider,
         ContractMetadata,
@@ -70,6 +71,12 @@ pub fn data_size_in_bytes(value: &OwnedValue) -> usize {
 }
 
 pub fn check_storage_entry_size(key: &OwnedValue, value: &OwnedValue) -> Result<usize, EnvironmentError> {
+    // Size calculation may serialize opaque descendants. Reject unsupported
+    // payloads first instead of letting Serializer::size panic.
+    if !key.is_serializable() || !value.is_serializable() {
+        return Err(EnvironmentError::Static("Key / value is not serializable"))
+    }
+
     // special case: for raw bytes, we take the length of the bytes directly
     let value_size = data_size_in_bytes(value);
 
@@ -82,10 +89,6 @@ pub fn check_storage_entry_size(key: &OwnedValue, value: &OwnedValue) -> Result<
 
     if key_size > MAX_KEY_SIZE {
         return Err(EnvironmentError::Static("Key is too large"));
-    }
-
-    if !key.is_serializable() || !value.is_serializable() {
-        return Err(EnvironmentError::Static("Key / value is not serializable"))
     }
 
     Ok(key_size + value_size)
@@ -119,12 +122,17 @@ pub fn storage(_: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut V
 }
 
 pub async fn storage_load<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, params: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
-    let (storage, state) = from_context::<P>(context)?;
-
     let key = heap.export(params.remove(0))?;
 
     check_storage_key(&key)?;
 
+    // Repeated legacy loads reuse the retained root without copying owned data.
+    if let Some(current) = context.get::<LegacyStorage>()
+        .and_then(|storage| storage.get(&metadata.metadata.contract_executor, &key)) {
+        return Ok(SysCallResult::Return(current.clone().unwrap_or_default().into()));
+    }
+
+    let (storage, state) = from_context::<P>(context)?;
     let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.block_version < BlockVersion::V6);
     let value = match cache.storage.entry(key.clone()) {
         Entry::Occupied(v) => v.get()
@@ -133,8 +141,7 @@ pub async fn storage_load<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'
         Entry::Vacant(v) => match storage.load_data(&metadata.metadata.contract_executor, &key, state.topoheight).await? {
             Some((topoheight, constant)) => {
                 debug!("storage load cache missed for key {}, fetched at topoheight {}: {:?}", key, topoheight, constant);
-                let stored = constant.clone();
-                v.insert(Some((VersionedState::FetchedAt(topoheight), stored)));
+                v.insert(Some((VersionedState::FetchedAt(topoheight), constant.clone())));
                 constant
             },
             None => {
@@ -144,7 +151,7 @@ pub async fn storage_load<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'
         }
     };
 
-    Ok(SysCallResult::Return(heap.import_owned(value.unwrap_or_default()).into()))
+    Ok(SysCallResult::Return(storage_value(context, metadata.metadata.contract_executor.clone(), key, value, heap).into()))
 }
 
 pub async fn storage_has<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, params: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
@@ -186,8 +193,8 @@ pub async fn storage_store<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<
     let cost = total_size as u64 * FEE_PER_BYTE_STORED_CONTRACT;
     context.increase_gas_usage(cost)?;
 
+    let stored = context.get::<LegacyStorage>().map(|_| value.clone());
     let (storage, state) = from_context::<P>(context)?;
-
     let cache = get_cache_for_contract(&mut state.changes.caches, state.global_caches, metadata.metadata.contract_executor.clone(), state.block_version < BlockVersion::V6);
 
     // We do it in two times: first we retrieve the VersionedState to update it
@@ -207,11 +214,14 @@ pub async fn storage_store<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<
 
     debug!("storage store key {}, setting value {}", key, value);
     // then, we replace the value if it exists (or simply insert it)
-    let value = cache.storage.insert(key, Some((data_state, Some(value))))
-        .and_then(|v| v.and_then(|(_, v)| v))
-        .unwrap_or_default();
+    let value = cache.storage.insert(key.clone(), Some((data_state, Some(value))))
+        .and_then(|v| v.and_then(|(_, v)| v));
 
-    Ok(SysCallResult::Return(heap.import_owned(value).into()))
+    let previous = storage_value(context, metadata.metadata.contract_executor.clone(), key.clone(), value, heap);
+    if let Some(stored) = stored {
+        replace_storage_value(context, metadata.metadata.contract_executor.clone(), key, Some(stored), heap);
+    }
+    Ok(SysCallResult::Return(previous.into()))
 }
 
 pub async fn storage_delete<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance<'a>, params: FnParams<'_>, metadata: &ModuleMetadata<'_>, context: &mut VMContext<'ty, 'r>, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
@@ -226,10 +236,11 @@ pub async fn storage_delete<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance
         Some(Some((s, _))) => match s {
             VersionedState::New => {
                 let value = cache.storage.remove(&key)
-                    .and_then(|v| v.and_then(|(_, v)| v))
-                    .unwrap_or_default();
+                    .and_then(|v| v.and_then(|(_, v)| v));
 
-                return Ok(SysCallResult::Return(heap.import_owned(value).into()));
+                let previous = storage_value(context, metadata.metadata.contract_executor.clone(), key.clone(), value, heap);
+                replace_storage_value(context, metadata.metadata.contract_executor.clone(), key, None, heap);
+                return Ok(SysCallResult::Return(previous.into()));
             },
             VersionedState::FetchedAt(topoheight) => VersionedState::Updated(*topoheight),
             VersionedState::Updated(topoheight) => VersionedState::Updated(*topoheight),
@@ -244,16 +255,27 @@ pub async fn storage_delete<'a, 'ty, 'r, P: ContractProvider<'ty>>(_: FnInstance
         }
     };
 
-    let value = cache.storage.insert(key, Some((data_state, None)))
-        .and_then(|v| v.and_then(|(_, v)| v))
-        .unwrap_or_default();
+    let value = cache.storage.insert(key.clone(), Some((data_state, None)))
+        .and_then(|v| v.and_then(|(_, v)| v));
 
-    Ok(SysCallResult::Return(heap.import_owned(value).into()))
+    let previous = storage_value(context, metadata.metadata.contract_executor.clone(), key.clone(), value, heap);
+    replace_storage_value(context, metadata.metadata.contract_executor.clone(), key, None, heap);
+    Ok(SysCallResult::Return(previous.into()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn storage_size_rejects_nonserializable_keys_and_values_without_panicking() {
+        let invalid = OwnedValue::Object(vec![OwnedValue::Opaque(OpaqueStorage.into())]);
+        let valid = OwnedValue::from(1u64);
+        for (key, value) in [(&invalid, &valid), (&valid, &invalid)] {
+            assert!(matches!(check_storage_entry_size(key, value),
+                Err(EnvironmentError::Static("Key / value is not serializable"))));
+        }
+    }
 
     #[test]
     fn raw_storage_rejects_reserved_btree_prefix() {

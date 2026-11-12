@@ -18,6 +18,7 @@ use crate::{
     config::{TX_GAS_BURN_PERCENT, XELIS_ASSET, CONTRACT_MAX_PAYLOAD_SIZE, CONTRACT_PAYLOAD_FEE_PER_BYTE},
     contract::{
         ChainState,
+        legacy_storage::LegacyStorage,
         ContractCache,
         ContractLog,
         ContractLogs,
@@ -217,10 +218,12 @@ pub(crate) async fn run_virtual_machine<'a, 'ty, P: for<'x> ContractProvider<'x>
     max_gas: u64,
 ) -> Result<(u64, u64, ExitValue), VMError> {
     let log_level = chain_state.log_level;
+    let legacy = chain_state.block_version < BlockVersion::V6;
     let caller_hash = caller.get_hash();
 
     log!(log_level, "Contract {} execution started: caller {}, invoke {:?}, max gas {}", contract, caller_hash, invoke, format_xelis(max_gas));
 
+    let mut original_storage = HashMap::new();
     let mut vm = VM::default();
 
     // Insert the module to load
@@ -250,13 +253,31 @@ pub(crate) async fn run_virtual_machine<'a, 'ty, P: for<'x> ContractProvider<'x>
 
     // insert the chain state separetly to avoid to give the S type
     context.insert_mut(chain_state);
+
+    if legacy {
+        context.insert(LegacyStorage::default());
+    }
+
     // insert the storage through our wrapper
     // so it can be easily mocked
     // insert the storage through our wrapper so it can be easily mocked
     context.insert_ref(contract_environment.provider);
 
     // We need to handle the result of the VM
-    let res = vm.run().await;
+    // SAFETY: trusted natives retain runtime roots only in LegacyStorage.
+    // Both completion and cancellation clear them before this scope drops its heap.
+    let res = unsafe {
+        vm.run_with_scope(|context, heap, result| {
+        if let Some(storage) = context.take::<LegacyStorage>().filter(|_| result.is_some()) {
+            let state = context.get_mut::<ChainState>()
+                .expect("chain state initialized");
+
+            original_storage = storage.finish(heap, state)
+                .map_err(VMError::from)?;
+        } // cancellation: drop references only
+
+        Ok(())
+    }) }.await;
 
     // Gas usage is already capped by the VM context gas limit, which may have
     // been increased by contract-funded gas injections.
@@ -301,6 +322,11 @@ pub(crate) async fn run_virtual_machine<'a, 'ty, P: for<'x> ContractProvider<'x>
             ExitValue::Error(err.into())
         }
     };
+
+    if legacy && !exit_code.is_success() {
+        // Keep only original shared child mutations when normal result validation fails.
+        context.get_mut::<ChainState>().expect("chain state initialized").changes.caches = original_storage;
+    }
 
     let gas_usage = context.current_gas_usage();
     let vm_max_gas = context.get_gas_limit();
@@ -439,6 +465,12 @@ pub async fn invoke_contract<'a, 'ty, P: for<'x> ContractProvider<'x>, E, B: Blo
     } else {
         // Otherwise, something was wrong, we delete the outputs made by the contract
         logs.clear();
+
+        if block_version < BlockVersion::V6 {
+            let storage = chain_state.changes.caches;
+            state.merge_contract_storage(storage).await
+                .map_err(ContractStateError::State)?;
+        }
 
         if !gas_sources.is_empty() {
             refund_gas_sources(state, gas_sources, used_gas, max_gas).await?;
