@@ -39,7 +39,7 @@ pub fn transcript_new(_: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_
         .as_ref(heap)
         .as_bytes()?;
 
-    context.increase_gas_usage(label.len() as u64 * 2)?;
+    context.increase_gas_usage(label.len() as u64 * 16)?;
 
     let transcript = OpaqueTranscript(Transcript::new(&label));
     Ok(SysCallResult::Return(transcript.into()))
@@ -54,7 +54,7 @@ pub fn transcript_challenge_scalar(zelf: FnInstance, params: FnParams<'_>, _: &M
             .as_ref(heap)
             .as_bytes()?;
 
-        context.increase_gas_usage(label.len() as u64 * 2)?;
+        context.increase_gas_usage(label.len() as u64 * 16)?;
 
         let scalar = zelf.0.challenge_scalar(&label);
         Ok(SysCallResult::Return(OpaqueScalar(scalar).into()))
@@ -82,8 +82,7 @@ pub fn transcript_challenge_bytes(zelf: FnInstance, params: FnParams<'_>, _: &Mo
             return Err(EnvironmentError::Static("Bytes length must not exceed 256 bytes"));
         }
 
-        context.increase_gas_usage(label.len() as u64 * 2)?;
-        context.increase_gas_usage(bytes_len as u64 * 5)?;
+        context.increase_gas_usage((label.len() as u64 + bytes_len as u64) * 16)?;
 
         let mut buffer = vec![0u8; bytes_len as usize];
         zelf.0.challenge_bytes(&label, &mut buffer);
@@ -105,7 +104,7 @@ pub fn transcript_append_message(zelf: FnInstance, params: FnParams<'_>, _: &Mod
             .as_ref(heap)
             .as_bytes()?;
 
-        context.increase_gas_usage((label.len() + message.len()) as u64 * 2)?;
+        context.increase_gas_usage((label.len() + message.len()) as u64 * 16)?;
 
         zelf.0.append_message(&label, &message);
 
@@ -122,7 +121,7 @@ pub fn transcript_append_point(zelf: FnInstance, params: FnParams<'_>, _: &Modul
             .as_ref(heap)
             .as_bytes()?;
 
-        context.increase_gas_usage(label.len() as u64 * 2)?;
+        context.increase_gas_usage(label.len() as u64 * 16)?;
 
         // clone for borrow checker, as we need to borrow the point mutably later
         let label = label.clone();
@@ -131,11 +130,7 @@ pub fn transcript_append_point(zelf: FnInstance, params: FnParams<'_>, _: &Modul
             .as_mut(heap)
             .as_opaque_type_mut()?;
 
-        if matches!(point, OpaqueRistrettoPoint::Decompressed(None, _)) {
-            context.increase_gas_usage(8000)?;
-        }
-
-        zelf.0.append_point(&label, point.compressed_mut());
+        zelf.0.append_point(&label, point.compressed_mut(context)?);
 
         Ok(SysCallResult::None)
     })
@@ -153,18 +148,14 @@ pub fn transcript_validate_and_append_point(zelf: FnInstance, params: FnParams<'
             .as_ref(heap)
             .as_bytes()?;
 
-        context.increase_gas_usage(label.len() as u64 * 2)?;
+        context.increase_gas_usage(label.len() as u64 * 16)?;
 
         let label = label.clone();
         let point: &mut OpaqueRistrettoPoint = point
             .as_mut(heap)
             .as_opaque_type_mut()?;
 
-        if matches!(point, OpaqueRistrettoPoint::Decompressed(None, _)) {
-            context.increase_gas_usage(8000)?;
-        }
-
-        zelf.0.validate_and_append_point(&label, point.compressed_mut())
+        zelf.0.validate_and_append_point(&label, point.compressed_mut(context)?)
             .context("Failed to validate and append point to transcript")?;
 
         Ok(SysCallResult::None)
@@ -180,7 +171,7 @@ pub fn transcript_append_scalar(zelf: FnInstance, params: FnParams<'_>, _: &Modu
             .as_ref(heap)
             .as_bytes()?;
 
-        context.increase_gas_usage(label.len() as u64 * 2)?;
+        context.increase_gas_usage(label.len() as u64 * 16)?;
 
         let scalar: &OpaqueScalar = params[1]
             .as_ref(heap)

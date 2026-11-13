@@ -179,7 +179,7 @@ pub fn scalar_hash_from_bytes(_: FnInstance, params: FnParams<'_>, _: &ModuleMet
         .as_ref(heap)
         .as_bytes()?;
 
-    context.increase_gas_usage(bytes.len() as u64 * 5)?;
+    context.increase_gas_usage(bytes.len() as u64 * 23)?;
 
     let scalar = Scalar::hash_from_bytes::<Sha3_512>(&bytes);
     Ok(SysCallResult::Return(OpaqueScalar(scalar).into()))

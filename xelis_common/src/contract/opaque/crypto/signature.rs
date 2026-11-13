@@ -58,9 +58,9 @@ pub fn signature_verify_fn(zelf: FnInstance, params: FnParams<'_>, _: &ModuleMet
             .as_ref(heap)
             .as_bytes()?;
 
-        context.increase_gas_usage(data.len() as u64 * 2)?;
+        context.increase_gas_usage(data.len() as u64 * 24)?;
 
-        let (compressed, key) = point.both()?;
+        let (compressed, key) = point.both(context)?;
         Ok(SysCallResult::Return(Primitive::Boolean(signature.verify_internal(&data, &key, compressed)).into()))
     })
 }

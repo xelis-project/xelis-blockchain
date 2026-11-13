@@ -144,9 +144,18 @@ pub fn blake3_fn(_: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, co
         .as_ref(heap)
         .as_bytes()?;
 
-    // Blake3 is relatively cheap
-    // Gas cost is proportional to input size
-    context.increase_gas_usage(input.len() as u64)?;
+    // Full 4 KiB groups use the SIMD path; the tail uses scalar blocks.
+    let length = input.len() as u64;
+    let groups = length / 4_096;
+    let tail = length % 4_096;
+    let tail_blocks = tail.div_ceil(64).saturating_sub(1);
+    let scalar_work = tail_blocks.min(15) * 330 + tail_blocks.saturating_sub(15) * 220;
+    let gas = if groups == 0 {
+        scalar_work
+    } else {
+        2_100 + groups * 4_000 + if tail == 0 { 0 } else { 800 + scalar_work }
+    };
+    context.increase_gas_usage(gas)?;
 
     let hash = hash(&input);
     Ok(SysCallResult::Return(RuntimeValue::Opaque(hash.into()).into()))
@@ -157,9 +166,9 @@ pub fn sha3_fn(_: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, cont
         .as_ref(heap)
         .as_bytes()?;
 
-    // Gas cost for SHA hashing
-    // Gas cost is proportional to input size
-    context.increase_gas_usage((input.len() as u64) * 4)?;
+    // SHA3-256 absorbs 136 bytes per block; the fixed fee covers the
+    // first permutation, including padding for inputs shorter than one block.
+    context.increase_gas_usage((input.len() as u64 / 136) * 1_700)?;
 
     let hash = Hash::new(Sha3_256::digest(&input).into());
     Ok(SysCallResult::Return(RuntimeValue::Opaque(hash.into()).into()))
@@ -172,7 +181,7 @@ pub fn sha256_fn(_: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, co
 
     // Gas cost for SHA hashing
     // Gas cost is proportional to input size
-    context.increase_gas_usage((input.len() as u64) * 4)?;
+    context.increase_gas_usage((input.len() as u64) * 9 / 4)?;
 
     // Bitcoin OP_SHA256 hashes the raw bytes once, with no byte reversal.
     // Preserve the original SHA3 output only for historical block replay.

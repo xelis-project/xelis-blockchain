@@ -28,6 +28,8 @@ use crate::{
     },
 };
 
+pub const POINT_COMPRESSION_GAS_COST: u64 = 21_000;
+
 #[derive(Debug, Clone, PartialEq, Eq, Opaque)]
 #[opaque(name = "RistrettoPoint", json, serializable, hash, eq)]
 pub enum OpaqueRistrettoPoint {
@@ -66,18 +68,19 @@ impl OpaqueRistrettoPoint {
         }
     }
 
-    pub fn compressed_mut(&mut self) -> &mut CompressedRistretto {
-        match self {
+    pub fn compressed_mut(&mut self, context: &mut VMContext) -> Result<&CompressedRistretto, EnvironmentError> {
+        Ok(match self {
             OpaqueRistrettoPoint::Compressed(c) => c,
             OpaqueRistrettoPoint::Decompressed(c, point) => {
                 if let Some(c) = c {
                     c
                 } else {
+                    context.increase_gas_usage(POINT_COMPRESSION_GAS_COST)?;
                     let compressed = point.compress();
                     c.insert(compressed)
                 }
             },
-        }
+        })
     }
 
     pub fn is_identity(&self) -> bool {
@@ -123,7 +126,8 @@ impl OpaqueRistrettoPoint {
         Ok(point)
     }
 
-    pub fn both(&mut self) -> Result<(&CompressedRistretto, &RistrettoPoint), EnvironmentError> {
+    pub fn both(&mut self, context: &mut VMContext) -> Result<(&CompressedRistretto, &RistrettoPoint), EnvironmentError> {
+        self.compressed_mut(context)?;
         self.decompress_internal()?;
 
         let OpaqueRistrettoPoint::Decompressed(compressed, point) = self else {
@@ -310,11 +314,12 @@ pub fn ristretto_from_bytes(_: FnInstance, params: FnParams<'_>, _: &ModuleMetad
     Ok(SysCallResult::Return(point.into()))
 }
 
-pub fn ristretto_to_bytes(zelf: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+pub fn ristretto_to_bytes(zelf: FnInstance, _: FnParams<'_>, _: &ModuleMetadata<'_>, context: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     heap.with_value(zelf, |zelf, _heap| {
-        let zelf: &OpaqueRistrettoPoint = zelf.as_opaque_type()?;
-        let compressed = zelf.compressed();
+        let zelf: &mut OpaqueRistrettoPoint = zelf.as_opaque_type_mut()?;
+
+        let compressed = zelf.compressed_mut(context)?;
 
         let bytes = compressed.as_bytes().to_vec();
         Ok(SysCallResult::Return(RuntimeValue::Bytes(bytes).into()))

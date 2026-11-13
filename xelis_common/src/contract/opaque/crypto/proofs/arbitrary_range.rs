@@ -43,7 +43,7 @@ impl DynSerializable for ArbitraryRangeProof {
     }
 }
 
-pub fn arbitrary_range_proof_new(_: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+pub fn arbitrary_range_proof_new(_: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, context: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let max_value = params[0]
         .as_u64(heap)
         .context("Failed to get max value parameter")?;
@@ -51,7 +51,7 @@ pub fn arbitrary_range_proof_new(_: FnInstance, params: FnParams<'_>, _: &Module
     let delta_commitment = CompressedCommitment::new(*params[1]
             .as_mut(heap)
             .as_opaque_type_mut::<OpaqueRistrettoPoint>()?
-            .compressed_mut()
+            .compressed_mut(context)?
         );
     let commitment_eq_proof = params[2]
         .as_ref(heap)

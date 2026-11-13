@@ -43,7 +43,7 @@ impl DynSerializable for OwnershipProof {
     }
 }
 
-pub fn ownership_proof_new(_: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+pub fn ownership_proof_new(_: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, context: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let amount = params[0]
         .as_u64(heap)
         .context("Failed to get amount parameter")?;
@@ -52,7 +52,7 @@ pub fn ownership_proof_new(_: FnInstance, params: FnParams<'_>, _: &ModuleMetada
         params[1]
                 .as_mut(heap)
                 .as_opaque_type_mut::<OpaqueRistrettoPoint>()?
-                .compressed_mut()
+                .compressed_mut(context)?
                 .clone()
         );
 

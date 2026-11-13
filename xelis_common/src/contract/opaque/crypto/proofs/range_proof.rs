@@ -26,6 +26,8 @@ use crate::{
     serializer::{Error as SerializationError, *},
 };
 
+pub const GAS_PER_COMMITMENT_BIT: u64 = 70_000;
+
 #[derive(Debug, Clone, Serialize, Deserialize, Opaque)]
 #[opaque(name = "RangeProof", json, serializable)]
 pub struct RangeProofWrapper(pub RangeProof);
@@ -44,7 +46,7 @@ impl DynSerializable for RangeProofWrapper {
     }
 }
 
-pub fn range_proof_verify_single(zelf: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, _: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
+pub fn range_proof_verify_single(zelf: FnInstance, params: FnParams<'_>, _: &ModuleMetadata<'_>, context: &mut VMContext, heap: &mut Heap) -> FnReturnType<ContractMetadata> {
     let zelf = zelf?;
     heap.with_value(zelf, |zelf, heap| {
         
@@ -54,6 +56,8 @@ pub fn range_proof_verify_single(zelf: FnInstance, params: FnParams<'_>, _: &Mod
         if proof_size == 0 || proof_size > 64 {
             return Err(EnvironmentError::Static("proof size must be between 1 and 64"));
         }
+
+        context.increase_gas_usage(proof_size as u64 * GAS_PER_COMMITMENT_BIT)?;
 
         // support pre-1.86 rustc, which doesn't support get_disjoint_mut([0, 1])
         let (left, right) = {
@@ -66,7 +70,7 @@ pub fn range_proof_verify_single(zelf: FnInstance, params: FnParams<'_>, _: &Mod
                     .as_mut(heap)
                     .as_opaque_type_mut()?;
 
-                let (compressed, decompressed) = commitment.both()?;
+                let (compressed, decompressed) = commitment.both(context)?;
                 (decompressed.clone(), compressed.clone())
         };
 
@@ -102,8 +106,8 @@ pub fn range_proof_verify_multiple(zelf: FnInstance, params: FnParams<'_>, _: &M
             return Err(EnvironmentError::Static("proof size must be 8, 16, 32 or 64"));
         }
 
-        let gas = (count as u64).checked_mul(1_500_000)
-            .ok_or(EnvironmentError::GasOverflow)?;
+        // Dimensions are bounded above, so this multiplication cannot overflow.
+        let gas = count as u64 * bits as u64 * GAS_PER_COMMITMENT_BIT;
 
         context.increase_gas_usage(gas)?;
 
@@ -112,7 +116,7 @@ pub fn range_proof_verify_multiple(zelf: FnInstance, params: FnParams<'_>, _: &M
             .map(|p| {
                 let opaque: &mut OpaqueRistrettoPoint = p.as_mut(heap)
                     .as_opaque_type_mut()?;
-                let (compressed, point) = opaque.both()?;
+                let (compressed, point) = opaque.both(context)?;
                 Ok((point.clone(), compressed.clone()))
             })
             .collect::<Result<Vec<_>, EnvironmentError>>()?

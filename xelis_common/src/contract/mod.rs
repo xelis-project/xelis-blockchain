@@ -616,7 +616,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             hash_type.clone(),
             vec![("bytes", Type::Bytes)],
             unsafe { FunctionHandler::sync_unchecked(hash_from_bytes_fn) },
-            150,
+            610,
             Some(hash_type.clone()),
             "Creates a hash from bytes."
         );
@@ -625,7 +625,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             hash_type.clone(),
             vec![("bytes", Type::Array(Box::new(Type::U8)))],
             unsafe { FunctionHandler::sync_unchecked(hash_from_array_fn) },
-            150,
+            1_040,
             Some(hash_type.clone()),
             "Creates a hash from a u8 array."
         );
@@ -634,7 +634,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             hash_type.clone(),
             vec![("value", Type::U256)],
             unsafe { FunctionHandler::sync_unchecked(hash_from_u256_fn) },
-            150,
+            630,
             Some(hash_type.clone()),
             "Creates a hash from a u256 value."
         );
@@ -652,7 +652,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             hash_type.clone(),
             vec![("input", Type::Bytes)],
             unsafe { FunctionHandler::sync_unchecked(blake3_fn) },
-            6_000,
+            850,
             Some(hash_type.clone()),
             "Computes the BLAKE3 hash of the input bytes."
         );
@@ -661,7 +661,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             hash_type.clone(),
             vec![("input", Type::Bytes)],
             unsafe { FunctionHandler::sync_unchecked(sha3_fn) },
-            15_000,
+            2_450,
             Some(hash_type.clone()),
             "Computes the SHA3 hash of the input bytes."
         );
@@ -711,7 +711,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             Some(random_type.clone()),
             vec![],
             unsafe { FunctionHandler::sync_unchecked(random_u16) },
-            10,
+            960,
             Some(Type::U16),
             "Generates the next deterministic random u16."
         );
@@ -738,7 +738,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             Some(random_type.clone()),
             vec![],
             unsafe { FunctionHandler::sync_unchecked(random_u128) },
-            10,
+            960,
             Some(Type::U128),
             "Generates the next deterministic random u128."
         );
@@ -747,7 +747,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             Some(random_type.clone()),
             vec![],
             unsafe { FunctionHandler::sync_unchecked(random_u256) },
-            10,
+            1_010,
             Some(Type::U256),
             "Generates the next deterministic random u256."
         );
@@ -756,7 +756,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             Some(random_type.clone()),
             vec![],
             unsafe { FunctionHandler::sync_unchecked(random_bool) },
-            10,
+            960,
             Some(Type::Bool),
             "Generates the next deterministic random boolean."
         );
@@ -958,7 +958,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("point", ristretto_type.clone()),
             ],
             unsafe { FunctionHandler::sync_unchecked(signature_verify_fn) },
-            1_000,
+            350_000,
             Some(Type::Bool),
             "Verifies the signature against the data and public key point."
         );
@@ -967,7 +967,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             signature_type.clone(),
             vec![("bytes", Type::Bytes)],
             unsafe { FunctionHandler::sync_unchecked(signature_from_bytes_fn) },
-            150,
+            1_500,
             Some(signature_type.clone()),
             "Deserializes a signature from bytes."
         );
@@ -982,7 +982,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("value", Type::U64)
             ],
             unsafe { FunctionHandler::sync_unchecked(ciphertext_add_plaintext) },
-            3_000,
+            158_000,
             None,
             "Adds a plaintext value to the ciphertext in place."
         );
@@ -993,7 +993,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("value", Type::U64)
             ],
             unsafe { FunctionHandler::sync_unchecked(ciphertext_sub_plaintext) },
-            3_000,
+            158_000,
             None,
             "Subtracts a plaintext value from the ciphertext in place."
         );
@@ -1004,7 +1004,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("value", Type::U64)
             ],
             unsafe { FunctionHandler::sync_unchecked(ciphertext_mul_plaintext) },
-            4_000,
+            315_000,
             None,
             "Multiplies the ciphertext by a plaintext value in place."
         );
@@ -1015,7 +1015,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("value", Type::U64)
             ],
             unsafe { FunctionHandler::sync_unchecked(ciphertext_div_plaintext) },
-            15_000,
+            372_000,
             None,
             "Divides the ciphertext by a plaintext value in place."
         );
@@ -1027,7 +1027,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("amount", Type::U64)
             ],
             unsafe { FunctionHandler::sync_unchecked(ciphertext_generate) },
-            5_000,
+            355_000,
             Some(ciphertext_type.clone()),
             "Generates a ciphertext for an address and plaintext amount."
         );
@@ -1038,7 +1038,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             Some(ciphertext_type.clone()),
             vec![],
             unsafe { FunctionHandler::sync_unchecked(ciphertext_commitment) },
-            10,
+            630,
             Some(ristretto_type.clone()),
             "Returns the ciphertext commitment point."
         );
@@ -1049,7 +1049,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             Some(ciphertext_type.clone()),
             vec![],
             unsafe { FunctionHandler::sync_unchecked(ciphertext_handle) },
-            10,
+            630,
             Some(ristretto_type.clone()),
             "Returns the ciphertext handle point."
         );
@@ -1060,7 +1060,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             ciphertext_type.clone(),
             vec![],
             unsafe { FunctionHandler::sync_unchecked(ciphertext_zero) },
-            20,
+            520,
             Some(ciphertext_type.clone()),
             "Returns a zero ciphertext."
         );
@@ -1077,7 +1077,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             Some(ristretto_type.clone()),
             vec![],
             unsafe { FunctionHandler::sync_unchecked(ristretto_is_identity) },
-            10,
+            750,
             Some(Type::Bool),
             "Returns whether the point is the identity."
         );
@@ -1088,7 +1088,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             ristretto_type.clone(),
             vec![],
             unsafe { FunctionHandler::sync_unchecked(ristretto_identity) },
-            100,
+            340,
             Some(ristretto_type.clone()),
             "Returns the identity Ristretto point."
         );
@@ -1101,7 +1101,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("value", scalar_type.clone())
             ],
             unsafe { FunctionHandler::sync_unchecked(ristretto_add_scalar) },
-            28_000,
+            150_000,
             Some(ristretto_type.clone()),
             "Returns this point plus the scalar multiplied by the base point."
         );
@@ -1113,7 +1113,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("value", scalar_type.clone())
             ],
             unsafe { FunctionHandler::sync_unchecked(ristretto_sub_scalar) },
-            28_000,
+            138_000,
             Some(ristretto_type.clone()),
             "Returns this point minus the scalar multiplied by the base point."
         );
@@ -1125,7 +1125,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("value", ristretto_type.clone())
             ],
             unsafe { FunctionHandler::sync_unchecked(ristretto_add) },
-            10_000,
+            23_000,
             Some(ristretto_type.clone()),
             "Returns the sum of this point and another point."
         );
@@ -1137,7 +1137,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("value", ristretto_type.clone())
             ],
             unsafe { FunctionHandler::sync_unchecked(ristretto_sub) },
-            12_000,
+            23_000,
             Some(ristretto_type.clone()),
             "Returns this point minus another point."
         );
@@ -1149,7 +1149,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("value", scalar_type.clone())
             ],
             unsafe { FunctionHandler::sync_unchecked(ristretto_mul_scalar) },
-            80_000,
+            150_000,
             Some(ristretto_type.clone()),
             "Returns this point multiplied by a scalar."
         );
@@ -1161,7 +1161,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("value", scalar_type.clone())
             ],
             unsafe { FunctionHandler::sync_unchecked(ristretto_div_scalar) },
-            46_000,
+            195_000,
             Some(ristretto_type.clone()),
             "Returns this point divided by a non-zero scalar."
         );
@@ -1171,7 +1171,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             ristretto_type.clone(),
             vec![("bytes", Type::Bytes)],
             unsafe { FunctionHandler::sync_unchecked(ristretto_from_bytes) },
-            3_000,
+            500,
             Some(ristretto_type.clone()),
             "Deserializes a Ristretto point from bytes."
         );
@@ -1181,7 +1181,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             Some(ristretto_type.clone()),
             vec![],
             unsafe { FunctionHandler::sync_unchecked(ristretto_to_bytes) },
-            3_000,
+            750,
             Some(Type::Bytes),
             "Serializes the Ristretto point to bytes."
         );
@@ -1198,7 +1198,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             scalar_type.clone(),
             vec![("value", Type::U64)],
             unsafe { FunctionHandler::sync_unchecked(scalar_from_u64) },
-            50,
+            490,
             Some(scalar_type.clone()),
             "Creates a scalar from a u64 value."
         );
@@ -1209,7 +1209,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             Some(scalar_type.clone()),
             vec![],
             unsafe { FunctionHandler::sync_unchecked(scalar_invert) },
-            5_000,
+            57_000,
             Some(scalar_type.clone()),
             "Returns the multiplicative inverse of the scalar."
         );
@@ -1220,7 +1220,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             Some(scalar_type.clone()),
             vec![],
             unsafe { FunctionHandler::sync_unchecked(scalar_is_zero) },
-            2,
+            760,
             Some(Type::Bool),
             "Returns whether the scalar is zero."
         );
@@ -1231,7 +1231,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             Some(scalar_type.clone()),
             vec![],
             unsafe { FunctionHandler::sync_unchecked(scalar_mul_base) },
-            80_000,
+            152_000,
             Some(ristretto_type.clone()),
             "Returns the scalar multiplied by the base point."
         );
@@ -1243,7 +1243,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("value", scalar_type.clone())
             ],
             unsafe { FunctionHandler::sync_unchecked(scalar_add) },
-            4_000,
+            800,
             Some(scalar_type.clone()),
             "Returns the sum of this scalar and another scalar."
         );
@@ -1255,7 +1255,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("value", scalar_type.clone())
             ],
             unsafe { FunctionHandler::sync_unchecked(scalar_sub) },
-            4_000,
+            800,
             Some(scalar_type.clone()),
             "Returns this scalar minus another scalar."
         );
@@ -1267,7 +1267,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("value", scalar_type.clone())
             ],
             unsafe { FunctionHandler::sync_unchecked(scalar_mul) },
-            8_000,
+            1_140,
             Some(scalar_type.clone()),
             "Returns this scalar multiplied by another scalar."
         );
@@ -1279,7 +1279,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("value", scalar_type.clone())
             ],
             unsafe { FunctionHandler::sync_unchecked(scalar_div) },
-            12_000,
+            58_000,
             Some(scalar_type.clone()),
             "Returns this scalar divided by a non-zero scalar."
         );
@@ -1289,7 +1289,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             scalar_type.clone(),
             vec![("bytes", Type::Bytes)],
             unsafe { FunctionHandler::sync_unchecked(scalar_from_bytes) },
-            300,
+            1_140,
             Some(Type::Optional(Box::new(scalar_type.clone()))),
             "Deserializes a scalar from bytes, if valid."
         );
@@ -1313,7 +1313,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             transcript_type.clone(),
             vec![("label", Type::Bytes)],
             unsafe { FunctionHandler::sync_unchecked(transcript_new) },
-            1_000,
+            2_600,
             Some(transcript_type.clone()),
             "Creates a transcript with the given label."
         );
@@ -1324,7 +1324,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             Some(transcript_type.clone()),
             vec![("label", Type::Bytes)],
             unsafe { FunctionHandler::sync_unchecked(transcript_challenge_scalar) },
-            1_500,
+            3_900,
             Some(scalar_type.clone()),
             "Derives a challenge scalar from the transcript with the given label."
         );
@@ -1338,7 +1338,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("n", Type::U32),
             ],
             unsafe { FunctionHandler::sync_unchecked(transcript_challenge_bytes) },
-            1_400,
+            3_100,
             Some(Type::Bytes),
             "Derives challenge bytes from the transcript with the given label and length."
         );
@@ -1366,7 +1366,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("point", ristretto_type.clone()),
             ],
             unsafe { FunctionHandler::sync_unchecked(transcript_append_point) },
-            500,
+            1_350,
             None,
             "Appends a labeled Ristretto point to the transcript."
         );
@@ -1379,7 +1379,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("point", ristretto_type.clone()),
             ],
             unsafe { FunctionHandler::sync_unchecked(transcript_validate_and_append_point) },
-            550,
+            1_700,
             None,
             "Validates and appends a labeled Ristretto point to the transcript."
         );
@@ -1393,7 +1393,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("scalar", scalar_type.clone()),
             ],
             unsafe { FunctionHandler::sync_unchecked(transcript_append_scalar) },
-            500,
+            1_400,
             None,
             "Appends a labeled scalar to the transcript."
         );
@@ -1414,7 +1414,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("transcript", transcript_type.clone()),
             ],
             unsafe { FunctionHandler::sync_unchecked(ciphertext_validity_proof_verify) },
-            300_000,
+            480_000,
             Some(Type::Bool),
             "Verifies that the ciphertext handles match the commitment and public keys. It is up to the caller to ensure all inputs are passed into the transcript."
         );
@@ -1433,7 +1433,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("transcript", transcript_type.clone()),
             ],
             unsafe { FunctionHandler::sync_unchecked(commitment_eq_proof_verify) },
-            300_000,
+            510_000,
             Some(Type::Bool),
             "Verifies equality between a ciphertext commitment and a plain commitment. It is up to the caller to ensure all inputs are passed into the transcript."
         );
@@ -1452,7 +1452,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("n", Type::U8),
             ],
             unsafe { FunctionHandler::sync_unchecked(range_proof_verify_single) },
-            3_000_000,
+            750_000,
             Some(Type::Bool),
             "Verifies a range proof for a single commitment. It is up to the caller to ensure all inputs are passed into the transcript."
         );
@@ -1468,7 +1468,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("n", Type::U8),
             ],
             unsafe { FunctionHandler::sync_unchecked(range_proof_verify_multiple) },
-            3_030_000,
+            750_000,
             Some(Type::Bool),
             "Verifies a range proof for multiple commitments. It is up to the caller to ensure all inputs are passed into the transcript."
         );
@@ -1487,7 +1487,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("range_proof", range_proof_type.clone()),
             ],
             unsafe { FunctionHandler::sync_unchecked(arbitrary_range_proof_new) },
-            1_000,
+            1_040,
             Some(arbitrary_range_proof_type.clone()),
             "Creates an arbitrary range proof wrapper from its components."
         );
@@ -1498,7 +1498,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             Some(arbitrary_range_proof_type.clone()),
             vec![],
             unsafe { FunctionHandler::sync_unchecked(arbitrary_range_proof_max_value) },
-            2,
+            550,
             Some(Type::U64),
             "Returns the maximum value covered by the arbitrary range proof."
         );
@@ -1509,7 +1509,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             Some(arbitrary_range_proof_type.clone()),
             vec![],
             unsafe { FunctionHandler::sync_unchecked(arbitrary_range_proof_delta_commitment) },
-            100,
+            590,
             Some(ristretto_type.clone()),
             "Returns the delta commitment for the arbitrary range proof."
         );
@@ -1520,7 +1520,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             Some(arbitrary_range_proof_type.clone()),
             vec![],
             unsafe { FunctionHandler::sync_unchecked(arbitrary_range_proof_commitment_eq_proof) },
-            500,
+            630,
             Some(commitment_equality_proof_type.clone()),
             "Returns the commitment equality proof inside the arbitrary range proof."
         );
@@ -1531,7 +1531,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             Some(arbitrary_range_proof_type.clone()),
             vec![],
             unsafe { FunctionHandler::sync_unchecked(arbitrary_range_proof_range_proof) },
-            500,
+            770,
             Some(range_proof_type.clone()),
             "Returns the range proof inside the arbitrary range proof."
         );
@@ -1546,7 +1546,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("transcript", transcript_type.clone()),
             ],
             unsafe { FunctionHandler::sync_unchecked(arbitrary_range_proof_verify) },
-            3_200_000,
+            9_950_000,
             Some(Type::Bool),
             "Verifies the arbitrary range proof for the source ciphertext."
         );
@@ -1565,7 +1565,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("range_proof", range_proof_type.clone()),
             ],
             unsafe { FunctionHandler::sync_unchecked(ownership_proof_new) },
-            1_000,
+            1_010,
             Some(ownership_proof_type.clone()),
             "Creates an ownership proof wrapper from its components."
         );
@@ -1576,7 +1576,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             Some(ownership_proof_type.clone()),
             vec![],
             unsafe { FunctionHandler::sync_unchecked(ownership_proof_amount) },
-            2,
+            560,
             Some(Type::U64),
             "Returns the amount claimed by the ownership proof."
         );
@@ -1587,7 +1587,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             Some(ownership_proof_type.clone()),
             vec![],
             unsafe { FunctionHandler::sync_unchecked(ownership_proof_commitment) },
-            100,
+            590,
             Some(ristretto_type.clone()),
             "Returns the commitment claimed by the ownership proof."
         );
@@ -1598,7 +1598,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             Some(ownership_proof_type.clone()),
             vec![],
             unsafe { FunctionHandler::sync_unchecked(ownership_proof_commitment_eq_proof) },
-            500,
+            620,
             Some(commitment_equality_proof_type.clone()),
             "Returns the commitment equality proof inside the ownership proof."
         );
@@ -1609,7 +1609,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             Some(ownership_proof_type.clone()),
             vec![],
             unsafe { FunctionHandler::sync_unchecked(ownership_proof_range_proof) },
-            500,
+            770,
             Some(range_proof_type.clone()),
             "Returns the range proof inside the ownership proof."
         );
@@ -1624,7 +1624,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("transcript", transcript_type.clone()),
             ],
             unsafe { FunctionHandler::sync_unchecked(ownership_proof_verify) },
-            3_200_000,
+            5_950_000,
             Some(Type::Bool),
             "Verifies the ownership proof for the source ciphertext."
         );
@@ -1641,7 +1641,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("commitment_eq_proof", commitment_equality_proof_type.clone()),
             ],
             unsafe { FunctionHandler::sync_unchecked(balance_proof_new) },
-            500,
+            590,
             Some(balance_proof_type.clone()),
             "Creates a balance proof wrapper from its components."
         );
@@ -1652,7 +1652,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             Some(balance_proof_type.clone()),
             vec![],
             unsafe { FunctionHandler::sync_unchecked(balance_proof_amount) },
-            2,
+            540,
             Some(Type::U64),
             "Returns the amount claimed by the balance proof."
         );
@@ -1663,7 +1663,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             Some(balance_proof_type.clone()),
             vec![],
             unsafe { FunctionHandler::sync_unchecked(balance_proof_commitment_eq_proof) },
-            500,
+            610,
             Some(commitment_equality_proof_type.clone()),
             "Returns the commitment equality proof inside the balance proof."
         );
@@ -1678,7 +1678,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("transcript", transcript_type.clone()),
             ],
             unsafe { FunctionHandler::sync_unchecked(balance_proof_verify) },
-            3_200_000,
+            850_000,
             Some(Type::Bool),
             "Verifies the balance proof for the source ciphertext."
         );
@@ -2287,7 +2287,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("handle", ristretto_type.clone()),
             ],
             unsafe { FunctionHandler::sync_unchecked(ciphertext_from) },
-            100,
+            1_670,
             Some(ciphertext_type.clone()),
             "Creates a ciphertext from commitment and handle points."
         );
@@ -2300,7 +2300,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("other", ciphertext_type.clone()),
             ],
             unsafe { FunctionHandler::sync_unchecked(ciphertext_add_ct) },
-            18_000,
+            46_000,
             None,
             "Adds another ciphertext to this ciphertext in place."
         );
@@ -2312,7 +2312,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("other", ciphertext_type.clone()),
             ],
             unsafe { FunctionHandler::sync_unchecked(ciphertext_sub_ct) },
-            18_000,
+            46_000,
             None,
             "Subtracts another ciphertext from this ciphertext in place."
         );
@@ -2324,7 +2324,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("scalar", scalar_type.clone()),
             ],
             unsafe { FunctionHandler::sync_unchecked(ciphertext_add_scalar) },
-            28_000,
+            153_000,
             None,
             "Adds a scalar to this ciphertext in place."
         );
@@ -2336,7 +2336,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("scalar", scalar_type.clone()),
             ],
             unsafe { FunctionHandler::sync_unchecked(ciphertext_sub_scalar) },
-            28_000,
+            153_000,
             None,
             "Subtracts a scalar from this ciphertext in place."
         );
@@ -2351,7 +2351,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
                 ("bytes", Type::Bytes)
             ],
             unsafe { FunctionHandler::sync_unchecked(scalar_hash_from_bytes) },
-            20_000,
+            2_550,
             Some(scalar_type.clone()),
             "Hashes bytes into a scalar."
         );
@@ -2361,7 +2361,7 @@ pub fn build_environment<P: for<'ty> ContractProvider<'ty>>(version: ContractVer
             hash_type.clone(),
             vec![("input", Type::Bytes)],
             unsafe { FunctionHandler::sync_unchecked(sha256_fn) },
-            30_000,
+            700,
             Some(hash_type.clone()),
             "Computes SHA-256 of the raw input bytes"
         );
