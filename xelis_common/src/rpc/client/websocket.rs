@@ -880,7 +880,7 @@ async fn with_timeout<F: Future, C: ToString>(timeout_after: Duration, future: F
 }
 
 #[cfg(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown"))]
-async fn with_timeout<F: Future>(timeout_after: Duration, future: F, context: Value) -> JsonRPCResult<F::Output> {
+async fn with_timeout<F: Future, C: ToString>(timeout_after: Duration, future: F, context: C) -> JsonRPCResult<F::Output> {
     let (mut sender, receiver) = oneshot::channel();
     spawn_task("ws-timeout", async move {
         select! {
