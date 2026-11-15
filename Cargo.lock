@@ -3606,7 +3606,7 @@ dependencies = [
 [[package]]
 name = "silex-assembler"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#f7c4c048ffc330a7b9a68e9687757b53ef62455e"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#489b56196ba987d1dad646b1691e2bd77daad2a3"
 dependencies = [
  "log",
  "silex-bytecode",
@@ -3617,7 +3617,7 @@ dependencies = [
 [[package]]
 name = "silex-ast"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#f7c4c048ffc330a7b9a68e9687757b53ef62455e"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#489b56196ba987d1dad646b1691e2bd77daad2a3"
 dependencies = [
  "indexmap",
  "silex-types",
@@ -3626,7 +3626,7 @@ dependencies = [
 [[package]]
 name = "silex-builder"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#f7c4c048ffc330a7b9a68e9687757b53ef62455e"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#489b56196ba987d1dad646b1691e2bd77daad2a3"
 dependencies = [
  "hex",
  "log",
@@ -3641,7 +3641,7 @@ dependencies = [
 [[package]]
 name = "silex-bytecode"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#f7c4c048ffc330a7b9a68e9687757b53ef62455e"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#489b56196ba987d1dad646b1691e2bd77daad2a3"
 dependencies = [
  "hex",
  "indexmap",
@@ -3654,7 +3654,7 @@ dependencies = [
 [[package]]
 name = "silex-compiler"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#f7c4c048ffc330a7b9a68e9687757b53ef62455e"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#489b56196ba987d1dad646b1691e2bd77daad2a3"
 dependencies = [
  "log",
  "silex-ast",
@@ -3667,7 +3667,7 @@ dependencies = [
 [[package]]
 name = "silex-environment"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#f7c4c048ffc330a7b9a68e9687757b53ef62455e"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#489b56196ba987d1dad646b1691e2bd77daad2a3"
 dependencies = [
  "better_any",
  "futures",
@@ -3683,7 +3683,7 @@ dependencies = [
 [[package]]
 name = "silex-lexer"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#f7c4c048ffc330a7b9a68e9687757b53ef62455e"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#489b56196ba987d1dad646b1691e2bd77daad2a3"
 dependencies = [
  "log",
  "silex-ast",
@@ -3694,7 +3694,7 @@ dependencies = [
 [[package]]
 name = "silex-parser"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#f7c4c048ffc330a7b9a68e9687757b53ef62455e"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#489b56196ba987d1dad646b1691e2bd77daad2a3"
 dependencies = [
  "indexmap",
  "log",
@@ -3710,7 +3710,7 @@ dependencies = [
 [[package]]
 name = "silex-types"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#f7c4c048ffc330a7b9a68e9687757b53ef62455e"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#489b56196ba987d1dad646b1691e2bd77daad2a3"
 dependencies = [
  "hashbrown 0.17.1",
  "hex",
@@ -3729,7 +3729,7 @@ dependencies = [
 [[package]]
 name = "silex-types-macros"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#f7c4c048ffc330a7b9a68e9687757b53ef62455e"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#489b56196ba987d1dad646b1691e2bd77daad2a3"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -4971,7 +4971,7 @@ dependencies = [
 [[package]]
 name = "xelis-vm"
 version = "0.1.0"
-source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#f7c4c048ffc330a7b9a68e9687757b53ef62455e"
+source = "git+https://github.com/xelis-project/xelis-vm?branch=dev#489b56196ba987d1dad646b1691e2bd77daad2a3"
 dependencies = [
  "futures",
  "indexmap",
